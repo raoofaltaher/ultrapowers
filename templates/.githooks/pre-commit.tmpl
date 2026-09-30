@@ -27,3 +27,30 @@ elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
 else
   echo "warning: gitleaks unavailable (no working binary, no docker); secret scan skipped." >&2
 fi
+# >>> team-memory lint
+# Runs the ultrapowers memory lint when this commit stages changes under the
+# team-memory store and the plugin checkout is reachable (ULTRAPOWERS_ROOT, or
+# the Claude Code plugin cache). Findings block the commit; an unreachable
+# plugin warns and continues.
+if [ -f ".agents/memory/MEMORY.md" ] && command -v node >/dev/null 2>&1 \
+  && git diff --cached --name-only | grep -q '^\.agents/memory/'; then
+  memory_lint=""
+  for candidate in \
+    "${ULTRAPOWERS_ROOT:-/nonexistent}/skills/team-memory/scripts/memory-lint.mjs" \
+    "${HOME}"/.claude/plugins/cache/*/ultrapowers/*/skills/team-memory/scripts/memory-lint.mjs \
+    "${HOME}"/.claude/plugins/marketplaces/ultrapowers/skills/team-memory/scripts/memory-lint.mjs; do
+    if [ -f "$candidate" ]; then
+      memory_lint="$candidate"
+      break
+    fi
+  done
+  if [ -n "$memory_lint" ]; then
+    if ! node "$memory_lint" .agents/memory; then
+      echo "pre-commit: team-memory lint found problems (listed above). Fix them, or run 'team-memory lint' with your agent." >&2
+      exit 1
+    fi
+  else
+    echo "pre-commit: team-memory lint skipped (ultrapowers plugin not found; set ULTRAPOWERS_ROOT to its checkout)" >&2
+  fi
+fi
+# <<< team-memory lint
