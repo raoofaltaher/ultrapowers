@@ -13,11 +13,13 @@ This file is the single instruction source for every coding agent that opens thi
 
 ## Team memory
 
-- The shared team memory lives in `.agents/memory/`. `MEMORY.md` is the index; topic files live next to it. Read the index at session start and open a topic file only when its index line is relevant to the task.
-- A fact enters team memory when it meets all four criteria: verified in this session, durable beyond this ticket, more than fifteen minutes to rediscover, and not derivable from the code or the docs in one step.
-- Personal memory is private scratch. When a personal note meets the four criteria, promote it into `.agents/memory/` with the team-memory skill; link, do not duplicate.
-- Commits that motivate or land a memory entry add the trailer `Memory-Ref: <dir>/<file>.md`.
-- Never store secrets, credentials, personal data, or anything that identifies a customer in team memory.
+Shared memory for every coding agent on this project lives in `.agents/memory/` (`memory.path` in `.agents/ultrapowers.json`). `MEMORY.md` is the index; `gotchas/`, `decisions/` and `subsystems/` hold one verified fact per file.
+
+- Read `.agents/memory/MEMORY.md` at session start. Open a topic file only when its index line is relevant to the work.
+- Save a learning only when it is ALL of: verified (tested or observed here, not inferred), durable (still true next month), expensive (15 minutes or more to rediscover), not derivable (not already in code, docs, specs or git history). Never store: secrets, tokens, credentials, URLs embedding auth, personal data, customer data.
+- Promotion: a personal auto-memory file that meets the four criteria is copied into the matching folder with a `date` line added; the `ultrapowers:team-memory` skill does this and lints the result.
+- Commits that land or motivate an entry carry the trailer `Memory-Ref: <dir>/<file>.md`.
+- Use the `ultrapowers:team-memory` skill for remember, recall, prune and lint.
 
 ## Anti-slop rules
 

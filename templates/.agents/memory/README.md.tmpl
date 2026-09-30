@@ -1,0 +1,81 @@
+# Team memory
+
+Git-committed, review-gated memory shared by every developer's coding agent on {{name}}, on every harness. The files in this folder are the store: no service, no database. `MEMORY.md` is the index every session loads; topic files are read on demand.
+
+## Quick start (daily use)
+
+Mostly you do nothing. The system is ambient:
+
+- Every session loads `MEMORY.md` through the project's agent instruction files (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`). Your agent already knows the team's learnings.
+- Your agent saves qualifying learnings during normal work. They ride your feature branch and are reviewed with the code in the same change request. Merge means the whole team's agents know it.
+- The ultrapowers plugin keeps capture honest: a one-line nudge on each prompt and a rescue reminder after context compaction, on harnesses that expose those events.
+
+When you want to drive it explicitly, tell your agent:
+
+- **"Remember this for the team: ..."** gates the fact against the four criteria below; refused if it is sprint status, inferred, or derivable.
+- **"Have we hit this before?" / "Why did we do X?"** runs the recall ladder (index, grep, git history, forge or tracker, personal memory) and writes hard-won answers back.
+- **"Run team-memory prune"** is the periodic hygiene pass.
+- **"Run team-memory lint"** checks the store's structure and lists every finding.
+
+## Layout
+
+- `MEMORY.md`: the index, one line per entry, hard budget 150 lines (`memory.indexBudget` in `.agents/ultrapowers.json`).
+- `gotchas/`: "looks right but fails" traps.
+- `decisions/`: architecture and process decisions with the why.
+- `subsystems/`: verified "how X works" facts.
+
+## Entry format: one fact per file
+
+The file name is the entry's `name` plus `.md`; `name` is a kebab-case slug. The frontmatter is the Claude Code auto-memory schema plus `date`, so a personal memory file can be promoted by copying it here and adding `date`.
+
+```markdown
+---
+name: <kebab-case-slug, equals the file name without .md>
+description: <one line: what this entry tells you>
+metadata:
+  type: <gotcha | decision | subsystem>
+date: <YYYY-MM-DD, creation or last re-verification>
+---
+<the fact, one to three sentences>
+
+**Why:** <root cause or rationale>
+
+**How to apply:** <what to do differently>
+```
+
+Optional `[[name]]` links in the body point at other entries. Authorship lives in `git blame`, not the file.
+
+Index line for each entry: `- [<name as title>](<dir>/<file>.md) — <one-line hook> (<YYYY-MM>)`. When an entry changes, fold the change into the same line as `**UPDATED YYYY-MM-DD: ...**` instead of adding a line.
+
+## When to write (ALL four required)
+
+1. **Verified**: tested or directly observed in this project, not inferred.
+2. **Durable**: still true next month (no sprint status, no in-flight branch state).
+3. **Expensive**: would cost a teammate 15 minutes or more to rediscover (`memory.rediscoveryMinutes`).
+4. **Not derivable**: not already stated in code, docs, specs, or git history.
+
+Never store: secrets, tokens, credentials, URLs embedding auth, personal data, customer data.
+
+Wrong entry? Delete it; git history preserves it. Update an existing entry instead of adding a near-duplicate.
+
+## How entries get in
+
+- Agents write qualifying entries during normal work; they ride the feature branch and are reviewed in the same change request as the code.
+- Explicitly: the `ultrapowers:team-memory` skill (remember, recall, prune, lint).
+- Nothing reaches the default branch without review.
+
+## Recall ladder
+
+Index line, then grep this folder, then `git log --grep` and `git log -S` at the project root and in each repository listed under `repos` in `.agents/ultrapowers.json`, then the forge or tracker when tools for it are available, then personal memory layers. Anything recovered at the git-history rung or later is written back as an entry.
+
+## Commit trailer
+
+Commits that motivate or land an entry carry the trailer `Memory-Ref: <dir>/<file>.md` (`memory.trailer`). Find them with `git log --grep "Memory-Ref"`.
+
+## Prune policy
+
+Periodically, or per release: run `team-memory lint`, re-verify entries older than six months, merge near-duplicates, delete stale ones together with their index line. Anyone may run it; agree on an owner in your team.
+
+## Secret gate
+
+`.gitleaks.toml` and `.githooks/pre-commit` scan staged changes, this folder included. One-time setup per clone: `git config core.hooksPath .githooks` and install gitleaks.

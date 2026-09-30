@@ -30,5 +30,7 @@
   ".gitleaks.toml": "1.0.0",
   ".githooks/pre-commit": "1.0.0",
   ".gitignore": "1.0.0",
-  ".gitattributes": "1.0.0"
+  ".gitattributes": "1.0.0",
+  ".agents/memory/README.md": "1.0.0",
+  ".agents/memory/MEMORY.md": "1.0.0"
 }

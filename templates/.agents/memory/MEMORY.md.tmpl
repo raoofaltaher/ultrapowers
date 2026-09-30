@@ -1,0 +1,23 @@
+# Team memory: index
+
+Shared, git-committed memory for every coding agent on {{name}}, on every harness.
+Entries live in `gotchas/`, `decisions/`, `subsystems/`, one verified fact per file. This index is
+loaded at session start; read a topic file only when its line looks relevant. Hard budget: 150 lines.
+
+Save a team memory ONLY when the learning is ALL of:
+1. **Verified**: tested or directly observed in this project, not inferred.
+2. **Durable**: still true next month (no sprint status, no in-flight branch state).
+3. **Expensive**: would cost a teammate 15 minutes or more to rediscover.
+4. **Not derivable**: not already stated in code, docs, specs, or git history.
+
+Never store: secrets, tokens, credentials, URLs embedding auth, personal data, customer data.
+Wrong entry? Delete it (git history preserves it). Prefer updating an existing entry over a near-duplicate.
+Full contract and how to contribute: `README.md`. Use the `ultrapowers:team-memory` skill to remember, recall, prune and lint.
+
+Index line format: `- [<name as title>](<dir>/<file>.md) — <one-line hook> (<YYYY-MM>)`. Fold updates into the same line as `**UPDATED YYYY-MM-DD: ...**`.
+
+## Gotchas
+
+## Decisions
+
+## Subsystems
