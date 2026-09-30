@@ -51,6 +51,21 @@ else
   ls -A "$out4" | sed 's/^/    /'
 fi
 
+out5="$TEST_ROOT/out with 'quotes' too"
+bash "$RUNNER" "$TEST_ROOT/repo" "$out5" "printf s > '{{out}}/single.txt'; A='-a -b'; printf '[%s]' \$A > {{out}}/split.txt"
+if [[ -f "$out5/single.txt" ]]; then pass "{{out}} inside single quotes is the literal path"; else fail "{{out}} inside single quotes is the literal path"; ls -A "$out5" | sed 's/^/    /'; fi
+if [[ "$(cat "$out5/split.txt" 2>/dev/null)" == "[-a][-b]" ]]; then pass "an unquoted variable in the command still word-splits"; else fail "an unquoted variable in the command still word-splits (got $(cat "$out5/split.txt" 2>/dev/null))"; fi
+
+# A re-run reuses the same out dir: nothing from the previous run may be read as this run's.
+out6="$TEST_ROOT/out-rerun"
+bash "$RUNNER" "$TEST_ROOT/repo" "$out6" "printf '%s' '<testsuite><testcase classname=\"a.B\" name=\"old\"><failure/></testcase></testsuite>' > {{out}}/old.xml; exit 3"
+bash "$RUNNER" "$TEST_ROOT/repo" "$out6" "exit 3"
+if [[ -f "$out6/.failed" ]]; then pass "setup: the second crash is marked .failed"; else fail "setup: the second crash is marked .failed"; fi
+bash "$RUNNER" "$TEST_ROOT/repo" "$out6" "if [ -e {{out}}/finished-at ]; then echo stale; else echo fresh; fi > {{out}}/probe.txt; printf '%s' '<testsuite><testcase classname=\"a.B\" name=\"new\"/></testsuite>' > {{out}}/new.xml"
+if [[ ! -f "$out6/.failed" ]]; then pass "a clean re-run clears the previous .failed marker"; else fail "a clean re-run clears the previous .failed marker"; fi
+if [[ "$(cat "$out6/probe.txt" 2>/dev/null)" == "fresh" ]]; then pass "the previous finished-at is gone while the new run is going"; else fail "the previous finished-at is gone while the new run is going"; fi
+if [[ ! -f "$out6/old.xml" ]]; then pass "results from the previous run are not judged again"; else fail "results from the previous run are not judged again"; fi
+
 rc=0
 bash "$RUNNER" "$TEST_ROOT/repo" >/dev/null 2>&1 || rc=$?
 if [[ "$rc" -ne 0 ]]; then pass "missing arguments exit non-zero"; else fail "missing arguments exit non-zero"; fi

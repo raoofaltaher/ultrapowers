@@ -121,3 +121,52 @@ test('CLI exits 1 when the baseline is missing', () => {
   assert.equal(run.status, 1);
   assert.match(run.stderr, /baseline not found/);
 });
+
+function dirWith(name, text) {
+  const dir = mkdtempSync(join(tmpdir(), 'judge-'));
+  writeFileSync(join(dir, name), text);
+  return dir;
+}
+
+test('a vitest file that failed to load is a failure even with no failed assertion', () => {
+  const json = JSON.stringify({ testResults: [{ name: 'src/items.test.js', status: 'failed', message: 'SyntaxError: Unexpected token', assertionResults: [] }] });
+  assert.deepEqual(failingFromVitest(json), ['src/items.test.js']);
+  const dir = dirWith('vitest.json', json);
+  const r = judge(dir, baseline);
+  assert.equal(r.status, 'JUDGED');
+  assert.deepEqual(r.newFailing, ['src/items.test.js']);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('TRX Error, Timeout and Aborted outcomes are failures', () => {
+  const xml = '<TestRun><Results>'
+    + '<UnitTestResult testName="A.Err" outcome="Error"/>'
+    + '<UnitTestResult testName="A.Slow" outcome="Timeout"/>'
+    + '<UnitTestResult testName="A.Cut" outcome="Aborted"/>'
+    + '<UnitTestResult testName="A.Ok" outcome="Passed"/>'
+    + '</Results></TestRun>';
+  assert.deepEqual(failingFromTrx(xml).sort(), ['A.Cut', 'A.Err', 'A.Slow']);
+});
+
+test('an aborted TRX run or unexecuted tests is INCOMPLETE, not a green', () => {
+  const aborted = '<TestRun><ResultSummary outcome="Aborted"><Counters total="3" executed="3" passed="3"/></ResultSummary><Results><UnitTestResult testName="A.B" outcome="Passed"/></Results></TestRun>';
+  let dir = dirWith('run.trx', aborted);
+  let r = judge(dir, baseline);
+  assert.equal(r.status, 'INCOMPLETE');
+  assert.ok(r.reasons.some((x) => /Aborted/.test(x)), r.reasons.join('; '));
+  rmSync(dir, { recursive: true, force: true });
+  const short = '<TestRun><ResultSummary outcome="Completed"><Counters total="5" executed="2" passed="2"/></ResultSummary><Results><UnitTestResult testName="A.B" outcome="Passed"/></Results></TestRun>';
+  dir = dirWith('run.trx', short);
+  r = judge(dir, baseline);
+  assert.equal(r.status, 'INCOMPLETE');
+  assert.ok(r.reasons.some((x) => /2 of 5/.test(x)), r.reasons.join('; '));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('a JUnit suite-level error with no failing testcase is INCOMPLETE', () => {
+  const dir = dirWith('junit.xml', '<testsuites><testsuite name="s" tests="1" errors="1" failures="0"><testcase classname="a" name="b"/></testsuite></testsuites>');
+  const r = judge(dir, baseline);
+  assert.equal(r.status, 'INCOMPLETE');
+  assert.ok(r.reasons.some((x) => /suite-level/.test(x)), r.reasons.join('; '));
+  rmSync(dir, { recursive: true, force: true });
+});

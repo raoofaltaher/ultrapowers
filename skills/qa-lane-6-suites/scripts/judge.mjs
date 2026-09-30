@@ -51,15 +51,45 @@ export function parseSuppressList(markdown) {
   return entries;
 }
 
+const TRX_FAILING = new Set(['Failed', 'Error', 'Timeout', 'Aborted']);
+
 export function failingFromTrx(xml) {
   const names = new Set();
   for (const match of xml.matchAll(/<UnitTestResult\b[^>]*>/g)) {
     const tag = match[0];
-    if (attr(tag, 'outcome') !== 'Failed') continue;
+    if (!TRX_FAILING.has(attr(tag, 'outcome'))) continue;
     const name = attr(tag, 'testName');
     if (name) names.add(name);
   }
   return [...names];
+}
+
+// A results file can admit that the run did not finish; that is INCOMPLETE, not a green.
+function incompleteFromTrx(xml, file) {
+  const reasons = [];
+  const summary = /<ResultSummary\b[^>]*>/.exec(xml);
+  const outcome = summary ? attr(summary[0], 'outcome') : '';
+  if (['Aborted', 'Error', 'Timeout'].includes(outcome)) reasons.push(`${file}: the test run ended ${outcome}`);
+  const counters = /<Counters\b[^>]*>/.exec(xml);
+  if (counters) {
+    const total = Number(attr(counters[0], 'total'));
+    const executed = Number(attr(counters[0], 'executed'));
+    if (Number.isFinite(total) && Number.isFinite(executed) && executed < total) reasons.push(`${file}: ${executed} of ${total} tests executed`);
+  }
+  for (const match of xml.matchAll(/<RunInfo\b[^>]*>/g)) {
+    if (attr(match[0], 'outcome') === 'Error') { reasons.push(`${file}: the test host reported a run error`); break; }
+  }
+  return reasons;
+}
+
+function incompleteFromJunit(xml, file, failingCount) {
+  if (failingCount > 0) return [];
+  for (const match of xml.matchAll(/<testsuite\b[^>]*>/g)) {
+    const errors = Number(attr(match[0], 'errors')) || 0;
+    const failures = Number(attr(match[0], 'failures')) || 0;
+    if (errors + failures > 0) return [`${file}: a suite-level error or failure with no failing testcase to name`];
+  }
+  return [];
 }
 
 export function failingFromVitest(jsonText) {
@@ -71,9 +101,13 @@ export function failingFromVitest(jsonText) {
     return [];
   }
   for (const file of Array.isArray(parsed?.testResults) ? parsed.testResults : []) {
+    let failedAssertions = 0;
     for (const assertion of Array.isArray(file?.assertionResults) ? file.assertionResults : []) {
-      if (assertion?.status === 'failed' && typeof assertion.fullName === 'string') names.add(assertion.fullName);
+      if (assertion?.status === 'failed' && typeof assertion.fullName === 'string') { names.add(assertion.fullName); failedAssertions++; }
     }
+    // A test file that failed to load or crashed has no failed assertion to name; the file
+    // itself is the failure.
+    if (file?.status === 'failed' && failedAssertions === 0) names.add(typeof file.name === 'string' && file.name ? file.name : '(unnamed test file)');
   }
   return [...names];
 }
@@ -105,6 +139,7 @@ function isVitestJson(text) {
 export function collectFailing(outDir) {
   const names = new Set();
   const formats = new Set();
+  const incomplete = [];
   let hadResults = false;
   const files = existsSync(outDir) ? readdirSync(outDir) : [];
   for (const file of files) {
@@ -120,6 +155,7 @@ export function collectFailing(outDir) {
       hadResults = true;
       formats.add('trx');
       failingFromTrx(text).forEach((n) => names.add(n));
+      incomplete.push(...incompleteFromTrx(text, file));
     } else if (ext === '.json' && isVitestJson(text)) {
       hadResults = true;
       formats.add('vitest-json');
@@ -127,10 +163,12 @@ export function collectFailing(outDir) {
     } else if (ext === '.xml' && /<testsuites?\b/.test(text)) {
       hadResults = true;
       formats.add('junit-xml');
-      failingFromJunit(text).forEach((n) => names.add(n));
+      const failing = failingFromJunit(text);
+      failing.forEach((n) => names.add(n));
+      incomplete.push(...incompleteFromJunit(text, file, failing.length));
     }
   }
-  return { names: [...names].sort(), hadResults, formats: [...formats].sort() };
+  return { names: [...names].sort(), hadResults, formats: [...formats].sort(), incomplete };
 }
 
 export function judge(outDir, baselinePath) {
@@ -145,6 +183,7 @@ export function judge(outDir, baselinePath) {
   }
   const collected = collectFailing(outDir);
   if (!collected.hadResults) reasons.push(`no .trx, vitest JSON or JUnit XML under ${outDir}; nothing was collected`);
+  reasons.push(...collected.incomplete);
   if (reasons.length > 0) {
     return { status: 'INCOMPLETE', newFailing: [], suppressed: [], reasons, formats: collected.formats };
   }

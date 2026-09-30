@@ -17,14 +17,52 @@ cmd="${3:?$usage}"
 
 mkdir -p "$out" || exit 1
 out_abs="$(cd "$out" && pwd)"
-# `{{out}}` becomes a reference to QA_SUITE_OUT, and the command runs with IFS empty, so the
-# path stays one word whether the command leaves `{{out}}` bare, double-quotes it or passes
-# it as an argument, even when it holds a space (a Windows home directory) or an `&`.
-ref='${QA_SUITE_OUT}'
-cmd="${cmd//\{\{out\}\}/$ref}"
+
+# A re-run reuses this out dir: nothing from the previous run may be read as this run's.
+rm -f "$out_abs/.failed" "$out_abs/exit-code" "$out_abs/started-at" "$out_abs/finished-at" "$out_abs/stdout.txt"
+for f in "$out_abs"/*.trx "$out_abs"/*.xml "$out_abs"/*.json; do
+  if [ -e "$f" ]; then rm -f "$f"; fi
+done
+
+# `{{out}}` is replaced by the quoting it sits in, so the path stays one word even when it
+# holds a space (a Windows home directory), a quote or an `&`: bare, it becomes the path in
+# single quotes; inside single quotes, the path itself; inside double quotes, ${QA_SUITE_OUT}.
+q="'"
+bs='\'
+lit="${out_abs//"$q"/"$q$bs$q$q"}"
+res=""
+state=""
+i=0
+n=${#cmd}
+while [ "$i" -lt "$n" ]; do
+  if [ "${cmd:$i:7}" = "{{out}}" ]; then
+    case "$state" in
+      "'") res+="$lit" ;;
+      '"') res+='${QA_SUITE_OUT}' ;;
+      *) res+="'$lit'" ;;
+    esac
+    i=$((i + 7))
+    continue
+  fi
+  c="${cmd:$i:1}"
+  if [ "$state" = "'" ]; then
+    if [ "$c" = "'" ]; then state=""; fi
+  elif [ "$c" = "$bs" ]; then
+    res+="$c${cmd:$((i + 1)):1}"
+    i=$((i + 2))
+    continue
+  elif [ "$state" = '"' ]; then
+    if [ "$c" = '"' ]; then state=""; fi
+  elif [ "$c" = "'" ] || [ "$c" = '"' ]; then
+    state="$c"
+  fi
+  res+="$c"
+  i=$((i + 1))
+done
+cmd="$res"
 
 date -u +%Y-%m-%dT%H:%M:%SZ > "$out_abs/started-at"
-(cd "$repo" && QA_SUITE_OUT="$out_abs" bash -c "IFS=; $cmd") > "$out_abs/stdout.txt" 2>&1
+(cd "$repo" && QA_SUITE_OUT="$out_abs" bash -c "$cmd") > "$out_abs/stdout.txt" 2>&1
 code=$?
 printf '%s\n' "$code" > "$out_abs/exit-code"
 
