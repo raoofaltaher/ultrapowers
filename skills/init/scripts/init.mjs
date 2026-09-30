@@ -356,36 +356,45 @@ function provenance(target, content, vars) {
 
 export function applyBlock(existing, body, target = 'the file') {
   const trimmedBody = body.replace(/^\n+/, '').replace(/\n+$/, '');
-  const block = `${BLOCK_START}\n${trimmedBody}\n${BLOCK_END}\n`;
+  const blockWith = (eol) => [BLOCK_START, ...trimmedBody.split('\n'), BLOCK_END].map((line) => `${line}${eol}`).join('');
   if (existing === null || existing === undefined) {
-    return { content: block, action: 'created' };
+    return { content: blockWith('\n'), action: 'created' };
   }
   const eol = existing.includes('\r\n') ? '\r\n' : '\n';
-  const text = lf(existing);
-  const lines = text.split('\n');
-  const at = (marker) => lines.flatMap((line, i) => (line.trimEnd() === marker ? [i] : []));
+  const block = blockWith(eol);
+  // Each line keeps its own ending, so bytes outside the block never change.
+  const lines = existing.match(/[^\n]*\n|[^\n]+$/g) ?? [];
+  const at = (marker) => lines.flatMap((line, i) => (line.replace(/\r?\n$/, '').trimEnd() === marker ? [i] : []));
   const starts = at(BLOCK_START);
   const ends = at(BLOCK_END);
   let next;
   let action;
   if (starts.length === 1 && ends.length === 1 && starts[0] < ends[0]) {
-    const head = lines.slice(0, starts[0]).map((line) => `${line}\n`).join('');
-    next = `${head}${block}${lines.slice(ends[0] + 1).join('\n')}`;
-    action = next === text ? 'unchanged' : 'replaced';
+    next = `${lines.slice(0, starts[0]).join('')}${block}${lines.slice(ends[0] + 1).join('')}`;
+    action = next === existing ? 'unchanged' : 'replaced';
   } else if (starts.length === 0 && ends.length === 0) {
-    let head = text;
-    if (head.length > 0 && !head.endsWith('\n')) head += '\n';
-    if (head.length > 0) head += '\n';
+    let head = existing;
+    if (head.length > 0 && !head.endsWith('\n')) head += eol;
+    if (head.length > 0) head += eol;
     next = `${head}${block}`;
     action = 'appended';
   } else {
     // A lone or doubled marker would make the next replace swallow the lines between them.
     throw new InitError('block-corrupt', `${target} has ${starts.length} "${BLOCK_START}" and ${ends.length} "${BLOCK_END}" lines; keep exactly one pair around the managed lines, or remove both, then run init again`, { path: target });
   }
-  return { content: eol === '\n' ? next : next.replace(/\n/g, eol), action };
+  return { content: next, action };
 }
 
+// The remote's default branch (origin/HEAD) when the clone knows it, else the branch checked out.
 function defaultBranchOf(repoDir) {
+  try {
+    const remoteHead = execFileSync('git', ['--git-dir', path.join(repoDir, '.git'), 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    if (remoteHead.startsWith('origin/')) return remoteHead.slice('origin/'.length);
+  } catch {
+    // No origin/HEAD: fall back to HEAD below.
+  }
   try {
     const head = fs.readFileSync(path.join(repoDir, '.git', 'HEAD'), 'utf8').trim();
     const match = head.match(/^ref: refs\/heads\/(.+)$/);
@@ -420,6 +429,11 @@ export function readMarker(root) {
   if (marker && typeof marker === 'object' && 'pluginVersion' in marker && !PLAIN_VERSION.test(String(marker.pluginVersion))) {
     throw new InitError('marker-corrupt', `${MARKER_PATH} has a pluginVersion that is not a plain version number`, { path: file });
   }
+  for (const key of ['repos', 'harnesses']) {
+    if (marker && typeof marker === 'object' && key in marker && !Array.isArray(marker[key])) {
+      throw new InitError('marker-corrupt', `${MARKER_PATH} has a ${key} value that is not a list`, { path: file });
+    }
+  }
   return marker;
 }
 
@@ -436,7 +450,12 @@ export function findMarkerAbove(dir) {
 }
 
 export function loadCanonicalMcp() {
-  const canonical = readJson(path.join(TEMPLATES_DIR, '.mcp.json'));
+  let canonical;
+  try {
+    canonical = readJson(path.join(TEMPLATES_DIR, '.mcp.json'));
+  } catch (err) {
+    throw new InitError('mcp-schema', `templates/.mcp.json is missing or not valid JSON: ${err.message}`);
+  }
   return {
     wrapper: canonical._ultrapowers?.windowsNpxWrapper ?? [],
     servers: canonical.mcpServers ?? {},
@@ -571,26 +590,55 @@ export function planPayload(opts, repos, harnesses) {
   return { files, blocks, omitted: omitted.sort(), vars };
 }
 
-function writeFile(root, target, content, executable, dryRun) {
+// A symlink or junction inside the project (a hostile .claude -> ~/.claude, say)
+// must not carry a write outside it. Checks the nearest part of the path that exists.
+export function guardTarget(root, target) {
+  const realRoot = fs.realpathSync(root);
+  let probe = path.join(root, target);
+  while (true) {
+    try {
+      fs.lstatSync(probe);
+      break;
+    } catch {
+      probe = path.dirname(probe);
+    }
+  }
+  let rel = null;
+  try {
+    rel = path.relative(realRoot, fs.realpathSync(probe));
+  } catch {
+    // A dangling link has no real path: treat it as outside.
+  }
+  if (rel === null || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+    throw new InitError('outside-root', `${target} resolves outside ${root} through a symlink or junction; nothing was written`, { path: target });
+  }
+}
+
+// flag 'wx' creates only: it fails rather than replace a file that appeared since the check.
+function writeFile(root, target, content, executable, dryRun, flag = 'w') {
+  guardTarget(root, target);
   const full = path.join(root, target);
   if (dryRun) return;
   fs.mkdirSync(path.dirname(full), { recursive: true });
-  fs.writeFileSync(full, content, 'utf8');
+  fs.writeFileSync(full, content, { encoding: 'utf8', flag });
   if (executable) {
     try { fs.chmodSync(full, 0o755); } catch { /* Windows has no mode bits */ }
   }
 }
 
 export function applyPlan(root, plan, report, dryRun) {
-  // Merge the blocks first, so a broken block fails before any file is written.
+  // Merge the blocks and check every target first, so a failure comes before any write.
   const blocks = plan.blocks.map((block) => planBlock(root, block.target, block.body));
+  const creates = plan.files.filter((file) => !fs.existsSync(path.join(root, file.target)));
+  for (const target of [...creates.map((f) => f.target), ...blocks.map((b) => b.target), MARKER_PATH]) {
+    guardTarget(root, target);
+  }
   for (const file of plan.files) {
-    const full = path.join(root, file.target);
-    if (fs.existsSync(full)) {
+    if (!creates.includes(file)) {
       report.skipped.push(file.target);
       continue;
     }
-    writeFile(root, file.target, file.content, file.executable, dryRun);
+    writeFile(root, file.target, file.content, file.executable, dryRun, 'wx');
     report.written.push(file.target);
   }
   for (const block of blocks) {
@@ -605,7 +653,8 @@ export function writeMarker(root, opts, repos, harnesses, written, dryRun, repor
     report.skipped.push(MARKER_PATH);
     return;
   }
-  writeFile(root, MARKER_PATH, renderMarker(buildVars(opts, repos, harnesses, written)), false, dryRun);
+  writeFile(root, MARKER_PATH, renderMarker(buildVars(opts, repos, harnesses, written)), false, dryRun, 'wx');
+  report.written.push(MARKER_PATH);
 }
 
 // planPayload calls this before any write, so a broken marker template fails
@@ -622,8 +671,7 @@ function renderMarker(vars) {
 }
 
 export function saveMarker(root, marker, dryRun) {
-  if (dryRun) return;
-  fs.writeFileSync(path.join(root, MARKER_PATH), `${JSON.stringify(marker, null, 2)}\n`, 'utf8');
+  writeFile(root, MARKER_PATH, `${JSON.stringify(marker, null, 2)}\n`, false, dryRun);
 }
 
 export function secretNames(root) {
@@ -839,6 +887,7 @@ export function runJoin(opts) {
   report.missingSecrets = missingSecrets(opts.root);
   const recorded = reconcileRepos(opts, marker, report);
   if (recorded) {
+    for (const target of ['.gitignore', MARKER_PATH]) guardTarget(opts.root, target);
     applyBlockFile(opts.root, '.gitignore', gitignoreBody(opts, marker), report, opts.dryRun);
     saveMarker(opts.root, marker, opts.dryRun);
     report.written.push(MARKER_PATH);
@@ -883,10 +932,23 @@ export function runUpgrade(opts) {
   const recorded = reconcileRepos(opts, marker, report);
   const plan = planPayload(markerOpts(opts, marker), marker.repos ?? [], markerHarnesses(marker));
   report.changed = changedTargets(opts, plan, from);
+  // Everything is checked before the first write, so an error leaves the project untouched.
+  if (opts.apply !== null) {
+    const changedPaths = new Set(report.changed.map((c) => c.path));
+    const unknown = opts.apply.filter((t) => !changedPaths.has(t));
+    if (unknown.length) {
+      throw new InitError('bad-args', `--apply names targets that did not change since ${from}: ${unknown.join(', ')}`, { unknown });
+    }
+  }
   const touched = new Set([...(opts.apply ?? []), ...(recorded ? ['.gitignore'] : [])]);
   for (const block of plan.blocks) {
     if (touched.has(block.target)) planBlock(opts.root, block.target, block.body);
   }
+  for (const target of touched) {
+    const isFile = plan.files.some((f) => f.target === target);
+    guardTarget(opts.root, isFile && fs.existsSync(path.join(opts.root, target)) ? `${target}${PROPOSAL_SUFFIX}` : target);
+  }
+  if (opts.apply !== null || recorded) guardTarget(opts.root, MARKER_PATH);
   // A proposal left from an earlier upgrade may hold a half-done merge.
   const pending = plan.files
     .filter((f) => touched.has(f.target) && fs.existsSync(path.join(opts.root, f.target)))
@@ -900,11 +962,6 @@ export function runUpgrade(opts) {
     applyBlockFile(opts.root, '.gitignore', gitignoreBody(opts, marker), report, opts.dryRun);
   }
   if (opts.apply !== null) {
-    const changedPaths = new Set(report.changed.map((c) => c.path));
-    const unknown = opts.apply.filter((t) => !changedPaths.has(t));
-    if (unknown.length) {
-      throw new InitError('bad-args', `--apply names targets that did not change since ${from}: ${unknown.join(', ')}`, { unknown });
-    }
     const created = [];
     for (const target of new Set(opts.apply)) {
       const block = plan.blocks.find((b) => b.target === target);
@@ -914,12 +971,12 @@ export function runUpgrade(opts) {
       }
       const file = plan.files.find((f) => f.target === target);
       if (!fs.existsSync(path.join(opts.root, target))) {
-        writeFile(opts.root, target, file.content, file.executable, opts.dryRun);
+        writeFile(opts.root, target, file.content, file.executable, opts.dryRun, 'wx');
         report.written.push(target);
         created.push(target);
         continue;
       }
-      writeFile(opts.root, `${target}${PROPOSAL_SUFFIX}`, file.content, false, opts.dryRun);
+      writeFile(opts.root, `${target}${PROPOSAL_SUFFIX}`, file.content, false, opts.dryRun, 'wx');
       report.written.push(`${target}${PROPOSAL_SUFFIX}`);
     }
     if (compareVersions(from, version) < 0) marker.pluginVersion = version;

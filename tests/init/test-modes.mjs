@@ -289,6 +289,39 @@ test('upgrade --apply with a broken managed block writes nothing, not even the p
   assert.deepEqual(changedFiles(before, snapshot(root)), []);
 });
 
+test('upgrade --record-repos with a bad --apply writes nothing, not even the .gitignore block', () => {
+  const root = scaffolded();
+  gitRepo(path.join(root, 'svc-new'));
+  setMarkerVersion(root, '0.0.1');
+  const before = snapshot(root);
+  const report = run(['upgrade', '--root', root, '--record-repos', '--apply', 'no/such/target.md'], { expectExit: 2 });
+  assert.equal(report.error.code, 'bad-args');
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
+});
+
+test('a marker whose repos is not a list is marker-corrupt for upgrade, not a crash', () => {
+  const root = scaffolded();
+  const data = marker(root);
+  data.repos = 'svc-api';
+  data.pluginVersion = '0.0.1';
+  fs.writeFileSync(path.join(root, '.agents', 'ultrapowers.json'), `${JSON.stringify(data, null, 2)}\n`);
+  const before = snapshot(root);
+  const report = run(['upgrade', '--root', root, '--apply', 'none'], { expectExit: 2 });
+  assert.equal(report.error.code, 'marker-corrupt');
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
+});
+
+test('a nested clone records its remote default branch, not the branch checked out', () => {
+  const origin = gitRepo(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ultrapowers-origin-')), 'svc'));
+  git(origin, 'checkout', '-q', '-b', 'trunk');
+  git(origin, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
+  const root = tmpWorkspace();
+  git(root, 'clone', '-q', origin, 'svc');
+  git(path.join(root, 'svc'), 'checkout', '-q', '-b', 'feature-x');
+  run(['scaffold', '--root', root, '--name', 'WS', '--platform', 'linux']);
+  assert.deepEqual(marker(root).repos, [{ name: 'svc', path: 'svc', defaultBranch: 'trunk' }]);
+});
+
 test('upgrade --apply .gitignore replaces only the managed block', () => {
   const root = scaffolded();
   const file = path.join(root, '.gitignore');

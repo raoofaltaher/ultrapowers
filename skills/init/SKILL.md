@@ -48,7 +48,7 @@ node "<SKILL_DIR>/scripts/init.mjs" detect --root "<ROOT>"
    node "<SKILL_DIR>/scripts/init.mjs" scaffold --root "<ROOT>" --name "<NAME>" --dry-run
    ```
 
-3. Show the report: `written` (created), plus `.agents/ultrapowers.json` (always created); `skipped` (exist, stay byte-identical); each `blocks` entry (`created`, `appended` or `replaced` between the `# >>> ultrapowers` markers); `omitted` (harnesses not chosen). Ask: "Write these files? (yes / no)".
+3. Show the report: `written` (created); `skipped` (exist, stay byte-identical); each `blocks` entry (`created`, `appended` or `replaced` between the `# >>> ultrapowers` markers); `omitted` (harnesses not chosen). Ask: "Write these files? (yes / no)".
 4. Only an explicit yes continues. "Looks good?", a question or a change request is not a yes: answer it, adjust the flags, show a new dry run.
 5. Run the same command without `--dry-run`. Report `written` and `skipped` from the real report, then `nextSteps` as a numbered list, verbatim.
 6. Continue with join mode for this clone.
@@ -84,6 +84,7 @@ Print `markerError`. Run `git diff -- .agents/ultrapowers.json`; a merge leaves 
 | `bad-args` | a flag, a harness id or an `--apply` path is wrong | Fix the command; `--apply` takes paths from `changed` only |
 | `bad-root` | `<ROOT>` is not a directory | Check `<ROOT>` |
 | `block-corrupt` | a managed block in `path` has a lone or doubled marker line | Your human partner fixes the markers; run again |
+| `outside-root` | `path` leads out of `<ROOT>` through a symlink or junction | Show `path`; write nothing by hand |
 | `proposal-exists` | an earlier `.ultrapowers-new` file is still there | Merge or delete it with your human partner; run again |
 | `bad-name` | the name is blank or holds `"`, `\` or a control character | Ask for another name |
 | `unknown-placeholder` | a plugin template is broken | Report a plugin bug; write nothing by hand |

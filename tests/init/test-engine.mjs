@@ -159,7 +159,7 @@ test('scaffold on a fresh repo writes the baseline payload and the marker', () =
     'AGENTS.md', 'CLAUDE.md', 'GEMINI.md', 'README.md',
     '.agents/mcp-secrets.env.example', '.claude/settings.json', '.claude/output-styles/ste-explanatory.md',
     '.gitleaks.toml', '.githooks/pre-commit', '.github/copilot-instructions.md', '.vscode/settings.json',
-    '.gitignore', '.gitattributes',
+    '.gitignore', '.gitattributes', '.agents/ultrapowers.json',
   ]) {
     assert.ok(report.written.includes(expected), `written should include ${expected}`);
     assert.ok(fs.existsSync(path.join(root, expected)), `${expected} exists on disk`);
@@ -179,7 +179,7 @@ test('scaffold on a fresh repo writes the baseline payload and the marker', () =
   assert.deepEqual(marker.repos, []);
   assert.deepEqual(marker.kb, KB_FOLDERS);
   assert.equal(marker.harnesses.length, 14);
-  assert.deepEqual([...marker.written].sort(), [...report.written].sort());
+  assert.deepEqual([...marker.written].sort(), report.written.filter((p) => p !== '.agents/ultrapowers.json').sort());
   assert.equal(marker.written.includes('.agents/ultrapowers.json'), false);
 
   const claude = fs.readFileSync(path.join(root, 'CLAUDE.md'), 'utf8');
@@ -222,7 +222,7 @@ test('scaffold a second time writes nothing and reports every file as skipped', 
   const before = listFiles(root).map((rel) => [rel, fs.readFileSync(path.join(root, rel))]);
   const second = run(['scaffold', '--root', root, '--name', 'Demo', '--platform', 'linux']);
   assert.deepEqual(second.written, []);
-  assert.deepEqual([...second.skipped].sort(), [...first.written.filter((p) => p !== '.gitignore' && p !== '.gitattributes'), '.agents/ultrapowers.json'].sort());
+  assert.deepEqual([...second.skipped].sort(), first.written.filter((p) => p !== '.gitignore' && p !== '.gitattributes').sort());
   assert.deepEqual(second.blocks.map((b) => b.action), ['unchanged', 'unchanged']);
   for (const [rel, bytes] of before) {
     assert.ok(fs.readFileSync(path.join(root, rel)).equals(bytes), `${rel} unchanged`);
@@ -257,6 +257,7 @@ test('dry-run writes nothing and lists what scaffold would write', () => {
   const report = run(['scaffold', '--root', root, '--name', 'Demo', '--dry-run', '--platform', 'linux']);
   assert.equal(report.dryRun, true);
   assert.ok(report.written.includes('AGENTS.md'));
+  assert.ok(report.written.includes('.agents/ultrapowers.json'), 'the marker is listed like any other file');
   assert.deepEqual(listFiles(root), []);
 });
 
@@ -380,6 +381,39 @@ for (const [label, markerTemplate, code] of [
     assert.deepEqual(listFiles(root), []);
   });
 }
+
+test('a templates directory without .mcp.json is an mcp-schema error, not a crash', () => {
+  const root = tmpRepo();
+  const templatesCopy = fs.mkdtempSync(path.join(os.tmpdir(), 'ultrapowers-templates-'));
+  fs.cpSync(path.join(repoRoot, 'templates'), templatesCopy, { recursive: true });
+  fs.rmSync(path.join(templatesCopy, '.mcp.json'));
+  const report = run(['scaffold', '--root', root, '--name', 'Demo', '--platform', 'linux'], {
+    env: { ULTRAPOWERS_TEMPLATES_DIR: templatesCopy },
+    expectExit: 2,
+  });
+  assert.equal(report.error.code, 'mcp-schema');
+  assert.deepEqual(listFiles(root), []);
+});
+
+test('a junction inside the project that points outside it stops scaffold before any write', () => {
+  const root = tmpRepo();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ultrapowers-outside-'));
+  fs.symlinkSync(outside, path.join(root, '.claude'), 'junction');
+  const report = run(['scaffold', '--root', root, '--name', 'Demo', '--platform', 'linux'], { expectExit: 2 });
+  assert.equal(report.error.code, 'outside-root');
+  assert.deepEqual(fs.readdirSync(outside), []);
+  assert.deepEqual(listFiles(root), ['.claude']);
+});
+
+test('applyBlock keeps the bytes outside the block in a file with mixed line endings', () => {
+  const appended = applyBlock('a/\r\nb/\n', 'new/', '.gitignore');
+  assert.equal(appended.action, 'appended');
+  assert.ok(appended.content.startsWith('a/\r\nb/\n'), JSON.stringify(appended.content));
+  const existing = `top/\n${BLOCK_START}\r\nold/\r\n${BLOCK_END}\r\nbottom/\n`;
+  const replaced = applyBlock(existing, 'new/', '.gitignore');
+  assert.equal(replaced.action, 'replaced');
+  assert.equal(replaced.content, `top/\n${BLOCK_START}\r\nnew/\r\n${BLOCK_END}\r\nbottom/\n`);
+});
 
 test('existing gitignore without trailing newline and CRLF gitattributes both gain a clean block', () => {
   const root = tmpRepo();
