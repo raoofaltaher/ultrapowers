@@ -88,6 +88,14 @@ else
   printf '%s\n' "$crlf_hits" | sed 's/^/      /'
 fi
 
+# The secrets example is where a teammate is most likely to paste a real key,
+# so gitleaks must scan it like any other file.
+if grep -q 'mcp-secrets' "$TEMPLATES/.gitleaks.toml.tmpl"; then
+  fail "gitleaks does not exempt the secrets example"
+else
+  pass "gitleaks does not exempt the secrets example"
+fi
+
 # The settings template selects this style for every session in a scaffolded
 # project, so it must keep Claude Code's built-in coding instructions.
 STYLE="$REPO_ROOT/output-styles/ste-explanatory.md"
