@@ -237,7 +237,7 @@ Restart any active Muse sessions after installing so the `SessionStart` hook tak
 
 ## The Basic Workflow
 
-1. Initialization - and Scaffolding: KB, AI config, and baseline payload are loaded. The agent is ready to receive your project description.
+1. /**Init** - and Scaffolding: KB, AI config, and baseline payload are loaded. The agent is ready to receive your project description.
 
 2. **/new-task <ticket_id> (ticket title)** - Activates to create and scaffold a new task and directory structure. tasks/<ticket_id>/task.md, specs/<ticket_id>, plans/<ticket_id>, and reviews/<ticket_id> are created. and a short summary of the task is added to the tasks/<ticket_id>/task.md file.
 
