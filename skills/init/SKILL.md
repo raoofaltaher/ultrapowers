@@ -1,8 +1,6 @@
 ---
 name: init
 description: Use when a project has no .agents/ultrapowers.json, when the session context says the ultrapowers scaffold is missing, older than the plugin or unreadable, or when your human partner asks to set up, join or upgrade an ultrapowers project
-arguments:
-  - name
 ---
 
 # Init

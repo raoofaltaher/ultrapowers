@@ -29,20 +29,15 @@ pass "SKILL.md exists"
 
 frontmatter="$(awk 'NR==1 && $0!="---"{exit} NR>1 && $0=="---"{exit} NR>1{print}' "$SKILL_MD")"
 keys="$(printf '%s\n' "$frontmatter" | grep -oE '^[a-z-]+:' | tr -d ':' | tr '\n' ' ')"
-if [ "$keys" = "name description arguments " ]; then
-  pass "frontmatter keys are name, description, arguments"
+if [ "$keys" = "name description " ]; then
+  pass "frontmatter keys are exactly name and description"
 else
-  fail "frontmatter keys are name, description, arguments (got: $keys)"
+  fail "frontmatter keys are exactly name and description (got: $keys)"
 fi
 if printf '%s\n' "$frontmatter" | grep -q '^name: init$'; then
   pass "frontmatter name is init"
 else
   fail "frontmatter name is init"
-fi
-if printf '%s\n' "$frontmatter" | grep -qE '^  - name$'; then
-  pass "arguments list declares name"
-else
-  fail "arguments list declares name"
 fi
 description="$(printf '%s\n' "$frontmatter" | sed -n 's/^description: //p')"
 if printf '%s' "$description" | grep -q '^Use when'; then
