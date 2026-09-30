@@ -240,6 +240,7 @@ is the whole process.
 
 - Write the validated design (spec) to `docs/ultrapowers/specs/YYYY-MM-DD-<topic>-design.md`
   - (User preferences for spec location override this default)
+  - If `.agents/ultrapowers.json` exists at or above the working directory and a ticket id is known from the conversation, write the spec to `specs/<id>/Spec.md` under the directory that holds that file instead of the default path. With no such file, or no ticket id, the default above stands.
 - Use elements-of-style:writing-clearly-and-concisely skill if available
 - Commit the design document to git
 

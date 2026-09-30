@@ -720,6 +720,40 @@ test_task() {
     rm "$proj/specs/1234/diagram.png" "$proj/plans/1234/Plan.md"
 }
 
+test_core_skill_edits() {
+    echo "--- brainstorming and writing-plans KB routing ---"
+    local b="$REPO_ROOT/skills/brainstorming/SKILL.md"
+    local w="$REPO_ROOT/skills/writing-plans/SKILL.md"
+
+    if [[ "$(grep -c 'specs/<id>/Spec.md' "$b" || true)" -eq 1 ]] \
+        && grep -q 'docs/ultrapowers/specs/YYYY-MM-DD-<topic>-design.md' "$b" \
+        && grep -q '\.agents/ultrapowers\.json' "$b"; then
+        pass "brainstorming keeps the default spec path and gains one KB route conditioned on the marker"
+    else
+        fail "brainstorming keeps the default spec path and gains one KB route conditioned on the marker"
+        grep -n 'Spec.md\|specs/YYYY' "$b" | sed 's/^/    /'
+    fi
+    if grep -A1 'User preferences for spec location override this default' "$b" | grep -q 'specs/<id>/Spec.md'; then
+        pass "the brainstorming route sits directly under the spec-location bullet"
+    else
+        fail "the brainstorming route sits directly under the spec-location bullet"
+    fi
+
+    if [[ "$(grep -c 'plans/<id>/Plan.md' "$w" || true)" -eq 1 && "$(grep -c 'PLAN-NN-<slug>.md' "$w" || true)" -eq 1 ]] \
+        && grep -q 'docs/ultrapowers/plans/YYYY-MM-DD-<feature-name>.md' "$w" \
+        && grep -q '\.agents/ultrapowers\.json' "$w"; then
+        pass "writing-plans keeps the default plan path and gains one KB route with the plan-set convention"
+    else
+        fail "writing-plans keeps the default plan path and gains one KB route with the plan-set convention"
+        grep -n 'Plan.md\|plans/YYYY' "$w" | sed 's/^/    /'
+    fi
+    if grep -A1 'User preferences for plan location override this default' "$w" | grep -q 'plans/<id>/Plan.md'; then
+        pass "the writing-plans route sits directly under the plan-location bullet"
+    else
+        fail "the writing-plans route sits directly under the plan-location bullet"
+    fi
+}
+
 test_skill_structure() {
     echo "--- skill structure ---"
     local name file
@@ -780,6 +814,7 @@ main() {
     test_new_task
     test_brainstorm_task
     test_task
+    test_core_skill_edits
     test_skill_structure
 
     echo ""

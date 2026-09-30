@@ -15,6 +15,7 @@ Write implementation plans for an engineer who has not seen this codebase or thi
 
 **Save plans to:** `docs/ultrapowers/plans/YYYY-MM-DD-<feature-name>.md`
 - (User preferences for plan location override this default)
+- If `.agents/ultrapowers.json` exists at or above the working directory and a ticket id is known from the conversation, save the plan to `plans/<id>/Plan.md` under the directory that holds that file instead. A plan set for one ticket uses `plans/<id>/PLAN-NN-<slug>.md` with a `README.md` index in the same folder. With no such file, or no ticket id, the default above stands.
 
 ## Scope Check
 
