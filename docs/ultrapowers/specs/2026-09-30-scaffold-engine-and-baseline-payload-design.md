@@ -1,7 +1,7 @@
 # Ultrapowers piece 2: scaffold engine and baseline payload
 
 - Date: 2026-09-30
-- Status: approved design, pending implementation plan
+- Status: implemented on branch scaffold-engine (2026-09-30); acceptance 1 and 6 checked in Claude Code and Codex, Cursor not yet
 - Scope: sub-project 2 of 5. Covers requirements 2 (knowledge base folders), 6 (agent instruction file for every harness), 7 (settings, MCP, repo hygiene), 8 (output style) and 9 (one-command project setup). Depends on piece 1 (the `ultrapowers:` namespace). Pieces 3, 4 and 5 add their own templates to the payload defined here.
 
 ## 1. Problem
