@@ -1,0 +1,39 @@
+# Known-issues baseline
+
+Lanes 2 (logs) and 6 (test suites) of the QA gatekeeper judge by comparing against this
+file, never by raw counts. Add an entry only when a run confirmed it is pre-existing noise
+or a pre-existing failure. Remove an entry when its cause is fixed. Every edit names the
+review folder (`reviews/<id>/`) that holds the evidence.
+
+## Test-suite baseline (lane 6)
+
+Human context (prose; the judge does not read this part):
+
+- <why a suite is flaky, how to run it in isolation, which runner works on which platform>
+
+Machine-readable suppress list: the judge reads ONLY the fenced block below. One entry per
+line: a full test name (suppresses that test) or a class (the name minus its last dotted
+segment; suppresses every test in it). Matched whole-line exact, never as a substring.
+Lines starting with `#` and blank lines are ignored. Seed it from a run on a known-good
+checkout: paste the `NEW-FAILING <name>` lines the judge printed that a human confirmed
+are pre-existing, verbatim. Until seeded, known failures surface as NEW-FAILING, which is
+the safe direction. A suppressed test that passes again is a blind spot; the report lists
+those under known-issues candidates so a human can prune them.
+
+```lane6-suppress
+# <full test name or class, one per line; seeded from reviews/<id>/>
+```
+
+## Noisy-but-benign log lines (lane 2)
+
+One extended regular expression per line inside the fenced block. Lane 2 drops matching
+lines before judging. Keep each pattern as narrow as the evidence allows; a pattern that
+hides a whole log level hides regressions.
+
+```lane2-noise
+# <regular expression matching one benign log line; note the review that confirmed it>
+```
+
+## Known-flaky UI (lane 1)
+
+- <screen or control, the observed flake, the retry rule, the review that confirmed it>

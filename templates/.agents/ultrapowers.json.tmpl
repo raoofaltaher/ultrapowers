@@ -14,5 +14,20 @@
     "rediscoveryMinutes": 15,
     "trailer": "Memory-Ref"
   },
+  "qa": {
+    "urls": { "frontend": "", "backendHealth": "", "idp": "", "observability": "" },
+    "hosts": { "allowed": [], "forbidden": [] },
+    "auth": { "type": "form|oidc-password|custom", "route": "", "tokenUrl": "", "clientId": "", "recipe": "" },
+    "roles": [ { "name": "user", "userEnv": "QA_USER_USER", "passwordEnv": "QA_PW_USER", "required": true } ],
+    "languages": [ { "code": "en", "switch": "" } ],
+    "containers": { "watch": [], "errorPattern": "error|exception|fatal|unhandled" },
+    "db": { "engine": "postgres", "container": "", "host": "", "database": "", "roRole": "qa_agent_ro", "roPasswordEnv": "QA_DB_RO_PASSWORD", "tenantColumn": "", "auditTables": [] },
+    "suites": [ { "repo": "", "command": "", "resultFormat": "trx|vitest-json|junit-xml", "timeoutSec": 1800 } ],
+    "observability": { "provider": "langfuse|none", "publicKeyEnv": "", "secretKeyEnv": "" },
+    "brand": { "logoPaths": [], "tokenPaths": [], "compareRoute": "" },
+    "regression": [ "" ],
+    "knownIssues": "qa/known-issues.md",
+    "api": { "errorEnvelopeFields": [], "crossTenantStatus": 404 }
+  },
   "written": {{writtenJson}}
 }
