@@ -196,15 +196,19 @@ else
   fail "hooks.json registers nudge (UserPromptSubmit) and postcompact (SessionStart compact) with shell:bash"
 fi
 
+# Cursor ingests additional_context from sessionStart only; beforeSubmitPrompt
+# output carries no context, so the nudge rides sessionStart there.
 if node -e '
 const hooks = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).hooks;
-const ok = (hooks.beforeSubmitPrompt || []).some((h) => h.command === "./hooks/run-hook.cmd team-memory-nudge")
-  && hooks.sessionStart.some((h) => h.command === "./hooks/run-hook.cmd session-start");
+const starts = (hooks.sessionStart || []).map((h) => h.command);
+const ok = !hooks.beforeSubmitPrompt
+  && starts[0] === "./hooks/run-hook.cmd session-start"
+  && starts.includes("./hooks/run-hook.cmd team-memory-nudge");
 process.exit(ok ? 0 : 1);
 ' "$REPO_ROOT/hooks/hooks-cursor.json"; then
-  pass "hooks-cursor.json registers the nudge on beforeSubmitPrompt and keeps sessionStart"
+  pass "hooks-cursor.json runs the nudge on sessionStart after session-start, not on beforeSubmitPrompt"
 else
-  fail "hooks-cursor.json registers the nudge on beforeSubmitPrompt and keeps sessionStart"
+  fail "hooks-cursor.json runs the nudge on sessionStart after session-start, not on beforeSubmitPrompt"
 fi
 
 if node -e '
@@ -220,6 +224,42 @@ process.exit(ok ? 0 : 1);
   pass "Muse manifest registers both team-memory hooks"
 else
   fail "Muse manifest registers both team-memory hooks"
+fi
+
+echo "Robustness"
+# Cursor sends workspace_roots and no cwd.
+cursor_input="$(printf '{"conversation_id":"c1","workspace_roots":["%s"],"hook_event_name":"sessionStart"}' "$TEST_ROOT/proj")"
+run_hook "$cursor_input" "${CURSOR_ENV[@]}" -- bash -c 'cd "$1" && exec bash "$2"' _ "$TEST_ROOT/bare" "$NUDGE"
+assert_context "nudge / Cursor: workspace_roots names the project when there is no cwd" cursor sessionStart "$NUDGE_TEXT" '`.agents/memory/`'
+
+for script in "$NUDGE" "$POSTCOMPACT"; do
+  run_hook "$(hook_input "$TEST_ROOT/proj" SessionStart compact)" ULTRAPOWERS_NUDGE=off "${CLAUDE_ENV[@]}" -- bash "$script"
+  assert_silent "$(basename "$script"): ULTRAPOWERS_NUDGE=off silences it"
+done
+
+# A harness that keeps stdin open must not stall every prompt.
+start_seconds=$SECONDS
+set +e
+open_out="$(cd "$TEST_ROOT/proj" && env -i PATH="${PATH:-}" HOME="$TEST_ROOT" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$NUDGE" < <(sleep 6 2>/dev/null))"
+open_status=$?
+set -e
+elapsed=$((SECONDS - start_seconds))
+if [ "$open_status" -eq 0 ] && [ "$elapsed" -le 3 ] && printf '%s' "$open_out" | grep -q "Team-memory:"; then
+  pass "nudge: silent open stdin does not hang the hook (${elapsed}s)"
+else
+  fail "nudge: silent open stdin does not hang the hook (${elapsed}s, status $open_status)"
+fi
+
+# The prompt hook runs on every turn in every repository: no node per prompt.
+shim="$TEST_ROOT/shim"
+mkdir -p "$shim"
+printf '#!/bin/sh\ntouch "%s/node-was-called"\nexit 1\n' "$shim" > "$shim/node"
+chmod +x "$shim/node"
+run_hook "$(hook_input "$TEST_ROOT/proj" UserPromptSubmit)" "${CLAUDE_ENV[@]}" PATH="$shim:${PATH:-}" -- bash "$NUDGE"
+if [ ! -e "$shim/node-was-called" ] && printf '%s' "$OUTPUT" | grep -q "Team-memory:"; then
+  pass "nudge: emits its line without starting node"
+else
+  fail "nudge: emits its line without starting node"; echo "$OUTPUT" | sed 's/^/      /'
 fi
 
 if [[ "$FAILURES" -gt 0 ]]; then

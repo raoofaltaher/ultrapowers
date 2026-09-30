@@ -12,15 +12,18 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib/team-memory-common
 . "${SCRIPT_DIR}/lib/team-memory-common"
 
+if nudge_off; then
+  exit 0
+fi
+
 input="$(read_hook_input)"
 
-source_field="$(json_string_field "$input" source)"
+source_field="$(json_string_field "$input" source || true)"
 if [ -n "$source_field" ] && [ "$source_field" != "compact" ]; then
   exit 0
 fi
 
-cwd="$(json_string_field "$input" cwd)"
-[ -n "$cwd" ] || cwd="$PWD"
+cwd="$(hook_cwd "$input")"
 
 store="$(find_memory_store "$cwd")" || exit 0
 

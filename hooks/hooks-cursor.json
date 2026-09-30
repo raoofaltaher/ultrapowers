@@ -4,9 +4,7 @@
     "sessionStart": [
       {
         "command": "./hooks/run-hook.cmd session-start"
-      }
-    ],
-    "beforeSubmitPrompt": [
+      },
       {
         "command": "./hooks/run-hook.cmd team-memory-nudge"
       }

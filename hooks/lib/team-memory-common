@@ -1,40 +1,83 @@
 #!/usr/bin/env bash
 # Shared helpers for hooks/team-memory-nudge and hooks/team-memory-postcompact.
 # Sourced by those two scripts, never executed. hooks/session-start does not
-# use this file on purpose: its tested output must stay byte-identical, and
-# the platform selection below is a copy of its block with the event name
-# made a parameter.
+# use this file on purpose: its tested output must stay byte-identical. The
+# input reader, the JSON field reader and the platform selection below are
+# copies of its versions, with the event name made a parameter.
+#
+# The nudge hook runs on every prompt in every repository, so these helpers
+# stay in bash: no node, and no fork per directory level.
 
-# read_hook_input: the hook's stdin JSON when stdin is a pipe or a file; empty
-# when stdin is a terminal so an interactive run never blocks.
+# read_hook_input: the hook's stdin JSON. Waits at most one second, so a
+# harness that keeps stdin open cannot stall the prompt; empty on a terminal.
 read_hook_input() {
-  if [ -t 0 ]; then
-    printf ''
-    return 0
+  local input=""
+  if [ ! -t 0 ]; then
+    IFS= read -r -d '' -t 1 input || true
   fi
-  cat 2>/dev/null || true
+  printf '%s' "$input"
 }
 
-# json_string_field <json> <key>: the value of a top-level string field, or
-# nothing. Node when available (full JSON); a sed fallback otherwise that
-# reads the first "<key>": "<value>" pair and unescapes \" and \\ only.
+# json_string_field <json> <key>: the first string value of <key>, or the
+# first element when the value is an array of strings (Cursor's
+# workspace_roots). Returns 1 when the key is missing or the value uses an
+# escape other than \" \\ \/. The value is capped at 4096 characters.
 json_string_field() {
-  local json="$1" key="$2"
-  if command -v node >/dev/null 2>&1; then
-    printf '%s' "$json" | KEY="$key" node -e '
-let s = "";
-process.stdin.on("data", (d) => { s += d; }).on("end", () => {
-  try {
-    const v = JSON.parse(s)[process.env.KEY];
-    if (typeof v === "string") process.stdout.write(v);
-  } catch {}
-});' 2>/dev/null || true
-  else
-    printf '%s' "$json" \
-      | sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\(\\([^\"\\\\]\\|\\\\.\\)*\\)\".*/\\1/p" \
-      | head -n 1 \
-      | sed -e 's/\\"/"/g' -e 's/\\\\/\\/g' || true
+  local json="$1" key="$2" rest value="" ch
+  case "$json" in
+    *"\"$key\""*) ;;
+    *) return 1 ;;
+  esac
+  rest="${json#*\"$key\"}"
+  rest="${rest#"${rest%%[![:space:]]*}"}"
+  [ "${rest:0:1}" = ":" ] || return 1
+  rest="${rest:1}"
+  rest="${rest#"${rest%%[![:space:]]*}"}"
+  if [ "${rest:0:1}" = "[" ]; then
+    rest="${rest:1}"
+    rest="${rest#"${rest%%[![:space:]]*}"}"
   fi
+  [ "${rest:0:1}" = '"' ] || return 1
+  rest="${rest:1:4096}"
+  while [ -n "$rest" ]; do
+    ch="${rest:0:1}"
+    case "$ch" in
+      '"')
+        printf '%s' "$value"
+        return 0
+        ;;
+      '\')
+        case "${rest:1:1}" in
+          '"' | '\' | '/') value+="${rest:1:1}" ;;
+          *) return 1 ;;
+        esac
+        rest="${rest:2}"
+        ;;
+      *)
+        value+="$ch"
+        rest="${rest:1}"
+        ;;
+    esac
+  done
+  return 1
+}
+
+# hook_cwd <json>: the project directory the harness names ("cwd" from Claude
+# Code, Copilot CLI and Muse; "workspace_roots" from Cursor), else $PWD.
+hook_cwd() {
+  local dir
+  dir="$(json_string_field "$1" cwd || json_string_field "$1" workspace_roots || true)"
+  [ -n "$dir" ] || dir="$PWD"
+  printf '%s' "$dir"
+}
+
+# nudge_off: ULTRAPOWERS_NUDGE=off is a personal off switch for every
+# ultrapowers nudge line, these two included.
+nudge_off() {
+  case "${ULTRAPOWERS_NUDGE:-}" in
+    [Oo][Ff][Ff]) return 0 ;;
+  esac
+  return 1
 }
 
 # find_memory_store <dir>: prints the relative path from <dir> to the nearest
@@ -46,12 +89,13 @@ find_memory_store() {
   start="${start//\\//}"
   dir="$(cd "$start" 2>/dev/null && pwd -P)" || return 1
   while :; do
-    if [ -f "${dir}/.agents/memory/MEMORY.md" ]; then
+    if [ -f "${dir%/}/.agents/memory/MEMORY.md" ]; then
       printf '%s.agents/memory/' "$prefix"
       return 0
     fi
-    parent="$(dirname "$dir")"
-    [ "$parent" = "$dir" ] && return 1
+    [ "$dir" = "/" ] && return 1
+    parent="${dir%/*}"
+    [ -n "$parent" ] || parent="/"
     dir="$parent"
     prefix="../${prefix}"
   done
