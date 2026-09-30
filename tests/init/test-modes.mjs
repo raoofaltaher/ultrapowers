@@ -218,6 +218,19 @@ test('upgrade --apply of an edited file leaves it byte-identical and writes a pr
   assert.match(fs.readFileSync(path.join(root, '.gitignore'), 'utf8'), /^\*\.ultrapowers-new$/m, 'proposals are gitignored');
 });
 
+test('upgrade --apply refuses to replace an earlier proposal and writes nothing', () => {
+  const root = scaffolded();
+  fs.writeFileSync(path.join(root, 'AGENTS.md'), '# Our own AGENTS.md\n');
+  const proposal = `AGENTS.md${PROPOSAL_SUFFIX}`;
+  fs.writeFileSync(path.join(root, proposal), '# Half-merged by hand\n\nKeep these notes.\n');
+  setMarkerVersion(root, '0.0.1');
+  const before = snapshot(root);
+  const report = run(['upgrade', '--root', root, '--apply', 'AGENTS.md'], { expectExit: 2 });
+  assert.equal(report.error.code, 'proposal-exists');
+  assert.deepEqual(report.error.paths, [proposal]);
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
+});
+
 test('upgrade --apply writes a missing target directly and records it', () => {
   const root = scaffolded();
   fs.rmSync(path.join(root, 'playbooks', 'README.md'));

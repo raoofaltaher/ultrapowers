@@ -876,6 +876,14 @@ export function runUpgrade(opts) {
   for (const block of plan.blocks) {
     if (touched.has(block.target)) planBlock(opts.root, block.target, block.body);
   }
+  // A proposal left from an earlier upgrade may hold a half-done merge.
+  const pending = plan.files
+    .filter((f) => touched.has(f.target) && fs.existsSync(path.join(opts.root, f.target)))
+    .map((f) => `${f.target}${PROPOSAL_SUFFIX}`)
+    .filter((p) => fs.existsSync(path.join(opts.root, p)));
+  if (pending.length) {
+    throw new InitError('proposal-exists', `earlier proposals are still there: ${pending.join(', ')}; merge or delete them, then run upgrade again`, { paths: pending });
+  }
   let markerChanged = recorded;
   if (recorded && !(opts.apply ?? []).includes('.gitignore')) {
     applyBlockFile(opts.root, '.gitignore', gitignoreBody(opts, marker), report, opts.dryRun);

@@ -86,6 +86,7 @@ Print `markerError`. Run `git diff -- .agents/ultrapowers.json`; a merge leaves 
 | `bad-args` | a flag, a harness id or an `--apply` path is wrong | Fix the command; `--apply` takes paths from `changed` only |
 | `bad-root` | `<ROOT>` is not a directory | Check `<ROOT>` |
 | `block-corrupt` | a managed block in `path` has a lone or doubled marker line | Your human partner fixes the markers; run again |
+| `proposal-exists` | an earlier `.ultrapowers-new` file is still there | Merge or delete it with your human partner; run again |
 | `bad-name` | the name is blank or holds `"`, `\` or a control character | Ask for another name |
 | `unknown-placeholder` | a plugin template is broken | Report a plugin bug; write nothing by hand |
 | `bad-template` | a plugin template renders to invalid JSON | Report a plugin bug; write nothing by hand |
