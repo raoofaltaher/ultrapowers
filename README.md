@@ -256,7 +256,7 @@ The skill reads the session transcript, reports what happened with line-level ev
 
 ## What ultrapowers adds
 
-Piece 1 (this release line's 1.0.0) is the rename and fork hygiene: one name everywhere, fork-owner identity in every manifest, nothing fetched from or reported to a remote host, no upstream-only publishing tooling. The pieces that make ultrapowers more than a rename each have a spec under `docs/ultrapowers/specs/` and land in later releases:
+Piece 1, the first release, is the rename and fork hygiene: one name everywhere, fork-owner identity in every manifest, nothing fetched from or reported to a remote host, no upstream-only publishing tooling. The pieces that make ultrapowers more than a rename each have a spec under `docs/ultrapowers/specs/` and land in later releases:
 
 - Piece 2: scaffold engine and baseline payload
 - Piece 3: task lifecycle skills

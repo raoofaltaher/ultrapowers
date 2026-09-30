@@ -53,6 +53,7 @@
       "docs",
       "tests",
       ".git",
+      ".remember",
       ".version-bump.json",
       "scripts/bump-version.sh"
     ]
