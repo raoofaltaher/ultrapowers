@@ -55,7 +55,8 @@
       ".git",
       ".remember",
       ".version-bump.json",
-      "scripts/bump-version.sh"
+      "scripts/bump-version.sh",
+      "CHANGES.json"
     ]
   }
 }

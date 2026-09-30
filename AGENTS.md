@@ -37,6 +37,8 @@ All of these run offline. Prerequisites: bash, node 18+, python 3 with pytest, `
 
 ```bash
 bash tests/hooks/test-session-start.sh
+bash tests/hooks/test-executable-bits.sh
+bash tests/init/run-tests.sh
 node --test tests/pi/test-pi-extension.mjs
 bash tests/opencode/run-tests.sh            # unit tests; add --integration for a live OpenCode
 python -m pytest tests/hermes

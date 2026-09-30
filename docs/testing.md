@@ -6,10 +6,11 @@ Ultrapowers ships offline plugin-infrastructure tests under `tests/`, one direct
 
 | Directory | Subject | Run |
 |---|---|---|
-| `tests/hooks/` | `hooks/session-start` output shape per harness | `bash tests/hooks/test-session-start.sh` |
+| `tests/hooks/` | `hooks/session-start` output shape per harness and the project scaffold nudge; executable bits on scripts run by path | `bash tests/hooks/test-session-start.sh`, `bash tests/hooks/test-executable-bits.sh` |
+| `tests/init/` | Init engine (rendering, managed blocks, MCP transforms, join and upgrade), template leak scan, OpenCode and Pi nudges, init skill structure | `bash tests/init/run-tests.sh` |
 | `tests/pi/` | Pi extension registration and bootstrap injection | `node --test tests/pi/test-pi-extension.mjs` |
 | `tests/opencode/` | OpenCode plugin loading, bootstrap caching, session classification, V2 skill registration | `bash tests/opencode/run-tests.sh` (unit); `--integration` needs OpenCode installed |
-| `tests/hermes/` | Hermes plugin layout resolution and bootstrap | `python -m pytest tests/hermes` |
+| `tests/hermes/` | Hermes plugin layout resolution, bootstrap and scaffold nudge | `python -m pytest tests/hermes` |
 | `tests/kimi/` | Kimi manifest wiring | `bash tests/kimi/run-tests.sh` |
 | `tests/devin/` | Devin manifest | `bash tests/devin/test-devin-plugin.sh` |
 | `tests/codex/` | Codex marketplace and manifest | `bash tests/codex/test-marketplace-manifest.sh` |
@@ -27,4 +28,4 @@ On Windows without Developer Mode, Git Bash cannot create symlinks, so `test-plu
 
 ## Model-driven tests
 
-`tests/claude-code/run-skill-tests.sh`, `tests/claude-code/test-subagent-driven-development*.sh`, `tests/claude-code/test-worktree-native-preference.sh` and everything under `tests/explicit-skill-requests/` drive a real Claude Code session and need a logged-in CLI. They are slow, cost tokens, and are run on demand, not as a gate.
+`tests/claude-code/run-skill-tests.sh`, `tests/claude-code/test-subagent-driven-development*.sh`, `tests/claude-code/test-worktree-native-preference.sh` and everything under `tests/explicit-skill-requests/` drive a real Claude Code session and need a logged-in CLI. They are slow, cost tokens, and are run on demand, not as a gate. The init skill's pressure scenarios and their recorded baseline and with-skill results are in `tests/init/pressure-scenarios.md` and `tests/init/pressure-results.md`.
