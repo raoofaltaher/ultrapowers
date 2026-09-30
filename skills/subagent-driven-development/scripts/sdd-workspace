@@ -42,7 +42,9 @@ slug=$(basename "$plan" .md)
 [ -n "$slug" ] && [ "$slug" != "." ] && [ "$slug" != ".." ] \
   || { echo "cannot derive a workspace name from: $plan" >&2; exit 2; }
 
-root=$(git rev-parse --show-toplevel)
+# Physical path, spelled the same way as plan_dir below (on Windows git
+# prints C:/..., while pwd -P prints /c/...).
+root=$(CDPATH= cd -- "$(git rev-parse --show-toplevel)" && pwd -P)
 base="$root/.ultrapowers/sdd"
 
 # Normalize the plan path (physical directory, so relative/absolute/../

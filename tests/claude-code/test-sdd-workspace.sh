@@ -34,7 +34,7 @@ main() {
     # macOS mktemp lives under /var -> /private/var).
     git init -q -b main "$TEST_ROOT/repo"
     local repo
-    repo="$(cd "$TEST_ROOT/repo" && git rev-parse --show-toplevel)"
+    repo="$(cd "$(cd "$TEST_ROOT/repo" && git rev-parse --show-toplevel)" && pwd -P)"
 
     cat > "$repo/plan-a.md" <<'PLAN'
 # Plan A
@@ -193,7 +193,7 @@ PLAN
     local wt="$TEST_ROOT/wt"
     ( cd "$repo" && git worktree add -q "$wt" -b wt-feature )
     local wt_root wt_dir
-    wt_root="$(cd "$wt" && git rev-parse --show-toplevel)"
+    wt_root="$(cd "$(cd "$wt" && git rev-parse --show-toplevel)" && pwd -P)"
     wt_dir="$(cd "$wt" && "$SDD_SCRIPTS/sdd-workspace" plan-a.md)"
     if [[ "$wt_dir" == "$wt_root/.ultrapowers/sdd/plan-a" && "$wt_dir" != "$dir_a" ]]; then
         pass "linked worktree resolves its own distinct workspace"

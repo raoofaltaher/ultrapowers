@@ -32,7 +32,7 @@ main() {
 
     git init -q -b main "$TEST_ROOT/repo"
     local repo
-    repo="$(cd "$TEST_ROOT/repo" && git rev-parse --show-toplevel)"
+    repo="$(cd "$(cd "$TEST_ROOT/repo" && git rev-parse --show-toplevel)" && pwd -P)"
     local git_id=(-c user.email=t@example.com -c user.name=t -c commit.gpgsign=false)
 
     cat > "$repo/plan.md" <<'PLAN'
