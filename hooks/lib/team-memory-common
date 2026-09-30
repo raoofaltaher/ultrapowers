@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Shared helpers for hooks/team-memory-nudge and hooks/team-memory-postcompact.
+# Sourced by those two scripts, never executed. hooks/session-start does not
+# use this file on purpose: its tested output must stay byte-identical, and
+# the platform selection below is a copy of its block with the event name
+# made a parameter.
+
+# read_hook_input: the hook's stdin JSON when stdin is a pipe or a file; empty
+# when stdin is a terminal so an interactive run never blocks.
+read_hook_input() {
+  if [ -t 0 ]; then
+    printf ''
+    return 0
+  fi
+  cat 2>/dev/null || true
+}
+
+# json_string_field <json> <key>: the value of a top-level string field, or
+# nothing. Node when available (full JSON); a sed fallback otherwise that
+# reads the first "<key>": "<value>" pair and unescapes \" and \\ only.
+json_string_field() {
+  local json="$1" key="$2"
+  if command -v node >/dev/null 2>&1; then
+    printf '%s' "$json" | KEY="$key" node -e '
+let s = "";
+process.stdin.on("data", (d) => { s += d; }).on("end", () => {
+  try {
+    const v = JSON.parse(s)[process.env.KEY];
+    if (typeof v === "string") process.stdout.write(v);
+  } catch {}
+});' 2>/dev/null || true
+  else
+    printf '%s' "$json" \
+      | sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\(\\([^\"\\\\]\\|\\\\.\\)*\\)\".*/\\1/p" \
+      | head -n 1 \
+      | sed -e 's/\\"/"/g' -e 's/\\\\/\\/g' || true
+  fi
+}
+
+# find_memory_store <dir>: prints the relative path from <dir> to the nearest
+# .agents/memory/ that holds a MEMORY.md at or above it (".agents/memory/",
+# "../.agents/memory/", ...). Returns 1 and prints nothing when there is none
+# or <dir> does not exist. Windows backslashes are accepted.
+find_memory_store() {
+  local start="$1" dir parent prefix=""
+  start="${start//\\//}"
+  dir="$(cd "$start" 2>/dev/null && pwd -P)" || return 1
+  while :; do
+    if [ -f "${dir}/.agents/memory/MEMORY.md" ]; then
+      printf '%s.agents/memory/' "$prefix"
+      return 0
+    fi
+    parent="$(dirname "$dir")"
+    [ "$parent" = "$dir" ] && return 1
+    dir="$parent"
+    prefix="../${prefix}"
+  done
+}
+
+# escape_for_json <s>: same passes as hooks/session-start.
+escape_for_json() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  printf '%s' "$s"
+}
+
+# emit_context <hookEventName> <text>: print the one JSON shape the current
+# harness consumes. Same branch order and env contract as hooks/session-start:
+# Cursor sets CURSOR_PLUGIN_ROOT (may also set CLAUDE_PLUGIN_ROOT); Claude Code
+# sets CLAUDE_PLUGIN_ROOT without COPILOT_CLI or MUSE_PLUGIN_ROOT; Muse sets
+# MUSE_PLUGIN_ROOT; Copilot CLI and unknown platforms get the SDK shape.
+# printf piped through cat mirrors session-start's bash 5.3 heredoc workaround.
+emit_context() {
+  local event="$1" text="$2" escaped
+  escaped="$(escape_for_json "$text")"
+  if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
+    printf '{\n  "additional_context": "%s"\n}\n' "$escaped" | cat
+  elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -z "${COPILOT_CLI:-}" ] && [ -z "${MUSE_PLUGIN_ROOT:-}" ]; then
+    printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "%s",\n    "additionalContext": "%s"\n  }\n}\n' "$event" "$escaped" | cat
+  elif [ -n "${MUSE_PLUGIN_ROOT:-}" ]; then
+    printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "%s",\n    "additionalContext": "%s"\n  }\n}\n' "$event" "$escaped" | cat
+  else
+    printf '{\n  "additionalContext": "%s"\n}\n' "$escaped" | cat
+  fi
+}

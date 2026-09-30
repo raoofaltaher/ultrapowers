@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# UserPromptSubmit hook for the ultrapowers plugin: a one-line team-memory
+# reminder. Prints nothing and exits 0 unless a team-memory store exists at or
+# above the session's working directory. Never writes anything.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/team-memory-common
+. "${SCRIPT_DIR}/lib/team-memory-common"
+
+input="$(read_hook_input)"
+cwd="$(json_string_field "$input" cwd)"
+[ -n "$cwd" ] || cwd="$PWD"
+
+store="$(find_memory_store "$cwd")" || exit 0
+
+emit_context "UserPromptSubmit" "Team-memory: if this session verified a durable, expensive-to-rediscover, non-derivable fact, save it to \`${store}\` with the team-memory skill."
+exit 0
