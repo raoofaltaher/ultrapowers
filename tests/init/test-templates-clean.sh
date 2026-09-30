@@ -96,6 +96,13 @@ else
   pass "gitleaks does not exempt the secrets example"
 fi
 
+# Init writes each harness MCP file once; nothing regenerates them from .mcp.json.
+if grep -q 'generated from `\.mcp\.json`' "$TEMPLATES/README.md.tmpl"; then
+  fail "README does not claim harness configs regenerate from .mcp.json"
+else
+  pass "README does not claim harness configs regenerate from .mcp.json"
+fi
+
 # The settings template selects this style for every session in a scaffolded
 # project, so it must keep Claude Code's built-in coding instructions.
 STYLE="$REPO_ROOT/output-styles/ste-explanatory.md"
