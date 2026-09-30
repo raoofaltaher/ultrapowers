@@ -4,17 +4,7 @@ Complete guide for using Ultrapowers with [Kimi Code](https://github.com/Moonsho
 
 ## Installation
 
-Ultrapowers is available in Kimi Code's plugin marketplace.
-
-Open the plugin manager:
-
-```text
-/plugins
-```
-
-Go to `Marketplace` > `Ultrapowers` and install it.
-
-You can also install from this repository:
+Ultrapowers is not listed in Kimi Code's plugin marketplace. Install it from this repository:
 
 ```text
 /plugins install https://github.com/raoofaltaher/ultrapowers

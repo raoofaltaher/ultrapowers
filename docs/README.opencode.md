@@ -115,7 +115,7 @@ V1 `plugin` key and the V2 `plugins` key):
 }
 ```
 
-On V2, pin `v6.4.1` or later; `v6.3.0` and earlier releases load only on V1.
+Every Ultrapowers release loads on both V1 and V2.
 
 ## How It Works
 
