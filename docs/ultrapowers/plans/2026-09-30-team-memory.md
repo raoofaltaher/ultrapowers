@@ -52,7 +52,7 @@ templates/.agents/ultrapowers.json.tmpl              modify: add "memory" sectio
 templates/AGENTS.md.tmpl                             modify: "Team memory" section text
 templates/CLAUDE.md.tmpl                             verify: @.agents/memory/MEMORY.md after @AGENTS.md
 templates/GEMINI.md.tmpl                             modify: add @.agents/memory/MEMORY.md
-templates/.githooks/pre-commit                       modify: optional memory lint block
+templates/.githooks/pre-commit.tmpl                   modify: optional memory lint block
 skills/team-memory/SKILL.md                          ported skill, four modes
 skills/team-memory/scripts/memory-lint.mjs           Node std-lib lint
 skills/team-memory/CREATION-LOG.md                   pressure-test record
@@ -88,13 +88,14 @@ docs/testing.md                                      modify: list the new suites
 - Create: `templates/.agents/memory/MEMORY.md.tmpl`
 - Create: `templates/.agents/memory/gotchas/.gitkeep`, `templates/.agents/memory/decisions/.gitkeep`, `templates/.agents/memory/subsystems/.gitkeep`
 - Modify: `templates/.agents/ultrapowers.json.tmpl`
+- Modify: `templates/CHANGES.json` (add `".agents/memory/README.md": "1.0.0"` and `".agents/memory/MEMORY.md": "1.0.0"` so upgrade mode tracks the store templates)
 - Modify: `templates/AGENTS.md.tmpl`
 - Modify: `templates/CLAUDE.md.tmpl` (verify), `templates/GEMINI.md.tmpl`
 - Modify: the nested-clone pointer template piece 2 renders into each opted-in clone (`grep -rl "Team memory" templates/` finds it)
 - Test: `tests/team-memory/test-templates.sh`
 
 **Interfaces:**
-- Consumes (piece 2): `node skills/init/scripts/init.mjs scaffold --name <name>` run inside a project root renders `templates/**`, copies files without `.tmpl` byte-for-byte, substitutes `{{name}}`, `{{pluginVersion}}`, `{{date}}`, `{{repos}}`, and prints a JSON report. Confirm the exact flag spellings with `node skills/init/scripts/init.mjs --help` before writing the test and use those spellings in the test; the assertions below do not depend on them.
+- Consumes (piece 2): `node skills/init/scripts/init.mjs scaffold --name <name>` run inside a project root renders `templates/**`, renders every file under `templates/` through the placeholder renderer (a file without `.tmpl` keeps its name; any `{{key}}` outside the known set `name pluginVersion date topology repos repoIgnoreLines repoGuideLines harnesses reposJson harnessesJson kbJson writtenJson` makes the render fail with `unknown-placeholder`, so these templates use only `{{name}}`, `{{pluginVersion}}`, `{{date}}`, `{{repos}}`), substitutes `{{name}}`, `{{pluginVersion}}`, `{{date}}`, `{{repos}}`, and prints a JSON report. Confirm the exact flag spellings with `node skills/init/scripts/init.mjs --help` before writing the test and use those spellings in the test; the assertions below do not depend on them.
 - Produces: a rendered store at `<project>/.agents/memory/` with `README.md`, `MEMORY.md` (three headings `## Gotchas`, `## Decisions`, `## Subsystems`), three folders; the `memory` config section with keys `path`, `indexBudget`, `rediscoveryMinutes`, `trailer` that Task 2's lint and Task 5's skill read.
 
 - [ ] **Step 1: Write the failing template test**
@@ -374,6 +375,18 @@ Open the pointer template (`grep -rl "Team memory" templates/` after Step 7 list
 Team memory lives at `../.agents/memory/`; consult MEMORY.md before assuming. Grep from inside this repo cannot see it.
 ```
 
+- [ ] **Step 9b: Track the store templates in `templates/CHANGES.json`**
+
+Add two keys to the JSON object in `templates/CHANGES.json`, keeping it valid JSON:
+
+```json
+  ".agents/memory/README.md": "1.0.0",
+  ".agents/memory/MEMORY.md": "1.0.0",
+```
+
+Run: `node -e "const c=require('./templates/CHANGES.json');if(!c['.agents/memory/README.md']||!c['.agents/memory/MEMORY.md'])process.exit(1);console.log('ok')"`
+Expected: `ok`
+
 - [ ] **Step 10: Run the test to verify it passes**
 
 Run: `bash tests/team-memory/test-templates.sh`
@@ -382,7 +395,7 @@ Expected: every line `[PASS]` except `[SKIP] memory-lint not present yet (Task 2
 - [ ] **Step 11: Commit**
 
 ```bash
-git add templates/.agents/memory templates/.agents/ultrapowers.json.tmpl templates/AGENTS.md.tmpl templates/CLAUDE.md.tmpl templates/GEMINI.md.tmpl tests/team-memory/test-templates.sh
+git add templates/.agents/memory templates/.agents/ultrapowers.json.tmpl templates/AGENTS.md.tmpl templates/CHANGES.json templates/CLAUDE.md.tmpl templates/GEMINI.md.tmpl tests/team-memory/test-templates.sh
 git add "$(grep -rl 'Team memory lives at' templates/)"
 git commit -m "memory: store templates, config section and instruction imports" -m "Adds the .agents/memory README, index and folders to the init payload, the memory config section, the Team memory section of AGENTS.md and the MEMORY.md imports for Claude Code and Gemini." -m "RAOOF A."
 ```
@@ -2314,7 +2327,7 @@ git commit -m "memory: Hermes first-turn nudge and documented limit" -m "The fir
 ### Task 9: Optional lint call in the project pre-commit template
 
 **Files:**
-- Modify: `templates/.githooks/pre-commit`
+- Modify: `templates/.githooks/pre-commit.tmpl`
 - Test: `tests/team-memory/test-precommit-lint.sh`
 
 **Interfaces:**
@@ -2333,7 +2346,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-TEMPLATE="$REPO_ROOT/templates/.githooks/pre-commit"
+TEMPLATE="$REPO_ROOT/templates/.githooks/pre-commit.tmpl"
 
 FAILURES=0
 pass() { echo "  [PASS] $1"; }
@@ -2411,7 +2424,7 @@ echo "STATUS: PASSED"
 Run: `bash tests/team-memory/test-precommit-lint.sh`
 Expected: `[FAIL] template has the marked block` and `[FAIL] commit touching the store is blocked...`; `STATUS: FAILED`.
 
-- [ ] **Step 3: Add the block to `templates/.githooks/pre-commit`**
+- [ ] **Step 3: Add the block to `templates/.githooks/pre-commit.tmpl`**
 
 Append before the template's final `exit 0` (or at the end of the file if it has none):
 
@@ -2453,7 +2466,7 @@ Expected: all `[PASS]`; `STATUS: PASSED`. If gitleaks is installed locally and t
 - [ ] **Step 5: Commit**
 
 ```bash
-git add templates/.githooks/pre-commit tests/team-memory/test-precommit-lint.sh
+git add templates/.githooks/pre-commit.tmpl tests/team-memory/test-precommit-lint.sh
 git commit -m "memory: optional lint call in the project pre-commit template" -m "When staged changes touch .agents/memory/ and the plugin checkout is reachable, the pre-commit runs memory-lint and blocks on findings; otherwise it warns and continues." -m "RAOOF A."
 ```
 
