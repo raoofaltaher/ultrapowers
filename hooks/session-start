@@ -24,7 +24,153 @@ escape_for_json() {
 }
 
 using_ultrapowers_escaped=$(escape_for_json "$using_ultrapowers_content")
-session_context="<EXTREMELY_IMPORTANT>\nYou have ultrapowers.\n\n**Below is the full content of your 'ultrapowers:using-ultrapowers' skill - your introduction to using skills. For all other skills, use the 'Skill' tool:**\n\n${using_ultrapowers_escaped}\n</EXTREMELY_IMPORTANT>"
+
+# Project scaffold nudge. The project directory comes from the hook's stdin
+# JSON ("cwd" from Claude Code and Copilot CLI, "workspace_roots" from
+# Cursor), else from the working directory. The nearest
+# .agents/ultrapowers.json at or above it decides whether one line asking for
+# /ultrapowers:init is added. Never writes.
+NUDGE_SCAFFOLD="This project has no ultrapowers scaffold. Offer /ultrapowers:init before other work."
+NUDGE_REPAIR="This project's .agents/ultrapowers.json is unreadable. Offer /ultrapowers:init to repair it before other work."
+
+read_hook_input() {
+    local input=""
+    if [ ! -t 0 ]; then
+        IFS= read -r -d '' -t 1 input || true
+    fi
+    printf '%s' "$input"
+}
+
+json_string_value() {
+    local json="$1" key="$2" rest value="" ch
+    case "$json" in
+        *"\"$key\""*) ;;
+        *) return 1 ;;
+    esac
+    rest="${json#*\"$key\"}"
+    rest="${rest#"${rest%%[![:space:]]*}"}"
+    [ "${rest:0:1}" = ":" ] || return 1
+    rest="${rest:1}"
+    rest="${rest#"${rest%%[![:space:]]*}"}"
+    if [ "${rest:0:1}" = "[" ]; then
+        rest="${rest:1}"
+        rest="${rest#"${rest%%[![:space:]]*}"}"
+    fi
+    [ "${rest:0:1}" = '"' ] || return 1
+    rest="${rest:1}"
+    while [ -n "$rest" ]; do
+        ch="${rest:0:1}"
+        case "$ch" in
+            '"')
+                printf '%s' "$value"
+                return 0
+                ;;
+            '\')
+                case "${rest:1:1}" in
+                    '"' | '\' | '/') value+="${rest:1:1}" ;;
+                    *) return 1 ;;
+                esac
+                rest="${rest:2}"
+                ;;
+            *)
+                value+="$ch"
+                rest="${rest:1}"
+                ;;
+        esac
+    done
+    return 1
+}
+
+to_posix_dir() {
+    local dir="$1"
+    case "$dir" in
+        [A-Za-z]:\\* | [A-Za-z]:/* | *\\*)
+            if command -v cygpath >/dev/null 2>&1; then
+                dir="$(cygpath -u "$dir" 2>/dev/null || printf '%s' "$dir")"
+            else
+                dir="${dir//\\//}"
+            fi
+            ;;
+    esac
+    printf '%s' "$dir"
+}
+
+find_marker_root() {
+    local dir="$1" parent
+    while [ -n "$dir" ]; do
+        if [ -f "${dir%/}/.agents/ultrapowers.json" ]; then
+            printf '%s' "$dir"
+            return 0
+        fi
+        parent="$(dirname "$dir")"
+        if [ "$parent" = "$dir" ] || [ "$parent" = "." ]; then
+            return 1
+        fi
+        dir="$parent"
+    done
+    return 1
+}
+
+marker_looks_valid() {
+    local text="$1"
+    case "$text" in
+        *'<<<<<<<'* | *'>>>>>>>'*) return 1 ;;
+    esac
+    text="${text#"${text%%[![:space:]]*}"}"
+    text="${text%"${text##*[![:space:]]}"}"
+    case "$text" in
+        '{'*'}') return 0 ;;
+    esac
+    return 1
+}
+
+version_lt() {
+    local a="$1" b="$2" x y
+    while [ -n "$a" ] || [ -n "$b" ]; do
+        x="${a%%.*}"
+        y="${b%%.*}"
+        x="${x//[!0-9]/}"
+        y="${y//[!0-9]/}"
+        x=$((10#${x:-0}))
+        y=$((10#${y:-0}))
+        if [ "$x" -lt "$y" ]; then return 0; fi
+        if [ "$x" -gt "$y" ]; then return 1; fi
+        if [ "$a" = "${a#*.}" ]; then a=""; else a="${a#*.}"; fi
+        if [ "$b" = "${b#*.}" ]; then b=""; else b="${b#*.}"; fi
+    done
+    return 1
+}
+
+project_nudge() {
+    local input dir root marker_text marker_version plugin_manifest plugin_version
+    input="$(read_hook_input)"
+    dir="$(json_string_value "$input" cwd || json_string_value "$input" workspace_roots || true)"
+    dir="$(to_posix_dir "$dir")"
+    if [ -z "$dir" ] || [ ! -d "$dir" ]; then
+        dir="$PWD"
+    fi
+    if ! root="$(find_marker_root "$dir")"; then
+        printf '%s' "$NUDGE_SCAFFOLD"
+        return 0
+    fi
+    marker_text="$(cat "${root%/}/.agents/ultrapowers.json" 2>/dev/null || true)"
+    if ! marker_looks_valid "$marker_text" || ! marker_version="$(json_string_value "$marker_text" pluginVersion)"; then
+        printf '%s' "$NUDGE_REPAIR"
+        return 0
+    fi
+    plugin_manifest="$(cat "${PLUGIN_ROOT}/.claude-plugin/plugin.json" 2>/dev/null || true)"
+    if plugin_version="$(json_string_value "$plugin_manifest" version)" && version_lt "$marker_version" "$plugin_version"; then
+        printf "This project's ultrapowers scaffold is from version %s; the plugin is %s. Offer /ultrapowers:init to upgrade before other work." "$marker_version" "$plugin_version"
+    fi
+    return 0
+}
+
+nudge_line="$(project_nudge || true)"
+nudge_escaped=""
+if [ -n "$nudge_line" ]; then
+    nudge_escaped="\n\n$(escape_for_json "$nudge_line")"
+fi
+session_context="<EXTREMELY_IMPORTANT>\nYou have ultrapowers.\n\n**Below is the full content of your 'ultrapowers:using-ultrapowers' skill - your introduction to using skills. For all other skills, use the 'Skill' tool:**\n\n${using_ultrapowers_escaped}${nudge_escaped}\n</EXTREMELY_IMPORTANT>"
 
 # Output context injection as JSON.
 # Cursor hooks expect additional_context (snake_case).

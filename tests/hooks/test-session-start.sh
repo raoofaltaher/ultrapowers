@@ -217,6 +217,133 @@ assert_command_output \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
     bash "$HOOK_UNDER_TEST"
 
+
+echo "Project scaffold nudge tests"
+
+NUDGE_SCAFFOLD="This project has no ultrapowers scaffold. Offer /ultrapowers:init before other work."
+NUDGE_UPGRADE_TAIL="Offer /ultrapowers:init to upgrade before other work."
+NUDGE_REPAIR="This project's .agents/ultrapowers.json is unreadable. Offer /ultrapowers:init to repair it before other work."
+ALL_NUDGES="$NUDGE_SCAFFOLD"$'\037'"$NUDGE_UPGRADE_TAIL"$'\037'"$NUDGE_REPAIR"
+PLUGIN_VERSION="$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$REPO_ROOT/.claude-plugin/plugin.json")"
+FIXTURES="$TEST_ROOT/nudge"
+
+make_marker() {
+    mkdir -p "$1/.agents"
+    printf '{\n  "name": "fixture",\n  "pluginVersion": "%s"\n}\n' "$2" >"$1/.agents/ultrapowers.json"
+}
+
+stdin_for() {
+    local file="$FIXTURES/stdin-$1.json"
+    printf '{"session_id":"s1","cwd":"%s","hook_event_name":"SessionStart","source":"startup"}' "$2" >"$file"
+    printf '%s' "$file"
+}
+
+mkdir -p "$FIXTURES/absent" "$FIXTURES/corrupt/.agents" "$FIXTURES/conflict/.agents"
+make_marker "$FIXTURES/current" "$PLUGIN_VERSION"
+make_marker "$FIXTURES/older" "0.0.1"
+mkdir -p "$FIXTURES/current/svc-api"
+printf '{ "name": "x", ' >"$FIXTURES/corrupt/.agents/ultrapowers.json"
+printf '{\n<<<<<<< HEAD\n  "pluginVersion": "1.0.0"\n=======\n  "pluginVersion": "0.9.0"\n>>>>>>> other\n}\n' >"$FIXTURES/conflict/.agents/ultrapowers.json"
+nudge_home="$(make_home nudge)"
+
+assert_command_output \
+    "marker absent: scaffold nudge" \
+    "nested" "$NUDGE_SCAFFOLD" "" "$nudge_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK_UNDER_TEST" <"$(stdin_for absent "$FIXTURES/absent")"
+
+assert_command_output \
+    "marker present and current: no nudge" \
+    "nested" "" "$ALL_NUDGES" "$nudge_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK_UNDER_TEST" <"$(stdin_for current "$FIXTURES/current")"
+
+assert_command_output \
+    "marker present and older: upgrade nudge naming both versions" \
+    "nested" "This project's ultrapowers scaffold is from version 0.0.1; the plugin is $PLUGIN_VERSION. $NUDGE_UPGRADE_TAIL" "" "$nudge_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK_UNDER_TEST" <"$(stdin_for older "$FIXTURES/older")"
+
+assert_command_output \
+    "cwd inside a nested clone of a current workspace: no nudge" \
+    "nested" "" "$ALL_NUDGES" "$nudge_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK_UNDER_TEST" <"$(stdin_for nested "$FIXTURES/current/svc-api")"
+
+assert_command_output \
+    "truncated marker: repair nudge, hook still succeeds" \
+    "nested" "$NUDGE_REPAIR" "" "$nudge_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK_UNDER_TEST" <"$(stdin_for corrupt "$FIXTURES/corrupt")"
+
+assert_command_output \
+    "merge-conflicted marker: repair nudge" \
+    "nested" "$NUDGE_REPAIR" "" "$nudge_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK_UNDER_TEST" <"$(stdin_for conflict "$FIXTURES/conflict")"
+
+assert_command_output \
+    "empty stdin falls back to the working directory (current workspace)" \
+    "nested" "" "$ALL_NUDGES" "$nudge_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash -c 'cd "$1" && exec bash "$2"' _ "$FIXTURES/current/svc-api" "$HOOK_UNDER_TEST" </dev/null
+
+assert_command_output \
+    "empty stdin falls back to the working directory (no marker)" \
+    "nested" "$NUDGE_SCAFFOLD" "" "$nudge_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash -c 'cd "$1" && exec bash "$2"' _ "$FIXTURES/absent" "$HOOK_UNDER_TEST" </dev/null
+
+printf '{"conversation_id":"c1","workspace_roots":["%s"],"hook_event_name":"sessionStart"}' "$FIXTURES/older" >"$FIXTURES/stdin-cursor.json"
+assert_command_output \
+    "Cursor workspace_roots names the project" \
+    "cursor" "$NUDGE_UPGRADE_TAIL" "" "$nudge_home" \
+    CURSOR_PLUGIN_ROOT="$REPO_ROOT" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK_UNDER_TEST" <"$FIXTURES/stdin-cursor.json"
+
+assert_command_output \
+    "Copilot CLI cwd names the project" \
+    "sdk" "$NUDGE_SCAFFOLD" "" "$nudge_home" \
+    COPILOT_CLI=1 CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK_UNDER_TEST" <"$(stdin_for copilot "$FIXTURES/absent")"
+
+if command -v cygpath >/dev/null 2>&1; then
+    win_dir="$(cygpath -w "$FIXTURES/current/svc-api" | sed 's/\\/\\\\/g')"
+    printf '{"session_id":"s1","cwd":"%s","hook_event_name":"SessionStart"}' "$win_dir" >"$FIXTURES/stdin-windows.json"
+    assert_command_output \
+        "Windows-escaped cwd resolves to the real directory" \
+        "nested" "" "$ALL_NUDGES" "$nudge_home" \
+        CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash -c 'cd "$1" && exec bash "$2"' _ "$FIXTURES/absent" "$HOOK_UNDER_TEST" <"$FIXTURES/stdin-windows.json"
+else
+    echo "  [SKIP] Windows-escaped cwd resolves to the real directory (no cygpath on this platform)"
+fi
+
+nudge_line_count="$(CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK_UNDER_TEST" <"$(stdin_for count "$FIXTURES/absent")" | node -e '
+let s = "";
+process.stdin.on("data", (d) => { s += d; }).on("end", () => {
+  const context = JSON.parse(s).hookSpecificOutput.additionalContext;
+  const lines = context.split("\n").filter((l) => l.startsWith("This project"));
+  process.stdout.write(`${lines.length}:${context.endsWith("\n</EXTREMELY_IMPORTANT>")}`);
+});')"
+if [ "$nudge_line_count" = "1:true" ]; then
+    pass "exactly one nudge line, inside the EXTREMELY_IMPORTANT block"
+else
+    fail "exactly one nudge line, inside the EXTREMELY_IMPORTANT block (got $nudge_line_count)"
+fi
+
+start_seconds=$SECONDS
+if CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK_UNDER_TEST" < <(sleep 6 2>/dev/null) >/dev/null; then
+    elapsed=$((SECONDS - start_seconds))
+    if [ "$elapsed" -le 4 ]; then
+        pass "silent open stdin does not hang the hook (${elapsed}s)"
+    else
+        fail "silent open stdin does not hang the hook (${elapsed}s)"
+    fi
+else
+    fail "silent open stdin does not hang the hook (hook exited non-zero)"
+fi
+
+before_listing="$(cd "$FIXTURES" && find . -type f | sort)"
+for fixture in absent current older corrupt conflict; do
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK_UNDER_TEST" <"$(stdin_for "w-$fixture" "$FIXTURES/$fixture")" >/dev/null
+done
+after_listing="$(cd "$FIXTURES" && find . -type f ! -name 'stdin-w-*' | sort)"
+if [ "$before_listing" = "$after_listing" ]; then
+    pass "the nudge check writes nothing into the project"
+else
+    fail "the nudge check writes nothing into the project"
+fi
+
 if [[ "$FAILURES" -gt 0 ]]; then
     echo "STATUS: FAILED ($FAILURES failure(s))"
     exit 1
