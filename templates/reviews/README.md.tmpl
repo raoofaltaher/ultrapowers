@@ -1,0 +1,19 @@
+# reviews
+
+Review outputs and decision evidence for `{{name}}`.
+
+## What belongs here
+
+- One folder per ticket: `reviews/<ticket-id>/`.
+- Code reviews, architecture reviews, security reviews, design reviews, prompt and agent reviews, retrospectives, QA reports.
+- Each review names the reviewed revision, lists findings with severity and evidence, records the decision, and lists follow-up actions.
+
+## Naming
+
+- `<ticket-id>` matches the other knowledge base folders.
+- A human or agent review is `reviews/<ticket-id>/Review.md`; a later round is `Review-2.md`, `Review-3.md`.
+- Evidence files (screenshots, logs cleaned of personal data) go to `reviews/<ticket-id>/artifacts/` and are named `<area>-<what>.<ext>`.
+
+## What does not belong here
+
+- Raw run transcripts, tokens, session cookies, database dumps, or anything with personal data. Those stay local and gitignored.

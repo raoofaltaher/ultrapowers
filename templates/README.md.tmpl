@@ -1,0 +1,67 @@
+# {{name}}
+
+This repository is the knowledge base and agent configuration for `{{name}}`. It is the directory you open your coding agent in. Code lives at this root or in nested clones one level down that this repository ignores.
+
+Scaffolded by ultrapowers {{pluginVersion}} on {{date}} (topology: {{topology}}).
+
+## Folder guide
+
+| Path | Purpose |
+|------|---------|
+| `tasks/` | Actionable work items, one folder per ticket id |
+| `specs/` | Product and technical specifications, `specs/<ticket-id>/Spec.md` |
+| `plans/` | Implementation plans, `plans/<ticket-id>/Plan.md` |
+| `reviews/` | Review outputs, QA reports and evidence, one folder per ticket id |
+| `evals/` | Evaluation records and result tables |
+| `handbooks/` | Team operating guides and technical handbooks |
+| `brand-book/` | Brand and UI identity source of truth |
+| `business/` | Business and product context |
+| `playbooks/` | Repeatable procedures with a trigger and a verification |
+| `release-notes/` | Customer-facing release notes |
+| `AGENTS.md` | The single instruction source for every coding agent |
+| `.agents/` | Project config (`ultrapowers.json`), secret variable names, team memory |
+| `.claude/`, `.codex/`, `.cursor/`, `.gemini/`, `.qwen/`, `.factory/`, `.kimi/`, `.vscode/`, `.github/` | Per-harness configuration generated from `.mcp.json` and `AGENTS.md` |
+
+Each knowledge base folder has a `README.md` that states what belongs there and how files are named.
+
+## Nested clones
+
+{{repoGuideLines}}
+
+Nested clones are separate git repositories. This repository ignores them through the managed block in `.gitignore`. When you add a clone, run `/ultrapowers:init` again; join mode detects it and offers to record it.
+
+## Workspace setup
+
+### Root topology (code at this root)
+
+1. Clone this repository and open your coding agent here.
+2. Run `git config core.hooksPath .githooks` once per clone so the secret scan runs before every commit.
+3. Define the environment variables listed in `.agents/mcp-secrets.env.example` in your user environment. Never commit real values.
+
+### Nested topology (code in clones one level down)
+
+1. Clone this repository and open your coding agent here.
+2. Clone each code repository into a folder directly under this root.
+3. Run `git config core.hooksPath .githooks` once per clone of this repository.
+4. Define the environment variables listed in `.agents/mcp-secrets.env.example`.
+5. Run `git status --short` before your first commit and confirm no clone folder appears.
+
+## Per-harness setup
+
+- Claude Code: reads `CLAUDE.md` (which imports `AGENTS.md`), `.claude/settings.json` and `.mcp.json`. Approve the project MCP servers when prompted.
+- Codex: reads `AGENTS.md` and `.codex/config.toml`.
+- Cursor: reads `AGENTS.md` and `.cursor/mcp.json`.
+- GitHub Copilot and VS Code: read `.github/copilot-instructions.md`, `.vscode/settings.json` and `.vscode/mcp.json`.
+- Gemini CLI: reads `GEMINI.md` and `.gemini/settings.json`, which lists `AGENTS.md` as a context file.
+- Qwen Code: reads `.qwen/settings.json`, which lists `AGENTS.md` as a context file.
+- OpenCode: reads `AGENTS.md` and `opencode.json`.
+- Factory, Kimi: read `AGENTS.md`; their MCP files are best-effort and may need adjustment.
+- Devin, Antigravity, Hermes, Pi, Muse: read `AGENTS.md`.
+
+Every harness needs the ultrapowers plugin installed; skills are not copied into this repository.
+
+## Contributing
+
+- Read `AGENTS.md` first. It is the contract for people and agents alike.
+- One ticket id per change set. Keep the four folders (`tasks`, `specs`, `plans`, `reviews`) for that id in step.
+- Never commit secrets, personal data, or files under a nested clone.

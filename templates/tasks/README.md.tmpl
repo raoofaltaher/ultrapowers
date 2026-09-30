@@ -1,0 +1,20 @@
+# tasks
+
+Actionable work items for `{{name}}`.
+
+## What belongs here
+
+- One folder per ticket: `tasks/<ticket-id>/`. The brief is `tasks/<ticket-id>/<ticket-id>.md`. Notes and checklists that the task needs sit next to it.
+- Small implementation tasks, backlog slices, investigation tasks, bug notes, QA tasks, and follow-up items from reviews.
+- Every brief states the owner, the status, the acceptance criteria, and links to the folders that share its ticket id in `specs/`, `plans/`, `reviews/` and `evals/`.
+
+## Naming
+
+- `<ticket-id>` is the tracker id, for example `1234`. Without a tracker, use `YYYY-MM-DD-<slug>`.
+- Supporting files use short lower-case names with hyphens.
+- The same `<ticket-id>` names the matching folders in the other knowledge base folders.
+
+## What does not belong here
+
+- Secrets, tokens, personal data.
+- Run transcripts and generated reports. Those go to `reviews/<ticket-id>/artifacts/` and only when they contain no personal data.

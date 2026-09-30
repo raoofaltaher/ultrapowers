@@ -18,3 +18,10 @@ skills/*/scripts/* text eol=lf
 *.png binary
 *.jpg binary
 *.gif binary
+
+# Ultrapowers templates and the hook template must stay LF; the engine copies
+# them byte-for-byte into projects, and the pre-commit template runs under sh
+*.tmpl text eol=lf
+templates/.githooks/* text eol=lf
+templates/.mcp.json text eol=lf
+templates/CHANGES.json text eol=lf

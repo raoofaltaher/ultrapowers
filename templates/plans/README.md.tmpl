@@ -1,0 +1,20 @@
+# plans
+
+Implementation and delivery plans for `{{name}}`.
+
+## What belongs here
+
+- One folder per ticket: `plans/<ticket-id>/`. A single plan is `plans/<ticket-id>/Plan.md`.
+- A plan set for one ticket uses `plans/<ticket-id>/PLAN-NN-<slug>.md` files with a `README.md` index in the same folder.
+- Step-by-step execution plans, release plans, rollout plans, migration plans, verification checklists.
+
+## Naming
+
+- `<ticket-id>` matches `tasks/<ticket-id>/` and `specs/<ticket-id>/`.
+- `NN` is a two-digit sequence starting at `01`.
+- Checkbox steps (`- [ ]`) are the progress record; a plan is done when every box is checked and its verification section reports passing.
+
+## What does not belong here
+
+- Design rationale. Put it in the spec and link to it.
+- Code. Plans contain the code an implementer needs, but the implementation lands in the code repositories.

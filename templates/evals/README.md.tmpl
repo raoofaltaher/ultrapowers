@@ -1,0 +1,19 @@
+# evals
+
+Evaluation records for `{{name}}`: how a change was measured, and against what.
+
+## What belongs here
+
+- One folder per ticket: `evals/<ticket-id>/`.
+- Scenario definitions, acceptance criteria used to grade, result tables, and the comparison against the previous baseline.
+- Agent-behavior evals: the prompt, the expected behavior, the observed behavior, and the verdict.
+
+## Naming
+
+- `evals/<ticket-id>/README.md` summarizes the run and links each scenario file.
+- Scenario files are `scenario-<slug>.md`; result tables are `results-<YYYY-MM-DD>.md`.
+
+## What does not belong here
+
+- Model or API credentials.
+- Large raw outputs. Keep the summary and the verdict; link to where the raw output lives if it is needed.
