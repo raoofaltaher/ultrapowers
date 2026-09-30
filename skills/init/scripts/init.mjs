@@ -354,7 +354,7 @@ function provenance(target, content, vars) {
   return content;
 }
 
-export function applyBlock(existing, body) {
+export function applyBlock(existing, body, target = 'the file') {
   const trimmedBody = body.replace(/^\n+/, '').replace(/\n+$/, '');
   const block = `${BLOCK_START}\n${trimmedBody}\n${BLOCK_END}\n`;
   if (existing === null || existing === undefined) {
@@ -362,21 +362,25 @@ export function applyBlock(existing, body) {
   }
   const eol = existing.includes('\r\n') ? '\r\n' : '\n';
   const text = lf(existing);
-  const startIdx = text.indexOf(BLOCK_START);
-  const endIdx = text.indexOf(BLOCK_END);
+  const lines = text.split('\n');
+  const at = (marker) => lines.flatMap((line, i) => (line.trimEnd() === marker ? [i] : []));
+  const starts = at(BLOCK_START);
+  const ends = at(BLOCK_END);
   let next;
   let action;
-  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-    const afterEnd = text.indexOf('\n', endIdx);
-    const tail = afterEnd === -1 ? '' : text.slice(afterEnd + 1);
-    next = `${text.slice(0, startIdx)}${block}${tail}`;
+  if (starts.length === 1 && ends.length === 1 && starts[0] < ends[0]) {
+    const head = lines.slice(0, starts[0]).map((line) => `${line}\n`).join('');
+    next = `${head}${block}${lines.slice(ends[0] + 1).join('\n')}`;
     action = next === text ? 'unchanged' : 'replaced';
-  } else {
+  } else if (starts.length === 0 && ends.length === 0) {
     let head = text;
     if (head.length > 0 && !head.endsWith('\n')) head += '\n';
     if (head.length > 0) head += '\n';
     next = `${head}${block}`;
     action = 'appended';
+  } else {
+    // A lone or doubled marker would make the next replace swallow the lines between them.
+    throw new InitError('block-corrupt', `${target} has ${starts.length} "${BLOCK_START}" and ${ends.length} "${BLOCK_END}" lines; keep exactly one pair around the managed lines, or remove both, then run init again`, { path: target });
   }
   return { content: eol === '\n' ? next : next.replace(/\n/g, eol), action };
 }
@@ -578,6 +582,8 @@ function writeFile(root, target, content, executable, dryRun) {
 }
 
 export function applyPlan(root, plan, report, dryRun) {
+  // Merge the blocks first, so a broken block fails before any file is written.
+  const blocks = plan.blocks.map((block) => planBlock(root, block.target, block.body));
   for (const file of plan.files) {
     const full = path.join(root, file.target);
     if (fs.existsSync(full)) {
@@ -587,8 +593,8 @@ export function applyPlan(root, plan, report, dryRun) {
     writeFile(root, file.target, file.content, file.executable, dryRun);
     report.written.push(file.target);
   }
-  for (const block of plan.blocks) {
-    applyBlockFile(root, block.target, block.body, report, dryRun);
+  for (const block of blocks) {
+    writeBlock(root, block, report, dryRun);
   }
   report.omitted.push(...plan.omitted);
 }
@@ -739,15 +745,22 @@ function markerOpts(opts, marker) {
   return { ...opts, name: opts.name ?? marker.name ?? path.basename(opts.root), nestedPointers: false };
 }
 
-export function applyBlockFile(root, target, body, report, dryRun) {
+function planBlock(root, target, body) {
   const full = path.join(root, target);
   const existing = fs.existsSync(full) ? fs.readFileSync(full, 'utf8') : null;
-  const { content, action } = applyBlock(existing, body);
+  return { target, ...applyBlock(existing, body, target) };
+}
+
+function writeBlock(root, { target, content, action }, report, dryRun) {
   if (action !== 'unchanged') {
     writeFile(root, target, content, false, dryRun);
     report.written.push(target);
   }
   report.blocks.push({ path: target, action });
+}
+
+export function applyBlockFile(root, target, body, report, dryRun) {
+  writeBlock(root, planBlock(root, target, body), report, dryRun);
 }
 
 function reconcileRepos(opts, marker, report) {
@@ -859,6 +872,10 @@ export function runUpgrade(opts) {
   const recorded = reconcileRepos(opts, marker, report);
   const plan = planPayload(markerOpts(opts, marker), marker.repos ?? [], markerHarnesses(marker));
   report.changed = changedTargets(opts, plan, from);
+  const touched = new Set([...(opts.apply ?? []), ...(recorded ? ['.gitignore'] : [])]);
+  for (const block of plan.blocks) {
+    if (touched.has(block.target)) planBlock(opts.root, block.target, block.body);
+  }
   let markerChanged = recorded;
   if (recorded && !(opts.apply ?? []).includes('.gitignore')) {
     applyBlockFile(opts.root, '.gitignore', gitignoreBody(opts, marker), report, opts.dryRun);

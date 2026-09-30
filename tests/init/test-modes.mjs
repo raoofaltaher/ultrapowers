@@ -240,6 +240,18 @@ test('upgrade --apply refuses a target that did not change and writes nothing', 
   assert.deepEqual(changedFiles(before, snapshot(root)), []);
 });
 
+test('upgrade --apply with a broken managed block writes nothing, not even the proposals before it', () => {
+  const root = scaffolded();
+  const file = path.join(root, '.gitattributes');
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('# <<< ultrapowers\n', ''));
+  setMarkerVersion(root, '0.0.1');
+  const before = snapshot(root);
+  const report = run(['upgrade', '--root', root, '--apply', 'AGENTS.md,.gitattributes'], { expectExit: 2 });
+  assert.equal(report.error.code, 'block-corrupt');
+  assert.equal(report.error.path, '.gitattributes');
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
+});
+
 test('upgrade --apply .gitignore replaces only the managed block', () => {
   const root = scaffolded();
   const file = path.join(root, '.gitignore');

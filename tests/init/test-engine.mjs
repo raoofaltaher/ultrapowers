@@ -101,6 +101,30 @@ test('applyBlock replaces an existing block in place and keeps surrounding lines
   assert.equal(content, `top/\n${BLOCK_START}\nnew/\n${BLOCK_END}\nbottom/\n`);
 });
 
+for (const [label, existing] of [
+  ['a start line without an end line', `top/\n${BLOCK_START}\nold/\nuser-added/\nsecret-dir/\n`],
+  ['an end line without a start line', `top/\nold/\n${BLOCK_END}\nsecret-dir/\n`],
+  ['two blocks', `${BLOCK_START}\na/\n${BLOCK_END}\n${BLOCK_START}\nb/\n${BLOCK_END}\n`],
+  ['the end line before the start line', `${BLOCK_END}\nsecret-dir/\n${BLOCK_START}\n`],
+]) {
+  test(`applyBlock refuses a file with ${label}`, () => {
+    assert.throws(
+      () => applyBlock(existing, 'new/', '.gitignore'),
+      (err) => err instanceof InitError && err.code === 'block-corrupt' && err.extra.path === '.gitignore',
+    );
+  });
+}
+
+test('scaffold with a broken managed block writes nothing and leaves the file alone', () => {
+  const root = tmpRepo();
+  const broken = `node_modules/\n${BLOCK_START}\nold/\nuser-added/\nsecret-dir/\n`;
+  fs.writeFileSync(path.join(root, '.gitignore'), broken);
+  const report = run(['scaffold', '--root', root, '--name', 'Demo', '--platform', 'linux'], { expectExit: 2 });
+  assert.equal(report.error.code, 'block-corrupt');
+  assert.deepEqual(listFiles(root), ['.gitignore']);
+  assert.equal(fs.readFileSync(path.join(root, '.gitignore'), 'utf8'), broken);
+});
+
 test('applyBlock reports unchanged when the block is already current', () => {
   const existing = `${BLOCK_START}\nsame/\n${BLOCK_END}\n`;
   const { action } = applyBlock(existing, 'same/');
