@@ -1,0 +1,6 @@
+# Copilot instructions for {{name}}
+
+- Read and follow `AGENTS.md` at the repository root. It is the single instruction source for every coding agent here; nothing in this file overrides it.
+- Directory-first layout: every ticket id has `tasks/<id>/`, `specs/<id>/`, `plans/<id>/` and `reviews/<id>/`. Look for the ticket's folders before creating anything.
+- Workspace MCP servers for VS Code and Copilot are in `.vscode/mcp.json`; secrets are prompted inputs, never literals.
+- Never commit real tokens, secrets, internal hostnames, or personal data. Use placeholders, input variables, or local-only `*.local.*` overrides.

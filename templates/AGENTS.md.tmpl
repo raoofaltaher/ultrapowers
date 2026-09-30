@@ -1,0 +1,115 @@
+# {{name}}: instructions for coding agents
+
+This file is the single instruction source for every coding agent that opens this repository. `CLAUDE.md` and `GEMINI.md` import it; Codex, Cursor, Copilot, OpenCode, Factory, Hermes, Pi, Devin, Antigravity and Muse read it directly. Edit this file, not the importers.
+
+## Repository principles
+
+- This repository is the knowledge base and agent configuration for `{{name}}`. It is the authoritative source of truth for specs, plans, reviews, handbooks and decisions. Code lives at this root or in nested clones one level down.
+- Directory-first layout: every work item has a ticket id and four folders named by it: `tasks/<id>/`, `specs/<id>/`, `plans/<id>/`, `reviews/<id>/`. Look for the ticket's folders before creating anything; extend what exists.
+- Knowledge documents are Markdown. Each folder's `README.md` states what belongs there and how files are named. Read it before adding a file.
+- Never commit real tokens, passwords, API keys, connection strings, internal hostnames, or personal local settings. Secrets are environment variables named in `.agents/mcp-secrets.env.example`; local overrides are `*.local.*` files, which are gitignored.
+- Before changing an agent discovery path, an MCP schema, or a harness-specific file format, check the vendor's current documentation.
+- Nested clones are other repositories. Do not commit their contents here, and do not edit their agent files unless the task says so.
+
+## Team memory
+
+- The shared team memory lives in `.agents/memory/`. `MEMORY.md` is the index; topic files live next to it. Read the index at session start and open a topic file only when its index line is relevant to the task.
+- A fact enters team memory when it meets all four criteria: verified in this session, durable beyond this ticket, more than fifteen minutes to rediscover, and not derivable from the code or the docs in one step.
+- Personal memory is private scratch. When a personal note meets the four criteria, promote it into `.agents/memory/` with the team-memory skill; link, do not duplicate.
+- Commits that motivate or land a memory entry add the trailer `Memory-Ref: <dir>/<file>.md`.
+- Never store secrets, credentials, personal data, or anything that identifies a customer in team memory.
+
+## Anti-slop rules
+
+- Understand the task deeply before editing.
+- Choose the smallest workflow that can solve it.
+- Do not accept placeholder implementations, dead scaffolding, fake integrations, or TODO-only completions.
+- Require evidence for claims about correctness.
+- If repository state and documentation disagree, surface the conflict explicitly before implementing.
+- Do not let workers improvise between memory surfaces; make the canonical surface part of the task contract.
+
+## House rules
+
+These two rules are this team's choice. A team that adopts this file may edit them, but an agent working here follows them as written.
+
+- Never commit test files. Write throwaway tests to prove your work during development, run them, then delete them before the commit. No test file, test project, fixture, or test results folder enters git.
+- Never write code comments. In any code or config file you create or edit, in any language in this repository, write no line comment, block comment, doc comment, or markup comment; the code and its names carry the meaning. Remove a comment you meet in a line you already change. Markdown headings and the `#!` shebang on line 1 of a script are not comments.
+
+---
+
+Behavioral guidelines to reduce common LLM coding mistakes.
+
+## 1. Think Before Coding
+
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
+
+Before implementing:
+
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them; don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+## 2. Simplicity First
+
+**Minimum code that solves the problem. Nothing speculative.**
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+## 3. Surgical Changes
+
+**Touch only what you must. Clean up only your own mess.**
+
+When editing existing code:
+
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it; don't delete it.
+
+When your changes create orphans:
+
+- Remove imports, variables and functions that YOUR changes made unused.
+- Don't remove pre-existing dead code unless asked.
+
+The test: every changed line should trace directly to your human partner's request.
+
+## 4. Goal-Driven Execution
+
+**Define success criteria. Loop until verified.**
+
+Transform tasks into verifiable goals:
+
+- "Add validation" becomes "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" becomes "Write a test that reproduces it, then make it pass"
+- "Refactor X" becomes "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
+
+```text
+1. [Step] -> verify: [check]
+2. [Step] -> verify: [check]
+3. [Step] -> verify: [check]
+```
+
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+---
+
+**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+## Response style
+
+Write explanations, insights and summaries in Simplified Technical English. These rules apply to prose, not to code, file paths, or command syntax.
+
+- Words: one term for one idea; one verb for one action; the short common word over the rare one; define an uncommon term at first use; a word keeps its one fixed meaning and its one part of speech.
+- Grammar: active voice with a named actor; passive voice only in a description where the actor is unknown; simple tenses only; no perfect tense; no chained modal verbs; an `-ing` word is a noun, not the main verb.
+- Sentences: one instruction per sentence; an instruction is 20 words or less; an explanation is 25 words or less; keep subject, verb and article; a noun cluster is at most 3 words.
+- Structure: one topic per paragraph, 6 sentences or less; a numbered list for 3 or more sequential steps; a bullet list for 3 or more parallel items; the result or finding comes first, background after.
+- Insights: before and after you write code, give one to three points about the choice you made, specific to this codebase. Insights go in the conversation, never into the codebase.
