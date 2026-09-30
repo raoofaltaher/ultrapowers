@@ -149,3 +149,4 @@ Create a todo for each item and complete them in order:
 | "Inline and short on context, one role will do" | Inline changes pacing, not coverage: checkpoint run-state, end `INCOMPLETE`, and the next run resumes. |
 | "The stack is down, so a chat message is enough" | The marker exists, so the run has started: write the `PRECONDITION-FAILED` report, remove the marker, print the verdict line. |
 | "The guardrail keeps denying me; removing the marker would let me finish" | The marker is the guardrail's switch. It is removed in STEP 9 or Step 7 and nowhere else. |
+| "The remaining screenshots can go in as one line of links" | Every screenshot in the report is embedded with `![caption](artifacts/<file>.png)`. A link hides the evidence from the reader and fails the report check. |

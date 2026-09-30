@@ -18,7 +18,8 @@ relative to the project root).
 Roles come from `qa.roles`; each names a `userEnv` and `passwordEnv`. A role with
 `credentials: missing` gets its plan rows marked `not-covered` with the reason "no credentials
 for <role>" and is never attempted. To type a credential, read it with one shell line
-(`printf '%s' "$<userEnv>"`, then the same for `<passwordEnv>`) immediately before the type
+(`printenv <userEnv>`, then the same for `<passwordEnv>`; a `$VAR` expansion makes the harness
+ask for approval on every login, while `printenv` can be pre-approved) immediately before the type
 action into the login form; that exchange is the only place a value appears. Never put a value
 in run-state, an artifact, a log excerpt, a screenshot (take none while a password field is
 filled) or the report.
