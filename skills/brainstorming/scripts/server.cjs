@@ -103,13 +103,10 @@ const SESSION_DIR = process.env.BRAINSTORM_DIR || '/tmp/brainstorm';
 const CONTENT_DIR = path.join(SESSION_DIR, 'content');
 const STATE_DIR = path.join(SESSION_DIR, 'state');
 const ULTRAPOWERS_VERSION = readUltrapowersVersion();
-const ULTRAPOWERS_BRAND_IMAGE_URL = 'https://primeradiant.com/brand/ultrapowers-visual-brainstorming-logo.png';
-const TELEMETRY_DISABLE_ENV_VARS = [
-  'ULTRAPOWERS_DISABLE_TELEMETRY',
-  'DISABLE_TELEMETRY',
-  'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC'
-];
-const ULTRAPOWERS_TELEMETRY_DISABLED = TELEMETRY_DISABLE_ENV_VARS.some(name => isTruthyEnv(process.env[name]));
+// The brand logo is the bundled SVG, served by this process at BRAND_LOGO_PATH.
+// Nothing about the companion is fetched from, or reported to, a remote host.
+const BRAND_LOGO_PATH = '/brand-logo.svg';
+const BRAND_LOGO_FILE = path.join(__dirname, '../../../assets/ultrapowers-small.svg');
 let ownerPid = process.env.BRAINSTORM_OWNER_PID ? Number(process.env.BRAINSTORM_OWNER_PID) : null;
 
 // Per-session secret key. The companion is reachable by any local browser tab
@@ -168,7 +165,7 @@ h1 { color: #333; } p { color: #666; }
 .brand { display: flex; align-items: center; min-width: 0; overflow: hidden; margin-bottom: 1.5rem; color: #666; font-size: 0.9rem; line-height: 1; }
 .brand a { color: inherit; text-decoration: none; display: flex; align-items: center; gap: 0.5rem; min-width: 0; max-width: 100%; line-height: 1; }
 .brand-copy { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1; transform: translateY(-1px); }
-.brand-logo { display: block; height: 1em; width: auto; max-width: 180px; filter: invert(1); }
+.brand-logo { display: block; height: 1em; width: auto; max-width: 180px; }
 </style>
 </head>
 <body><!-- BRANDING --><h1>Brainstorm Companion</h1>
@@ -224,13 +221,6 @@ function readUltrapowersVersion() {
   return 'unknown';
 }
 
-function isTruthyEnv(value) {
-  if (!value) return false;
-  const normalized = String(value).trim().toLowerCase();
-  if (!normalized) return false;
-  return !['0', 'false', 'no', 'off'].includes(normalized);
-}
-
 function escapeHtmlText(value) {
   return String(value)
     .replace(/&/g, '&amp;')
@@ -241,14 +231,9 @@ function escapeHtmlText(value) {
 
 function brandMarkup() {
   const version = escapeHtmlText(ULTRAPOWERS_VERSION);
-  const text = ULTRAPOWERS_TELEMETRY_DISABLED
-    ? 'Prime Radiant Ultrapowers v' + version
-    : 'Ultrapowers v' + version;
-  const logo = ULTRAPOWERS_TELEMETRY_DISABLED
-    ? ''
-    : '<img class="brand-logo" src="' + ULTRAPOWERS_BRAND_IMAGE_URL + '?v=' + encodeURIComponent(ULTRAPOWERS_VERSION) + '" alt="Prime Radiant" referrerpolicy="no-referrer" decoding="async">';
-
-  return '<div class="brand"><a href="https://github.com/raoofaltaher/ultrapowers">' + logo + '<span class="brand-copy">' + text + '</span></a></div>';
+  const logo = '<img class="brand-logo" src="' + BRAND_LOGO_PATH + '" alt="Ultrapowers" decoding="async">';
+  return '<div class="brand"><a href="https://github.com/raoofaltaher/ultrapowers">' + logo +
+    '<span class="brand-copy">Ultrapowers v' + version + '</span></a></div>';
 }
 
 function renderBranding(html) {
@@ -431,6 +416,19 @@ function handleRequest(req, res) {
     const contentType = MIME_TYPES[ext] || 'application/octet-stream';
     res.writeHead(200, securityHeaders({ 'Content-Type': contentType }));
     res.end(fs.readFileSync(filePath));
+  } else if (req.method === 'GET' && pathname === BRAND_LOGO_PATH) {
+    // Bundled brand logo. Packaged trees may ship without assets/, so a
+    // missing file is a 404 rather than a crash. Authorization was already
+    // checked at the top of this function, like every other route.
+    let svg = null;
+    try { svg = fs.readFileSync(BRAND_LOGO_FILE); } catch (e) { /* asset not shipped */ }
+    if (!svg) {
+      res.writeHead(404, securityHeaders());
+      res.end('Not found');
+      return;
+    }
+    res.writeHead(200, securityHeaders({ 'Content-Type': 'image/svg+xml' }));
+    res.end(svg);
   } else {
     res.writeHead(404, securityHeaders());
     res.end('Not found');
