@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -12,6 +12,42 @@ const skillsDir = resolve(packageRoot, "skills");
 const bootstrapSkillPath = resolve(skillsDir, "using-ultrapowers", "SKILL.md");
 
 let cachedBootstrap: string | null | undefined;
+
+// Team memory (ultrapowers piece 4). Pi runs no shell hooks, so the extension
+// carries the one-line reminders itself: a nudge with the session-start
+// bootstrap, a rescue line with the post-compaction bootstrap. Best-effort and
+// silent without a store. Same contract as the bash find_memory_store: the
+// relative POSIX path from startDir to the nearest .agents/memory/ holding a
+// MEMORY.md, or null.
+export function findMemoryStore(startDir: string): string | null {
+	let dir: string;
+	try {
+		dir = realpathSync(resolve(startDir));
+	} catch {
+		return null;
+	}
+	let prefix = "";
+	for (;;) {
+		if (existsSync(join(dir, ".agents", "memory", "MEMORY.md"))) return `${prefix}.agents/memory/`;
+		const parent = dirname(dir);
+		if (parent === dir) return null;
+		dir = parent;
+		prefix = `../${prefix}`;
+	}
+}
+
+function teamMemoryNudge(store: string): string {
+	return `Team-memory: if this session verified a durable, expensive-to-rediscover, non-derivable fact, save it to \`${store}\` with the team-memory skill.`;
+}
+
+function teamMemoryPostcompact(store: string): string {
+	return `Context was just compacted. If team-worthy learnings surfaced earlier and are not yet saved to \`${store}\`, save them now with the team-memory skill.`;
+}
+
+function cwdOf(ctx: unknown): string {
+	const cwd = (ctx as { cwd?: unknown } | undefined)?.cwd;
+	return typeof cwd === "string" && cwd.length > 0 ? cwd : process.cwd();
+}
 
 const NUDGE_SCAFFOLD = "This project has no ultrapowers scaffold. Offer /ultrapowers:init before other work.";
 const NUDGE_REPAIR = "This project's .agents/ultrapowers.json is unreadable. Offer /ultrapowers:init to repair it before other work.";
@@ -93,6 +129,7 @@ function withProjectNudge(bootstrap: string, directory: string): string {
 
 export default function ultrapowersPiExtension(pi: ExtensionAPI) {
 	let injectBootstrap = true;
+	let afterCompaction = false;
 
 	pi.on("resources_discover", async () => ({
 		skillPaths: [skillsDir],
@@ -100,14 +137,17 @@ export default function ultrapowersPiExtension(pi: ExtensionAPI) {
 
 	pi.on("session_start", async () => {
 		injectBootstrap = true;
+		afterCompaction = false;
 	});
 
 	pi.on("session_compact", async () => {
 		injectBootstrap = true;
+		afterCompaction = true;
 	});
 
 	pi.on("agent_end", async () => {
 		injectBootstrap = false;
+		afterCompaction = false;
 	});
 
 	pi.on("context", async (event, ctx) => {
@@ -117,9 +157,14 @@ export default function ultrapowersPiExtension(pi: ExtensionAPI) {
 		const bootstrap = getBootstrapContent();
 		if (!bootstrap) return;
 
+		const store = findMemoryStore(cwdOf(ctx));
+		const memoryLine = store ? (afterCompaction ? teamMemoryPostcompact(store) : teamMemoryNudge(store)) : null;
+		const withNudge = withProjectNudge(bootstrap, cwdOf(ctx));
+		const text = memoryLine ? `${withNudge}\n\n${memoryLine}` : withNudge;
+
 		const bootstrapMessage = {
 			role: "user" as const,
-			content: [{ type: "text" as const, text: withProjectNudge(bootstrap, ctx?.cwd ?? process.cwd()) }],
+			content: [{ type: "text" as const, text }],
 			timestamp: Date.now(),
 		};
 

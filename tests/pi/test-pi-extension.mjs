@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 
@@ -134,4 +135,60 @@ test('pi tools reference documents pi-specific mappings', async () => {
     rows.some((row) => /todo|task/i.test(row)),
     'mapping table documents task tracking',
   );
+});
+
+function makeMemoryFixture() {
+  const root = mkdtempSync(join(tmpdir(), 'pi-team-memory-'));
+  mkdirSync(join(root, '.agents', 'memory'), { recursive: true });
+  writeFileSync(join(root, '.agents', 'memory', 'MEMORY.md'), '# Team memory: index\n');
+  mkdirSync(join(root, 'nested', 'app'), { recursive: true });
+  return { root, nested: join(root, 'nested', 'app'), bare: mkdtempSync(join(tmpdir(), 'pi-bare-')) };
+}
+
+test('team memory: findMemoryStore walks up to the store or returns null', async () => {
+  const mod = await import(pathToFileURL(extensionPath).href + `?cachebust=${Date.now()}-${Math.random()}`);
+  const fx = makeMemoryFixture();
+  assert.equal(mod.findMemoryStore(fx.bare), null);
+  assert.equal(mod.findMemoryStore(fx.root), '.agents/memory/');
+  assert.equal(mod.findMemoryStore(fx.nested), '../../.agents/memory/');
+  assert.equal(mod.findMemoryStore(join(fx.root, 'missing')), null);
+});
+
+test('team memory: startup bootstrap carries the nudge only when a store exists', async () => {
+  const fx = makeMemoryFixture();
+  const user = { role: 'user', content: [{ type: 'text', text: 'Start' }], timestamp: 1 };
+
+  const withStore = await loadExtension();
+  await firstHandler(withStore.handlers, 'session_start')({ type: 'session_start', reason: 'startup' }, { cwd: fx.nested });
+  const injected = await firstHandler(withStore.handlers, 'context')({ type: 'context', messages: [user] }, { cwd: fx.nested });
+  const text = textOf(injected.messages[0]);
+  assert.match(text, /You have ultrapowers/);
+  assert.match(text, /Team-memory: if this session verified a durable, expensive-to-rediscover, non-derivable fact, save it to `\.\.\/\.\.\/\.agents\/memory\/` with the team-memory skill\./);
+  assert.doesNotMatch(text, /Context was just compacted/);
+
+  const withoutStore = await loadExtension();
+  await firstHandler(withoutStore.handlers, 'session_start')({ type: 'session_start', reason: 'startup' }, { cwd: fx.bare });
+  const plain = await firstHandler(withoutStore.handlers, 'context')({ type: 'context', messages: [user] }, { cwd: fx.bare });
+  assert.doesNotMatch(textOf(plain.messages[0]), /Team-memory:/);
+});
+
+test('team memory: after session_compact the bootstrap carries the rescue line until agent_end', async () => {
+  const fx = makeMemoryFixture();
+  const { handlers } = await loadExtension();
+  const context = firstHandler(handlers, 'context');
+  const ctx = { cwd: fx.root };
+
+  await firstHandler(handlers, 'session_compact')({ type: 'session_compact', compactionEntry: {}, fromExtension: false }, ctx);
+  const summary = { role: 'compactionSummary', summary: 'Prior work', tokensBefore: 10, timestamp: 1 };
+  const user = { role: 'user', content: [{ type: 'text', text: 'Continue' }], timestamp: 2 };
+  const result = await context({ type: 'context', messages: [summary, user] }, ctx);
+  const text = textOf(result.messages[1]);
+  assert.match(text, /Context was just compacted\. If team-worthy learnings surfaced earlier and are not yet saved to `\.agents\/memory\/`, save them now with the team-memory skill\./);
+  assert.doesNotMatch(text, /Team-memory: if this session/);
+
+  await firstHandler(handlers, 'agent_end')({ type: 'agent_end', messages: [] }, ctx);
+  await firstHandler(handlers, 'session_start')({ type: 'session_start', reason: 'startup' }, ctx);
+  const fresh = await context({ type: 'context', messages: [user] }, ctx);
+  assert.match(textOf(fresh.messages[0]), /Team-memory: if this session/);
+  assert.doesNotMatch(textOf(fresh.messages[0]), /Context was just compacted/);
 });
