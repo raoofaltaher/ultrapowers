@@ -1,19 +1,18 @@
 {
-  "name": "ultrapowers-dev",
-  "description": "Development marketplace for Ultrapowers core skills library",
+  "name": "ultrapowers",
+  "description": "Marketplace for the Ultrapowers core skills library",
   "owner": {
-    "name": "Jesse Vincent",
-    "email": "jesse@fsck.com"
+    "name": "raoofaltaher",
+    "url": "https://github.com/raoofaltaher"
   },
   "plugins": [
     {
       "name": "ultrapowers",
       "description": "Core skills library for Muse: TDD, debugging, collaboration patterns, and proven techniques",
-      "version": "6.4.2",
+      "version": "1.0.0",
       "source": "./",
       "author": {
-        "name": "Jesse Vincent",
-        "email": "jesse@fsck.com"
+        "name": "RAOOF A."
       }
     }
   ]

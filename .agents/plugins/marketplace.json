@@ -1,7 +1,7 @@
 {
-  "name": "ultrapowers-dev",
+  "name": "ultrapowers",
   "interface": {
-    "displayName": "Ultrapowers Dev"
+    "displayName": "Ultrapowers"
   },
   "plugins": [
     {

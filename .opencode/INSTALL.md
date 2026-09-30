@@ -79,7 +79,7 @@ V1 `plugin` key and the V2 `plugins` key):
 
 ```json
 {
-  "plugin": ["ultrapowers@git+https://github.com/raoofaltaher/ultrapowers.git#v6.4.2"]
+  "plugin": ["ultrapowers@git+https://github.com/raoofaltaher/ultrapowers.git#v1.0.0"]
 }
 ```
 

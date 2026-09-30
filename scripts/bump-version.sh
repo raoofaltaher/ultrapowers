@@ -10,6 +10,10 @@
 #
 set -euo pipefail
 
+# Native Windows jq builds end every output line with CRLF; strip the CR so
+# field names and values compare cleanly. pipefail keeps jq's exit status.
+jq() { command jq "$@" | tr -d '\r'; }
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONFIG="$REPO_ROOT/.version-bump.json"

@@ -1,10 +1,9 @@
 {
   "name": "ultrapowers",
-  "version": "6.4.2",
+  "version": "1.0.0",
   "description": "An agentic skills framework and software development methodology.",
   "author": {
-    "name": "Jesse Vincent",
-    "email": "jesse@fsck.com"
+    "name": "RAOOF A."
   },
   "homepage": "https://github.com/raoofaltaher/ultrapowers",
   "license": "MIT",
@@ -27,7 +26,7 @@
     "displayName": "Ultrapowers",
     "shortDescription": "Planning, TDD, debugging, and delivery workflows for coding agents",
     "longDescription": "Use Ultrapowers to guide agent work through brainstorming, implementation planning, test-driven development, systematic debugging, parallel execution, code review, and finish-the-branch workflows.",
-    "developerName": "Jesse Vincent",
+    "developerName": "RAOOF A.",
     "capabilities": [
       "Interactive",
       "Read",
