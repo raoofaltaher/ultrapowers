@@ -59,7 +59,199 @@ export const MCP_TARGETS = {
   '.vscode/mcp.json': 'vscode',
 };
 
-export const MCP_GENERATORS = {};
+export const CODEX_DEFAULTS = { approval_policy: 'on-request', sandbox_mode: 'workspace-write' };
+export const CONTEXT_FILES = { gemini: ['GEMINI.md', 'AGENTS.md'], qwen: ['QWEN.md', 'AGENTS.md'] };
+const SECRET_REF = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+const HAS_SECRET_REF = /\$\{[A-Za-z_][A-Za-z0-9_]*\}/;
+const WHOLE_SECRET_REF = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/;
+
+function hasKeys(map) {
+  return Boolean(map) && Object.keys(map).length > 0;
+}
+
+function toJson(value) {
+  return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function mapSecrets(map, format) {
+  const out = {};
+  for (const [key, value] of Object.entries(map)) {
+    out[key] = String(value).replace(SECRET_REF, (_, name) => format(name));
+  }
+  return out;
+}
+
+function launch(server, wrap) {
+  const args = [...(server.args ?? [])];
+  if (wrap && server.command === 'npx') return { command: 'cmd', args: ['/c', 'npx', ...args] };
+  return { command: server.command, args };
+}
+
+export function validateServers(servers) {
+  for (const [id, server] of Object.entries(servers)) {
+    const isStdio = server.type === 'stdio' && typeof server.command === 'string' && (server.args ?? []).every((a) => typeof a === 'string');
+    const isHttp = server.type === 'http' && typeof server.url === 'string';
+    if (!isStdio && !isHttp) {
+      throw new InitError('mcp-schema', `templates/.mcp.json server ${id} must be { type: "stdio", command, args } or { type: "http", url }`, { server: id });
+    }
+  }
+}
+
+function jsonServers(servers, wrap, secret, { stdioType = true, httpKey = null } = {}) {
+  const out = {};
+  for (const [id, server] of Object.entries(servers)) {
+    if (server.type === 'http') {
+      const entry = httpKey ? { [httpKey]: server.url } : { type: 'http', url: server.url };
+      if (hasKeys(server.headers)) entry.headers = mapSecrets(server.headers, secret);
+      out[id] = entry;
+      continue;
+    }
+    const entry = { ...(stdioType ? { type: 'stdio' } : {}), ...launch(server, wrap) };
+    if (hasKeys(server.env)) entry.env = mapSecrets(server.env, secret);
+    out[id] = entry;
+  }
+  return out;
+}
+
+const dollarRef = (name) => `\${${name}}`;
+const cursorRef = (name) => `\${env:${name}}`;
+const opencodeRef = (name) => `{env:${name}}`;
+const vscodeInputId = (name) => name.toLowerCase().replace(/_/g, '-');
+
+function standardJson(servers, { wrap }) {
+  return toJson({ mcpServers: jsonServers(servers, wrap, dollarRef) });
+}
+
+function geminiFamilyJson(schema) {
+  return (servers, { wrap }) => toJson({
+    context: { fileName: CONTEXT_FILES[schema] },
+    mcpServers: jsonServers(servers, wrap, dollarRef, { stdioType: false, httpKey: 'httpUrl' }),
+  });
+}
+
+function opencodeJson(servers, { wrap }) {
+  const mcp = {};
+  for (const [id, server] of Object.entries(servers)) {
+    if (server.type === 'http') {
+      const entry = { type: 'remote', url: server.url, enabled: true };
+      if (hasKeys(server.headers)) entry.headers = mapSecrets(server.headers, opencodeRef);
+      mcp[id] = entry;
+      continue;
+    }
+    const { command, args } = launch(server, wrap);
+    const entry = { type: 'local', command: [command, ...args], enabled: true };
+    if (hasKeys(server.env)) entry.environment = mapSecrets(server.env, opencodeRef);
+    mcp[id] = entry;
+  }
+  return toJson({ $schema: 'https://opencode.ai/config.json', mcp });
+}
+
+function vscodeJson(servers, { wrap }) {
+  const inputs = new Map();
+  const inputRef = (serverId) => (name) => {
+    if (!inputs.has(name)) {
+      inputs.set(name, { type: 'promptString', id: vscodeInputId(name), description: `${name} for the ${serverId} MCP server`, password: true });
+    }
+    return `\${input:${vscodeInputId(name)}}`;
+  };
+  const out = {};
+  for (const [id, server] of Object.entries(servers)) {
+    if (server.type === 'http') {
+      const entry = { type: 'http', url: server.url };
+      if (hasKeys(server.headers)) entry.headers = mapSecrets(server.headers, inputRef(id));
+      out[id] = entry;
+      continue;
+    }
+    const entry = { type: 'stdio', ...launch(server, wrap) };
+    if (hasKeys(server.env)) entry.env = mapSecrets(server.env, inputRef(id));
+    out[id] = entry;
+  }
+  const sortedInputs = [...inputs.values()].sort((a, b) => a.id.localeCompare(b.id));
+  return toJson({ inputs: sortedInputs, servers: out });
+}
+
+const tomlKey = (key) => (/^[A-Za-z0-9_-]+$/.test(key) ? key : JSON.stringify(key));
+const tomlString = (value) => JSON.stringify(String(value));
+const tomlArray = (values) => `[${values.map(tomlString).join(', ')}]`;
+
+function codexEnv(id, env) {
+  const names = [];
+  const literal = {};
+  for (const [key, value] of Object.entries(env ?? {})) {
+    const whole = WHOLE_SECRET_REF.exec(String(value));
+    if (whole && whole[1] === key) {
+      names.push(key);
+    } else if (!HAS_SECRET_REF.test(String(value))) {
+      literal[key] = String(value);
+    } else {
+      throw new InitError('mcp-schema', `server ${id}: Codex passes secrets by variable name only, so env ${key} must be "\${${key}}"`, { server: id });
+    }
+  }
+  return { names, literal };
+}
+
+function codexHeaders(id, headers) {
+  const byVariable = {};
+  const literal = {};
+  let bearer = null;
+  for (const [header, value] of Object.entries(headers ?? {})) {
+    const text = String(value);
+    const whole = WHOLE_SECRET_REF.exec(text);
+    const token = /^Bearer \$\{([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(text);
+    if (whole) {
+      byVariable[header] = whole[1];
+    } else if (token && header.toLowerCase() === 'authorization') {
+      bearer = token[1];
+    } else if (!HAS_SECRET_REF.test(text)) {
+      literal[header] = text;
+    } else {
+      throw new InitError('mcp-schema', `server ${id}: Codex cannot embed a secret inside header ${header}`, { server: id });
+    }
+  }
+  return { byVariable, literal, bearer };
+}
+
+function codexToml(servers, { wrap }) {
+  const lines = [
+    `approval_policy = ${tomlString(CODEX_DEFAULTS.approval_policy)}`,
+    `sandbox_mode = ${tomlString(CODEX_DEFAULTS.sandbox_mode)}`,
+  ];
+  for (const [id, server] of Object.entries(servers)) {
+    const table = `mcp_servers.${tomlKey(id)}`;
+    const subTables = [];
+    lines.push('', `[${table}]`);
+    if (server.type === 'http') {
+      lines.push(`url = ${tomlString(server.url)}`);
+      const { byVariable, literal, bearer } = codexHeaders(id, server.headers);
+      if (bearer) lines.push(`bearer_token_env_var = ${tomlString(bearer)}`);
+      if (hasKeys(byVariable)) subTables.push(['env_http_headers', byVariable]);
+      if (hasKeys(literal)) subTables.push(['http_headers', literal]);
+    } else {
+      const { command, args } = launch(server, wrap);
+      lines.push(`command = ${tomlString(command)}`, `args = ${tomlArray(args)}`);
+      const { names, literal } = codexEnv(id, server.env);
+      if (names.length) lines.push(`env_vars = ${tomlArray(names)}`);
+      if (hasKeys(literal)) subTables.push(['env', literal]);
+    }
+    for (const [name, map] of subTables) {
+      lines.push('', `[${table}.${name}]`);
+      for (const [key, value] of Object.entries(map)) lines.push(`${tomlKey(key)} = ${tomlString(value)}`);
+    }
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+export const MCP_GENERATORS = {
+  claude: standardJson,
+  codex: codexToml,
+  cursor: (servers, { wrap }) => toJson({ mcpServers: jsonServers(servers, wrap, cursorRef, { httpKey: 'url' }) }),
+  gemini: geminiFamilyJson('gemini'),
+  qwen: geminiFamilyJson('qwen'),
+  opencode: opencodeJson,
+  factory: standardJson,
+  kimi: standardJson,
+  vscode: vscodeJson,
+};
 
 export class InitError extends Error {
   constructor(code, message, extra = {}) {
@@ -239,6 +431,7 @@ export function loadCanonicalMcp() {
 
 export function generateMcpFiles(harnesses, platform) {
   const { wrapper, servers } = loadCanonicalMcp();
+  validateServers(servers);
   const files = [];
   for (const [target, schema] of Object.entries(MCP_TARGETS)) {
     const generator = MCP_GENERATORS[schema];
@@ -331,7 +524,7 @@ export function planPayload(opts, repos, harnesses) {
     omitted.push(OUTPUT_STYLE_TARGET);
   }
   for (const { target, content } of generateMcpFiles(harnesses, opts.platform)) {
-    files.push({ target, content, executable: false });
+    files.push({ target, content: provenance(target, content, vars), executable: false });
   }
   for (const [target, owner] of Object.entries(TARGET_HARNESS)) {
     if (MCP_TARGETS[target] && !harnesses.includes(owner) && !omitted.includes(target)) omitted.push(target);
