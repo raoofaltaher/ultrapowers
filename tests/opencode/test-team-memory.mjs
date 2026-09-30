@@ -101,7 +101,7 @@ async function v2(cwd) {
 }
 
 const v2User = (text) => ({ role: 'user', content: [{ type: 'text', text }] });
-const checkpoint = () => ({ role: 'assistant', content: [{ type: 'compaction', provider: 'fixture', encrypted: 'opaque' }] });
+const checkpoint = (id = 'opaque') => ({ role: 'assistant', content: [{ type: 'compaction', provider: 'fixture', encrypted: id }] });
 
 {
   const invoke = await v2(bare);
@@ -125,9 +125,32 @@ const checkpoint = () => ({ role: 'assistant', content: [{ type: 'compaction', p
   assert.equal(hasRescue(compacted.messages[1]), true, 'V2 after compaction: rescue line rides the re-injected bootstrap');
   assert.equal(hasNudge(compacted.messages[1]), false);
 
-  const retained = { sessionID: 'v2-proj', messages: [v2User('Keep going'), checkpoint()] };
+  // Provider-native checkpoints stay in every later request: the same
+  // checkpoint must not repeat the rescue line, and the nudge comes back.
+  const nextTurn = { sessionID: 'v2-proj', messages: [checkpoint(), v2User('Next step')] };
+  await invoke(nextTurn);
+  assert.equal(hasRescue(nextTurn.messages[1]), false, 'V2: the rescue line is not repeated for the same checkpoint');
+  assert.equal(hasNudge(nextTurn.messages[1]), true, 'V2: the nudge returns on the turn after the rescue');
+
+  const retained = { sessionID: 'v2-proj', messages: [v2User('Keep going'), checkpoint('second')] };
   await invoke(retained);
-  assert.equal(hasRescue(retained.messages[0]), true, 'V2 with a retained user message and a checkpoint: rescue line');
+  assert.equal(hasRescue(retained.messages[0]), true, 'V2 with a retained user message and a new checkpoint: rescue line');
+}
+
+{
+  process.env.ULTRAPOWERS_NUDGE = 'off';
+  try {
+    const h = await v1(nested);
+    const event = { messages: [v1Message('v1-off', 'Do the task')] };
+    await h.transform(event);
+    assert.equal(hasNudge(event.messages[0]), false, 'V1: ULTRAPOWERS_NUDGE=off silences the nudge');
+    const invoke = await v2(proj);
+    const off = { sessionID: 'v2-off', messages: [checkpoint('off')] };
+    await invoke(off);
+    assert.equal(hasRescue(off.messages[1]) || hasNudge(off.messages[1]), false, 'V2: ULTRAPOWERS_NUDGE=off silences both lines');
+  } finally {
+    delete process.env.ULTRAPOWERS_NUDGE;
+  }
 }
 
 {

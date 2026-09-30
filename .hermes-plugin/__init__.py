@@ -239,7 +239,8 @@ def register(ctx):
             context = _with_project_nudge(bootstrap, platform)
             # Same terminal-only rule as the scaffold nudge: a messaging
             # gateway's working directory is not the project.
-            store = _team_memory_store(os.getcwd()) if platform in NUDGE_PLATFORMS else None
+            memory_off = os.environ.get("ULTRAPOWERS_NUDGE", "").lower() == "off"
+            store = _team_memory_store(os.getcwd()) if platform in NUDGE_PLATFORMS and not memory_off else None
             if store:
                 return {"context": f"{context}\n\n{TEAM_MEMORY_NUDGE.format(store=store)}"}
             return {"context": context}

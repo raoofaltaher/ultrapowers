@@ -192,3 +192,17 @@ test('team memory: after session_compact the bootstrap carries the rescue line u
   assert.match(textOf(fresh.messages[0]), /Team-memory: if this session/);
   assert.doesNotMatch(textOf(fresh.messages[0]), /Context was just compacted/);
 });
+
+test('team memory: ULTRAPOWERS_NUDGE=off leaves the memory lines out', async () => {
+  const fx = makeMemoryFixture();
+  const user = { role: 'user', content: [{ type: 'text', text: 'Start' }], timestamp: 1 };
+  process.env.ULTRAPOWERS_NUDGE = 'off';
+  try {
+    const { handlers } = await loadExtension();
+    await firstHandler(handlers, 'session_start')({ type: 'session_start', reason: 'startup' }, { cwd: fx.root });
+    const injected = await firstHandler(handlers, 'context')({ type: 'context', messages: [user] }, { cwd: fx.root });
+    assert.doesNotMatch(textOf(injected.messages[0]), /Team-memory:/);
+  } finally {
+    delete process.env.ULTRAPOWERS_NUDGE;
+  }
+});

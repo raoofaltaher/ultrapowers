@@ -157,7 +157,7 @@ export default function ultrapowersPiExtension(pi: ExtensionAPI) {
 		const bootstrap = getBootstrapContent();
 		if (!bootstrap) return;
 
-		const store = findMemoryStore(cwdOf(ctx));
+		const store = nudgeOff() ? null : findMemoryStore(cwdOf(ctx));
 		const memoryLine = store ? (afterCompaction ? teamMemoryPostcompact(store) : teamMemoryNudge(store)) : null;
 		const withNudge = withProjectNudge(bootstrap, cwdOf(ctx));
 		const text = memoryLine ? `${withNudge}\n\n${memoryLine}` : withNudge;

@@ -150,3 +150,11 @@ class TestTeamMemory:
         assert "## Team memory on Hermes" in text
         assert "first turn only" in text
         assert "post-compaction" in text
+
+    def test_off_switch_leaves_the_memory_line_out(self, tmp_path, monkeypatch, mock_ctx):
+        m = _load()
+        m.register(mock_ctx)
+        self._store(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("ULTRAPOWERS_NUDGE", "off")
+        assert "Team-memory:" not in mock_ctx._hooks["pre_llm_call"](is_first_turn=True)["context"]

@@ -261,6 +261,24 @@ export const findMemoryStore = (startDir) => {
 export const teamMemoryNudge = (store) =>
   `${TEAM_MEMORY_MARKER} if this session verified a durable, expensive-to-rediscover, non-derivable fact, save it to \`${store}\` with the team-memory skill.`;
 
+// The store the memory lines name, or null when there is none or the person
+// set ULTRAPOWERS_NUDGE=off.
+const memoryStoreFor = (directory) => (nudgeOff() ? null : findMemoryStore(directory));
+
+// The identity of the newest compaction checkpoint in a V2 request, or null.
+// Provider-native checkpoints stay in every later request, so the rescue line
+// keys on this instead of on the mere presence of a checkpoint.
+const compactionMark = (messages) => {
+  let mark = null;
+  for (const m of messages) {
+    if (!Array.isArray(m.content)) continue;
+    for (const p of m.content) {
+      if (p && p.type === 'compaction') mark = typeof p.encrypted === 'string' ? p.encrypted : JSON.stringify(p);
+    }
+  }
+  return mark;
+};
+
 export const teamMemoryPostcompact = (store) =>
   `${POSTCOMPACT_MARKER} If team-worthy learnings surfaced earlier and are not yet saved to \`${store}\`, save them now with the team-memory skill.`;
 
@@ -388,7 +406,7 @@ export const UltrapowersPlugin = async ({ client, directory }) => {
       const sessionID = firstUser.info.sessionID;
       if (compactedSessions.has(sessionID)) {
         compactedSessions.delete(sessionID);
-        const store = findMemoryStore(directory);
+        const store = memoryStoreFor(directory);
         const lastUser = [...output.messages].reverse().find(m => m.info.role === 'user');
         if (store && lastUser && lastUser.parts.length
             && !lastUser.parts.some(p => p.type === 'text' && p.text.startsWith(POSTCOMPACT_MARKER))) {
@@ -412,7 +430,7 @@ export const UltrapowersPlugin = async ({ client, directory }) => {
       firstUser.parts.unshift({ ...ref, type: 'text', text: withProjectNudge(bootstrap, directory, firstUser.info.sessionID) });
 
       // Team memory: the one-line nudge rides the first-message bootstrap.
-      const store = findMemoryStore(directory);
+      const store = memoryStoreFor(directory);
       if (store) firstUser.parts.push({ ...ref, type: 'text', text: teamMemoryNudge(store) });
     }
   };
@@ -447,6 +465,9 @@ async function setup(ctx) {
   // Team memory: the project directory V2 hands us when it does, else the
   // process working directory at activation.
   const projectDir = projectDirectory ?? process.cwd();
+  // Team memory: compaction checkpoints already answered with the rescue line,
+  // as "<sessionID>|<checkpoint>". Bounded like the other session caches.
+  const rescuedCheckpoints = new Set();
 
   // 1. Register skills (one transform; one draft.add per skill)
   try {
@@ -511,10 +532,15 @@ async function setup(ctx) {
 
         // Team memory: nudge on the first message, rescue line when a
         // compaction checkpoint is present. Silent without a store.
-        const store = findMemoryStore(typeof event.directory === 'string' ? event.directory : projectDir);
-        const compacted = event.messages.some(m => Array.isArray(m.content)
-          && m.content.some(p => p && p.type === 'compaction'));
-        const memoryLine = store ? (compacted ? teamMemoryPostcompact(store) : teamMemoryNudge(store)) : null;
+        const store = memoryStoreFor(typeof event.directory === 'string' ? event.directory : projectDir);
+        const mark = compactionMark(event.messages);
+        const markKey = mark === null ? null : `${event.sessionID ?? ''}|${mark}`;
+        const freshCompaction = markKey !== null && !rescuedCheckpoints.has(markKey);
+        if (store && freshCompaction) {
+          if (rescuedCheckpoints.size >= 256) rescuedCheckpoints.delete(rescuedCheckpoints.values().next().value);
+          rescuedCheckpoints.add(markKey);
+        }
+        const memoryLine = store ? (freshCompaction ? teamMemoryPostcompact(store) : teamMemoryNudge(store)) : null;
         const extra = memoryLine ? [{ type: 'text', text: memoryLine }] : [];
 
         // Native compaction can leave only an opaque checkpoint. Keep it
