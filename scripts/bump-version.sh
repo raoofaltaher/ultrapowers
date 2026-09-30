@@ -45,7 +45,9 @@ write_json_field() {
 }
 
 require_tool() {
-  command -v "$1" >/dev/null 2>&1 || {
+  # type -P finds executables only, so the jq wrapper function above cannot
+  # stand in for a missing jq binary.
+  type -P "$1" >/dev/null 2>&1 || {
     echo "error: required tool '$1' is not on PATH" >&2
     return 1
   }

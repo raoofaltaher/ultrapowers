@@ -73,4 +73,29 @@ cmp -s "$TEST_ROOT/package.before" "$invalid_repo/package.json" \
 cmp -s "$TEST_ROOT/plugin.before" "$invalid_repo/.hermes-plugin/plugin.yaml" \
   || fail "invalid YAML manifest changed"
 
+# A missing jq must be reported as a missing tool, not as an unreadable
+# manifest. Drop only the PATH entries that hold jq; skip when that would
+# also remove the core tools the script needs (jq in /usr/bin on Linux).
+nojq_path=""
+IFS=':' read -r -a path_dirs <<<"$PATH"
+for d in "${path_dirs[@]}"; do
+  [[ -n "$d" ]] || continue
+  if [[ -x "$d/jq" || -x "$d/jq.exe" ]]; then continue; fi
+  nojq_path="${nojq_path:+$nojq_path:}$d"
+done
+if PATH="$nojq_path" command -v sed >/dev/null 2>&1 \
+  && PATH="$nojq_path" command -v tr >/dev/null 2>&1 \
+  && ! PATH="$nojq_path" command -v jq >/dev/null 2>&1; then
+  nojq_repo="$TEST_ROOT/nojq"
+  make_fixture "$nojq_repo" $'name: ultrapowers\nversion: 1.2.3'
+  if PATH="$nojq_path" /bin/bash "$nojq_repo/scripts/bump-version.sh" 2.3.4 \
+    >"$TEST_ROOT/nojq.out" 2>&1; then
+    fail "bump-version succeeded without jq"
+  fi
+  grep -q "required tool 'jq' is not on PATH" "$TEST_ROOT/nojq.out" \
+    || fail "missing jq was not reported as a missing tool: $(cat "$TEST_ROOT/nojq.out")"
+else
+  echo "SKIP: missing-jq case (jq shares a PATH directory with core tools)"
+fi
+
 echo "Version-bump tests passed"
