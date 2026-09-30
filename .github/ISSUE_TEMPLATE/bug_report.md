@@ -4,52 +4,27 @@ about: Something isn't working as expected
 labels: bug
 ---
 
-<!--
-BEFORE FILING: Search open AND closed issues. The Windows SessionStart
-hook alone has been reported 29 times. If your issue already exists,
-add a comment or reaction to the existing one instead.
--->
-
-- [ ] I searched existing issues and this is not a duplicate
-
-## Environment (required)
-<!-- Required. We assume an agent filed this report — tell us which one and
-     where it ran. We weigh reports by what produced them. -->
+## Environment
 
 | Field | Value |
 |-------|-------|
 | Ultrapowers version | |
-| Harness (Claude Code, Cursor, etc.) | |
-| Harness version | |
-| Your model + version | |
-| All plugins installed | |
-| OS + shell | |
+| Harness and version | |
+| Model | |
+| OS and shell | |
 
-## Is this a Ultrapowers issue or a platform issue?
-<!-- Ultrapowers is a plugin. Some reported "bugs" are actually issues
-     in the underlying platform or model. If you're not sure, try
-     reproducing without Ultrapowers installed.
+## What happened
 
-     If the problem persists without Ultrapowers, file the issue with
-     your platform instead. -->
-
-- [ ] I confirmed this issue does not occur without Ultrapowers installed
-
-## What happened?
-<!-- Be specific. "It doesn't work" is not a bug report. -->
+<!-- Be specific. Include the exact error text if there is one. -->
 
 ## Steps to reproduce
+
 1.
 2.
 3.
 
 ## Expected behavior
-<!-- What should have happened? -->
 
-## Actual behavior
-<!-- What happened instead? -->
+## Transcript or log
 
-## Debug log or conversation transcript
-<!-- A debug log or conversation transcript showing the issue is the
-     single most helpful thing you can include. Without one, we're
-     guessing. Screenshots of error output are also useful. -->
+<!-- A session transcript or debug log is the most useful thing you can attach. The diagnosing-ultrapowers skill can build a scrubbed bundle for you. -->
