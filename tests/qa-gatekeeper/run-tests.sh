@@ -14,6 +14,7 @@ SUITES=(
   "node --test tests/qa-gatekeeper/judge.test.mjs"
   "bash tests/qa-gatekeeper/test-run-suite.sh"
   "node --test tests/qa-gatekeeper/qa-preflight.test.mjs"
+  "bash tests/qa-gatekeeper/test-skill-structure.sh"
 )
 
 failed=0
