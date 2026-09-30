@@ -43,6 +43,18 @@
         "path": "skills/new-task/SKILL.md"
       },
       {
+        "id": "qa-lane-1-ui",
+        "path": "skills/qa-lane-1-ui/SKILL.md"
+      },
+      {
+        "id": "qa-lane-2-logs",
+        "path": "skills/qa-lane-2-logs/SKILL.md"
+      },
+      {
+        "id": "qa-lane-3-api",
+        "path": "skills/qa-lane-3-api/SKILL.md"
+      },
+      {
         "id": "receiving-code-review",
         "path": "skills/receiving-code-review/SKILL.md"
       },
