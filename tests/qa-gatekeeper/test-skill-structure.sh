@@ -180,6 +180,15 @@ if [[ -f "$LANE6_FILE" ]]; then
   if grep -q '`judged`' "$LANE6_FILE"; then pass "qa-lane-6-suites: names the final suite statuses"; else fail "qa-lane-6-suites: names the final suite statuses"; fi
 fi
 
+
+# Final review I8: lane 3 keeps raw responses in .ultrapowers/ scratch and writes only a
+# redacted copy into the committed artifacts; both cleanups remove the scratch files.
+LANE3_FILE="$REPO_ROOT/skills/qa-lane-3-api/SKILL.md"
+if [[ -f "$LANE3_FILE" ]]; then
+  if ! grep -q -- '-o <ROOT>/reviews/' "$LANE3_FILE" && grep -q '\.ultrapowers/qa-api-' "$LANE3_FILE"; then pass "qa-lane-3-api: raw responses go to .ultrapowers/ scratch, not artifacts"; else fail "qa-lane-3-api: raw responses go to .ultrapowers/ scratch, not artifacts"; fi
+fi
+if grep -q 'qa-api-\*' "$REPO_ROOT/agents/qa-specialist.md" && grep -q 'qa-api-\*' "$REPO_ROOT/skills/qa-specialist/SKILL.md"; then pass "STEP 9 and Step 7 delete the qa-api-* scratch files"; else fail "STEP 9 and Step 7 delete the qa-api-* scratch files"; fi
+
 if [[ "$FAILURES" -gt 0 ]]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"
   exit 1

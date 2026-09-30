@@ -129,8 +129,8 @@ test -f "<ROOT>/reviews/<ID>/QA-REPORT.md" && echo report-present; test -e "<ROO
 - No `report-present`: write the report now per `ultrapowers:qa-report`, verdict `INCOMPLETE`,
   naming what stopped the run.
 - `marker-present`: remove it with `rm "<ROOT>/.ultrapowers/qa-active"`, and delete
-  `qa-token.json`, `qa-cookies-*.txt` and `qa-trace-*.json` under `<ROOT>/.ultrapowers/` where
-  they exist.
+  `qa-token.json`, `qa-cookies-*.txt`, `qa-trace-*.json` and `qa-api-*.txt` under
+  `<ROOT>/.ultrapowers/` where they exist.
 - The last line of your output is exactly `Verdict: <value> — reviews/<ID>/QA-REPORT.md`, with
   the value from the report's `Verdict:` line.
 

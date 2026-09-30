@@ -28,7 +28,7 @@ token per `qa.auth.type`:
   the same shell line as the probe, so the value never prints:
 
   ```bash
-  TOKEN="$(sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p' <ROOT>/.ultrapowers/qa-token.json)"; curl -s -o <ROOT>/reviews/<ID>/artifacts/api-<finding>.txt -w '%{http_code}\n' -H "Authorization: Bearer $TOKEN" <literal endpoint URL>
+  TOKEN="$(sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p' <ROOT>/.ultrapowers/qa-token.json)"; curl -s -o <ROOT>/.ultrapowers/qa-api-<finding>.txt -w '%{http_code}\n' -H "Authorization: Bearer $TOKEN" <literal endpoint URL>
   ```
 
   Never print the file; STEP 9 deletes it.
@@ -64,8 +64,12 @@ URL is denied by the guardrail by design. Hosts: `qa.hosts.allowed` only.
 
 ## Evidence
 
-Save probe and response (status, body excerpt) to `reviews/<ID>/artifacts/api-<finding>.txt` at
-capture time. For coverage, append every probe as you go (method, path, role, expected status,
+A raw response body goes to `<ROOT>/.ultrapowers/qa-api-<finding>.txt` (gitignored scratch,
+deleted at STEP 9), never straight into `artifacts/`: a body can hold a token or, on a real
+cross-tenant hit, another tenant's data. At capture time write the evidence file
+`reviews/<ID>/artifacts/api-<finding>.txt` from it: the probe (method, literal URL, role), the
+status, and a body excerpt with tokens, cookies, credentials and other-tenant values replaced by
+`<redacted>`. For coverage, append every probe as you go (method, path, role, expected status,
 observed status) to `api-probes.txt`; without it the lane is not `done`. Strip `Authorization`
 headers, cookies and any credential material from everything you save. Never write a token into
 the report or an artifact.

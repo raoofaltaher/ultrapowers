@@ -159,7 +159,8 @@ Exactly one line starts with `Verdict:`.
 
 **STEP 9 — Close.** Close the browser. Delete the lane scratch files when present (`rm
 <ROOT>/.ultrapowers/qa-token.json`, `rm <ROOT>/.ultrapowers/qa-cookies-*.txt`, `rm
-<ROOT>/.ultrapowers/qa-trace-*.json`). Remove the run marker: `rm <ROOT>/.ultrapowers/qa-active`.
+<ROOT>/.ultrapowers/qa-trace-*.json`, `rm <ROOT>/.ultrapowers/qa-api-*.txt`). Remove the run
+marker: `rm <ROOT>/.ultrapowers/qa-active`.
 Print exactly one final line: `Verdict: <value> — reviews/<ID>/QA-REPORT.md`. Stop.
 
 ## Triage classes
