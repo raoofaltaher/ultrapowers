@@ -54,3 +54,7 @@ If `delegate_task` is unavailable, do the work inline rather than inventing tool
 ## Task tracking
 
 Use the `todo` tool for task tracking within a session. For multi-agent task boards, use `hermes kanban` CLI if available. Treat older `TodoWrite` references as the task-tracking action.
+
+## Team memory on Hermes
+
+Hermes accepts injected context on the first turn only and has no post-compaction hook. When a `.agents/memory/` store exists at or above the working directory, the ultrapowers plugin adds the one-line team-memory reminder to the first-turn bootstrap; it cannot repeat it after compaction. Save team-worthy learnings as you go, using the criteria in `AGENTS.md` and the `team-memory` skill, instead of waiting for a reminder.

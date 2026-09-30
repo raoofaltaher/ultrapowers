@@ -5,6 +5,35 @@ from pathlib import Path
 
 BOOTSTRAP_MARKER = "ultrapowers:using-ultrapowers bootstrap for hermes"
 
+# Team memory (ultrapowers piece 4). Hermes accepts injected context on the
+# first turn only (pre_llm_call with is_first_turn) and has no post-compaction
+# hook, so Hermes users get the one-line nudge at session start and no rescue
+# line after compaction. The AGENTS.md criteria carry the rest.
+TEAM_MEMORY_NUDGE = (
+    "Team-memory: if this session verified a durable, expensive-to-rediscover, "
+    "non-derivable fact, save it to `{store}` with the team-memory skill."
+)
+
+
+def _team_memory_store(start_dir: str):
+    """Relative POSIX path from start_dir to the nearest .agents/memory/ that
+    holds a MEMORY.md at or above it (".agents/memory/", "../.agents/memory/",
+    ...), or None. Same contract as hooks/lib/team-memory-common's
+    find_memory_store. A missing start_dir yields None, never an exception.
+    """
+    if not os.path.isdir(start_dir):
+        return None
+    current = os.path.realpath(start_dir)
+    prefix = ""
+    while True:
+        if os.path.isfile(os.path.join(current, ".agents", "memory", "MEMORY.md")):
+            return f"{prefix}.agents/memory/"
+        parent = os.path.dirname(current)
+        if parent == current:
+            return None
+        current = parent
+        prefix = "../" + prefix
+
 
 def _skills_dir() -> str:
     """Locate the stock skills/ tree for either supported install layout.
@@ -207,7 +236,13 @@ def register(ctx):
         **kwargs,
     ):
         if is_first_turn:
-            return {"context": _with_project_nudge(bootstrap, platform)}
+            context = _with_project_nudge(bootstrap, platform)
+            # Same terminal-only rule as the scaffold nudge: a messaging
+            # gateway's working directory is not the project.
+            store = _team_memory_store(os.getcwd()) if platform in NUDGE_PLATFORMS else None
+            if store:
+                return {"context": f"{context}\n\n{TEAM_MEMORY_NUDGE.format(store=store)}"}
+            return {"context": context}
         return None
 
     ctx.register_hook("pre_llm_call", pre_llm_call)

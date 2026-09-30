@@ -96,3 +96,57 @@ class TestBootstrapContent:
             f"context over {HERMES_CONTEXT_SPILL_LIMIT} to a file, which "
             "breaks inline injection"
         )
+
+
+class TestTeamMemory:
+    def _store(self, root):
+        (root / ".agents" / "memory").mkdir(parents=True)
+        (root / ".agents" / "memory" / "MEMORY.md").write_text("# Team memory: index\n")
+
+    def test_no_store_returns_none(self, tmp_path):
+        m = _load()
+        assert m._team_memory_store(str(tmp_path)) is None
+
+    def test_missing_dir_returns_none(self, tmp_path):
+        m = _load()
+        assert m._team_memory_store(str(tmp_path / "gone")) is None
+
+    def test_store_at_cwd(self, tmp_path):
+        m = _load()
+        self._store(tmp_path)
+        assert m._team_memory_store(str(tmp_path)) == ".agents/memory/"
+
+    def test_store_two_levels_up(self, tmp_path):
+        m = _load()
+        self._store(tmp_path)
+        nested = tmp_path / "nested" / "app"
+        nested.mkdir(parents=True)
+        assert m._team_memory_store(str(nested)) == "../../.agents/memory/"
+
+    def test_first_turn_context_carries_nudge_only_with_store(self, tmp_path, monkeypatch, mock_ctx):
+        m = _load()
+        m.register(mock_ctx)
+        hook = mock_ctx._hooks["pre_llm_call"]
+        monkeypatch.chdir(tmp_path)
+
+        without = hook(is_first_turn=True)["context"]
+        assert "Team-memory:" not in without
+        assert without.rstrip().endswith("</EXTREMELY_IMPORTANT>")
+
+        self._store(tmp_path)
+        with_store = hook(is_first_turn=True)["context"]
+        assert with_store.rstrip().endswith(
+            "Team-memory: if this session verified a durable, expensive-to-rediscover, "
+            "non-derivable fact, save it to `.agents/memory/` with the team-memory skill."
+        )
+        assert BOOTSTRAP_MARKER in with_store
+        assert hook(is_first_turn=False) is None
+
+    def test_limit_is_documented(self):
+        m = _load()
+        ref = os.path.join(m._skills_dir(), "using-ultrapowers", "references", "hermes-tools.md")
+        with open(ref, encoding="utf-8") as f:
+            text = f.read()
+        assert "## Team memory on Hermes" in text
+        assert "first turn only" in text
+        assert "post-compaction" in text
