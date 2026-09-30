@@ -61,6 +61,38 @@ else
   fail "commit succeeds once the store is clean"
 fi
 
+# 3b. The hook lints what is being committed: an untracked, half-written draft
+# in the working tree does not block a clean staged change.
+printf -- '---\nname: second\ndescription: d\nmetadata:\n  type: gotcha\ndate: 2026-09-30\n---\nFact.\n\n**Why:** x.\n\n**How to apply:** y.\n' > "$WORK/.agents/memory/gotchas/second.md"
+printf '# Team memory: index\n\n## Gotchas\n- [lonely](gotchas/lonely.md) — hook (2026-09)\n- [second](gotchas/second.md) — hook (2026-09)\n\n## Decisions\n\n## Subsystems\n' > "$WORK/.agents/memory/MEMORY.md"
+git -C "$WORK" add .agents/memory
+printf 'draft, not indexed yet\n' > "$WORK/.agents/memory/gotchas/draft.md"
+set +e
+out="$(ULTRAPOWERS_ROOT="$REPO_ROOT" git -C "$WORK" commit -q -m "second" 2>&1)"
+status=$?
+set -e
+if [ "$status" -eq 0 ]; then
+  pass "an untracked draft in the working tree does not block a clean staged change"
+else
+  fail "an untracked draft in the working tree does not block a clean staged change"; printf '%s\n' "$out" | sed 's/^/    /'
+fi
+rm -f "$WORK/.agents/memory/gotchas/draft.md"
+
+# 3c. The reverse: a broken staged index blocks even when the working copy is fixed.
+printf '# Team memory: index\n\n## Gotchas\n- [lonely](gotchas/lonely.md) — hook (2026-09)\n\n## Decisions\n\n## Subsystems\n' > "$WORK/.agents/memory/MEMORY.md"
+git -C "$WORK" add .agents/memory
+printf '# Team memory: index\n\n## Gotchas\n- [lonely](gotchas/lonely.md) — hook (2026-09)\n- [second](gotchas/second.md) — hook (2026-09)\n\n## Decisions\n\n## Subsystems\n' > "$WORK/.agents/memory/MEMORY.md"
+set +e
+out="$(ULTRAPOWERS_ROOT="$REPO_ROOT" git -C "$WORK" commit -q -m "drop line" 2>&1)"
+status=$?
+set -e
+if [ "$status" -ne 0 ] && printf '%s' "$out" | grep -q "ORPHAN gotchas/second.md"; then
+  pass "a broken staged index blocks the commit although the working copy is fixed"
+else
+  fail "a broken staged index blocks the commit although the working copy is fixed"; printf '%s\n' "$out" | sed 's/^/    /'
+fi
+git -C "$WORK" add .agents/memory
+
 # 4. Plugin not reachable: warns and continues (the stray file would otherwise be a finding).
 printf 'session summary\n' > "$WORK/.agents/memory/2026-01-05-session-summary.md"
 git -C "$WORK" add .agents/memory

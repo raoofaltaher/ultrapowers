@@ -1,4 +1,6 @@
-# Ultrapowers
+![ultrapowers logo](assets/ultrapowers-small.svg)
+
+# Ultrapowers 
 
 Ultrapowers is a complete software development methodology for your coding agents, built on a set of composable skills and a session-start bootstrap that makes sure your agent uses them.
 
@@ -6,30 +8,33 @@ Ultrapowers is a fork of Jesse Vincent's MIT-licensed skills library, cut from i
 
 ## Table of Contents
 
-- [How it works](#how-it-works)
-- [Installation](#installation)
-  - [Claude Code](#claude-code)
-  - [Antigravity](#antigravity)
-  - [Codex](#codex)
-  - [Cursor](#cursor)
-  - [Devin CLI](#devin-cli)
-  - [Factory Droid](#factory-droid)
-  - [Gemini CLI](#gemini-cli)
-  - [GitHub Copilot CLI](#github-copilot-cli)
-  - [Grok Build CLI](#grok-build-cli)
-  - [Kimi Code](#kimi-code)
-  - [OpenCode](#opencode)
-  - [Pi](#pi)
-  - [Qwen Code](#qwen-code)
-  - [Hermes Agent](#hermes-agent)
-  - [Muse](#muse)
-- [The Basic Workflow](#the-basic-workflow)
-- [When Something Goes Wrong](#when-something-goes-wrong)
-- [What ultrapowers adds](#what-ultrapowers-adds)
-- [What's Inside](#whats-inside)
-- [Philosophy](#philosophy)
-- [Contributing](#contributing)
-- [License](#license)
+- [Ultrapowers](#ultrapowers)
+  - [Table of Contents](#table-of-contents)
+  - [How it works](#how-it-works)
+  - [Installation](#installation)
+    - [Claude Code](#claude-code)
+    - [Antigravity](#antigravity)
+    - [Codex](#codex)
+    - [Cursor](#cursor)
+    - [Devin CLI](#devin-cli)
+    - [Factory Droid](#factory-droid)
+    - [Gemini CLI](#gemini-cli)
+    - [GitHub Copilot CLI](#github-copilot-cli)
+    - [Grok Build CLI](#grok-build-cli)
+    - [Kimi Code](#kimi-code)
+    - [OpenCode](#opencode)
+    - [Pi](#pi)
+    - [Qwen Code](#qwen-code)
+    - [Hermes Agent](#hermes-agent)
+    - [Muse](#muse)
+  - [The Basic Workflow](#the-basic-workflow)
+  - [When Something Goes Wrong](#when-something-goes-wrong)
+  - [What ultrapowers adds](#what-ultrapowers-adds)
+  - [What's Inside](#whats-inside)
+    - [Skills Library](#skills-library)
+  - [Philosophy](#philosophy)
+  - [Contributing](#contributing)
+  - [License](#license)
 
 ## How it works
 
@@ -232,19 +237,25 @@ Restart any active Muse sessions after installing so the `SessionStart` hook tak
 
 ## The Basic Workflow
 
-1. **brainstorming** - Activates before writing code. Refines rough ideas through questions, explores alternatives, presents design in sections for validation. Saves design document.
+1. Initialization - and Scaffolding: KB, AI config, and baseline payload are loaded. The agent is ready to receive your project description.
 
-2. **using-git-worktrees** - Activates after design approval. Creates isolated workspace on new branch, runs project setup, verifies clean test baseline.
+2. **/new-task <ticket_id> (ticket title)** - Activates to create and scaffold a new task and directory structure. tasks/<ticket_id>/task.md, specs/<ticket_id>, plans/<ticket_id>, and reviews/<ticket_id> are created. and a short summary of the task is added to the tasks/<ticket_id>/task.md file.
 
-3. **writing-plans** - Activates with approved design. Breaks work into bite-sized tasks (2-5 minutes each). Every task has exact file paths, complete code, verification steps.
+3. **/brainstorming-task <ticket_id> (optional repository name)** - Activates before writing code. Refines rough ideas through questions, explores alternatives, presents design in sections for validation. Saves design document. and generates specification files in specs/<ticket_id>/spec.md.
 
-4. **subagent-driven-development** or **executing-plans** - Activates with plan. Either dispatches a fresh subagent per task with a review after each (most thorough), or implements every task inline in the current session with one fresh review of the whole branch at the end (cheapest).
+4. **using-git-worktrees** - Activates after design approval. Creates isolated workspace on new branch, runs project setup, verifies clean test baseline.
 
-5. **test-driven-development** - Activates during implementation. Enforces RED-GREEN-REFACTOR: write failing test, watch it fail, write minimal code, watch it pass, commit. Deletes code written before tests.
+5. **writing-plans** - Activates with approved design. Breaks work into bite-sized tasks (2-5 minutes each). Every task has exact file paths, complete code, verification steps.
 
-6. **requesting-code-review** - Activates between tasks. Reviews against plan, reports issues by severity. Critical issues block progress.
+6. **subagent-driven-development** or **executing-plans** - Activates with plan. Either dispatches a fresh subagent per task with a review after each (most thorough), or implements every task inline in the current session with one fresh review of the whole branch at the end (cheapest).
 
-7. **finishing-a-development-branch** - Activates when tasks complete. Verifies tests, presents options (merge/PR/keep/discard), cleans up worktree.
+7. **test-driven-development** - Activates during implementation. Enforces RED-GREEN-REFACTOR: write failing test, watch it fail, write minimal code, watch it pass, commit. Deletes code written before tests.
+
+8. **requesting-code-review** - Activates between tasks. Reviews against plan, reports issues by severity. Critical issues block progress.
+
+9. **/qa-specialists** - Activates for QA gatekeeping and testing. Reviews code against standards, tests the feature, validates it, reports issues by severity. Critical issues block progress.
+
+10. **finishing-a-development-branch** - Activates when tasks complete. Verifies tests, presents options (merge/PR/keep/discard), cleans up worktree.
 
 **The agent checks for relevant skills before any task.** Mandatory workflows, not suggestions.
 
@@ -256,12 +267,12 @@ The skill reads the session transcript, reports what happened with line-level ev
 
 ## What ultrapowers adds
 
-Piece 1, the first release, is the rename and fork hygiene: one name everywhere, fork-owner identity in every manifest, nothing fetched from or reported to a remote host, no upstream-only publishing tooling. The pieces that make ultrapowers more than a rename each have a spec under `docs/ultrapowers/specs/` and land in later releases:
-
-- Piece 2: scaffold engine and baseline payload
-- Piece 3: task lifecycle skills
-- Piece 4: team memory
-- Piece 5: QA gatekeeper
+- Scaffold engine and baseline payload
+- Scaffold Knowledge base set and AI configurations for the full development lifecycle
+- Easy-to-repeat workflows and setup for new projects, eliminating the need for a human to repeat the same steps for every new project
+- Task lifecycle skills
+- Team memory
+- QA gatekeeper
 
 ## What's Inside
 

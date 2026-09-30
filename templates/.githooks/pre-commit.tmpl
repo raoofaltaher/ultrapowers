@@ -45,7 +45,18 @@ if [ -f ".agents/memory/MEMORY.md" ] && command -v node >/dev/null 2>&1 \
     fi
   done
   if [ -n "$memory_lint" ]; then
-    if ! node "$memory_lint" .agents/memory; then
+    # Lint the staged snapshot, not the working tree: an untracked draft must
+    # not block a clean commit, and a fix left unstaged must not hide a broken one.
+    snapshot="$(mktemp -d 2>/dev/null)" || snapshot=""
+    lint_dir=".agents/memory"
+    if [ -n "$snapshot" ] && git ls-files -z -- .agents/memory .agents/ultrapowers.json \
+        | xargs -0 git checkout-index --prefix="$snapshot/" -- 2>/dev/null; then
+      lint_dir="$snapshot/.agents/memory"
+    fi
+    lint_status=0
+    node "$memory_lint" "$lint_dir" || lint_status=$?
+    if [ -n "$snapshot" ]; then rm -rf "$snapshot"; fi
+    if [ "$lint_status" -ne 0 ]; then
       echo "pre-commit: team-memory lint found problems (listed above). Fix them, or run 'team-memory lint' with your agent." >&2
       exit 1
     fi
