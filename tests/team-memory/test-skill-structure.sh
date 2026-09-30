@@ -33,6 +33,8 @@ check "body says your human partner, never the user" bash -c '
 check "body reads repos from the project config, not hard-coded names" bash -c '
   grep -q "repos" "$1" && grep -q "ultrapowers.json" "$1" && ! grep -Eq "git -C [a-z]" "$1"' _ "$SKILL"
 check "body has a Red Flags table" bash -c 'grep -q "^## Red flags" "$1" && grep -q "^| Thought | Reality |" "$1"' _ "$SKILL"
+check "promotion reduces metadata to type and never promotes a user-type memory" bash -c '
+  grep -q "reduced to \`type\`" "$1" && grep -qi "never promote" "$1"' _ "$SKILL"
 check "Muse manifest lists team-memory" bash -c '
   node -e "const m=JSON.parse(require(\"fs\").readFileSync(process.argv[1],\"utf8\")); process.exit(m.capabilities.skills.some(s=>s.id===\"team-memory\"&&s.path===\"skills/team-memory/SKILL.md\")?0:1)" "$1"' _ "$REPO_ROOT/.muse-plugin/plugin.json"
 

@@ -43,7 +43,7 @@ Git-native shared memory for every coding agent on the project. The store is `.a
 7. Run **lint** on the store and fix every finding.
 8. Commit on the current branch with the trailer `<memory.trailer>: <dir>/<name>.md` (default `Memory-Ref`). The entry is reviewed in the same change request as the work that produced it.
 
-Promotion from personal memory: a personal auto-memory file that passes the gate is copied into the matching folder, gains `date` (and `metadata.type` when the personal layer left it out), gets its index line, and goes through steps 6 to 8.
+Promotion from personal memory: a personal auto-memory file that passes the gate is copied into the matching folder with `name` and `description` kept, its `metadata` reduced to `type` (gotcha, decision or subsystem; a personal layer's own types and extra keys fail the lint) and `date` added. It gets its index line and goes through steps 6 to 8. Never promote a memory about a person (a `user`-type memory).
 
 ## recall: find prior knowledge (the ladder, in order)
 

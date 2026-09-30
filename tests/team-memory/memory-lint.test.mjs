@@ -198,10 +198,16 @@ test('CRLF index and entries lint exactly like LF', () => {
   assert.deepEqual(lintStore(store), []);
 });
 
-test('a promoted personal auto-memory file passes unchanged after adding date', () => {
-  const promoted = '---\nname: promoted-fact\ndescription: Copied from a personal memory layer\nmetadata:\n  type: gotcha\ndate: 2026-09-30\n---\nThe fact.\n\n**Why:** cause.\n\n**How to apply:** action.\n';
-  const { store } = makeStore({ entries: [{ name: 'promoted-fact', type: 'gotcha', raw: promoted }] });
-  assert.deepEqual(lintStore(store), []);
+test('a real personal auto-memory file lints clean once promoted: metadata reduced to type, date added', () => {
+  const body = 'The fact.\n\n**Why:** cause.\n\n**How to apply:** action.\n';
+  // The key shape a personal auto-memory layer writes: its own type set and
+  // extra metadata keys. Adding date alone is not a promotion.
+  const personal = '---\nname: promoted-fact\ndescription: Copied from a personal memory layer\nmetadata:\n  node_type: memory\n  type: feedback\n  originSessionId: s-1\n  modified: 2026-09-01\ndate: 2026-09-30\n---\n' + body;
+  const raw = makeStore({ entries: [{ name: 'promoted-fact', type: 'gotcha', raw: personal }] });
+  assert.deepEqual(codes(lintStore(raw.store)).sort(), ['FM_KEYS', 'FM_TYPE']);
+  const promoted = '---\nname: promoted-fact\ndescription: Copied from a personal memory layer\nmetadata:\n  type: gotcha\ndate: 2026-09-30\n---\n' + body;
+  const done = makeStore({ entries: [{ name: 'promoted-fact', type: 'gotcha', raw: promoted }] });
+  assert.deepEqual(lintStore(done.store), []);
 });
 
 test('CLI prints one line per finding and exits 1; clean store exits 0 with no output', () => {

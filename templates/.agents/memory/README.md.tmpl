@@ -26,7 +26,7 @@ When you want to drive it explicitly, tell your agent:
 
 ## Entry format: one fact per file
 
-The file name is the entry's `name` plus `.md`; `name` is a kebab-case slug. The frontmatter is the Claude Code auto-memory schema plus `date`, so a personal memory file can be promoted by copying it here and adding `date`.
+The file name is the entry's `name` plus `.md`; `name` is a kebab-case slug. The frontmatter follows the Claude Code auto-memory schema plus `date`. To promote a personal memory file, copy it here, keep `name` and `description`, replace `metadata` with only `type` (gotcha, decision or subsystem, by what the fact is), and add `date`: a personal layer's own types and extra keys fail the lint. Never promote a memory about a person (a `user`-type memory).
 
 ```markdown
 ---

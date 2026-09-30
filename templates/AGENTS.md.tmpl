@@ -17,7 +17,7 @@ Shared memory for every coding agent on this project lives in `.agents/memory/` 
 
 - Read `.agents/memory/MEMORY.md` at session start. Open a topic file only when its index line is relevant to the work.
 - Save a learning only when it is ALL of: verified (tested or observed here, not inferred), durable (still true next month), expensive (15 minutes or more to rediscover), not derivable (not already in code, docs, specs or git history). Never store: secrets, tokens, credentials, URLs embedding auth, personal data, customer data.
-- Promotion: a personal auto-memory file that meets the four criteria is copied into the matching folder with a `date` line added; the `ultrapowers:team-memory` skill does this and lints the result.
+- Promotion: a personal auto-memory file that meets the four criteria is copied into the matching folder with its `metadata` reduced to `type` (gotcha, decision or subsystem) and a `date` line added; memories about a person (`user` type) are never promoted. The `ultrapowers:team-memory` skill does this and lints the result.
 - Commits that land or motivate an entry carry the trailer `Memory-Ref: <dir>/<file>.md`.
 - Use the `ultrapowers:team-memory` skill for remember, recall, prune and lint.
 

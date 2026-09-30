@@ -44,6 +44,12 @@ check "README.md.tmpl names the trailer, the ladder, prune and the secret gate" 
 check "store templates contain no reference-project data" bash -c '
   ! grep -rEi "https?://|@[a-z0-9-]+\.[a-z]{2,}|gitlab|github|bitbucket|winget|nextit|next-it|DRI:" "$1"' _ "$STORE_TPL"
 
+# Promotion is a transformation, not a copy: a personal auto-memory layer has
+# its own metadata types and keys, which the D2 schema rejects.
+check "README.md.tmpl and AGENTS.md.tmpl describe promotion as reducing metadata to type" bash -c '
+  ! grep -q "promoted by copying it here and adding" "$1" && grep -q "only \`type\`" "$1" &&
+  grep -q "reduced to \`type\`" "$2" && grep -qi "never promote" "$1" && grep -qi "never promoted" "$2"' _ "$STORE_TPL/README.md.tmpl" "$TPL/AGENTS.md.tmpl"
+
 check "ultrapowers.json.tmpl has the memory section with the four keys" bash -c '
   grep -q "\"memory\": {" "$1" && grep -q "\"path\": \".agents/memory\"" "$1" &&
   grep -q "\"indexBudget\": 150" "$1" && grep -q "\"rediscoveryMinutes\": 15" "$1" &&
