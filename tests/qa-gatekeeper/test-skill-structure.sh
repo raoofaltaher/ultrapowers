@@ -92,7 +92,7 @@ if [[ -f "$ENTRY" ]]; then
   entry_body="$(body "$ENTRY")"
   if printf '%s\n' "$entry_fm" | grep -Eq '^arguments:'; then fail "qa-specialist: no arguments key"; else pass "qa-specialist: no arguments key"; fi
   entry_desc="$(printf '%s\n' "$entry_fm" | sed -n 's/^description: //p')"
-  for word in then step dispatch preflight marker; do
+  for word in 'then' step dispatch preflight marker; do
     if printf '%s' "$entry_desc" | grep -qiw -- "$word"; then
       fail "qa-specialist: description avoids workflow word '$word'"
     else

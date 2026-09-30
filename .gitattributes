@@ -4,6 +4,10 @@ hooks/session-start text eol=lf
 hooks/team-memory-nudge text eol=lf
 hooks/team-memory-postcompact text eol=lf
 hooks/qa-guardrail text eol=lf
+# QA gatekeeper: psql meta-commands and the judge fixtures must stay LF
+*.sql text eol=lf
+tests/qa-gatekeeper/fixtures/judge/*.trx text eol=lf
+tests/qa-gatekeeper/fixtures/judge/*.xml text eol=lf
 hooks/lib/* text eol=lf
 # Skill helper scripts are often extensionless; keep them LF too
 skills/*/scripts/* text eol=lf
