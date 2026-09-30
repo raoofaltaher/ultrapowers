@@ -10,14 +10,17 @@ if [ -n "$GITLEAKS" ] && ! "$GITLEAKS" version >/dev/null 2>&1; then
   echo "warning: $GITLEAKS is present but cannot execute (Application Control?); trying Docker." >&2
   GITLEAKS=""
 fi
+# Use the project's rules when .gitleaks.toml exists, gitleaks' defaults otherwise.
+set --
+if [ -f .gitleaks.toml ]; then set -- --config .gitleaks.toml; fi
 if [ -n "$GITLEAKS" ]; then
-  "$GITLEAKS" git --pre-commit --staged --no-banner --config .gitleaks.toml || {
+  "$GITLEAKS" git --pre-commit --staged --no-banner "$@" || {
     echo "gitleaks: potential secret in staged changes - commit blocked." >&2
     exit 1
   }
 elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd):/repo:ro" -w /repo zricethezav/gitleaks:latest \
-    git --pre-commit --staged --no-banner --config .gitleaks.toml || {
+    git --pre-commit --staged --no-banner "$@" || {
     echo "gitleaks (docker): potential secret in staged changes - commit blocked." >&2
     exit 1
   }
