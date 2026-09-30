@@ -230,6 +230,40 @@ ${toolMapping}
   return _bootstrapCache.get(toolMapping);
 };
 
+// --- Team memory (ultrapowers piece 4) --------------------------------------
+//
+// OpenCode runs no shell hooks, so the plugin carries what hooks/team-memory-nudge
+// and hooks/team-memory-postcompact carry elsewhere: one line on the first user
+// message and one line after compaction. Best-effort and silent without a
+// store. findMemoryStore has the same contract as the bash find_memory_store:
+// the relative POSIX path from startDir to the nearest .agents/memory/ that
+// holds a MEMORY.md, or null.
+export const TEAM_MEMORY_MARKER = 'Team-memory:';
+export const POSTCOMPACT_MARKER = 'Context was just compacted.';
+
+export const findMemoryStore = (startDir) => {
+  let dir;
+  try {
+    dir = fs.realpathSync(path.resolve(startDir || process.cwd()));
+  } catch {
+    return null;
+  }
+  let prefix = '';
+  for (;;) {
+    if (fs.existsSync(path.join(dir, '.agents', 'memory', 'MEMORY.md'))) return `${prefix}.agents/memory/`;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+    prefix = `../${prefix}`;
+  }
+};
+
+export const teamMemoryNudge = (store) =>
+  `${TEAM_MEMORY_MARKER} if this session verified a durable, expensive-to-rediscover, non-derivable fact, save it to \`${store}\` with the team-memory skill.`;
+
+export const teamMemoryPostcompact = (store) =>
+  `${POSTCOMPACT_MARKER} If team-worthy learnings surfaced earlier and are not yet saved to \`${store}\`, save them now with the team-memory skill.`;
+
 // --- Task-subagent (child session) detection --------------------------------
 //
 // #2160: the bootstrap drives controller workflows (brainstorming, planning,
@@ -307,6 +341,10 @@ const isChildSession = async (fetchSession, sessionID) => {
  * (experimental.chat.messages.transform).
  */
 export const UltrapowersPlugin = async ({ client, directory }) => {
+  // Team memory: sessions OpenCode compacted since our last injection. V1
+  // publishes session.compacted on the event bus; the transform drains this.
+  const compactedSessions = new Set();
+
   return {
     // Inject skills path into live config so OpenCode discovers ultrapowers skills
     // without requiring manual symlinks or config file edits.
@@ -319,6 +357,14 @@ export const UltrapowersPlugin = async ({ client, directory }) => {
       config.skills.paths = config.skills.paths || [];
       if (!config.skills.paths.includes(ultrapowersSkillsDir)) {
         config.skills.paths.push(ultrapowersSkillsDir);
+      }
+    },
+
+    // Team memory: remember which sessions were just compacted so the next
+    // transform appends the post-compaction rescue line exactly once.
+    event: async ({ event }) => {
+      if (event?.type === 'session.compacted' && typeof event.properties?.sessionID === 'string') {
+        compactedSessions.add(event.properties.sessionID);
       }
     },
 
@@ -337,6 +383,19 @@ export const UltrapowersPlugin = async ({ client, directory }) => {
       const firstUser = output.messages.find(m => m.info.role === 'user');
       if (!firstUser || !firstUser.parts.length) return;
 
+      // Team memory: post-compaction rescue, once per compaction, appended to
+      // the newest user message. Silent without a store.
+      const sessionID = firstUser.info.sessionID;
+      if (compactedSessions.has(sessionID)) {
+        compactedSessions.delete(sessionID);
+        const store = findMemoryStore(directory);
+        const lastUser = [...output.messages].reverse().find(m => m.info.role === 'user');
+        if (store && lastUser && lastUser.parts.length
+            && !lastUser.parts.some(p => p.type === 'text' && p.text.startsWith(POSTCOMPACT_MARKER))) {
+          lastUser.parts.push({ ...lastUser.parts[0], type: 'text', text: teamMemoryPostcompact(store) });
+        }
+      }
+
       // Guard: skip if first user message already contains bootstrap.
       if (firstUser.parts.some(p => p.type === 'text' && p.text.includes('EXTREMELY_IMPORTANT'))) return;
 
@@ -351,6 +410,10 @@ export const UltrapowersPlugin = async ({ client, directory }) => {
 
       const ref = firstUser.parts[0];
       firstUser.parts.unshift({ ...ref, type: 'text', text: withProjectNudge(bootstrap, directory, firstUser.info.sessionID) });
+
+      // Team memory: the one-line nudge rides the first-message bootstrap.
+      const store = findMemoryStore(directory);
+      if (store) firstUser.parts.push({ ...ref, type: 'text', text: teamMemoryNudge(store) });
     }
   };
 };
@@ -381,6 +444,9 @@ async function setup(ctx) {
     return;
   }
   const projectDirectory = typeof ctx.directory === 'string' ? ctx.directory : null;
+  // Team memory: the project directory V2 hands us when it does, else the
+  // process working directory at activation.
+  const projectDir = projectDirectory ?? process.cwd();
 
   // 1. Register skills (one transform; one draft.add per skill)
   try {
@@ -443,13 +509,22 @@ async function setup(ctx) {
           event.sessionID,
         )) return;
 
+        // Team memory: nudge on the first message, rescue line when a
+        // compaction checkpoint is present. Silent without a store.
+        const store = findMemoryStore(typeof event.directory === 'string' ? event.directory : projectDir);
+        const compacted = event.messages.some(m => Array.isArray(m.content)
+          && m.content.some(p => p && p.type === 'compaction'));
+        const memoryLine = store ? (compacted ? teamMemoryPostcompact(store) : teamMemoryNudge(store)) : null;
+        const extra = memoryLine ? [{ type: 'text', text: memoryLine }] : [];
+
         // Native compaction can leave only an opaque checkpoint. Keep it
         // intact and append the transient bootstrap as a user message.
         const text = withProjectNudge(bootstrap, typeof event.directory === 'string' ? event.directory : projectDirectory, event.sessionID);
         if (firstUser) {
           firstUser.content.unshift({ type: 'text', text });
+          firstUser.content.push(...extra);
         } else {
-          event.messages.push({ role: 'user', content: [{ type: 'text', text }] });
+          event.messages.push({ role: 'user', content: [{ type: 'text', text }, ...extra] });
         }
       } catch (err) {
         // Never let hook callback errors break the request pipeline.
