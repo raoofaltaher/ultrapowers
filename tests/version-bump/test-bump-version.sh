@@ -98,4 +98,16 @@ else
   echo "SKIP: missing-jq case (jq shares a PATH directory with core tools)"
 fi
 
+# The scaffold marker, the hook and the injectors accept only plain dotted
+# versions, so a prerelease or suffixed version must be refused here.
+for bad in 1.3.0-beta.1 1.3.0+build 1.3.0rc1; do
+  pre_repo="$TEST_ROOT/pre-$bad"
+  make_fixture "$pre_repo" $'name: ultrapowers\nversion: 1.2.3'
+  if /bin/bash "$pre_repo/scripts/bump-version.sh" "$bad" >"$TEST_ROOT/pre.out" 2>&1; then
+    fail "bump-version accepted $bad"
+  fi
+  [[ "$(jq -r '.version' "$pre_repo/package.json")" == "1.2.3" ]] \
+    || fail "package.json changed after refusing $bad"
+done
+
 echo "Version-bump tests passed"

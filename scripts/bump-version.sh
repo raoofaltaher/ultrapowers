@@ -232,9 +232,10 @@ cmd_audit() {
 cmd_bump() {
   local new_version="$1"
 
-  # Validate semver-ish format
-  if ! echo "$new_version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+'; then
-    echo "error: '$new_version' doesn't look like a version (expected X.Y.Z)" >&2
+  # Plain X.Y.Z only: the scaffold marker and every nudge reader reject a
+  # prerelease or build suffix, so such a version would break upgrades.
+  if ! echo "$new_version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+    echo "error: '$new_version' is not a plain version (expected X.Y.Z, no suffix)" >&2
     exit 1
   fi
 
