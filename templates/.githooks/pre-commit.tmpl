@@ -1,0 +1,26 @@
+#!/bin/sh
+GITLEAKS="$(command -v gitleaks 2>/dev/null)"
+if [ -z "$GITLEAKS" ] && [ -n "$LOCALAPPDATA" ]; then
+  for candidate in "$LOCALAPPDATA"/Microsoft/WinGet/Links/gitleaks.exe \
+                   "$LOCALAPPDATA"/Microsoft/WinGet/Packages/Gitleaks.Gitleaks_*/gitleaks.exe; do
+    if [ -x "$candidate" ]; then GITLEAKS="$candidate"; break; fi
+  done
+fi
+if [ -n "$GITLEAKS" ] && ! "$GITLEAKS" version >/dev/null 2>&1; then
+  echo "warning: $GITLEAKS is present but cannot execute (Application Control?); trying Docker." >&2
+  GITLEAKS=""
+fi
+if [ -n "$GITLEAKS" ]; then
+  "$GITLEAKS" git --pre-commit --staged --no-banner --config .gitleaks.toml || {
+    echo "gitleaks: potential secret in staged changes - commit blocked." >&2
+    exit 1
+  }
+elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd):/repo:ro" -w /repo zricethezav/gitleaks:latest \
+    git --pre-commit --staged --no-banner --config .gitleaks.toml || {
+    echo "gitleaks (docker): potential secret in staged changes - commit blocked." >&2
+    exit 1
+  }
+else
+  echo "warning: gitleaks unavailable (no working binary, no docker); secret scan skipped." >&2
+fi

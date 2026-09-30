@@ -1,0 +1,16 @@
+title = "{{name}} gitleaks"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Placeholders that the scaffold uses on purpose"
+regexes = [
+  '''\$\{[A-Z0-9_]+\}''',
+  '''\$\{env:[A-Z0-9_]+\}''',
+  '''\$\{input:[a-z0-9-]+\}''',
+  '''\{env:[A-Z0-9_]+\}''',
+]
+paths = [
+  '''\.agents/mcp-secrets\.env\.example''',
+]
