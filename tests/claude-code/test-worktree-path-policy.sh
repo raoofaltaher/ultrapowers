@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# The old global path is asserted as a literal string, so the tilde must not expand.
+# shellcheck disable=SC2088
 # Regression check: Ultrapowers should not route new worktrees through the old
 # global worktree directory.
 
