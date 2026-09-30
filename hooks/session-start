@@ -57,7 +57,9 @@ json_string_value() {
         rest="${rest#"${rest%%[![:space:]]*}"}"
     fi
     [ "${rest:0:1}" = '"' ] || return 1
-    rest="${rest:1}"
+    # No version or path is longer than this; the cap keeps the per-character
+    # copies below small, so a huge value cannot stall the hook.
+    rest="${rest:1:4096}"
     while [ -n "$rest" ]; do
         ch="${rest:0:1}"
         case "$ch" in
@@ -157,7 +159,7 @@ project_nudge() {
         printf '%s' "$NUDGE_SCAFFOLD"
         return 0
     fi
-    marker_text="$(cat "${root%/}/.agents/ultrapowers.json" 2>/dev/null || true)"
+    marker_text="$(head -c 65536 "${root%/}/.agents/ultrapowers.json" 2>/dev/null || true)"
     if ! marker_looks_valid "$marker_text" || ! marker_version="$(json_string_value "$marker_text" pluginVersion)" || ! version_is_plain "$marker_version"; then
         printf '%s' "$NUDGE_REPAIR"
         return 0

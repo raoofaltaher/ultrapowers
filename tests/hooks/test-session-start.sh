@@ -285,6 +285,21 @@ assert_command_output \
     "nested" "$NUDGE_REPAIR" "$HOSTILE_TEXT" "$nudge_home" \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK_UNDER_TEST" <"$(stdin_for hostile "$FIXTURES/hostile")"
 
+# A huge marker value must not stall the hook past its timeout: the parser
+# once copied the rest of the text for every character it read.
+make_marker "$FIXTURES/huge" "$(head -c 40000 /dev/zero | tr '\0' x)"
+huge_start=$SECONDS
+assert_command_output \
+    "40 KB marker value: repair nudge" \
+    "nested" "$NUDGE_REPAIR" "" "$nudge_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK_UNDER_TEST" <"$(stdin_for huge "$FIXTURES/huge")"
+huge_elapsed=$((SECONDS - huge_start))
+if [ "$huge_elapsed" -le 3 ]; then
+    pass "40 KB marker value is read in ${huge_elapsed}s (at most 3)"
+else
+    fail "40 KB marker value is read in ${huge_elapsed}s (at most 3)"
+fi
+
 assert_command_output \
     "empty stdin falls back to the working directory (current workspace)" \
     "nested" "" "$ALL_NUDGES" "$nudge_home" \
