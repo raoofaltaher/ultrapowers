@@ -55,6 +55,14 @@
         "path": "skills/qa-lane-3-api/SKILL.md"
       },
       {
+        "id": "qa-lane-4-db",
+        "path": "skills/qa-lane-4-db/SKILL.md"
+      },
+      {
+        "id": "qa-lane-5-observability",
+        "path": "skills/qa-lane-5-observability/SKILL.md"
+      },
+      {
         "id": "receiving-code-review",
         "path": "skills/receiving-code-review/SKILL.md"
       },
