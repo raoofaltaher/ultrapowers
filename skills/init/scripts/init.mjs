@@ -654,6 +654,12 @@ function scaffoldNextSteps(opts, report, repos) {
   if (repos.length) {
     steps.push(`Nested clones detected and ignored by the managed .gitignore block: ${repos.map((r) => r.name).join(', ')}`);
   }
+  // Claude Code skips AGENTS.md whenever CLAUDE.md exists, so a kept file needs the import.
+  for (const [file, harness] of [['CLAUDE.md', 'Claude Code'], ['GEMINI.md', 'Gemini CLI']]) {
+    if (!report.skipped.includes(file)) continue;
+    if (/^@(\.\/)?AGENTS\.md\s*$/m.test(fs.readFileSync(path.join(opts.root, file), 'utf8'))) continue;
+    steps.push(`Your existing ${file} does not import AGENTS.md. Add @AGENTS.md as its first line, or ${harness} never reads the shared instructions.`);
+  }
   const bestEffort = BEST_EFFORT_TARGETS.filter((t) => report.written.includes(t));
   if (bestEffort.length) {
     steps.push(`Best-effort files, verify against the vendor docs: ${bestEffort.join(', ')}`);

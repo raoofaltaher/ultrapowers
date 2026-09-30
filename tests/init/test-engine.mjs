@@ -241,6 +241,17 @@ test('a pre-existing AGENTS.md stays byte-identical and is reported skipped', ()
   assert.equal(marker.written.includes('AGENTS.md'), false);
 });
 
+test('a pre-existing CLAUDE.md without the AGENTS.md import gets a next step; one with it does not', () => {
+  const root = tmpRepo();
+  fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# Our Claude notes\n\nUse tabs.\n');
+  fs.writeFileSync(path.join(root, 'GEMINI.md'), '# Gemini\n@AGENTS.md\n');
+  const report = run(['scaffold', '--root', root, '--name', 'Demo', '--platform', 'linux']);
+  assert.ok(report.skipped.includes('CLAUDE.md') && report.skipped.includes('GEMINI.md'));
+  const importSteps = report.nextSteps.filter((s) => s.includes('@AGENTS.md'));
+  assert.equal(importSteps.length, 1, JSON.stringify(report.nextSteps));
+  assert.match(importSteps[0], /CLAUDE\.md/);
+});
+
 test('dry-run writes nothing and lists what scaffold would write', () => {
   const root = tmpRepo();
   const report = run(['scaffold', '--root', root, '--name', 'Demo', '--dry-run', '--platform', 'linux']);
