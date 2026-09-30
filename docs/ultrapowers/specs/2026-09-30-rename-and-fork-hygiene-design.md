@@ -15,7 +15,7 @@ Every later piece adds skills that reference the namespace `ultrapowers:<skill>`
 | Id | Decision | Rationale |
 |----|----------|-----------|
 | D1 | Rename every occurrence, including upstream history documents. | Owner's choice. One name in the repo, no dual vocabulary. |
-| D2 | The only permitted occurrences of the old name after the rename are: the upstream copyright line in `LICENSE`, one fork notice in `README.md`, and this spec and its plan. | MIT attribution is mandatory. The spec must name what it replaces. |
+| D2 | The only permitted occurrences of the old name after the rename are: the upstream copyright line in `LICENSE`, one fork notice in `README.md`, the owner's raw requirements document `docs/ultrapowers-requirements.md`, and this spec and its plan. | MIT attribution is mandatory. The requirements doc records the owner's own words. The spec must name what it replaces. |
 | D3 | Version resets to `1.0.0`. The fork notice states the upstream version it was cut from. | Ultrapowers is a new plugin with its own release line. |
 | D4 | Plugin name `ultrapowers`; marketplace name `ultrapowers`; one plugin with source `./`; owner `raoofaltaher`; homepage and repository `https://github.com/raoofaltaher/ultrapowers`. | Matches the existing git remote. One repo serves as marketplace and plugin. |
 | D5 | Author fields name the fork owner by git name only; no email in manifests. | Owner did not ask for an email to be published. |
@@ -72,7 +72,7 @@ Text substitutions the blind pass produces, listed so their consumers can be che
 - Upstream URLs `github.com/obra/superpowers` and `obra/superpowers` become `github.com/raoofaltaher/ultrapowers` and `raoofaltaher/ultrapowers`. The sibling repos `superpowers-marketplace`, `superpowers-skills`, `superpowers-evals`, and the fork `prime-radiant-inc/openai-codex-plugins` have no fork equivalent; their mentions are removed with the sections that used them (see 4.3).
 - `hooks/session-start` keeps its file name, so `.gitattributes` needs no change.
 
-Excluded from the blind pass: `LICENSE`, this spec, its plan, `.git/`, `.remember/`, and binary assets.
+Excluded from the blind pass: `LICENSE`, `docs/ultrapowers-requirements.md`, this spec, its plan, `.git/`, `.remember/`, and binary assets.
 
 ### 4.3 Fork hygiene: deletions and rewrites
 
@@ -108,7 +108,7 @@ File: `skills/brainstorming/scripts/server.cjs`.
 
 ## 5. Acceptance criteria
 
-1. `grep -rIi superpowers . --exclude-dir=.git --exclude-dir=.remember` returns matches only in `LICENSE`, the README fork notice line, and the piece 1 spec and plan.
+1. `grep -rIi superpowers . --exclude-dir=.git --exclude-dir=.remember` returns matches only in `LICENSE`, the README fork notice line, `docs/ultrapowers-requirements.md`, and the piece 1 spec and plan.
 2. `find . -path ./.git -prune -o -iname '*superpowers*' -print` returns nothing.
 3. `scripts/bump-version.sh --check` reports `1.0.0` in all eleven registered files and `--audit` finds no stray version strings.
 4. Every offline suite passes: `bash tests/hooks/test-session-start.sh`; `node --test tests/pi/test-pi-extension.mjs`; `bash tests/opencode/run-tests.sh` (unit tests only); `python -m pytest tests/hermes`; `bash tests/kimi/run-tests.sh`; `bash tests/devin/test-devin-plugin.sh`; `bash tests/codex/test-marketplace-manifest.sh`; `bash tests/version-bump/test-bump-version.sh`; the shell-lint tests; `npm test` in `tests/brainstorm-server`; `bash tests/antigravity/run-tests.sh`; the non-model scripts in `tests/claude-code/` (`test-sdd-workspace.sh`, `test-executing-plans-scripts.sh`, `test-worktree-path-policy.sh`); `bash tests/diagnosing-ultrapowers/test-skill-structure.sh`.
