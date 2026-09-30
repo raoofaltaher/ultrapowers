@@ -52,7 +52,7 @@ Promotion from personal memory: a personal auto-memory file that passes the gate
 3. Git history: `git log --grep="<topic>" --oneline` and `git log -S"<symbol>" --oneline` at the project root, then once per entry in `repos` of `.agents/ultrapowers.json` with `git -C <repos[].path>`. Search the trailer too: `git log --grep="Memory-Ref"`.
 4. The forge or tracker, when tools for it are available in this session: change requests, issues, review threads. Descriptions and review threads hold the "why".
 5. Personal memory layers, where installed.
-6. If the answer was hard-won at rung 3 or deeper, write it back with **remember**. Archaeology feeds the corpus.
+6. If the answer was hard-won at rung 3 or deeper, write it back with **remember**. A fact found only by this archaeology passes Not derivable: that criterion rules out what code, docs or specs state outright, not what a commit body buried. Archaeology feeds the corpus.
 
 ## prune: periodic hygiene
 
