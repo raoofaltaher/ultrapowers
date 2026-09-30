@@ -14,6 +14,19 @@
 ULTRAPOWERS_MARKER='.agents/ultrapowers.json'
 ULTRAPOWERS_DEFAULT_TICKET_PATTERN='^#?[A-Za-z0-9][A-Za-z0-9._-]*$'
 
+# Prelude for the node readers: parse the marker into c, tolerate a UTF-8 byte
+# order mark, and turn a parse failure into one ERROR line and exit 3 instead
+# of a stack trace and empty output.
+ULTRAPOWERS_READ_JS='
+let c;
+try {
+  c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8").replace(/^﻿/, ""));
+} catch (e) {
+  process.stderr.write("ERROR: .agents/ultrapowers.json is not valid JSON: " + String(e.message).split("\n")[0] + "\n");
+  process.exit(3);
+}
+'
+
 have_node() {
   [ -z "${ULTRAPOWERS_NO_NODE:-}" ] || return 1
   command -v node >/dev/null 2>&1
@@ -38,8 +51,7 @@ find_root() {
 config_string() { # $1=root $2=key $3=default -> value without trailing newline
   cfg="$1/$ULTRAPOWERS_MARKER"
   if have_node; then
-    node -e '
-const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    node -e "$ULTRAPOWERS_READ_JS"'
 const v = c[process.argv[2]];
 process.stdout.write(typeof v === "string" && v !== "" ? v : process.argv[3]);
 ' "$cfg" "$2" "$3"
@@ -52,8 +64,7 @@ process.stdout.write(typeof v === "string" && v !== "" ? v : process.argv[3]);
 config_repos() { # $1=root -> lines: name<TAB>path<TAB>area ; ".<TAB>.<TAB>-" when none
   cfg="$1/$ULTRAPOWERS_MARKER"
   if have_node; then
-    node -e '
-const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    node -e "$ULTRAPOWERS_READ_JS"'
 const repos = Array.isArray(c.repos)
   ? c.repos.filter(r => r && typeof r.name === "string" && r.name !== "")
   : [];
@@ -97,11 +108,20 @@ repo_path() { # $1=root $2=repo name -> absolute path; unknown name -> ERROR, rc
 }
 
 validate_ticket() { # $1=root $2=id -> rc 0 ok; rc 2 with ERROR
-  pat=$(config_string "$1" ticketPattern "$ULTRAPOWERS_DEFAULT_TICKET_PATTERN")
+  pat=$(config_string "$1" ticketPattern "$ULTRAPOWERS_DEFAULT_TICKET_PATTERN") || return 2
+  [ -n "$pat" ] || pat=$ULTRAPOWERS_DEFAULT_TICKET_PATTERN
   if [ -z "$2" ]; then
     printf 'ERROR: ticket id is empty\n' >&2
     return 2
   fi
+  # The id becomes a folder name under tasks/, specs/, plans/ and reviews/, so
+  # anything that names another path is refused whatever ticketPattern allows.
+  case "$2" in
+    . | .. | -* | */* | *\\* | *[[:space:]]*)
+      printf 'ERROR: ticket [%s] is not a plain folder name (no /, backslash, whitespace, leading -, . or ..)\n' "$2" >&2
+      return 2
+      ;;
+  esac
   if printf '%s\n' "$2" | grep -Eq -- "$pat"; then
     return 0
   fi

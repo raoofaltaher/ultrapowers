@@ -4,8 +4,10 @@
 #   scaffold-task.sh check  <ID>             validate the id; print EXISTS or absent per folder
 #   scaffold-task.sh create <ID> [title...]  create the four folders, .gitkeep files and the brief
 #   scaffold-task.sh commit <ID>             stage the four folders and commit once
+#                                            (=== COMMITTED === or === NOTHING-TO-COMMIT ===)
 #
-# Exit codes: 0 ok; 1 not scaffolded or usage; 2 ticket rejected; 3 tasks/<ID> already exists.
+# Exit codes: 0 ok; 1 not scaffolded, usage or a failed commit; 2 ticket rejected;
+# 3 tasks/<ID> already exists.
 # Every section is marked === NAME ===. Any line containing ERROR means stop.
 set -u
 
@@ -73,13 +75,26 @@ case "$mode" in
       printf 'ERROR: tasks/%s/%s.md is missing; run create first\n' "$id" "$id" >&2
       exit 1
     fi
-    trailer=$(config_string "$root" commitTrailer '')
+    trailer=$(config_string "$root" commitTrailer '') || exit 1
     msg=$(printf 'chore(%s): scaffold task\n\nFour ticket folders and the brief at tasks/%s/%s.md, created by ultrapowers:new-task.' "$id" "$id" "$id")
     if [ -n "$trailer" ]; then
       msg=$(printf '%s\n\n%s' "$msg" "$trailer")
     fi
-    git -C "$root" add -- "tasks/$id" "specs/$id" "plans/$id" "reviews/$id"
-    git -C "$root" commit -q -m "$msg" -- "tasks/$id" "specs/$id" "plans/$id" "reviews/$id"
+    set -- "tasks/$id" "specs/$id" "plans/$id" "reviews/$id"
+    if ! git -C "$root" add -- "$@"; then
+      printf 'ERROR: git add failed; nothing was committed\n' >&2
+      exit 1
+    fi
+    if git -C "$root" diff --cached --quiet -- "$@"; then
+      printf '=== NOTHING-TO-COMMIT ===\n'
+      printf 'NOTHING-TO-COMMIT: the four %s folders have no changes. Last commit:\n' "$id"
+      git -C "$root" log -1 --format='%h %s'
+      exit 0
+    fi
+    if ! git -C "$root" commit -q -m "$msg" -- "$@"; then
+      printf 'ERROR: git commit failed (see the message above); the files stay staged and nothing was committed\n' >&2
+      exit 1
+    fi
     printf '=== COMMITTED ===\n'
     git -C "$root" log -1 --format='%h %s'
     ;;

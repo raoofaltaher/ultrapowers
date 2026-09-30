@@ -720,6 +720,188 @@ test_task() {
     rm "$proj/specs/1234/diagram.png" "$proj/plans/1234/Plan.md"
 }
 
+test_review_fixes() {
+    echo "--- final review fixes ---"
+    local out err rc id label
+
+    # --- a failed commit is never reported as committed ---
+    local hooked="$TEST_ROOT/hooked"
+    bash "$FIXTURE" "$hooked" >/dev/null
+    mkdir -p "$hooked/.reject-hooks"
+    printf '#!/bin/sh\necho "rejected by test hook" >&2\nexit 1\n' > "$hooked/.reject-hooks/pre-commit"
+    chmod +x "$hooked/.reject-hooks/pre-commit"
+    git -C "$hooked" config core.hooksPath .reject-hooks
+    (cd "$hooked" && bash "$SCAFFOLD" create 5555 Hooked >/dev/null)
+    rc=0
+    out="$(cd "$hooked" && bash "$SCAFFOLD" commit 5555 2>&1)" || rc=$?
+    if [[ "$rc" -ne 0 && "$out" == *"ERROR"* && "$out" != *"=== COMMITTED ==="* ]]; then
+        pass "scaffold-task commit reports a rejected commit as an ERROR, not COMMITTED"
+    else
+        fail "scaffold-task commit reports a rejected commit as an ERROR, not COMMITTED"
+        echo "    exit: $rc"
+        echo "    out: $out"
+    fi
+    (cd "$hooked" && bash "$SCAFFOLD" create 5556 Hooked spec >/dev/null)
+    printf '# 5556 design\n' > "$hooked/specs/5556/Spec.md"
+    rc=0
+    out="$(cd "$hooked" && bash "$COMMIT_SPEC" 5556 "hooked" 2>&1)" || rc=$?
+    if [[ "$rc" -ne 0 && "$out" == *"ERROR"* && "$out" != *"=== COMMITTED ==="* ]]; then
+        pass "commit-spec reports a rejected commit as an ERROR, not COMMITTED"
+    else
+        fail "commit-spec reports a rejected commit as an ERROR, not COMMITTED"
+        echo "    exit: $rc"
+        echo "    out: $out"
+    fi
+    git -C "$hooked" config --unset core.hooksPath
+    (cd "$hooked" && bash "$SCAFFOLD" commit 5555 >/dev/null 2>&1) || true
+    rc=0
+    out="$(cd "$hooked" && bash "$SCAFFOLD" commit 5555 2>&1)" || rc=$?
+    if [[ "$rc" -eq 0 && "$out" == *"NOTHING-TO-COMMIT"* && "$out" != *"=== COMMITTED ==="* ]]; then
+        pass "scaffold-task commit with nothing new says NOTHING-TO-COMMIT"
+    else
+        fail "scaffold-task commit with nothing new says NOTHING-TO-COMMIT"
+        echo "    exit: $rc"
+        echo "    out: $out"
+    fi
+    (cd "$hooked" && bash "$COMMIT_SPEC" 5556 "first" >/dev/null 2>&1) || true
+    rc=0
+    out="$(cd "$hooked" && bash "$COMMIT_SPEC" 5556 "again" 2>&1)" || rc=$?
+    if [[ "$rc" -eq 0 && "$out" == *"NOTHING-TO-COMMIT"* && "$out" != *"=== COMMITTED ==="* ]]; then
+        pass "commit-spec with an unchanged Spec.md says NOTHING-TO-COMMIT"
+    else
+        fail "commit-spec with an unchanged Spec.md says NOTHING-TO-COMMIT"
+        echo "    exit: $rc"
+        echo "    out: $out"
+    fi
+
+    # --- an unreadable marker stops every script with one ERROR line ---
+    local badjson="$TEST_ROOT/badjson"
+    bash "$FIXTURE" "$badjson" >/dev/null
+    sed 's/"written": \[\],/"written": [],,/' "$badjson/.agents/ultrapowers.json" > "$badjson/cfg.tmp"
+    mv "$badjson/cfg.tmp" "$badjson/.agents/ultrapowers.json"
+    rc=0
+    err="$(cd "$badjson" && bash "$SCAFFOLD" create '../../outside' 2>&1 >/dev/null)" || rc=$?
+    if [[ "$rc" -ne 0 && "$err" == *"ERROR"* && "$err" == *"not valid JSON"* && "$err" != *"    at "* && ! -e "$TEST_ROOT/outside" ]]; then
+        pass "an invalid marker stops create with one ERROR line and writes nothing"
+    else
+        fail "an invalid marker stops create with one ERROR line and writes nothing"
+        echo "    exit: $rc"
+        echo "    err: $err"
+        [[ -e "$TEST_ROOT/outside" ]] && echo "    created: $TEST_ROOT/outside"
+    fi
+    rc=0
+    err="$(cd "$badjson" && bash "$PREFLIGHT" 1234 2>&1 >/dev/null)" || rc=$?
+    if [[ "$rc" -ne 0 && "$err" == *"not valid JSON"* && "$err" != *"    at "* ]]; then
+        pass "an invalid marker stops preflight with one ERROR line"
+    else
+        fail "an invalid marker stops preflight with one ERROR line"
+        echo "    exit: $rc"
+        echo "    err: $err"
+    fi
+
+    local bom="$TEST_ROOT/bom"
+    bash "$FIXTURE" "$bom" >/dev/null
+    { printf '\357\273\277'; cat "$bom/.agents/ultrapowers.json"; } > "$bom/cfg.tmp"
+    mv "$bom/cfg.tmp" "$bom/.agents/ultrapowers.json"
+    rc=0
+    out="$(cd "$bom" && bash "$PREFLIGHT" 1234 backend 2>&1)" || rc=$?
+    if [[ "$rc" -eq 0 && "$out" == *"SELECTED-BY-FOCUS (backend): api"* ]]; then
+        pass "a marker with a UTF-8 byte order mark is read (node)"
+    else
+        fail "a marker with a UTF-8 byte order mark is read (node)"
+        echo "    exit: $rc"
+        echo "    out: $out"
+    fi
+    rc=0
+    out="$(cd "$bom" && ULTRAPOWERS_NO_NODE=1 bash "$PREFLIGHT" 1234 backend 2>&1)" || rc=$?
+    if [[ "$rc" -eq 0 && "$out" == *"SELECTED-BY-FOCUS (backend): api"* ]]; then
+        pass "a marker with a UTF-8 byte order mark is read (sed)"
+    else
+        fail "a marker with a UTF-8 byte order mark is read (sed)"
+        echo "    exit: $rc"
+        echo "    out: $out"
+    fi
+
+    # --- ids that name a path are refused whatever the pattern says ---
+    local anything="$TEST_ROOT/anything"
+    bash "$FIXTURE" "$anything" '.*' >/dev/null
+    for id in '../1' '1/2' '1\2' '1 2' '.' '..' '-1' "$(printf '1\n2')"; do
+        rc=0
+        err="$(lib_call "$anything" validate_ticket "$anything" "$id" 2>&1)" || rc=$?
+        label="$(printf '%s' "$id" | tr '
+' '|')"
+        if [[ "$rc" -eq 2 && "$err" == *"ERROR"* ]]; then
+            pass "ticket id [$label] is refused even under ticketPattern .*"
+        else
+            fail "ticket id [$label] is refused even under ticketPattern .*"
+            echo "    exit: $rc"
+        fi
+    done
+    rc=0
+    err="$(lib_call "$TEST_ROOT/proj" validate_ticket "$TEST_ROOT/proj" "$(printf 'ok\n../../nl')" 2>&1)" || rc=$?
+    if [[ "$rc" -eq 2 ]]; then
+        pass "an id with a newline is refused under the default pattern"
+    else
+        fail "an id with a newline is refused under the default pattern"
+        echo "    exit: $rc"
+    fi
+    for id in '#12' 'PROJ-12.a_b'; do
+        rc=0
+        lib_call "$anything" validate_ticket "$anything" "$id" >/dev/null 2>&1 || rc=$?
+        if [[ "$rc" -eq 0 ]]; then
+            pass "ticket id [$id] is still accepted"
+        else
+            fail "ticket id [$id] is still accepted"
+            echo "    exit: $rc"
+        fi
+    done
+
+    # --- grounding ranks by brief terms matched and skips the knowledge base ---
+    local ranked="$TEST_ROOT/ranked"
+    mkdir -p "$ranked/.agents" "$ranked/src" "$ranked/tasks/1234" "$ranked/plans/55"
+    git init -q -b main "$ranked"
+    printf '{ "name": "ranked", "topology": "root", "repos": [] }\n' > "$ranked/.agents/ultrapowers.json"
+    for i in 1 2 3 4 5 6 7 8 9; do printf 'invoice note %s\n' "$i" > "$ranked/src/a$i.txt"; done
+    printf 'invoice rounding happens here\n' > "$ranked/src/total.py"
+    printf 'invoice rounding\ninvoice rounding\n' > "$ranked/tasks/1234/1234.md"
+    printf 'invoice\n' > "$ranked/plans/55/Plan.md"
+    out="$(cd "$ranked" && bash "$GROUND" 1234 . invoice rounding)"
+    if [[ "$(printf '%s\n' "$out" | grep ' hits  ' | head -n 1)" == *"src/total.py" ]]; then
+        pass "the file matching the most brief terms is listed first"
+    else
+        fail "the file matching the most brief terms is listed first"
+        echo "    out: $out"
+    fi
+    if [[ "$out" != *"tasks/1234"* && "$out" != *"plans/55"* ]]; then
+        pass "grounding the root skips the knowledge-base folders"
+    else
+        fail "grounding the root skips the knowledge-base folders"
+        echo "    out: $out"
+    fi
+
+    # --- the loader shows the knowledge base's own git state ---
+    local kbstate="$TEST_ROOT/kbstate"
+    bash "$FIXTURE" "$kbstate" >/dev/null
+    (cd "$kbstate" && bash "$SCAFFOLD" create 4321 KB state >/dev/null && bash "$SCAFFOLD" commit 4321 >/dev/null)
+    printf '# 4321 design\n' > "$kbstate/specs/4321/Spec.md"
+    out="$(cd "$kbstate" && bash "$MANIFEST" 4321)"
+    if [[ "$out" == *"?? specs/4321/Spec.md"* && "$out" == *"chore(4321): scaffold task"* ]]; then
+        pass "manifest reports uncommitted ticket documents and the ticket's commits"
+    else
+        fail "manifest reports uncommitted ticket documents and the ticket's commits"
+        echo "    out: $out"
+    fi
+
+    # --- a focus word that matches nothing says how area focus works ---
+    out="$(cd "$TEST_ROOT/proj" && bash "$PREFLIGHT" 1234 nosuchword)"
+    if [[ "$out" == *"FOCUS-NO-MATCH"* && "$out" == *'"area"'* ]]; then
+        pass "FOCUS-NO-MATCH explains how to give a repo an area"
+    else
+        fail "FOCUS-NO-MATCH explains how to give a repo an area"
+        echo "    out: $out"
+    fi
+}
+
 test_core_skill_edits() {
     echo "--- brainstorming and writing-plans KB routing ---"
     local b="$REPO_ROOT/skills/brainstorming/SKILL.md"
@@ -848,6 +1030,7 @@ main() {
     test_new_task
     test_brainstorm_task
     test_task
+    test_review_fixes
     test_core_skill_edits
     test_manifests
     test_skill_structure

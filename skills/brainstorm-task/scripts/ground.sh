@@ -1,7 +1,10 @@
 #!/bin/sh
 # ground.sh - Step 4 of ultrapowers:brainstorm-task: grep the brief's terms in
-# one repository and print at most eight candidate files, highest hit count
-# first. The cap is the point: the agent reads only what is listed here.
+# one repository and print at most eight candidate files: those matching the
+# most distinct terms first, then the most matching lines, then by path. The
+# cap is the point: the agent reads only what is listed here. Grounding the
+# root (.) skips the knowledge-base folders: the brief contains every term by
+# construction, and other tickets' documents are not code.
 #
 #   ground.sh <ID> <repo-name|.> <term> [term...]
 #
@@ -30,6 +33,36 @@ if [ ! -d "$dir" ]; then
   exit 2
 fi
 
+if git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then is_git=yes; else is_git=no; fi
+
+search() { # $1=-c|-l, then -e term ...; prints path:count or path, one per line
+  mode=$1
+  shift
+  if [ "$is_git" = yes ]; then
+    git -C "$dir" grep -I -i "$mode" -F --untracked "$@" -- . 2>/dev/null || true
+  else
+    (cd "$dir" && grep -rIiF "$mode" --exclude-dir=.git "$@" . 2>/dev/null | sed 's|^\./||') || true
+  fi
+}
+
+kb_filter() { # drop the knowledge-base folders when grounding the root
+  if [ "$repo" = "." ]; then
+    grep -v -e '^tasks/' -e '^specs/' -e '^plans/' -e '^reviews/' -e '^\.agents/' || true
+  else
+    cat
+  fi
+}
+
+# Distinct terms per file: one listing per term, counted with uniq -c.
+lists=''
+for t in "$@"; do
+  l=$(search -l -e "$t")
+  if [ -n "$l" ]; then
+    lists=$(printf '%s\n%s' "$lists" "$l")
+  fi
+done
+distinct=$(printf '%s\n' "$lists" | sed '/^$/d' | kb_filter | LC_ALL=C sort | uniq -c)
+
 # Turn "a b c" into "-e a -e b -e c" without arrays.
 n=$#
 i=0
@@ -39,22 +72,26 @@ while [ "$i" -lt "$n" ]; do
   set -- "$@" -e "$t"
   i=$((i + 1))
 done
+hits=$(search -c "$@" | kb_filter)
+
+tab=$(printf '\t')
+ranked=$({
+  printf '%s\n' "$distinct" | sed '/^$/d; s/^/D /'
+  printf '%s\n' "$hits" | sed '/^$/d; s/^/H /'
+} | awk '
+  /^D / { s = substr($0, 3); match(s, /^ *[0-9]+ /); d[substr(s, RLENGTH + 1)] = substr(s, 1, RLENGTH) + 0; next }
+  /^H / { s = substr($0, 3); c = s; sub(/.*:/, "", c); p = s; sub(/:[^:]*$/, "", p)
+          if (c + 0 > 0) print (d[p] + 0) "\t" (c + 0) "\t" p }
+' | LC_ALL=C sort -t "$tab" -k1,1nr -k2,2nr -k3,3)
+total=$(printf '%s\n' "$ranked" | grep -c . || true)
 
 printf '=== GROUNDING CANDIDATES: %s (ticket %s) ===\n' "$repo" "$id"
-if git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  hits=$(git -C "$dir" grep -I -i -c -F --untracked "$@" -- . 2>/dev/null || true)
-else
-  hits=$(cd "$dir" && grep -rIicF --exclude-dir=.git "$@" . 2>/dev/null | sed 's|^\./||' || true)
-fi
-sorted=$(printf '%s\n' "$hits" | grep -v ':0$' | grep -v '^$' | LC_ALL=C sort -t: -k2,2nr -k1,1 || true)
-total=$(printf '%s\n' "$sorted" | grep -c . || true)
-
 if [ "$total" -eq 0 ]; then
   printf '(0 files matched; widen the terms or pick another repository)\n'
   exit 0
 fi
-printf '%s\n' "$sorted" | head -n "$CAP" | while IFS= read -r line; do
-  printf '%5s hits  %s\n' "${line##*:}" "${line%:*}"
+printf '%s\n' "$ranked" | head -n "$CAP" | while IFS="$tab" read -r nt nl p; do
+  printf '%3s terms %5s hits  %s\n' "$nt" "$nl" "$p"
 done
 if [ "$total" -gt "$CAP" ]; then
   printf '(%s more files matched; not listed. The cap is %s files per repository, highest signal first.)\n' "$((total - CAP))" "$CAP"

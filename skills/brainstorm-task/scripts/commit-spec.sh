@@ -4,7 +4,9 @@
 #
 #   commit-spec.sh <ID> <one-line summary>
 #
-# Exit codes: 0 ok; 1 not scaffolded, usage or missing Spec.md; 2 ticket rejected.
+# Prints === COMMITTED === or, when Spec.md is unchanged, === NOTHING-TO-COMMIT ===.
+# Exit codes: 0 ok; 1 not scaffolded, usage, missing Spec.md or a failed commit;
+# 2 ticket rejected.
 set -u
 
 here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -25,12 +27,24 @@ if [ ! -f "$root/$spec" ]; then
   exit 1
 fi
 
-trailer=$(config_string "$root" commitTrailer '')
+trailer=$(config_string "$root" commitTrailer '') || exit 1
 msg=$(printf 'spec(%s): %s\n\nWritten by ultrapowers:brainstorm-task after a grounded brainstorming session.' "$id" "$summary")
 if [ -n "$trailer" ]; then
   msg=$(printf '%s\n\n%s' "$msg" "$trailer")
 fi
-git -C "$root" add -- "$spec"
-git -C "$root" commit -q -m "$msg" -- "$spec"
+if ! git -C "$root" add -- "$spec"; then
+  printf 'ERROR: git add failed; nothing was committed\n' >&2
+  exit 1
+fi
+if git -C "$root" diff --cached --quiet -- "$spec"; then
+  printf '=== NOTHING-TO-COMMIT ===\n'
+  printf 'NOTHING-TO-COMMIT: %s has no changes since its last commit:\n' "$spec"
+  git -C "$root" log -1 --format='%h %s' -- "$spec"
+  exit 0
+fi
+if ! git -C "$root" commit -q -m "$msg" -- "$spec"; then
+  printf 'ERROR: git commit failed (see the message above); %s stays staged and nothing was committed\n' "$spec" >&2
+  exit 1
+fi
 printf '=== COMMITTED ===\n'
 git -C "$root" log -1 --format='%h %s'

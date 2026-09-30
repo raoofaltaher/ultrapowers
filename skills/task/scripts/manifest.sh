@@ -69,6 +69,19 @@ else
 fi
 
 printf '\n=== REPO STATE ===\n'
+# The ticket's own documents live in the root repository, which is not one of
+# the declared repos, so report their commits and working-tree state first.
+printf -- '----- knowledge base (tasks, specs, plans, reviews for %s)  branch=%s -----\n' "$id" "$(branch_of "$root")"
+if git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  set -- "tasks/$id" "specs/$id" "plans/$id" "reviews/$id"
+  kblog=$(git -C "$root" log --oneline -10 -- "$@" 2>/dev/null || true)
+  if [ -n "$kblog" ]; then printf '%s\n' "$kblog"; else printf '(no commits touch these folders yet)\n'; fi
+  printf -- '-- working tree --\n'
+  st=$(git -C "$root" status --short --untracked-files=all -- "$@")
+  if [ -n "$st" ]; then printf '%s\n' "$st"; else printf '(clean)\n'; fi
+else
+  printf '(the knowledge base is not in a git repository)\n'
+fi
 tab=$(printf '\t')
 branch_report "$root" | while IFS="$tab" read -r n _p _a b; do
   d=$(repo_path "$root" "$n") || continue

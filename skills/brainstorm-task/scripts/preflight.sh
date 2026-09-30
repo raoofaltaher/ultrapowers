@@ -70,7 +70,7 @@ if [ $# -gt 0 ]; then
     names=$(printf '%s' "$sel" | tr '\n' ' ')
     printf 'SELECTED-BY-FOCUS (%s): %s\n' "$*" "${names% }"
   else
-    printf 'FOCUS-NO-MATCH (%s): no repo name or area matched; falling through\n' "$*"
+    printf 'FOCUS-NO-MATCH (%s): no repo name or area matched; falling through. To focus by area, add "area": "<word>" to repo entries in %s (init does not set it).\n' "$*" "$ULTRAPOWERS_MARKER"
   fi
 fi
 if [ -z "$sel" ]; then
