@@ -2242,7 +2242,7 @@ git commit -m "feat(task): read-only loader that reports where a ticket stands" 
 - Consumes: the S7 baseline from Task 2 (spec written to the default path despite the marker) as the failing test for this edit.
 - Produces: exactly one new bullet in each skill; nothing else in either body changes (spec D5).
 
-Grounding, quoted from the current files (before piece 1 the paths say `superpowers`; after piece 1 they say `ultrapowers`, which is the state this plan edits):
+Grounding, quoted from the current files (before piece 1 the paths carry the upstream name; after piece 1 they say `ultrapowers`, which is the state this plan edits):
 
 `skills/brainstorming/SKILL.md` line 135 (checklist, Architectural item 6), left unchanged by this task because spec 3.5 scopes the edit to the documentation step:
 

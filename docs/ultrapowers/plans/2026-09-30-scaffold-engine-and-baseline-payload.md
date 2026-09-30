@@ -3750,7 +3750,7 @@ git commit -m "feat(init): the init skill" -m "Detects the mode, asks up to thre
 ### Task 8: Session-start nudge in the bash hook
 
 **Files:**
-- Modify: `hooks/session-start:26-27` (line numbers after piece 1; the pre-rename file has the same numbering with `superpowers` names)
+- Modify: `hooks/session-start:26-27` (line numbers after piece 1; the pre-rename file has the same numbering with the upstream names)
 - Modify: `tests/hooks/test-session-start.sh` (new block inserted before the final status check, which starts at line 220 `if [[ "$FAILURES" -gt 0 ]]; then`)
 
 **Interfaces:**
@@ -5109,4 +5109,4 @@ Searched the plan for "TBD", "TODO", "implement later", "fill in", "similar to T
 
 ### 6. How the code in this plan was checked
 
-Every code block in Tasks 1 to 9 was run in a scratch copy of the repository with piece 1's rename simulated (`superpowers` to `ultrapowers` in names and paths, version `1.0.0`), on Windows with Git Bash, Node 26 and Python 3.14: the leak scan, `test-engine.mjs` (21), `test-mcp-transforms.mjs` (13), `test-modes.mjs` (13), `test-nudge-injectors.mjs` (20), `test-skill-structure.sh` (48 checks), the extended hook suite (20), `tests/hermes` (29), `tests/pi` (6), and the OpenCode bootstrap-caching and session suites all passed, and each new suite was also run against the code before its task to confirm the failures the "see it fail" steps name. ShellCheck was not available there, so the lint steps are unverified; the pressure scenarios need live sessions and were not run.
+Every code block in Tasks 1 to 9 was run in a scratch copy of the repository with piece 1's rename simulated (the upstream name to `ultrapowers` in names and paths, version `1.0.0`), on Windows with Git Bash, Node 26 and Python 3.14: the leak scan, `test-engine.mjs` (21), `test-mcp-transforms.mjs` (13), `test-modes.mjs` (13), `test-nudge-injectors.mjs` (20), `test-skill-structure.sh` (48 checks), the extended hook suite (20), `tests/hermes` (29), `tests/pi` (6), and the OpenCode bootstrap-caching and session suites all passed, and each new suite was also run against the code before its task to confirm the failures the "see it fail" steps name. ShellCheck was not available there, so the lint steps are unverified; the pressure scenarios need live sessions and were not run.

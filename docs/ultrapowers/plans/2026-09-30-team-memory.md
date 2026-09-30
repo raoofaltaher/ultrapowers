@@ -1937,7 +1937,7 @@ export const UltrapowersPlugin = async ({ client, directory }) => {
 };
 ```
 
-The `ultrapowersSkillsDir` name is piece 1's rename of `superpowersSkillsDir`; keep whatever name the file uses after piece 1 for that constant.
+The `ultrapowersSkillsDir` name is piece 1's rename of the upstream skills-directory constant; keep whatever name the file uses after piece 1 for that constant.
 
 - [ ] **Step 5: Wire V2**
 
