@@ -118,7 +118,7 @@ for code in $(grep -oE "InitError\('[a-z-]+'" "$ENGINE" | sed -E "s/InitError\('
   fi
 done
 
-for phrase in "--dry-run" "explicit yes" "Never write the payload by hand" "nested clone" "workspaceRoot" ".ultrapowers-new" "your human partner"; do
+for phrase in "--dry-run" "existing-hooks:<names>" "explicit yes" "Never write the payload by hand" "nested clone" "workspaceRoot" ".ultrapowers-new" "your human partner"; do
   if grep -qF -- "$phrase" "$SKILL_MD"; then
     pass "mentions '$phrase'"
   else

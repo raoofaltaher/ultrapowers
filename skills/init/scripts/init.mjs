@@ -784,6 +784,9 @@ function ensureHooksPath(opts) {
   const current = gitConfigGet(opts.root, 'core.hooksPath');
   if (current === HOOKS_PATH) return 'already-set';
   if (current) return `kept:${current}`;
+  // Setting core.hooksPath would silently stop these (an LFS pre-push, say).
+  const live = liveHooks(opts.root);
+  if (live.length) return `existing-hooks:${live.join(',')}`;
   if (opts.dryRun) return 'would-set';
   try {
     gitConfigSet(opts.root, 'core.hooksPath', HOOKS_PATH);
@@ -804,6 +807,8 @@ function localNextSteps(report) {
   };
   if (report.hooksPath.startsWith('kept:')) {
     steps.push(`core.hooksPath is ${report.hooksPath.slice(5)}; left unchanged. The secret scan in ${HOOKS_PATH}/pre-commit runs only from ${HOOKS_PATH}.`);
+  } else if (report.hooksPath.startsWith('existing-hooks:')) {
+    steps.push(`core.hooksPath left unset: setting it would stop these hooks in .git/hooks: ${report.hooksPath.slice(15).split(',').join(', ')}. The secret scan in ${HOOKS_PATH}/pre-commit runs only from ${HOOKS_PATH}.`);
   } else if (hooks[report.hooksPath]) {
     steps.push(hooks[report.hooksPath]);
   }
@@ -942,12 +947,29 @@ export function main(argv) {
   }
 }
 
+// The effective value from any scope: a global core.hooksPath disables .git/hooks too.
 export function gitConfigGet(root, key) {
   try {
-    return execFileSync('git', ['config', '--local', '--get', key], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return execFileSync('git', ['config', '--get', key], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   } catch {
     return '';
   }
+}
+
+function liveHooks(root) {
+  let dir;
+  try {
+    dir = path.resolve(root, execFileSync('git', ['rev-parse', '--git-path', 'hooks'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim());
+  } catch {
+    return [];
+  }
+  if (!fs.existsSync(dir)) return [];
+  // Git runs only executable hooks; Windows has no mode bits, so every file counts there.
+  const runs = (entry) => process.platform === 'win32' || (fs.statSync(path.join(dir, entry.name)).mode & 0o111) !== 0;
+  return fs.readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && !entry.name.endsWith('.sample') && runs(entry))
+    .map((entry) => entry.name)
+    .sort();
 }
 
 export function gitConfigSet(root, key, value) {

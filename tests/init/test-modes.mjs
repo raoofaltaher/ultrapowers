@@ -115,6 +115,30 @@ test('join leaves a custom core.hooksPath alone and dry-run changes nothing', ()
   assert.throws(() => git(fresh, 'config', '--local', '--get', 'core.hooksPath'));
 });
 
+test('join leaves a global core.hooksPath in charge and sets nothing locally', () => {
+  const root = scaffolded();
+  const globalConfig = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ultrapowers-global-')), 'gitconfig');
+  fs.writeFileSync(globalConfig, '[core]\n\thooksPath = /corp/hooks\n');
+  const env = { GIT_CONFIG_GLOBAL: globalConfig };
+  assert.equal(run(['join', '--root', root, '--dry-run'], { env }).hooksPath, 'kept:/corp/hooks');
+  const report = run(['join', '--root', root], { env });
+  assert.equal(report.hooksPath, 'kept:/corp/hooks');
+  assert.ok(report.nextSteps.some((s) => s.includes('/corp/hooks')));
+  assert.throws(() => git(root, 'config', '--local', '--get', 'core.hooksPath'));
+});
+
+test('join does not set core.hooksPath over hooks already in .git/hooks and names them', () => {
+  const root = scaffolded();
+  const hook = path.join(root, '.git', 'hooks', 'pre-push');
+  fs.writeFileSync(hook, '#!/bin/sh\ngit lfs pre-push "$@"\n');
+  fs.chmodSync(hook, 0o755);
+  assert.equal(run(['join', '--root', root, '--dry-run']).hooksPath, 'existing-hooks:pre-push');
+  const report = run(['join', '--root', root]);
+  assert.equal(report.hooksPath, 'existing-hooks:pre-push');
+  assert.ok(report.nextSteps.some((s) => s.includes('pre-push')));
+  assert.throws(() => git(root, 'config', '--local', '--get', 'core.hooksPath'));
+});
+
 test('join reports the secret variables from the example file that are not defined', () => {
   const root = scaffolded();
   const report = run(['join', '--root', root]);

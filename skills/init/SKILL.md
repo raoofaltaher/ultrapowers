@@ -58,7 +58,7 @@ node "<SKILL_DIR>/scripts/init.mjs" detect --root "<ROOT>"
 ## Join mode
 
 1. Dry run: `node "<SKILL_DIR>/scripts/init.mjs" join --root "<ROOT>" --dry-run`
-2. Read `hooksPath` (`would-set`, `already-set`, `kept:<value>`, `no-git`), `missingSecrets` and `newRepos`.
+2. Read `hooksPath` (`would-set`, `already-set`, `kept:<value>`, `existing-hooks:<names>`, `no-git`), `missingSecrets` and `newRepos`. `existing-hooks` means setting core.hooksPath would stop those hooks, so join leaves it unset: name them.
 3. When `hooksPath` is `would-set` or `newRepos` is not empty, ask one question naming exactly what changes: "Set core.hooksPath to .githooks for this clone?" and, for new clones, "Record <names> in .agents/ultrapowers.json and the .gitignore block?" Nothing would change: skip the question.
 4. Run join without `--dry-run`; add `--record-repos` only after a yes to recording. Join writes no other shared file.
 5. Relay `nextSteps`: the variable names to define (never ask for or repeat a value) and the MCP approval prompt to expect.
