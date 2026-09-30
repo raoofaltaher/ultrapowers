@@ -1,3 +1,4 @@
+import json
 import os
 import re
 from pathlib import Path
@@ -71,6 +72,99 @@ def _build_bootstrap(skills_dir: str) -> str:
     )
 
 
+NUDGE_SCAFFOLD = (
+    "This project has no ultrapowers scaffold. "
+    "Offer /ultrapowers:init before other work."
+)
+NUDGE_REPAIR = (
+    "This project's .agents/ultrapowers.json is unreadable. "
+    "Offer /ultrapowers:init to repair it before other work."
+)
+NUDGE_PLATFORMS = (None, "", "cli")
+
+
+def _plugin_version():
+    here = os.path.dirname(os.path.realpath(__file__))
+    try:
+        with open(os.path.join(here, "plugin.yaml"), encoding="utf-8") as f:
+            for line in f:
+                match = re.match(r"^version:\s*['\"]?([0-9][^'\"\s]*)", line)
+                if match:
+                    return match.group(1)
+    except OSError:
+        pass
+    return None
+
+
+def _version_less(a, b):
+    def parts(v):
+        return [int(re.sub(r"\D", "", p) or 0) for p in str(v).split(".")]
+
+    pa, pb = parts(a), parts(b)
+    width = max(len(pa), len(pb))
+    pa += [0] * (width - len(pa))
+    pb += [0] * (width - len(pb))
+    return pa < pb
+
+
+def _find_marker(start):
+    current = os.path.abspath(start)
+    while True:
+        candidate = os.path.join(current, ".agents", "ultrapowers.json")
+        if os.path.isfile(candidate):
+            return candidate
+        parent = os.path.dirname(current)
+        if parent == current:
+            return None
+        current = parent
+
+
+def _project_nudge(directory):
+    """One line for the first turn when the project needs /ultrapowers:init.
+
+    Read-only. Mirrors hooks/session-start: missing marker, older
+    pluginVersion, or an unreadable marker each get a line; a current
+    project gets none.
+    """
+    marker = _find_marker(directory)
+    if marker is None:
+        return NUDGE_SCAFFOLD
+    try:
+        with open(marker, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return NUDGE_REPAIR
+    recorded = data.get("pluginVersion") if isinstance(data, dict) else None
+    if not isinstance(recorded, str):
+        return NUDGE_REPAIR
+    current = _plugin_version()
+    if current and _version_less(recorded, current):
+        return (
+            f"This project's ultrapowers scaffold is from version {recorded}; "
+            f"the plugin is {current}. "
+            "Offer /ultrapowers:init to upgrade before other work."
+        )
+    return None
+
+
+def _with_project_nudge(bootstrap, platform):
+    # Only a terminal session has a project directory; messaging gateways
+    # run from wherever the gateway process started.
+    if platform not in NUDGE_PLATFORMS:
+        return bootstrap
+    try:
+        nudge = _project_nudge(os.getcwd())
+    except Exception:
+        return bootstrap
+    if not nudge:
+        return bootstrap
+    close = "</EXTREMELY_IMPORTANT>"
+    at = bootstrap.rfind(close)
+    if at == -1:
+        return f"{bootstrap}\n\n{nudge}"
+    return f"{bootstrap[:at]}\n{nudge}\n{bootstrap[at:]}"
+
+
 def register(ctx):
     skills_dir = _skills_dir()
     bootstrap = _build_bootstrap(skills_dir)
@@ -98,7 +192,7 @@ def register(ctx):
         **kwargs,
     ):
         if is_first_turn:
-            return {"context": bootstrap}
+            return {"context": _with_project_nudge(bootstrap, platform)}
         return None
 
     ctx.register_hook("pre_llm_call", pre_llm_call)

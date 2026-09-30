@@ -24,6 +24,68 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Skills directory shared by V1 (config hook) and V2 (setup/ctx.skill.transform)
 const ultrapowersSkillsDir = path.resolve(__dirname, '../../skills');
 
+// Project scaffold nudge (spec 4.2): one line inside the bootstrap when the
+// project directory has no .agents/ultrapowers.json at or above it, or has one
+// that is older than this plugin or unreadable. Read-only; recomputed per
+// injection so the line disappears as soon as init has run.
+const NUDGE_SCAFFOLD = 'This project has no ultrapowers scaffold. Offer /ultrapowers:init before other work.';
+const NUDGE_REPAIR = "This project's .agents/ultrapowers.json is unreadable. Offer /ultrapowers:init to repair it before other work.";
+const upgradeNudge = (from, to) => `This project's ultrapowers scaffold is from version ${from}; the plugin is ${to}. Offer /ultrapowers:init to upgrade before other work.`;
+
+let _pluginVersion;
+const readPluginVersion = () => {
+  if (_pluginVersion !== undefined) return _pluginVersion;
+  try {
+    _pluginVersion = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8')).version || null;
+  } catch {
+    _pluginVersion = null;
+  }
+  return _pluginVersion;
+};
+
+const versionLess = (a, b) => {
+  const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) < (pb[i] ?? 0);
+  }
+  return false;
+};
+
+const projectNudge = (directory) => {
+  if (typeof directory !== 'string' || directory === '') return null;
+  try {
+    let current = path.resolve(directory);
+    let markerFile = null;
+    while (!markerFile) {
+      const candidate = path.join(current, '.agents', 'ultrapowers.json');
+      if (fs.existsSync(candidate)) markerFile = candidate;
+      else if (path.dirname(current) === current) return NUDGE_SCAFFOLD;
+      else current = path.dirname(current);
+    }
+    let marker;
+    try {
+      marker = JSON.parse(fs.readFileSync(markerFile, 'utf8'));
+    } catch {
+      return NUDGE_REPAIR;
+    }
+    if (!marker || typeof marker !== 'object' || typeof marker.pluginVersion !== 'string') return NUDGE_REPAIR;
+    const version = readPluginVersion();
+    return version && versionLess(marker.pluginVersion, version) ? upgradeNudge(marker.pluginVersion, version) : null;
+  } catch (err) {
+    console.error('[ultrapowers] project scaffold check failed:', err);
+    return null;
+  }
+};
+
+const withProjectNudge = (bootstrap, directory) => {
+  const nudge = projectNudge(directory);
+  if (!nudge) return bootstrap;
+  const close = '</EXTREMELY_IMPORTANT>';
+  const at = bootstrap.lastIndexOf(close);
+  return at === -1 ? `${bootstrap}\n\n${nudge}` : `${bootstrap.slice(0, at)}\n${nudge}\n${bootstrap.slice(at)}`;
+};
+
 // Simple frontmatter extraction (avoid dependency on skills-core for
 // bootstrap). Handles plain `key: value` lines, quoted values (including
 // quotes that close on an indented continuation line), YAML block scalar
@@ -260,7 +322,7 @@ export const UltrapowersPlugin = async ({ client, directory }) => {
       )) return;
 
       const ref = firstUser.parts[0];
-      firstUser.parts.unshift({ ...ref, type: 'text', text: bootstrap });
+      firstUser.parts.unshift({ ...ref, type: 'text', text: withProjectNudge(bootstrap, directory) });
     }
   };
 };
@@ -290,6 +352,7 @@ async function setup(ctx) {
   if (!ctx || !ctx.skill || typeof ctx.skill.transform !== 'function' || !ctx.session || typeof ctx.session.hook !== 'function') {
     return;
   }
+  const projectDirectory = typeof ctx.directory === 'string' ? ctx.directory : null;
 
   // 1. Register skills (one transform; one draft.add per skill)
   try {
@@ -354,10 +417,11 @@ async function setup(ctx) {
 
         // Native compaction can leave only an opaque checkpoint. Keep it
         // intact and append the transient bootstrap as a user message.
+        const text = withProjectNudge(bootstrap, typeof event.directory === 'string' ? event.directory : projectDirectory);
         if (firstUser) {
-          firstUser.content.unshift({ type: 'text', text: bootstrap });
+          firstUser.content.unshift({ type: 'text', text });
         } else {
-          event.messages.push({ role: 'user', content: [{ type: 'text', text: bootstrap }] });
+          event.messages.push({ role: 'user', content: [{ type: 'text', text }] });
         }
       } catch (err) {
         // Never let hook callback errors break the request pipeline.

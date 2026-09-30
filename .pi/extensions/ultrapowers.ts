@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -12,6 +12,67 @@ const skillsDir = resolve(packageRoot, "skills");
 const bootstrapSkillPath = resolve(skillsDir, "using-ultrapowers", "SKILL.md");
 
 let cachedBootstrap: string | null | undefined;
+
+const NUDGE_SCAFFOLD = "This project has no ultrapowers scaffold. Offer /ultrapowers:init before other work.";
+const NUDGE_REPAIR = "This project's .agents/ultrapowers.json is unreadable. Offer /ultrapowers:init to repair it before other work.";
+
+let cachedPluginVersion: string | null | undefined;
+
+function pluginVersion(): string | null {
+	if (cachedPluginVersion !== undefined) return cachedPluginVersion;
+	try {
+		const pkg = JSON.parse(readFileSync(resolve(packageRoot, "package.json"), "utf8")) as { version?: unknown };
+		cachedPluginVersion = typeof pkg.version === "string" ? pkg.version : null;
+	} catch {
+		cachedPluginVersion = null;
+	}
+	return cachedPluginVersion;
+}
+
+function versionLess(a: string, b: string): boolean {
+	const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
+	const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
+	for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+		if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) < (pb[i] ?? 0);
+	}
+	return false;
+}
+
+function projectNudge(directory: string): string | null {
+	try {
+		let current = resolve(directory);
+		let markerFile: string | null = null;
+		while (!markerFile) {
+			const candidate = resolve(current, ".agents", "ultrapowers.json");
+			if (existsSync(candidate)) markerFile = candidate;
+			else if (dirname(current) === current) return NUDGE_SCAFFOLD;
+			else current = dirname(current);
+		}
+		let marker: unknown;
+		try {
+			marker = JSON.parse(readFileSync(markerFile, "utf8"));
+		} catch {
+			return NUDGE_REPAIR;
+		}
+		const recorded = (marker as { pluginVersion?: unknown } | null)?.pluginVersion;
+		if (typeof recorded !== "string") return NUDGE_REPAIR;
+		const version = pluginVersion();
+		if (version && versionLess(recorded, version)) {
+			return `This project's ultrapowers scaffold is from version ${recorded}; the plugin is ${version}. Offer /ultrapowers:init to upgrade before other work.`;
+		}
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+function withProjectNudge(bootstrap: string, directory: string): string {
+	const nudge = projectNudge(directory);
+	if (!nudge) return bootstrap;
+	const close = "</EXTREMELY_IMPORTANT>";
+	const at = bootstrap.lastIndexOf(close);
+	return at === -1 ? `${bootstrap}\n\n${nudge}` : `${bootstrap.slice(0, at)}\n${nudge}\n${bootstrap.slice(at)}`;
+}
 
 export default function ultrapowersPiExtension(pi: ExtensionAPI) {
 	let injectBootstrap = true;
@@ -32,7 +93,7 @@ export default function ultrapowersPiExtension(pi: ExtensionAPI) {
 		injectBootstrap = false;
 	});
 
-	pi.on("context", async (event) => {
+	pi.on("context", async (event, ctx) => {
 		if (!injectBootstrap) return;
 		if (event.messages.some(messageContainsBootstrap)) return;
 
@@ -41,7 +102,7 @@ export default function ultrapowersPiExtension(pi: ExtensionAPI) {
 
 		const bootstrapMessage = {
 			role: "user" as const,
-			content: [{ type: "text" as const, text: bootstrap }],
+			content: [{ type: "text" as const, text: withProjectNudge(bootstrap, ctx?.cwd ?? process.cwd()) }],
 			timestamp: Date.now(),
 		};
 

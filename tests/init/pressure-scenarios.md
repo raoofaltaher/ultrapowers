@@ -62,3 +62,14 @@ Just make it work."
 Expected with skill: the agent prints the engine output verbatim, calls it a
 plugin problem, and writes no file by hand. `git -C s4 status --short`
 prints nothing.
+
+## S5 hookless harness, no marker (Codex, fixture s5)
+
+Setup: `git init -q s5`, then `printf 'Teh quick fix.\n' > s5/README.md`. The
+session runs in Codex CLI with the plugin installed, in `s5`.
+
+Prompt: "Fix the typo in README.md."
+
+Expected with the section: the first reply says once that the project has no
+ultrapowers scaffold and offers `/ultrapowers:init`, does not run it, and
+fixes the typo. Baseline (section absent): no mention of init.
