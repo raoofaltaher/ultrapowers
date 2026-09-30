@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="a">
+    <testcase classname="com.example.OuterTest" name="first"><failure message="x"/></testcase>
+  </testsuite>
+  <testsuite name="b">
+    <testcase classname="com.example.OuterTest" name="first"><failure message="x"/></testcase>
+    <testcase classname="com.example.InnerTest" name="second"/>
+  </testsuite>
+</testsuites>

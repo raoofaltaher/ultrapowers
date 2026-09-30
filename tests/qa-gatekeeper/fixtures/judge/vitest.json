@@ -1,0 +1,1 @@
+{"testResults":[{"assertionResults":[{"status":"failed","fullName":"onboarding > prefill > applies detected sector"},{"status":"passed","fullName":"onboarding > prefill > empty state"},{"status":"skipped","fullName":"onboarding > prefill > pending case"}]}]}

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="checkout" tests="6" failures="2" errors="1" skipped="1">
+  <testcase classname="com.example.CheckoutTest" name="totals_add_up" time="0.01">
+    <failure message="expected 3 got 2">stack</failure>
+  </testcase>
+  <testcase classname="com.example.CheckoutTest" name="discount_applies" time="0.01"/>
+  <testcase classname="com.example.CartTest" name="removes_item" time="0.01">
+    <failure message="boom"/>
+  </testcase>
+  <testcase name="smoke renders home" time="0.02">
+    <error message="TypeError">stack</error>
+  </testcase>
+  <testcase classname="com.example.CartTest" name="pending_case" time="0">
+    <skipped/>
+  </testcase>
+  <testcase classname="com.example.MathTest" name="Rounds &amp; carries" time="0">
+    <failure/>
+  </testcase>
+</testsuite>

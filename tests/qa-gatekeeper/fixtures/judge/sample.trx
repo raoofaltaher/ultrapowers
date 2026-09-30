@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TestRun>
+  <Results>
+    <UnitTestResult executionId="a" testName="Sample.Tests.ApprovalFlow.Delete_requires_approval" outcome="Failed" />
+    <UnitTestResult executionId="b" testName="Sample.Tests.HeaderTests.Renders_header" outcome="Failed" />
+    <UnitTestResult outcome="Failed" executionId="c" testName="Sample.Tests.ArticlesTests.Anonymous_cannot_write" />
+    <UnitTestResult executionId="d" testName="Sample.Tests.BillingTests.Plans_lists_three" outcome="Passed" />
+    <UnitTestResult executionId="e" testName="Sample.Tests.MathTests.Rounds &amp; carries" outcome="Failed" />
+  </Results>
+</TestRun>
