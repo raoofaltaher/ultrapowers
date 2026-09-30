@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"docker exec -e PGPASSWORD=\"$QA_DB_RO_PASSWORD\" db-container psql -U qa_agent_ro -d appdb -c \"SELECT count(*) FROM users\""}}

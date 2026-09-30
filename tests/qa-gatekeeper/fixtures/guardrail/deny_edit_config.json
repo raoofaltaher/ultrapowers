@@ -1,0 +1,1 @@
+{"tool_name":"Edit","tool_input":{"file_path":"{{ROOT}}/.agents/ultrapowers.json","old_string":"a","new_string":"b"}}

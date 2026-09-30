@@ -1,0 +1,285 @@
+#!/usr/bin/env bash
+# qa-guardrail: PreToolUse guardrail for the ultrapowers QA gatekeeper (spec 3.5).
+#
+# stdin  : the harness event JSON (tool_name, tool_input, optional cwd)
+# exit 0 : allow.  exit 2 : deny; stderr carries "QA-GUARDRAIL DENY: <reason>".
+#
+# Inert unless the run marker `.ultrapowers/qa-active` exists at or above the working
+# directory. The qa-specialist entry skill writes the marker and the agent removes it at
+# the end of the run, so every other session pays only a directory walk.
+#
+# `set -uo pipefail` and NOT `-e`: the "grep matches -> deny, else continue" pattern below
+# relies on a non-matching grep returning non-zero without aborting the script.
+set -uo pipefail
+
+deny() {
+  local msg="QA-GUARDRAIL DENY: $1"
+  printf '%s\n' "$msg" >&2
+  if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
+    local escaped
+    escaped="$(printf '%s' "$msg" | sed 's/["\\]/\\&/g')"
+    printf '{"permission":"deny","agent_message":"%s"}\n' "$escaped"
+  fi
+  exit 2
+}
+
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+# Forward slashes, collapsed; a Windows drive prefix `X:` becomes `/x`; no trailing slash.
+norm_path() {
+  local p
+  p="$(printf '%s' "$1" | tr '\\' '/' | sed -E 's#/+#/#g; s#(.)/$#\1#')"
+  case "$p" in
+    [A-Za-z]:*) p="/$(lower "${p:0:1}")${p:2}" ;;
+  esac
+  printf '%s' "$p"
+}
+
+# Walk up from $1 looking for the run marker; print the directory that holds it.
+find_root() {
+  local d="$1"
+  [ -n "$d" ] || return 1
+  while :; do
+    if [ -f "$d/.ultrapowers/qa-active" ]; then
+      printf '%s' "$d"
+      return 0
+    fi
+    case "$d" in
+      /|.|"") return 1 ;;
+    esac
+    d="${d%/*}"
+    [ -n "$d" ] || d="/"
+  done
+}
+
+event="$(cat)"
+
+# --- Fast path: is a run active? Check the process cwd, then EVERY "cwd" string in the
+# event (all occurrences, so text inside a command can add a candidate but never hide the
+# real one). No node process is started for an inert session.
+root=""
+if ! root="$(find_root "$(norm_path "$PWD")")"; then
+  root=""
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    if root="$(find_root "$(norm_path "$candidate")")"; then
+      break
+    fi
+    root=""
+  done < <(printf '%s' "$event" | grep -oE '"cwd"[[:space:]]*:[[:space:]]*"[^"]*"' | sed -E 's/^"cwd"[[:space:]]*:[[:space:]]*"//; s/"$//')
+fi
+[ -n "$root" ] || exit 0
+
+# --- Active. From here on an uninspectable call is denied, never waved through.
+command -v node >/dev/null 2>&1 || deny "node is required to inspect tool calls during a QA run and is not on PATH"
+
+# Node on Windows reads `/c/x` as `C:\c\x` unless Git Bash converts the argument, and a
+# harness may run hooks with that conversion off. Hand node a mixed path (`C:/x`) instead.
+root_node="$root"
+if command -v cygpath >/dev/null 2>&1; then
+  root_node="$(cygpath -m "$root" 2>/dev/null)" || root_node="$root"
+fi
+
+parse_status=""; tool=""; cmd=""; wpath=""; url=""; event_cwd=""; allowed=""; forbidden=""; ticket=""
+{
+  IFS= read -r -d '' parse_status || true
+  IFS= read -r -d '' tool || true
+  IFS= read -r -d '' cmd || true
+  IFS= read -r -d '' wpath || true
+  IFS= read -r -d '' url || true
+  IFS= read -r -d '' event_cwd || true
+  IFS= read -r -d '' allowed || true
+  IFS= read -r -d '' forbidden || true
+  IFS= read -r -d '' ticket || true
+} < <(printf '%s' "$event" | node -e '
+const fs = require("node:fs");
+const path = require("node:path");
+let ev;
+try { ev = JSON.parse(fs.readFileSync(0, "utf8")); } catch (e) { ev = null; }
+if (!ev || typeof ev !== "object") {
+  process.stdout.write(["unparseable", "", "", "", "", "", "", "", ""].join("\0") + "\0");
+  process.exit(0);
+}
+const root = process.argv[1];
+const inp = ev.tool_input && typeof ev.tool_input === "object" ? ev.tool_input : {};
+const str = (v) => (typeof v === "string" ? v : "");
+let qa = {};
+try { qa = JSON.parse(fs.readFileSync(path.join(root, ".agents", "ultrapowers.json"), "utf8")).qa || {}; } catch (e) { qa = {}; }
+const hosts = qa.hosts && typeof qa.hosts === "object" ? qa.hosts : {};
+const norm = (list) => (Array.isArray(list) ? list : []).map((h) => str(h).trim().toLowerCase()).filter(Boolean);
+const allowed = norm(hosts.allowed);
+const urls = qa.urls && typeof qa.urls === "object" ? qa.urls : {};
+for (const value of Object.values(urls)) {
+  try { if (str(value)) allowed.push(new URL(value).hostname.toLowerCase()); } catch (e) { /* not a URL */ }
+}
+let ticket = "";
+try { ticket = fs.readFileSync(path.join(root, ".ultrapowers", "qa-active"), "utf8").trim(); } catch (e) { ticket = ""; }
+process.stdout.write([
+  "ok", str(ev.tool_name), str(inp.command),
+  str(inp.file_path) || str(inp.notebook_path) || str(inp.path),
+  str(inp.url), str(ev.cwd), allowed.join(","), norm(hosts.forbidden).join(","), ticket,
+].join("\0") + "\0");
+' "$root_node")
+[ "$parse_status" = "ok" ] || deny "the tool event could not be parsed; an uninspectable call is refused during a QA run"
+
+# Prefer the event's real cwd for the root and for resolving relative paths: on Windows the
+# harness spells it `S:\proj` while the process cwd is `/s/proj`; both normalize alike.
+base_cwd="$(norm_path "$PWD")"
+if [ -n "$event_cwd" ]; then
+  ev_norm="$(norm_path "$event_cwd")"
+  if [ -d "$ev_norm" ]; then
+    base_cwd="$ev_norm"
+    if ev_root="$(find_root "$ev_norm")"; then
+      root="$ev_root"
+    fi
+  fi
+fi
+
+tool_lc="$(lower "$tool")"
+root_lc="$(lower "$root")"
+
+# --- File tools: the only legitimate writes are the report, its artifacts and run-state
+# under reviews/<ticket>/, plus the run's own state under .ultrapowers/. Protected paths are
+# refused wherever they sit (this closes the loop where the agent edits the guardrail, the
+# config, harness settings or key material).
+is_write_tool=0
+case "$tool" in
+  Write|Edit|MultiEdit|NotebookEdit) is_write_tool=1 ;;
+  *)
+    case "$tool_lc" in
+      *write*|*edit*|*create_file*|*move_file*|*delete*)
+        [ -n "$wpath" ] && is_write_tool=1 ;;
+    esac ;;
+esac
+
+if [ "$is_write_tool" -eq 1 ]; then
+  wl="$(lower "$(norm_path "$wpath")")"
+  printf '%s' "$wl" | grep -Eq '(^|/)\.ssh/|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws/|mcp-secrets\.env|\.local\.|hooks/qa-guardrail|\.agents/ultrapowers\.json|(^|/)\.claude/|(^|/)\.git/|(^|/)\.githooks/|settings(\.local)?\.json$' \
+    && deny "write to a protected path ($wpath) is never allowed during a QA run"
+  case "$wl" in
+    ..|../*|*/../*|*/..) deny "write path with a parent-directory segment ($wpath) cannot be verified" ;;
+  esac
+  case "$wl" in
+    /*) abs="$wl" ;;
+    ./*) abs="$(lower "$base_cwd")/${wl#./}" ;;
+    *) abs="$(lower "$base_cwd")/$wl" ;;
+  esac
+  ok=0
+  if [ -n "$ticket" ]; then
+    case "$abs" in "$root_lc/reviews/$(lower "$ticket")/"*) ok=1 ;; esac
+  else
+    case "$abs" in "$root_lc/reviews/"*) ok=1 ;; esac
+  fi
+  case "$abs" in "$root_lc/.ultrapowers/"*) ok=1 ;; esac
+  [ "$ok" -eq 1 ] || deny "writes during a QA run are limited to reviews/${ticket:-<id>}/ and .ultrapowers/ (got: $wpath)"
+  exit 0
+fi
+
+# --- Arbitrary in-page code is an egress and exfiltration bypass; never.
+case "$tool_lc" in
+  *run_code_unsafe*) deny "arbitrary in-page code execution is never allowed during a QA run" ;;
+esac
+
+host_of() {
+  printf '%s' "$1" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#^[^/?@]*@##; s#[/?].*$##; s#:[0-9]+$##' | tr '[:upper:]' '[:lower:]'
+}
+on_list() {
+  # $1 comma-separated list, $2 host
+  [ -n "$1" ] && [ -n "$2" ] && printf ',%s,' "$1" | grep -qF ",$2,"
+}
+
+# --- Navigation and fetch tools: forbidden hosts never; allowed hosts only when a list is set.
+if [ -n "$url" ]; then
+  case "$tool_lc" in
+    *navigate*|*goto*|*open_url*|*new_page*|*fetch*)
+      h="$(host_of "$url")"
+      on_list "$forbidden" "$h" && deny "host '$h' is on qa.hosts.forbidden"
+      if [ -n "$allowed" ]; then
+        on_list "$allowed" "$h" || deny "host '$h' is not in qa.hosts.allowed"
+      fi ;;
+  esac
+fi
+
+# --- Shell command surface.
+[ -n "$cmd" ] || exit 0
+lc="$(lower "$cmd")"
+
+# Never push. Fail closed on any git command carrying a push token.
+printf '%s' "$lc" | grep -Eq '\bgit\b[^;&|]*\bpush\b' && deny "git push is never allowed during a QA run"
+
+# Forbidden hosts anywhere in the command line.
+IFS=',' read -r -a forbidden_hosts <<< "$forbidden"
+for h in "${forbidden_hosts[@]:-}"; do
+  [ -n "$h" ] && printf '%s' "$lc" | grep -qF -- "$h" && deny "forbidden host '$h' appears in the command"
+done
+
+# No stack teardown: docker[- ]compose down|stop|rm; docker rm|kill|stop; the container,
+# volume, network and image sub-noun forms; any docker ... prune.
+printf '%s' "$lc" | grep -Eq 'docker[-[:space:]]compose[^;&|]*\b(down|stop|rm)\b|docker[[:space:]]+(rm|kill|stop)\b|docker[[:space:]]+(container|volume|network|image)[[:space:]]+(rm|stop|prune)\b|docker[^;&|]*\bprune\b' \
+  && deny "container stop, remove, down or prune is never allowed; the stack stays as found"
+
+# Database read-only. A mutating verb is blocked when it LEADS a psql statement (right after
+# the -c quote or a `;`), so column names and filter literals like action='delete' pass.
+if printf '%s' "$lc" | grep -Eq '\bpsql\b'; then
+  printf '%s' "$lc" | grep -Eq '(-u[[:space:]=]?|--username[[:space:]=])postgres([^a-z0-9_]|$)' \
+    && deny "psql as the database superuser is blocked; use the configured read-only role (qa.db.roRole)"
+  printf '%s' "$cmd" | grep -Eq '\$\(|`' \
+    && deny "command substitution inside a psql command is blocked; the SQL must be literal and inspectable"
+  printf '%s' "$cmd" | grep -Eq '/\*|\*/|--[[:space:]]|--$' \
+    && deny "SQL comments inside inline psql are blocked; they only serve to hide a write verb"
+  printf '%s' "$lc" | grep -Eq '(^|[[:space:]])-c[[:space:]=]?|(^|[[:space:]])--command[[:space:]=]' \
+    || deny "psql without an inline -c statement is blocked; lane 4 runs single inline statements only"
+  printf '%s' "$lc" | grep -Eq '(^|[[:space:]])(-f|--file)([[:space:]=])|\\i[[:space:]]|<<' \
+    && deny "psql from a script file or heredoc is blocked; the SQL is not inspectable"
+  printf '%s' "$lc" | grep -Eq "(['\"]|;)[[:space:]]*(insert|update|delete|merge|drop|truncate|alter|grant|revoke|create|copy)[[:space:]]" \
+    && deny "mutating SQL is blocked; lane 4 is read-only"
+  printf '%s' "$lc" | grep -Eq '\([[:space:]]*(insert|update|delete|merge)[[:space:]]' \
+    && deny "a write inside a CTE or subquery is blocked; lane 4 is read-only"
+  printf '%s' "$lc" | grep -Eq '\bdo[[:space:]]*\$' \
+    && deny "a psql DO block is blocked; lane 4 is read-only"
+  printf '%s' "$lc" | grep -Eq '\bselect\b[^;]*[[:space:]]into[[:space:]]+[a-z0-9_."]+[[:space:]]+from\b' \
+    && deny "SELECT ... INTO <table> creates a table and is blocked; lane 4 is read-only"
+fi
+
+# Destructive filesystem: short and long rm options, find -delete, disk tools, device writes.
+printf '%s' "$lc" | grep -Eq '(^|[;&|[:space:]])rm[[:space:]]+-[a-z]*[rf]|(^|[;&|[:space:]])rm[[:space:]]+--(recursive|force|dir)|(^|[;&|[:space:]])(rmdir|shred|mkfs|dd)[[:space:]]|>[[:space:]]*/dev/(sd|nvme)|(^|[;&|[:space:]])find[[:space:]][^;&|]*[[:space:]]-delete\b' \
+  && deny "recursive or forced delete is blocked"
+
+# Git working-tree destruction.
+printf '%s' "$lc" | grep -Eq '\bgit\b[^;&|]*\b(reset[[:space:]]+--hard|clean[[:space:]]+-[a-z]*f|checkout[[:space:]]+--[[:space:]]|restore[[:space:]]|stash[[:space:]]+drop|branch[[:space:]]+-d)' \
+  && deny "git commands that discard work (reset --hard, clean -f, checkout --, restore, stash drop, branch -D) are blocked"
+
+# Permission and ownership changes.
+printf '%s' "$lc" | grep -Eq '(^|[;&|[:space:]])(chmod|chown|chgrp|icacls|takeown)[[:space:]]' \
+  && deny "permission or ownership change is blocked"
+
+# Remote shells and copies; inline interpreters; raw network redirection.
+printf '%s' "$lc" | grep -Eq '(^|[;&|[:space:]])(ssh|scp|sftp|rsync|telnet|nc|ncat|netcat)[[:space:]]' \
+  && deny "remote shell or copy is blocked"
+printf '%s' "$lc" | grep -Eq '(^|[;&|[:space:]])(python3?|node|nodejs|perl|ruby|php|deno|bun)[[:space:]]+(-c|-e|-)([[:space:]]|$)' \
+  && deny "inline interpreter code is blocked; it is an unbounded egress and execution bypass"
+printf '%s' "$lc" | grep -Eq '/dev/(tcp|udp)/' \
+  && deny "/dev/tcp and /dev/udp network redirection is blocked"
+
+# Key material touched alongside a read or transfer tool; environment dumps; uploads.
+printf '%s' "$lc" | grep -Eq '(^|/)\.ssh/|id_rsa|id_ed25519|\.aws/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|[/[:space:]])\.env([^a-z0-9_]|$)' \
+  && printf '%s' "$lc" | grep -Eq '(curl|wget|nc |ncat|scp |base64|xxd|openssl|cat|type)' \
+  && deny "reading or transferring key material is blocked"
+printf '%s' "$lc" | grep -Eq '(^|[;&|[:space:]])(printenv|env)[[:space:]]*($|[;&|])' \
+  && deny "dumping the environment is blocked; check a variable with \${NAME:+set} instead"
+printf '%s' "$lc" | grep -Eq '(curl|wget)[^;&|]*(-t |--upload-file|--data-binary[[:space:]]*@|-d[[:space:]]*@|-f[[:space:]][^;&|]*@)' \
+  && deny "outbound file upload is blocked"
+
+# Egress allow-list (active when qa.hosts.allowed is set): curl/wget reach only listed hosts,
+# and only through literal URLs; a $VAR target fails closed.
+if [ -n "$allowed" ] && printf '%s' "$lc" | grep -Eq '(^|[;&|[:space:]])(curl|wget)[[:space:]]'; then
+  urls="$(printf '%s' "$cmd" | grep -Eoi 'https?://[^/"'"'"'[:space:]]+' || true)"
+  [ -n "$urls" ] || deny "curl/wget without a literal http(s) URL; the target cannot be verified"
+  while IFS= read -r u; do
+    [ -n "$u" ] || continue
+    h="$(host_of "$u")"
+    on_list "$allowed" "$h" || deny "host '$h' is not in qa.hosts.allowed"
+  done <<< "$urls"
+fi
+
+exit 0

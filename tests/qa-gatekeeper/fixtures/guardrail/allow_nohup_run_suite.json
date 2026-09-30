@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"nohup bash /plugins/ultrapowers/skills/qa-lane-6-suites/scripts/run-suite.sh {{ROOT}}/repo-a {{ROOT}}/reviews/1234/artifacts/suites/repo-a 'npm test -- --reporter=json --outputFile={{out}}/vitest.json' > /dev/null 2>&1 & echo $!"}}

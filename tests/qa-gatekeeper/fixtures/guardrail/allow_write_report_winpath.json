@@ -1,0 +1,1 @@
+{"tool_name":"Write","tool_input":{"file_path":"{{WINROOT}}\\reviews\\1234\\QA-REPORT.md","content":"# report"},"cwd":"{{WINROOT}}"}

@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"dotnet test --filter Category=Unit --logger \"trx;LogFileName={{ROOT}}/reviews/1234/artifacts/suites/repo-a/results.trx\""}}

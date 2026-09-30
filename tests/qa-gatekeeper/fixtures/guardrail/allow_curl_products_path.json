@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"curl http://backend-container:8080/api/products"}}

@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"docker exec db-container psql -U app -d appdb -c \"MERGE INTO customers c USING src s ON c.id=s.id WHEN MATCHED THEN UPDATE SET name=s.name\""}}

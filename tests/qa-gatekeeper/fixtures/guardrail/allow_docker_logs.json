@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"docker logs backend-container --since 2026-01-01T00:00:00Z 2>&1 | grep -iE 'error|exception' | head -80"}}

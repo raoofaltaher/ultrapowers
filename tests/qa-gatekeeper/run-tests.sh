@@ -10,6 +10,7 @@ cd "$REPO_ROOT" || exit 1
 SUITES=(
   "bash tests/qa-gatekeeper/test-templates.sh"
   "bash tests/qa-gatekeeper/test-no-reference-leaks.sh"
+  "bash tests/qa-gatekeeper/test-qa-guardrail.sh"
 )
 
 failed=0

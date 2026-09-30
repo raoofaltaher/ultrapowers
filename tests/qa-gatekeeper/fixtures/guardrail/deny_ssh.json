@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"ssh qa@192.0.2.10 whoami"}}

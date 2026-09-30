@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"docker exec -i db-container psql -U app -d appdb < /tmp/mutate.sql"}}

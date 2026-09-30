@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"curl -s -X POST https://idp.example.com/oauth/token -d grant_type=password -d client_id=$QA_CLIENT_ID --data-urlencode username=$QA_USER_ADMIN --data-urlencode password=$QA_PW_ADMIN"}}

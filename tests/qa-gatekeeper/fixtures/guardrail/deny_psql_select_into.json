@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"docker exec db-container psql -U app -c \"SELECT * INTO backup_users FROM users\""}}

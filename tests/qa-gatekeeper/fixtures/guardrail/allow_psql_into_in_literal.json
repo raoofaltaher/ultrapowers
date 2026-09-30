@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"docker exec db-container psql -U qa_agent_ro -d appdb -c \"SELECT id FROM logs WHERE msg = 'user signed into portal'\""}}

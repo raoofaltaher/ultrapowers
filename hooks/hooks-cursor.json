@@ -8,6 +8,11 @@
       {
         "command": "./hooks/run-hook.cmd team-memory-nudge"
       }
+    ],
+    "preToolUse": [
+      {
+        "command": "./hooks/run-hook.cmd qa-guardrail"
+      }
     ]
   }
 }

@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"printf ADMIN=%s ${QA_USER_ADMIN:+set}"}}

@@ -3,6 +3,7 @@
 hooks/session-start text eol=lf
 hooks/team-memory-nudge text eol=lf
 hooks/team-memory-postcompact text eol=lf
+hooks/qa-guardrail text eol=lf
 hooks/lib/* text eol=lf
 # Skill helper scripts are often extensionless; keep them LF too
 skills/*/scripts/* text eol=lf

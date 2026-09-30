@@ -1,0 +1,1 @@
+{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/repo-a/src/Program.cs","content":"// changed"}}
