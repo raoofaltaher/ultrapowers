@@ -1,7 +1,4 @@
 {
-  "_ultrapowers": {
-    "windowsNpxWrapper": ["claude", "codex", "cursor", "vscode", "factory", "kimi"]
-  },
   "mcpServers": {
     "playwright": {
       "type": "stdio",

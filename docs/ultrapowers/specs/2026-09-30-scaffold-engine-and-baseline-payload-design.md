@@ -98,7 +98,7 @@ Instructions:
 
 Settings and MCP:
 
-- `.mcp.json` (canonical): Playwright, context7, sequential thinking, Microsoft docs, deepwiki, Firecrawl, Brave, Chrome DevTools. Secrets as `${VAR}`. Commands use `npx` directly; the engine emits the `cmd /c` wrapper form only in files for harnesses that need it on Windows, decided by a flag in the template.
+- `.mcp.json` (canonical): Playwright, context7, sequential thinking, Microsoft docs, deepwiki, Firecrawl, Brave, Chrome DevTools. Secrets as `${VAR}`. Commands use `npx` in the canonical file. Every generated file starts each `npx` server as `node -e <launcher> -- <npx args>`. The launcher runs `cmd /c npx` on Windows and `npx` elsewhere, so a scaffold made on any OS works for teammates on every other OS. (Revised 2026-09-30 by owner decision: the earlier per-OS `cmd /c` wrapper broke macOS and Linux teammates of a Windows scaffold.)
 - Generated: `.codex/config.toml` (`[mcp_servers.<id>]`, secrets by variable name, plus `approval_policy` and `sandbox_mode` defaults), `.cursor/mcp.json` (`${env:VAR}`), `.gemini/settings.json`, `.qwen/settings.json`, `opencode.json` (`mcp` map with `{env:VAR}`), `.factory/mcp.json`, `.kimi/mcp.json`, `.vscode/mcp.json`.
 - `.claude/settings.json`: `outputStyle` set to the shipped style name; `permissions.allow` with a curated read-mostly list (read tools, git read subcommands, docker read subcommands, package-manager test and build commands, the plugin's skills); empty `hooks` object that piece 4 fills; `.claude/settings.local.json` gitignored.
 - `.agents/mcp-secrets.env.example`: variable names with one-line purposes. The real file is never created by init.

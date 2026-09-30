@@ -81,9 +81,16 @@ function mapSecrets(map, format) {
   return out;
 }
 
-function launch(server, wrap) {
+// npx is npx.cmd on Windows, which a harness that spawns without a shell cannot
+// start (ENOENT); node is a real executable everywhere. So every npx server
+// starts as `node -e NPX_LAUNCHER -- <npx args>`, and the launcher runs npx the
+// way the machine it lands on needs. One committed file then works on Windows,
+// macOS and Linux alike.
+export const NPX_LAUNCHER = "const[c,...a]=process.platform==='win32'?['cmd','/d','/c','npx',...process.argv.slice(1)]:['npx',...process.argv.slice(1)];const p=require('child_process').spawn(c,a,{stdio:'inherit'});for(const s of['SIGINT','SIGTERM'])process.on(s,()=>p.kill(s));p.on('exit',(code)=>process.exit(code??1))";
+
+function launch(server) {
   const args = [...(server.args ?? [])];
-  if (wrap && server.command === 'npx') return { command: 'cmd', args: ['/c', 'npx', ...args] };
+  if (server.command === 'npx') return { command: 'node', args: ['-e', NPX_LAUNCHER, '--', ...args] };
   return { command: server.command, args };
 }
 
@@ -97,7 +104,7 @@ export function validateServers(servers) {
   }
 }
 
-function jsonServers(servers, wrap, secret, { stdioType = true, httpKey = null } = {}) {
+function jsonServers(servers, secret, { stdioType = true, httpKey = null } = {}) {
   const out = {};
   for (const [id, server] of Object.entries(servers)) {
     if (server.type === 'http') {
@@ -106,7 +113,7 @@ function jsonServers(servers, wrap, secret, { stdioType = true, httpKey = null }
       out[id] = entry;
       continue;
     }
-    const entry = { ...(stdioType ? { type: 'stdio' } : {}), ...launch(server, wrap) };
+    const entry = { ...(stdioType ? { type: 'stdio' } : {}), ...launch(server) };
     if (hasKeys(server.env)) entry.env = mapSecrets(server.env, secret);
     out[id] = entry;
   }
@@ -118,18 +125,18 @@ const cursorRef = (name) => `\${env:${name}}`;
 const opencodeRef = (name) => `{env:${name}}`;
 const vscodeInputId = (name) => name.toLowerCase().replace(/_/g, '-');
 
-function standardJson(servers, { wrap }) {
-  return toJson({ mcpServers: jsonServers(servers, wrap, dollarRef) });
+function standardJson(servers) {
+  return toJson({ mcpServers: jsonServers(servers, dollarRef) });
 }
 
 function geminiFamilyJson(schema) {
-  return (servers, { wrap }) => toJson({
+  return (servers) => toJson({
     context: { fileName: CONTEXT_FILES[schema] },
-    mcpServers: jsonServers(servers, wrap, dollarRef, { stdioType: false, httpKey: 'httpUrl' }),
+    mcpServers: jsonServers(servers, dollarRef, { stdioType: false, httpKey: 'httpUrl' }),
   });
 }
 
-function opencodeJson(servers, { wrap }) {
+function opencodeJson(servers) {
   const mcp = {};
   for (const [id, server] of Object.entries(servers)) {
     if (server.type === 'http') {
@@ -138,7 +145,7 @@ function opencodeJson(servers, { wrap }) {
       mcp[id] = entry;
       continue;
     }
-    const { command, args } = launch(server, wrap);
+    const { command, args } = launch(server);
     const entry = { type: 'local', command: [command, ...args], enabled: true };
     if (hasKeys(server.env)) entry.environment = mapSecrets(server.env, opencodeRef);
     mcp[id] = entry;
@@ -146,7 +153,7 @@ function opencodeJson(servers, { wrap }) {
   return toJson({ $schema: 'https://opencode.ai/config.json', mcp });
 }
 
-function vscodeJson(servers, { wrap }) {
+function vscodeJson(servers) {
   const inputs = new Map();
   const inputRef = (serverId) => (name) => {
     if (!inputs.has(name)) {
@@ -162,7 +169,7 @@ function vscodeJson(servers, { wrap }) {
       out[id] = entry;
       continue;
     }
-    const entry = { type: 'stdio', ...launch(server, wrap) };
+    const entry = { type: 'stdio', ...launch(server) };
     if (hasKeys(server.env)) entry.env = mapSecrets(server.env, inputRef(id));
     out[id] = entry;
   }
@@ -211,7 +218,7 @@ function codexHeaders(id, headers) {
   return { byVariable, literal, bearer };
 }
 
-function codexToml(servers, { wrap }) {
+function codexToml(servers) {
   const lines = [
     `approval_policy = ${tomlString(CODEX_DEFAULTS.approval_policy)}`,
     `sandbox_mode = ${tomlString(CODEX_DEFAULTS.sandbox_mode)}`,
@@ -227,7 +234,7 @@ function codexToml(servers, { wrap }) {
       if (hasKeys(byVariable)) subTables.push(['env_http_headers', byVariable]);
       if (hasKeys(literal)) subTables.push(['http_headers', literal]);
     } else {
-      const { command, args } = launch(server, wrap);
+      const { command, args } = launch(server);
       lines.push(`command = ${tomlString(command)}`, `args = ${tomlArray(args)}`);
       const { names, literal } = codexEnv(id, server.env);
       if (names.length) lines.push(`env_vars = ${tomlArray(names)}`);
@@ -244,7 +251,7 @@ function codexToml(servers, { wrap }) {
 export const MCP_GENERATORS = {
   claude: standardJson,
   codex: codexToml,
-  cursor: (servers, { wrap }) => toJson({ mcpServers: jsonServers(servers, wrap, cursorRef, { httpKey: 'url' }) }),
+  cursor: (servers) => toJson({ mcpServers: jsonServers(servers, cursorRef, { httpKey: 'url' }) }),
   gemini: geminiFamilyJson('gemini'),
   qwen: geminiFamilyJson('qwen'),
   opencode: opencodeJson,
@@ -456,22 +463,18 @@ export function loadCanonicalMcp() {
   } catch (err) {
     throw new InitError('mcp-schema', `templates/.mcp.json is missing or not valid JSON: ${err.message}`);
   }
-  return {
-    wrapper: canonical._ultrapowers?.windowsNpxWrapper ?? [],
-    servers: canonical.mcpServers ?? {},
-  };
+  return { servers: canonical.mcpServers ?? {} };
 }
 
-export function generateMcpFiles(harnesses, platform) {
-  const { wrapper, servers } = loadCanonicalMcp();
+export function generateMcpFiles(harnesses) {
+  const { servers } = loadCanonicalMcp();
   validateServers(servers);
   const files = [];
   for (const [target, schema] of Object.entries(MCP_TARGETS)) {
     const generator = MCP_GENERATORS[schema];
     if (!generator) continue;
     if (!harnesses.includes(TARGET_HARNESS[target])) continue;
-    const wrap = platform === 'win32' && wrapper.includes(schema);
-    files.push({ target, content: generator(servers, { wrap }) });
+    files.push({ target, content: generator(servers) });
   }
   return files;
 }
@@ -569,7 +572,7 @@ export function planPayload(opts, repos, harnesses) {
   } else {
     omitted.push(OUTPUT_STYLE_TARGET);
   }
-  for (const { target, content } of generateMcpFiles(harnesses, opts.platform)) {
+  for (const { target, content } of generateMcpFiles(harnesses)) {
     files.push({ target, content: provenance(target, content, vars), executable: false });
   }
   for (const [target, owner] of Object.entries(TARGET_HARNESS)) {

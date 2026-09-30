@@ -3,18 +3,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseToml } from './toml-mini.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
 const ENGINE = path.join(repoRoot, 'skills', 'init', 'scripts', 'init.mjs');
-const { MCP_GENERATORS, MCP_TARGETS, ALL_HARNESSES, InitError, generateMcpFiles } = await import(pathToFileURL(ENGINE).href);
+const { MCP_GENERATORS, MCP_TARGETS, ALL_HARNESSES, InitError, NPX_LAUNCHER, generateMcpFiles } = await import(pathToFileURL(ENGINE).href);
 
 const canonical = JSON.parse(fs.readFileSync(path.join(repoRoot, 'templates', '.mcp.json'), 'utf8'));
 const CANONICAL_IDS = Object.keys(canonical.mcpServers).sort();
-const WRAPPED = canonical._ultrapowers.windowsNpxWrapper;
 const SCHEMA_OF = MCP_TARGETS;
 const TARGET_OF = Object.fromEntries(Object.entries(MCP_TARGETS).map(([target, schema]) => [schema, target]));
 
@@ -67,8 +66,8 @@ test('every MCP target has a pure generator', () => {
   for (const schema of Object.values(MCP_TARGETS)) {
     assert.equal(typeof MCP_GENERATORS[schema], 'function', `generator for ${schema}`);
     const input = structuredClone(canonical.mcpServers);
-    const first = MCP_GENERATORS[schema](input, { wrap: true });
-    const second = MCP_GENERATORS[schema](input, { wrap: true });
+    const first = MCP_GENERATORS[schema](input);
+    const second = MCP_GENERATORS[schema](input);
     assert.equal(first, second, `${schema} is deterministic`);
     assert.deepEqual(input, canonical.mcpServers, `${schema} does not mutate its input`);
   }
@@ -117,7 +116,7 @@ test('secret references use the syntax of each schema', () => {
 
 test('stdio and http servers take the shape of each schema', () => {
   const files = generated('linux');
-  const npx = { command: 'npx', args: ['-y', '@playwright/mcp@latest'] };
+  const npx = { command: 'node', args: ['-e', NPX_LAUNCHER, '--', '-y', '@playwright/mcp@latest'] };
   const url = 'https://mcp.deepwiki.com/mcp';
   for (const schema of ['claude', 'factory', 'kimi']) {
     const servers = files[schema].parsed.mcpServers;
@@ -130,7 +129,7 @@ test('stdio and http servers take the shape of each schema', () => {
     assert.deepEqual(files[schema].parsed.mcpServers.playwright, npx, schema);
     assert.deepEqual(files[schema].parsed.mcpServers.deepwiki, { httpUrl: url }, schema);
   }
-  assert.deepEqual(files.opencode.parsed.mcp.playwright, { type: 'local', command: ['npx', '-y', '@playwright/mcp@latest'], enabled: true });
+  assert.deepEqual(files.opencode.parsed.mcp.playwright, { type: 'local', command: ['node', ...npx.args], enabled: true });
   assert.deepEqual(files.opencode.parsed.mcp.deepwiki, { type: 'remote', url, enabled: true });
   assert.equal(files.opencode.parsed.$schema, 'https://opencode.ai/config.json');
   assert.deepEqual(files.codex.parsed.mcp_servers.playwright, npx);
@@ -139,20 +138,20 @@ test('stdio and http servers take the shape of each schema', () => {
   assert.deepEqual(files.vscode.parsed.servers.deepwiki, { type: 'http', url });
 });
 
-test('the cmd /c wrapper appears only on win32 and only for the listed schemas', () => {
-  const launchOf = (schema, parsed) => {
-    const server = serversOf(TARGET_OF[schema], parsed).playwright;
-    return schema === 'opencode' ? server.command : [server.command, ...server.args];
-  };
+test('generated MCP files are the same whichever platform runs scaffold', () => {
   const linux = generated('linux');
   const win = generated('win32');
   for (const schema of Object.values(MCP_TARGETS)) {
-    assert.deepEqual(launchOf(schema, linux[schema].parsed).slice(0, 2), ['npx', '-y'], `${schema} on linux`);
-    const expected = WRAPPED.includes(schema) ? ['cmd', '/c', 'npx', '-y'] : ['npx', '-y'];
-    assert.deepEqual(launchOf(schema, win[schema].parsed).slice(0, expected.length), expected, `${schema} on win32`);
-    assert.equal(win[schema].content.includes('"cmd"') && !WRAPPED.includes(schema), false, `${schema} is not wrapped`);
+    assert.equal(win[schema].content, linux[schema].content, `${schema} is portable`);
+    assert.equal(win[schema].content.includes('"cmd"'), false, `${schema} has no Windows-only wrapper`);
   }
-  assert.deepEqual(serversOf('.mcp.json', win.claude.parsed).deepwiki, { type: 'http', url: 'https://mcp.deepwiki.com/mcp' }, 'http servers are never wrapped');
+});
+
+test('the npx launcher starts npx on this platform without a shell', () => {
+  const result = spawnSync('node', ['-e', NPX_LAUNCHER, '--', '--version'], { encoding: 'utf8' });
+  assert.equal(result.error, undefined, String(result.error));
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout.trim(), /^\d+\.\d+\.\d+$/);
 });
 
 test('gemini and qwen settings list AGENTS.md as a context file', () => {
@@ -168,18 +167,18 @@ test('the codex config carries the approval and sandbox defaults', () => {
 });
 
 test('headers, literal values and embedded references map per schema', () => {
-  const claude = JSON.parse(MCP_GENERATORS.claude(SYNTHETIC, { wrap: true })).mcpServers;
+  const claude = JSON.parse(MCP_GENERATORS.claude(SYNTHETIC)).mcpServers;
   assert.deepEqual(claude.docs.headers, { Authorization: 'Bearer ${DOCS_TOKEN}', 'X-Team': '${TEAM_ID}' });
-  assert.deepEqual(claude.tool, { type: 'stdio', command: 'node', args: ['server.js'], env: { TOOL_KEY: '${TOOL_KEY}', MODE: 'strict' } }, 'only npx is wrapped');
-  const cursor = JSON.parse(MCP_GENERATORS.cursor(SYNTHETIC, { wrap: false })).mcpServers;
+  assert.deepEqual(claude.tool, { type: 'stdio', command: 'node', args: ['server.js'], env: { TOOL_KEY: '${TOOL_KEY}', MODE: 'strict' } }, 'only npx goes through the launcher');
+  const cursor = JSON.parse(MCP_GENERATORS.cursor(SYNTHETIC)).mcpServers;
   assert.equal(cursor.docs.headers.Authorization, 'Bearer ${env:DOCS_TOKEN}');
-  const opencode = JSON.parse(MCP_GENERATORS.opencode(SYNTHETIC, { wrap: false })).mcp;
+  const opencode = JSON.parse(MCP_GENERATORS.opencode(SYNTHETIC)).mcp;
   assert.equal(opencode.docs.headers.Authorization, 'Bearer {env:DOCS_TOKEN}');
   assert.deepEqual(opencode.tool.environment, { TOOL_KEY: '{env:TOOL_KEY}', MODE: 'strict' });
-  const vscode = JSON.parse(MCP_GENERATORS.vscode(SYNTHETIC, { wrap: false }));
+  const vscode = JSON.parse(MCP_GENERATORS.vscode(SYNTHETIC));
   assert.equal(vscode.servers.docs.headers.Authorization, 'Bearer ${input:docs-token}');
   assert.deepEqual(vscode.inputs.map((i) => i.id), ['docs-token', 'team-id', 'tool-key']);
-  const codex = parseToml(MCP_GENERATORS.codex(SYNTHETIC, { wrap: true })).mcp_servers;
+  const codex = parseToml(MCP_GENERATORS.codex(SYNTHETIC)).mcp_servers;
   assert.equal(codex.docs.bearer_token_env_var, 'DOCS_TOKEN');
   assert.deepEqual(codex.docs.env_http_headers, { 'X-Team': 'TEAM_ID' });
   assert.deepEqual(codex.tool.env_vars, ['TOOL_KEY']);
@@ -190,7 +189,7 @@ test('headers, literal values and embedded references map per schema', () => {
 test('codex refuses a secret it cannot pass by variable name', () => {
   const renamed = { x: { type: 'stdio', command: 'npx', args: [], env: { API_KEY: '${OTHER_NAME}' } } };
   assert.throws(
-    () => MCP_GENERATORS.codex(renamed, { wrap: false }),
+    () => MCP_GENERATORS.codex(renamed),
     (err) => err instanceof InitError && err.code === 'mcp-schema' && /server x/.test(err.message),
   );
 });
