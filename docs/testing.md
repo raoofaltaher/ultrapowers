@@ -1,37 +1,30 @@
 # Testing Ultrapowers
 
-Ultrapowers has two distinct kinds of tests, each in its own directory:
+Ultrapowers ships offline plugin-infrastructure tests under `tests/`, one directory per subject. They check that the non-LLM code works: hooks, manifests, injectors, the brainstorm companion server, the SDD scripts and the helper scripts. Skill behavior on real model sessions is judged with the `writing-skills` skill's subagent pressure tests and is not part of this suite.
 
-- **`tests/`** — does the plugin's non-LLM code work? Bash + node + python integration tests for brainstorm-server JS, OpenCode plugin loading, codex-plugin sync, and analysis utilities.
-- **`evals/`** — do agents behave correctly on real LLM sessions? Python harness driving real tmux sessions of Claude Code / Codex / Gemini CLI, with an LLM actor and verifier judging skill compliance.
+## Suites and how to run them
 
-## Plugin tests
+| Directory | Subject | Run |
+|---|---|---|
+| `tests/hooks/` | `hooks/session-start` output shape per harness | `bash tests/hooks/test-session-start.sh` |
+| `tests/pi/` | Pi extension registration and bootstrap injection | `node --test tests/pi/test-pi-extension.mjs` |
+| `tests/opencode/` | OpenCode plugin loading, bootstrap caching, session classification, V2 skill registration | `bash tests/opencode/run-tests.sh` (unit); `--integration` needs OpenCode installed |
+| `tests/hermes/` | Hermes plugin layout resolution and bootstrap | `python -m pytest tests/hermes` |
+| `tests/kimi/` | Kimi manifest wiring | `bash tests/kimi/run-tests.sh` |
+| `tests/devin/` | Devin manifest | `bash tests/devin/test-devin-plugin.sh` |
+| `tests/codex/` | Codex marketplace and manifest | `bash tests/codex/test-marketplace-manifest.sh` |
+| `tests/version-bump/` | `scripts/bump-version.sh` against fixtures (needs `jq`, `yq`) | `bash tests/version-bump/test-bump-version.sh` |
+| `tests/shell-lint/` | `scripts/lint-shell.sh` against fixtures | `bash tests/shell-lint/test-lint-shell.sh` |
+| `tests/rename-fork/` | `scripts/rename-fork.sh` against a throwaway repo | `bash tests/rename-fork/test-rename-fork.sh` |
+| `tests/antigravity/` | Antigravity tool mapping reference | `bash tests/antigravity/run-tests.sh` |
+| `tests/diagnosing-ultrapowers/` | Structure of the diagnosing skill (frontmatter, referenced files, leak scan, word budget) | `bash tests/diagnosing-ultrapowers/test-skill-structure.sh` |
+| `tests/brainstorm-server/` | Companion server: WebSocket protocol, auth, branding, lifecycle | `cd tests/brainstorm-server && npm install && npm test` |
+| `tests/claude-code/` | SDD workspace and executing-plans scripts; worktree path policy | `bash tests/claude-code/test-sdd-workspace.sh`, `bash tests/claude-code/test-executing-plans-scripts.sh`, `bash tests/claude-code/test-worktree-path-policy.sh` |
 
-Live in `tests/`. Currently:
+Shell scripts are linted with `scripts/lint-shell.sh --all` (ShellCheck plus `bash -n`/`sh -n`).
 
-- `tests/brainstorm-server/` — node test suite for the brainstorm server JS code.
-- `tests/opencode/` — bash tests for OpenCode plugin loading, bootstrap caching, and tool registration.
-- `tests/codex-plugin-sync/` — bash sync verification.
-- `tests/kimi/` — bash/Python checks for Kimi plugin manifest wiring.
-- `tests/claude-code/test-helpers.sh`, `analyze-token-usage.py` — utilities used by remaining bash tests.
-- `tests/claude-code/test-subagent-driven-development.sh` — agent-can-describe-SDD test (no quorum counterpart; tests description-recall, not behavior).
-- `tests/claude-code/test-subagent-driven-development-integration.sh` — extended SDD integration with token analysis (quorum covers the YAGNI subset; bash adds commit-count, Claude Code task-tracking, and token telemetry assertions).
-- `tests/claude-code/test-worktree-native-preference.sh` — RED-GREEN-REFACTOR validation for worktree skill (quorum covers the PRESSURE phase; bash also covers RED/GREEN baselines).
-- `tests/explicit-skill-requests/` — Haiku-specific, multi-turn, and skill-name-prompted tests not covered by quorum.
-- `tests/diagnosing-ultrapowers/test-skill-structure.sh` — structural checks for the diagnosing-ultrapowers skill (frontmatter, referenced files, leak scan, word budget); behavior-scenario eval records are kept by the maintainer outside the repo.
+On Windows without Developer Mode, Git Bash cannot create symlinks, so `test-plugin-loading.sh` and `test-skill-registration.sh` in `tests/opencode/` fail there for that reason alone; run them on a machine with symlink support.
 
-Run plugin tests via the relevant directory's `run-*.sh` or `npm test`.
+## Model-driven tests
 
-## Skill behavior evals
-
-Live in `evals/` (the [ultrapowers-evals](https://github.com/prime-radiant-inc/ultrapowers-evals/) eval lab, since renamed from Drill). Quorum is the harness CLI — one part of the system: it drives real coding-agent CLIs through a Gauntlet QA agent and grades them against each scenario's acceptance criteria plus deterministic post-checks. Scenarios live at `evals/scenarios/<name>/`. See `evals/README.md` for setup, the container runtime, and the safety model. Quick start (local break-glass run):
-
-```bash
-cd evals
-bun install
-export ULTRAPOWERS_ROOT=/path/to/ultrapowers
-bun run quorum run scenarios/triggering-test-driven-development --coding-agent claude
-bun run quorum show <run-dir>
-```
-
-Quorum scenarios are slow (3-30+ minutes each) and run real LLM sessions in permissive modes — read `evals/README.md`'s Live Eval Risk section first. Only the static gates (`bun run check`, `bun run quorum check`) are safe for public CI; the natural follow-up remains a tiered model (static gates on PR, live sweep nightly + on-demand).
+`tests/claude-code/run-skill-tests.sh`, `tests/claude-code/test-subagent-driven-development*.sh`, `tests/claude-code/test-worktree-native-preference.sh` and everything under `tests/explicit-skill-requests/` drive a real Claude Code session and need a logged-in CLI. They are slow, cost tokens, and are run on demand, not as a gate.
