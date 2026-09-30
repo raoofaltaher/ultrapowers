@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Validate the Devin CLI integration. `devin plugins install obra/superpowers`
+# Validate the Devin CLI integration. `devin plugins install raoofaltaher/ultrapowers`
 # reads `.devin-plugin/plugin.json` and auto-discovers the co-located `skills/`
 # directory; Devin CLI surfaces every installed skill's name + description in
 # the system prompt at session start and invokes them via its native `skill`
@@ -32,8 +32,8 @@ manifest_path = Path(sys.argv[1])
 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 repo_root = manifest_path.parents[1]
 
-if manifest.get("name") != "superpowers":
-    raise AssertionError(f"plugin name: expected 'superpowers', got {manifest.get('name')!r}")
+if manifest.get("name") != "ultrapowers":
+    raise AssertionError(f"plugin name: expected 'ultrapowers', got {manifest.get('name')!r}")
 
 package = json.loads((repo_root / "package.json").read_text(encoding="utf-8"))
 if manifest.get("version") != package.get("version"):

@@ -41,7 +41,7 @@ JSON
 }
 
 happy_repo="$TEST_ROOT/happy"
-make_fixture "$happy_repo" $'name: superpowers\nversion: 1.2.3'
+make_fixture "$happy_repo" $'name: ultrapowers\nversion: 1.2.3'
 
 /bin/bash "$happy_repo/scripts/bump-version.sh" --check >"$TEST_ROOT/check.out"
 /bin/bash "$happy_repo/scripts/bump-version.sh" --audit >"$TEST_ROOT/audit.out"
@@ -59,7 +59,7 @@ jq -e '
   || fail "Hermes manifest is not registered"
 
 invalid_repo="$TEST_ROOT/invalid"
-make_fixture "$invalid_repo" $'name: superpowers\nversion: 123'
+make_fixture "$invalid_repo" $'name: ultrapowers\nversion: 123'
 cp "$invalid_repo/package.json" "$TEST_ROOT/package.before"
 cp "$invalid_repo/.hermes-plugin/plugin.yaml" "$TEST_ROOT/plugin.before"
 

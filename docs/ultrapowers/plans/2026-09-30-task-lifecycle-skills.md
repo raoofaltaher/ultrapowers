@@ -2247,20 +2247,20 @@ Grounding, quoted from the current files (before piece 1 the paths carry the ups
 `skills/brainstorming/SKILL.md` line 135 (checklist, Architectural item 6), left unchanged by this task because spec 3.5 scopes the edit to the documentation step:
 
 ```
-6. **Write design doc** — save to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md` and commit
+6. **Write design doc** — save to `docs/ultrapowers/specs/YYYY-MM-DD-<topic>-design.md` and commit
 ```
 
 `skills/brainstorming/SKILL.md` lines 241-242 (the Documentation step under "After the Design (architectural path)"), the insertion point:
 
 ```
-- Write the validated design (spec) to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`
+- Write the validated design (spec) to `docs/ultrapowers/specs/YYYY-MM-DD-<topic>-design.md`
   - (User preferences for spec location override this default)
 ```
 
 `skills/writing-plans/SKILL.md` lines 16-17, the insertion point:
 
 ```
-**Save plans to:** `docs/superpowers/plans/YYYY-MM-DD-<feature-name>.md`
+**Save plans to:** `docs/ultrapowers/plans/YYYY-MM-DD-<feature-name>.md`
 - (User preferences for plan location override this default)
 ```
 

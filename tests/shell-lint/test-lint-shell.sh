@@ -71,7 +71,7 @@ write_stub_tool() {
     printf ' <%s>' "\$arg"
   done
   printf '\n'
-} >> "\$SUPERPOWERS_SHELL_LINT_TEST_LOG"
+} >> "\$ULTRAPOWERS_SHELL_LINT_TEST_LOG"
 exit 0
 EOF
   chmod +x "$path"
@@ -120,7 +120,7 @@ run_lint_shell() {
   (
     cd "$repo"
     PATH="$fakebin:$PATH" \
-      SUPERPOWERS_SHELL_LINT_TEST_LOG="$log" \
+      ULTRAPOWERS_SHELL_LINT_TEST_LOG="$log" \
       bash "$SCRIPT_UNDER_TEST" "$@"
   )
 }

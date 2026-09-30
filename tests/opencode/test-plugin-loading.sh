@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Test: Plugin Loading
-# Verifies that the superpowers plugin loads correctly in OpenCode
+# Verifies that the ultrapowers plugin loads correctly in OpenCode
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -13,7 +13,7 @@ source "$SCRIPT_DIR/setup.sh"
 # Trap to cleanup on exit
 trap cleanup_test_env EXIT
 
-plugin_link="$OPENCODE_CONFIG_DIR/plugins/superpowers.js"
+plugin_link="$OPENCODE_CONFIG_DIR/plugins/ultrapowers.js"
 
 # Test 1: Verify plugin file exists and is registered
 echo "Test 1: Checking plugin registration..."
@@ -34,26 +34,26 @@ fi
 
 # Test 2: Verify skills directory is populated
 echo "Test 2: Checking skills directory..."
-skill_count=$(find "$SUPERPOWERS_SKILLS_DIR" -name "SKILL.md" | wc -l)
+skill_count=$(find "$ULTRAPOWERS_SKILLS_DIR" -name "SKILL.md" | wc -l)
 if [ "$skill_count" -gt 0 ]; then
     echo "  [PASS] Found $skill_count skills"
 else
-    echo "  [FAIL] No skills found in $SUPERPOWERS_SKILLS_DIR"
+    echo "  [FAIL] No skills found in $ULTRAPOWERS_SKILLS_DIR"
     exit 1
 fi
 
-# Test 3: Check using-superpowers skill exists (critical for bootstrap)
-echo "Test 3: Checking using-superpowers skill (required for bootstrap)..."
-if [ -f "$SUPERPOWERS_SKILLS_DIR/using-superpowers/SKILL.md" ]; then
-    echo "  [PASS] using-superpowers skill exists"
+# Test 3: Check using-ultrapowers skill exists (critical for bootstrap)
+echo "Test 3: Checking using-ultrapowers skill (required for bootstrap)..."
+if [ -f "$ULTRAPOWERS_SKILLS_DIR/using-ultrapowers/SKILL.md" ]; then
+    echo "  [PASS] using-ultrapowers skill exists"
 else
-    echo "  [FAIL] using-superpowers skill not found (required for bootstrap)"
+    echo "  [FAIL] using-ultrapowers skill not found (required for bootstrap)"
     exit 1
 fi
 
 # Test 4: Verify plugin JavaScript syntax (basic check)
 echo "Test 4: Checking plugin JavaScript syntax..."
-if node --check "$SUPERPOWERS_PLUGIN_FILE" 2>/dev/null; then
+if node --check "$ULTRAPOWERS_PLUGIN_FILE" 2>/dev/null; then
     echo "  [PASS] Plugin JavaScript syntax is valid"
 else
     echo "  [FAIL] Plugin has JavaScript syntax errors"
@@ -62,7 +62,7 @@ fi
 
 # Test 5: Verify bootstrap text does not reference a hardcoded skills path
 echo "Test 5: Checking bootstrap does not advertise a wrong skills path..."
-if grep -q 'configDir}/skills/superpowers/' "$SUPERPOWERS_PLUGIN_FILE"; then
+if grep -q 'configDir}/skills/ultrapowers/' "$ULTRAPOWERS_PLUGIN_FILE"; then
     echo "  [FAIL] Plugin still references old configDir skills path"
     exit 1
 else

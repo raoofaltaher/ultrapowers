@@ -62,7 +62,7 @@ PLAN
     # --- task-start: brief path + BASE in one call ---
     local out
     out="$(cd "$repo" && "$EP_SCRIPTS/task-start" plan.md 1)"
-    if [[ "$out" == *"brief: $repo/.superpowers/sdd/plan/task-1-brief.md"* ]]; then
+    if [[ "$out" == *"brief: $repo/.ultrapowers/sdd/plan/task-1-brief.md"* ]]; then
         pass "task-start prints the brief path under the plan's workspace"
     else
         fail "task-start prints the brief path under the plan's workspace"
@@ -74,7 +74,7 @@ PLAN
         fail "task-start prints BASE as the current HEAD"
         echo "    got: $out"
     fi
-    if [[ -s "$repo/.superpowers/sdd/plan/task-1-brief.md" ]]; then
+    if [[ -s "$repo/.ultrapowers/sdd/plan/task-1-brief.md" ]]; then
         pass "task-start writes the brief file"
     else
         fail "task-start writes the brief file"
@@ -86,7 +86,7 @@ PLAN
     head="$(cd "$repo" && git rev-parse HEAD)"
     out="$(cd "$repo" && "$EP_SCRIPTS/task-done" plan.md 1 "$base" -- sh -c 'echo "Ran 3 tests"; echo OK')"
     rc=$?
-    local ledger="$repo/.superpowers/sdd/plan/progress.md"
+    local ledger="$repo/.ultrapowers/sdd/plan/progress.md"
     local expected="Task 1: complete (commits ${base:0:7}..${head:0:7}, tests: sh -c 'echo \"Ran 3 tests\"; echo OK' → OK)"
     if [[ -f "$ledger" ]] && grep -qF "$expected" "$ledger"; then
         pass "task-done appends the completion line with commit range and test result"
@@ -101,7 +101,7 @@ PLAN
         fail "task-done prints the tail of the test output"
         echo "    got: $out"
     fi
-    if [[ -s "$repo/.superpowers/sdd/plan/task-1-tests.log" ]]; then
+    if [[ -s "$repo/.ultrapowers/sdd/plan/task-1-tests.log" ]]; then
         pass "task-done keeps the full test output in the workspace"
     else
         fail "task-done keeps the full test output in the workspace"

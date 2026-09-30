@@ -1,9 +1,9 @@
 {
-  "name": "superpowers",
+  "name": "ultrapowers",
   "version": "6.4.2",
-  "description": "Superpowers skills and runtime bootstrap for coding agents",
+  "description": "Ultrapowers skills and runtime bootstrap for coding agents",
   "type": "module",
-  "main": ".opencode/plugins/superpowers.js",
+  "main": ".opencode/plugins/ultrapowers.js",
   "keywords": [
     "pi-package",
     "skills",
@@ -14,7 +14,7 @@
   ],
   "pi": {
     "extensions": [
-      "./.pi/extensions/superpowers.ts"
+      "./.pi/extensions/ultrapowers.ts"
     ],
     "skills": [
       "./skills"

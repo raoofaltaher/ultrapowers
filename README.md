@@ -1,6 +1,6 @@
-# Superpowers
+# Ultrapowers
 
-Superpowers is a complete software development methodology for your coding agents, built on top of a set of composable skills and some initial instructions that make sure your agent uses them.
+Ultrapowers is a complete software development methodology for your coding agents, built on top of a set of composable skills and some initial instructions that make sure your agent uses them.
 
 ## Table of Contents
 
@@ -43,66 +43,66 @@ After you've signed off on the design, your agent puts together an implementatio
 
 Next up, once you say "go", it launches a *subagent-driven-development* process, having agents work through each engineering task, inspecting and reviewing their work, and continuing forward. It's not uncommon for your agent to work autonomously for a couple hours at a time without deviating from the plan you put together.
 
-There's a bunch more to it, but that's the core of the system. And because the skills trigger automatically, you don't need to do anything special. Your coding agent just has Superpowers.
+There's a bunch more to it, but that's the core of the system. And because the skills trigger automatically, you don't need to do anything special. Your coding agent just has Ultrapowers.
 
 ## Commercial Services
 
-If you're using Superpowers in enterprise and could benefit from commercial support, additional tooling, or managed spending, please don't hesitate to drop us a line at sales@primeradiant.com.
+If you're using Ultrapowers in enterprise and could benefit from commercial support, additional tooling, or managed spending, please don't hesitate to drop us a line at sales@primeradiant.com.
 
 ## Installation
 
-Installation differs by harness. If you use more than one, install Superpowers separately for each one.
+Installation differs by harness. If you use more than one, install Ultrapowers separately for each one.
 
 ### Claude Code
 
-Superpowers is available via the [official Claude plugin marketplace](https://claude.com/plugins/superpowers)
+Ultrapowers is available via the [official Claude plugin marketplace](https://claude.com/plugins/ultrapowers)
 
 #### Official Marketplace
 
 - Install the plugin from Anthropic's official marketplace:
 
   ```bash
-  /plugin install superpowers@claude-plugins-official
+  /plugin install ultrapowers@claude-plugins-official
   ```
 
-#### Superpowers Marketplace
+#### Ultrapowers Marketplace
 
-The Superpowers marketplace provides Superpowers and some other related plugins for Claude Code.
+The Ultrapowers marketplace provides Ultrapowers and some other related plugins for Claude Code.
 
 - Register the marketplace:
 
   ```bash
-  /plugin marketplace add obra/superpowers-marketplace
+  /plugin marketplace add raoofaltaher/ultrapowers-marketplace
   ```
 
 - Install the plugin from this marketplace:
 
   ```bash
-  /plugin install superpowers@superpowers-marketplace
+  /plugin install ultrapowers@ultrapowers-marketplace
   ```
 
 ### Antigravity
 
-Install Superpowers as a plugin from this repository:
+Install Ultrapowers as a plugin from this repository:
 
 ```bash
-agy plugin install https://github.com/obra/superpowers
+agy plugin install https://github.com/raoofaltaher/ultrapowers
 ```
 
-Antigravity runs the plugin's session-start hook, so Superpowers is active from
+Antigravity runs the plugin's session-start hook, so Ultrapowers is active from
 the first message. Reinstall with the same command to update.
 
 ### Codex App
 
-Superpowers is available via the [official Codex plugin marketplace](https://github.com/openai/plugins).
+Ultrapowers is available via the [official Codex plugin marketplace](https://github.com/openai/plugins).
 
 - In the Codex app, click on Plugins in the sidebar.
-- You should see `Superpowers` in the Coding section.
-- Click the `+` next to Superpowers and follow the prompts.
+- You should see `Ultrapowers` in the Coding section.
+- Click the `+` next to Ultrapowers and follow the prompts.
 
 ### Codex CLI
 
-Superpowers is available via the [official Codex plugin marketplace](https://github.com/openai/plugins).
+Ultrapowers is available via the [official Codex plugin marketplace](https://github.com/openai/plugins).
 
 - Open the plugin search interface:
 
@@ -110,10 +110,10 @@ Superpowers is available via the [official Codex plugin marketplace](https://git
   /plugins
   ```
 
-- Search for Superpowers:
+- Search for Ultrapowers:
 
   ```bash
-  superpowers
+  ultrapowers
   ```
 
 - Select `Install Plugin`.
@@ -123,23 +123,23 @@ Superpowers is available via the [official Codex plugin marketplace](https://git
 - In Cursor Agent chat, install from marketplace:
 
   ```text
-  /add-plugin superpowers
+  /add-plugin ultrapowers
   ```
 
-- Or search for "superpowers" in the plugin marketplace.
+- Or search for "ultrapowers" in the plugin marketplace.
 
 ### Devin CLI
 
 - Install the plugin from this repository:
 
   ```bash
-  devin plugins install obra/superpowers
+  devin plugins install raoofaltaher/ultrapowers
   ```
 
 - Update to the latest version with:
 
   ```bash
-  devin plugins update superpowers
+  devin plugins update ultrapowers
   ```
 
 ### Factory Droid
@@ -147,13 +147,13 @@ Superpowers is available via the [official Codex plugin marketplace](https://git
 - Register the marketplace:
 
   ```bash
-  droid plugin marketplace add https://github.com/obra/superpowers
+  droid plugin marketplace add https://github.com/raoofaltaher/ultrapowers
   ```
 
 - Install the plugin:
 
   ```bash
-  droid plugin install superpowers@superpowers
+  droid plugin install ultrapowers@ultrapowers
   ```
 
 ### Gemini CLI
@@ -161,13 +161,13 @@ Superpowers is available via the [official Codex plugin marketplace](https://git
 - Install the extension:
 
   ```bash
-  gemini extensions install https://github.com/obra/superpowers
+  gemini extensions install https://github.com/raoofaltaher/ultrapowers
   ```
 
 - Update later:
 
   ```bash
-  gemini extensions update superpowers
+  gemini extensions update ultrapowers
   ```
 
 ### GitHub Copilot CLI
@@ -175,26 +175,26 @@ Superpowers is available via the [official Codex plugin marketplace](https://git
 - Register the marketplace:
 
   ```bash
-  copilot plugin marketplace add obra/superpowers-marketplace
+  copilot plugin marketplace add raoofaltaher/ultrapowers-marketplace
   ```
 
 - Install the plugin:
 
   ```bash
-  copilot plugin install superpowers@superpowers-marketplace
+  copilot plugin install ultrapowers@ultrapowers-marketplace
   ```
 
 ### Grok Build CLI
 
-Superpowers is available via the [official Grok plugin marketplace](https://github.com/xai-org/plugin-marketplace).
+Ultrapowers is available via the [official Grok plugin marketplace](https://github.com/xai-org/plugin-marketplace).
 
 - Install the plugin from xAI's official marketplace:
 
   ```bash
-  grok plugin install superpowers@xai-official --trust
+  grok plugin install ultrapowers@xai-official --trust
   ```
 
-- Or open the marketplace in the TUI, search for Superpowers, and install it:
+- Or open the marketplace in the TUI, search for Ultrapowers, and install it:
 
   ```text
   /marketplace
@@ -202,7 +202,7 @@ Superpowers is available via the [official Grok plugin marketplace](https://gith
 
 ### Kimi Code
 
-Superpowers is available in Kimi Code's plugin marketplace.
+Ultrapowers is available in Kimi Code's plugin marketplace.
 
 - Open Kimi Code's plugin manager:
 
@@ -210,67 +210,67 @@ Superpowers is available in Kimi Code's plugin marketplace.
   /plugins
   ```
 
-- Go to `Marketplace` > `Superpowers` and install it.
+- Go to `Marketplace` > `Ultrapowers` and install it.
 
 - Or install directly from this repository:
 
   ```text
-  /plugins install https://github.com/obra/superpowers
+  /plugins install https://github.com/raoofaltaher/ultrapowers
   ```
 
 - Detailed docs: [docs/README.kimi.md](docs/README.kimi.md)
 
 ### OpenCode
 
-OpenCode uses its own plugin install; install Superpowers separately even if you
+OpenCode uses its own plugin install; install Ultrapowers separately even if you
 already use it in another harness.
 
 - Tell OpenCode:
 
   ```
-  Fetch and follow instructions from https://raw.githubusercontent.com/obra/superpowers/refs/heads/main/.opencode/INSTALL.md
+  Fetch and follow instructions from https://raw.githubusercontent.com/raoofaltaher/ultrapowers/refs/heads/main/.opencode/INSTALL.md
   ```
 
 - Detailed docs: [docs/README.opencode.md](docs/README.opencode.md)
 
 ### Pi
 
-Install Superpowers as a Pi package from this repository:
+Install Ultrapowers as a Pi package from this repository:
 
 ```bash
-pi install git:github.com/obra/superpowers
+pi install git:github.com/raoofaltaher/ultrapowers
 ```
 
 For local development, run Pi with this checkout loaded as a temporary package:
 
 ```bash
-pi -e /path/to/superpowers
+pi -e /path/to/ultrapowers
 ```
 
-The Pi package loads the Superpowers skills and a small extension that injects the `using-superpowers` bootstrap at session startup and again after compaction. Pi has native skills, so no compatibility `Skill` tool is required. Subagent and task-list tools remain optional Pi companion packages.
+The Pi package loads the Ultrapowers skills and a small extension that injects the `using-ultrapowers` bootstrap at session startup and again after compaction. Pi has native skills, so no compatibility `Skill` tool is required. Subagent and task-list tools remain optional Pi companion packages.
 
 ### Qwen Code
 
 Qwen Code installs plugins from Claude Code marketplaces directly.
 
-- Install the plugin from this repository, and pick `superpowers` when prompted:
+- Install the plugin from this repository, and pick `ultrapowers` when prompted:
 
   ```bash
-  qwen extensions install obra/superpowers
+  qwen extensions install raoofaltaher/ultrapowers
   ```
 
 - Update later:
 
   ```bash
-  qwen extensions update superpowers
+  qwen extensions update ultrapowers
   ```
 
 ### Hermes Agent
 
-Install Superpowers as a Hermes plugin from this repository:
+Install Ultrapowers as a Hermes plugin from this repository:
 
 ```bash
-hermes plugins install obra/superpowers --enable
+hermes plugins install raoofaltaher/ultrapowers --enable
 ```
 
 Restart any active Hermes sessions after installing. Note: Hermes has no
@@ -279,27 +279,27 @@ turn loses the bootstrap — start a fresh session if skills stop triggering.
 
 ### Muse
 
-Superpowers is available as a native Muse plugin — same repo, same skills, all harnesses. The `using-superpowers` bootstrap is injected via the native `SessionStart` hook alongside Claude Code, Codex, Cursor, Gemini, Pi, and the rest — no per-session opt-in.
+Ultrapowers is available as a native Muse plugin — same repo, same skills, all harnesses. The `using-ultrapowers` bootstrap is injected via the native `SessionStart` hook alongside Claude Code, Codex, Cursor, Gemini, Pi, and the rest — no per-session opt-in.
 
 - Install from a local checkout:
 
   ```bash
   muse plugins install ./
-  muse plugins approve superpowers
+  muse plugins approve ultrapowers
   ```
 
   Or clone and install:
 
   ```bash
-  git clone https://github.com/obra/superpowers.git
-  muse plugins install ./superpowers
-  muse plugins approve superpowers
+  git clone https://github.com/raoofaltaher/ultrapowers.git
+  muse plugins install ./ultrapowers
+  muse plugins approve ultrapowers
   ```
 
 - Update later:
 
   ```bash
-  muse plugins update superpowers
+  muse plugins update ultrapowers
   ```
 
 Restart any active Muse sessions after installing so the `SessionStart` hook takes effect — skills are active immediately, hooks require approval on first install. To verify, start a fresh session and send `Let's make a react todo list` — a working install auto-triggers `brainstorming` before any code is written. Version is tracked in `.version-bump.json` so `scripts/bump-version.sh` keeps it in sync.
@@ -324,17 +324,17 @@ Restart any active Muse sessions after installing so the `SessionStart` hook tak
 
 ## When Something Goes Wrong
 
-Sometimes a session misbehaves: a skill fires when it shouldn't, stays silent when it should, or the agent ignores its plan, repeats work, or burns more tokens than you'd expect. Ask your coding agent to "figure out what went wrong with superpowers in this session" and it will invoke the **diagnosing-superpowers** skill. To examine an earlier session, name it: "figure out what went wrong with superpowers in session `<id>`".
+Sometimes a session misbehaves: a skill fires when it shouldn't, stays silent when it should, or the agent ignores its plan, repeats work, or burns more tokens than you'd expect. Ask your coding agent to "figure out what went wrong with ultrapowers in this session" and it will invoke the **diagnosing-ultrapowers** skill. To examine an earlier session, name it: "figure out what went wrong with ultrapowers in session `<id>`".
 
 The skill reads the session transcript, reports what happened with line-level evidence, and, if you want, packages a scrubbed bundle for a bug report.
 
 ## Community
 
-Superpowers is built by [Jesse Vincent](https://blog.fsck.com) and the rest of the folks at [Prime Radiant](https://primeradiant.com).
+Ultrapowers is built by [Jesse Vincent](https://blog.fsck.com) and the rest of the folks at [Prime Radiant](https://primeradiant.com).
 
-- **Discord**: [Join us](https://discord.gg/35wsABTejz) for community support, questions, and sharing what you're building with Superpowers
-- **Issues**: https://github.com/obra/superpowers/issues
-- **Release announcements**: [Sign up](https://primeradiant.com/superpowers/) to get notified about new versions
+- **Discord**: [Join us](https://discord.gg/35wsABTejz) for community support, questions, and sharing what you're building with Ultrapowers
+- **Issues**: https://github.com/raoofaltaher/ultrapowers/issues
+- **Release announcements**: [Sign up](https://primeradiant.com/ultrapowers/) to get notified about new versions
 
 ## What's Inside
 
@@ -346,7 +346,7 @@ Superpowers is built by [Jesse Vincent](https://blog.fsck.com) and the rest of t
 **Debugging**
 - **systematic-debugging** - 4-phase root cause process (includes root-cause-tracing, defense-in-depth, condition-based-waiting techniques)
 - **verification-before-completion** - Ensure it's actually fixed
-- **diagnosing-superpowers** - Work out what went wrong in a session, with evidence; export a scrubbed bundle or file an issue
+- **diagnosing-ultrapowers** - Work out what went wrong in a session, with evidence; export a scrubbed bundle or file an issue
 
 **Collaboration** 
 - **brainstorming** - Socratic design refinement
@@ -361,7 +361,7 @@ Superpowers is built by [Jesse Vincent](https://blog.fsck.com) and the rest of t
 
 **Meta**
 - **writing-skills** - Create new skills following best practices (includes testing methodology)
-- **using-superpowers** - Introduction to the skills system
+- **using-ultrapowers** - Introduction to the skills system
 
 ## Philosophy
 
@@ -370,11 +370,11 @@ Superpowers is built by [Jesse Vincent](https://blog.fsck.com) and the rest of t
 - **Complexity reduction** - Simplicity as primary goal
 - **Evidence over claims** - Verify before declaring success
 
-Read [the original release announcement](https://blog.fsck.com/2025/10/09/superpowers/).
+Read [the original release announcement](https://blog.fsck.com/2025/10/09/ultrapowers/).
 
 ## Contributing
 
-The general contribution process for Superpowers is below. Keep in mind that we don't generally accept contributions of new skills and that any updates to skills must work across all of the coding agents we support.
+The general contribution process for Ultrapowers is below. Keep in mind that we don't generally accept contributions of new skills and that any updates to skills must work across all of the coding agents we support.
 
 1. Fork the repository
 2. Switch to the 'dev' branch
@@ -382,13 +382,13 @@ The general contribution process for Superpowers is below. Keep in mind that we 
 4. Follow the `writing-skills` skill for creating and testing new and modified skills
 5. Submit a PR, being sure to fill in the pull request template.
 
-Skill-behavior tests use the drill eval harness from [superpowers-evals](https://github.com/prime-radiant-inc/superpowers-evals/), cloned into `evals/` — see `evals/README.md` for setup. Plugin-infrastructure tests live at `tests/` and run via the relevant `run-*.sh` or `npm test`.
+Skill-behavior tests use the drill eval harness from [ultrapowers-evals](https://github.com/prime-radiant-inc/ultrapowers-evals/), cloned into `evals/` — see `evals/README.md` for setup. Plugin-infrastructure tests live at `tests/` and run via the relevant `run-*.sh` or `npm test`.
 
 See `skills/writing-skills/SKILL.md` for the complete guide.
 
 ## Updating
 
-Superpowers updates are somewhat coding-agent dependent, but are often automatic.
+Ultrapowers updates are somewhat coding-agent dependent, but are often automatic.
 
 ## License
 
@@ -396,4 +396,4 @@ MIT License - see LICENSE file for details
 
 ## Visual companion telemetry
 
-Because skills and plugins don't provide any feedback to creators, we have no idea how many of you are using Superpowers. By default, the Prime Radiant logo on brainstorming's optional visual companion feature is loaded from our website. It includes the version of Superpowers in use. It does not include any details about your project, prompt, or coding agent. We don't see your clicks or anything about what you're building. This helps us have a rough idea of how many folks are using Superpowers and which version of Superpowers they're using. It's 100% optional. To disable this, set the environment variable `SUPERPOWERS_DISABLE_TELEMETRY` to any true value. Superpowers also honors Claude Code's `DISABLE_TELEMETRY` and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` opt-outs.
+Because skills and plugins don't provide any feedback to creators, we have no idea how many of you are using Ultrapowers. By default, the Prime Radiant logo on brainstorming's optional visual companion feature is loaded from our website. It includes the version of Ultrapowers in use. It does not include any details about your project, prompt, or coding agent. We don't see your clicks or anything about what you're building. This helps us have a rough idea of how many folks are using Ultrapowers and which version of Ultrapowers they're using. It's 100% optional. To disable this, set the environment variable `ULTRAPOWERS_DISABLE_TELEMETRY` to any true value. Ultrapowers also honors Claude Code's `DISABLE_TELEMETRY` and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` opt-outs.

@@ -1,4 +1,4 @@
-# Installing Superpowers for OpenCode
+# Installing Ultrapowers for OpenCode
 
 ## Prerequisites
 
@@ -14,7 +14,7 @@ Use the existing V1 plugin configuration:
 
 ```json
 {
-  "plugin": ["superpowers@git+https://github.com/obra/superpowers.git"]
+  "plugin": ["ultrapowers@git+https://github.com/raoofaltaher/ultrapowers.git"]
 }
 ```
 
@@ -24,7 +24,7 @@ Use the V2 plugin configuration:
 
 ```json
 {
-  "plugins": ["superpowers@git+https://github.com/obra/superpowers.git"]
+  "plugins": ["ultrapowers@git+https://github.com/raoofaltaher/ultrapowers.git"]
 }
 ```
 
@@ -36,24 +36,24 @@ Restart OpenCode. V2 uses the `opencode` command; `opencode2` may be available
 as an alias. The plugin installs through OpenCode's plugin manager and
 registers all skills.
 
-Verify by asking: "Tell me about your superpowers"
+Verify by asking: "Tell me about your ultrapowers"
 
 OpenCode uses its own plugin install. If you also use Claude Code, Codex, or
-another harness, install Superpowers separately for each one.
+another harness, install Ultrapowers separately for each one.
 
 ## Migrating from the old symlink-based install
 
-If you previously installed superpowers using `git clone` and symlinks, remove the old setup:
+If you previously installed ultrapowers using `git clone` and symlinks, remove the old setup:
 
 ```bash
 # Remove old symlinks
-rm -f ~/.config/opencode/plugins/superpowers.js
-rm -rf ~/.config/opencode/skills/superpowers
+rm -f ~/.config/opencode/plugins/ultrapowers.js
+rm -rf ~/.config/opencode/skills/ultrapowers
 
 # Optionally remove the cloned repo
-rm -rf ~/.config/opencode/superpowers
+rm -rf ~/.config/opencode/ultrapowers
 
-# Remove skills.paths from opencode.json if you added one for superpowers
+# Remove skills.paths from opencode.json if you added one for ultrapowers
 ```
 
 Then follow the installation steps above.
@@ -69,9 +69,9 @@ use skill tool to load brainstorming
 
 ## Updating
 
-OpenCode installs Superpowers through a git-backed package spec. Some OpenCode
+OpenCode installs Ultrapowers through a git-backed package spec. Some OpenCode
 and Bun versions pin that resolved git dependency in a lockfile or cache, so a
-restart may not pick up the newest Superpowers commit. If updates do not appear,
+restart may not pick up the newest Ultrapowers commit. If updates do not appear,
 clear OpenCode's package cache or reinstall the plugin.
 
 To pin a specific version, add a tag or commit to the spec (same form for the
@@ -79,7 +79,7 @@ V1 `plugin` key and the V2 `plugins` key):
 
 ```json
 {
-  "plugin": ["superpowers@git+https://github.com/obra/superpowers.git#v6.4.2"]
+  "plugin": ["ultrapowers@git+https://github.com/raoofaltaher/ultrapowers.git#v6.4.2"]
 }
 ```
 
@@ -89,9 +89,9 @@ On V2, pin `v6.4.1` or later; `v6.3.0` and earlier releases load only on V1.
 
 ### Plugin not loading
 
-1. Check logs. V1: `opencode run --print-logs "hello" 2>&1 | grep -i superpowers`.
+1. Check logs. V1: `opencode run --print-logs "hello" 2>&1 | grep -i ultrapowers`.
    V2 loads plugins in the background server, so add `--standalone`:
-   `opencode run --standalone --print-logs "hello" 2>&1 | grep -i superpowers`,
+   `opencode run --standalone --print-logs "hello" 2>&1 | grep -i ultrapowers`,
    or inspect `~/.local/share/opencode/log/opencode.log` filtering for `role=server`.
 2. Verify the plugin line in your `opencode.json`
 3. Make sure you're running a recent version of OpenCode
@@ -105,7 +105,7 @@ the plugin, try installing with system npm and pointing OpenCode at the local
 package:
 
 ```powershell
-npm install superpowers@git+https://github.com/obra/superpowers.git --prefix "$HOME\.config\opencode"
+npm install ultrapowers@git+https://github.com/raoofaltaher/ultrapowers.git --prefix "$HOME\.config\opencode"
 ```
 
 Then use the absolute path of the installed package in `opencode.json` for your
@@ -116,7 +116,7 @@ package name, not a local directory.
 
 ```json
 {
-  "plugin": ["C:\\Users\\<you>\\.config\\opencode\\node_modules\\superpowers"]
+  "plugin": ["C:\\Users\\<you>\\.config\\opencode\\node_modules\\ultrapowers"]
 }
 ```
 
@@ -124,7 +124,7 @@ package name, not a local directory.
 
 ```json
 {
-  "plugins": ["C:\\Users\\<you>\\.config\\opencode\\node_modules\\superpowers"]
+  "plugins": ["C:\\Users\\<you>\\.config\\opencode\\node_modules\\ultrapowers"]
 }
 ```
 
@@ -162,5 +162,5 @@ Skills speak in actions ("create a todo", "dispatch a subagent", "read a file").
 
 ## Getting Help
 
-- Report issues: https://github.com/obra/superpowers/issues
-- Full documentation: https://github.com/obra/superpowers/blob/main/docs/README.opencode.md
+- Report issues: https://github.com/raoofaltaher/ultrapowers/issues
+- Full documentation: https://github.com/raoofaltaher/ultrapowers/blob/main/docs/README.opencode.md

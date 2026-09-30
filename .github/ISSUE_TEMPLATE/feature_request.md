@@ -1,6 +1,6 @@
 ---
 name: Feature Request
-about: Propose a change or addition to Superpowers
+about: Propose a change or addition to Ultrapowers
 labels: enhancement
 ---
 
@@ -25,7 +25,7 @@ progress, and some were intentionally declined.
 <!-- What other approaches could solve the same problem? Why is your
      proposal better? -->
 
-## Is this appropriate for core Superpowers?
+## Is this appropriate for core Ultrapowers?
 <!-- Would this benefit someone working on a completely different kind
      of project? If this is specific to your domain, workflow, or a
      third-party tool, it may belong as its own plugin instead. -->
@@ -37,7 +37,7 @@ progress, and some were intentionally declined.
 
 | Field | Value |
 |-------|-------|
-| Superpowers version | |
+| Ultrapowers version | |
 | Harness (Claude Code, Cursor, etc.) | |
 | Harness version | |
 | Your model + version | |

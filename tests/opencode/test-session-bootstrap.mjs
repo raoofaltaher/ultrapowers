@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 const [, , inputPath] = process.argv;
 assert.ok(inputPath, 'pass the plugin module path');
 const pluginURL = pathToFileURL(fs.realpathSync(inputPath));
-const marker = '<EXTREMELY_IMPORTANT>\nYou have superpowers.';
+const marker = '<EXTREMELY_IMPORTANT>\nYou have ultrapowers.';
 let generation = 0;
 
 function reply(flavor, session) {
@@ -38,7 +38,7 @@ async function makeHarness(flavor, fetchSession) {
   };
   let invoke;
   if (flavor === 'v1') {
-    const hooks = await mod.SuperpowersPlugin({
+    const hooks = await mod.UltrapowersPlugin({
       client: { session: { get: ({ path: { id } }) => get(id) } },
       directory: '.',
     });

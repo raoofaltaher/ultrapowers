@@ -113,7 +113,7 @@ if (typeof survivingContextHook !== 'function') {
   };
   await survivingContextHook(event);
   const count = event.messages.flatMap((message) => message.content).filter(
-    (part) => part.type === 'text' && part.text.startsWith('<EXTREMELY_IMPORTANT>\nYou have superpowers.')
+    (part) => part.type === 'text' && part.text.startsWith('<EXTREMELY_IMPORTANT>\nYou have ultrapowers.')
   ).length;
   if (count !== 1) failures.push(`expected surviving bootstrap once, got ${count}`);
 }
@@ -141,9 +141,9 @@ const frontmatterFixtures = {
     expected: 'Folded line one line two',
   },
 };
-const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'superpowers-frontmatter-'));
+const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ultrapowers-frontmatter-'));
 try {
-  const fixturePlugin = path.join(fixtureRoot, '.opencode', 'plugins', 'superpowers.js');
+  const fixturePlugin = path.join(fixtureRoot, '.opencode', 'plugins', 'ultrapowers.js');
   fs.mkdirSync(path.dirname(fixturePlugin), { recursive: true });
   fs.copyFileSync(pluginPath, fixturePlugin);
   for (const [id, { frontmatter }] of Object.entries(frontmatterFixtures)) {

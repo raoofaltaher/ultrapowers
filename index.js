@@ -4,6 +4,6 @@
 // with an index entrypoint (`index.js`) and reject bare file paths
 // ("configured plugin path must be a directory"). npm/git package installs
 // resolve via package.json `main`; this file only serves the directory form,
-// an absolute path such as `"plugins": ["/path/to/superpowers"]` (`~` is not
+// an absolute path such as `"plugins": ["/path/to/ultrapowers"]` (`~` is not
 // expanded).
-export { default } from "./.opencode/plugins/superpowers.js";
+export { default } from "./.opencode/plugins/ultrapowers.js";

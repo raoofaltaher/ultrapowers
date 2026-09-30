@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "name": "superpowers",
-  "displayName": "Superpowers",
+  "name": "ultrapowers",
+  "displayName": "Ultrapowers",
   "version": "6.4.2",
   "description": "Core skills library for Muse: TDD, debugging, collaboration patterns, and proven techniques",
   "compat": {
@@ -15,8 +15,8 @@
         "path": "skills/brainstorming/SKILL.md"
       },
       {
-        "id": "diagnosing-superpowers",
-        "path": "skills/diagnosing-superpowers/SKILL.md"
+        "id": "diagnosing-ultrapowers",
+        "path": "skills/diagnosing-ultrapowers/SKILL.md"
       },
       {
         "id": "dispatching-parallel-agents",
@@ -55,8 +55,8 @@
         "path": "skills/using-git-worktrees/SKILL.md"
       },
       {
-        "id": "using-superpowers",
-        "path": "skills/using-superpowers/SKILL.md"
+        "id": "using-ultrapowers",
+        "path": "skills/using-ultrapowers/SKILL.md"
       },
       {
         "id": "verification-before-completion",
