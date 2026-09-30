@@ -2690,9 +2690,10 @@ for skill in "${LANES[@]}" qa-specialist; do
   if printf '%s\n' "$fm" | grep -Eq '^description: "?Use when '; then pass "$skill: description starts with Use when"; else fail "$skill: description starts with Use when"; fi
   if body "$file" | grep -Eq 'mcp__|\bBash\(|\bWrite\(|\bEdit\('; then fail "$skill: body has no harness tool names"; else pass "$skill: body has no harness tool names"; fi
   if [[ "$skill" == "qa-specialist" ]]; then
-    for key in '^arguments:' '^context: fork$' '^agent: qa-specialist$'; do
+    for key in '^context: fork$' '^agent: qa-specialist$'; do
       if printf '%s\n' "$fm" | grep -Eq "$key"; then pass "$skill: frontmatter has $key"; else fail "$skill: frontmatter has $key"; fi
     done
+    if printf '%s\n' "$fm" | grep -Eq '^arguments:'; then fail "$skill: no arguments key"; else pass "$skill: no arguments key"; fi
     if printf '%s\n' "$fm" | grep -Eq '^user-invocable: false'; then fail "$skill: is user-invocable"; else pass "$skill: is user-invocable"; fi
     if grep -Fq '## Red Flags' "$file"; then pass "$skill: has a red-flags table"; else fail "$skill: has a red-flags table"; fi
   else
@@ -3857,7 +3858,7 @@ git commit -m "feat(qa): lane 6 suites, new lane 7 generated-content, and the re
 - Consumes: `node <SKILL_DIR>/scripts/qa-preflight.mjs <ticket> [--cwd <dir>]` (Task 4): exit 0 with the report JSON (`ok`, `root`, `ticket`, `errors`, `missing`, `preconditions`, `warnings`, `gates`, `docs.brief.exists`, `docs.spec.exists`, `docs.reviewFiles`, `runState.path`, `runState.exists`, `markerExists`, `changeSet[].onTicketBranch`, `changeSet[].error`), 2 on usage, 3 without a project root (`errors[0]` starts `ERROR: no .agents/ultrapowers.json`), 4 on a ticket that fails `ticketPattern` (`errors[0]` starts `ERROR: ticket`); the contract `agents/qa-specialist.md` (Task 5: sections "Absolute rules" and "The procedure, in order", STEP 0 to STEP 9, the resume rule, the final line `Verdict: <value> — reviews/<ID>/QA-REPORT.md`); `ultrapowers:qa-report` (Task 8); the guardrail (Task 2), which lets the shell write and `rm` `<ROOT>/.ultrapowers/qa-active`.
 - Produces: `/ultrapowers:qa-specialist <ticket> [note]`; the marker `<ROOT>/.ultrapowers/qa-active` holding the ticket id with no trailing newline; the run mode handed to the contract (fresh or resume); a finished run's old run-state moved to `<ROOT>/.ultrapowers/run-state-<ID>.previous.json`; an output whose last line is `Verdict: <value> — reviews/<ID>/QA-REPORT.md`.
 
-This skill is new, so it follows G1 fully: two-key frontmatter plus `arguments: [ticket]`, `context: fork` and `agent: qa-specialist` (spec 3.1), "your human partner" voice, a checklist that becomes todos, a red-flags table, no harness tool names. It is modeled on `skills/brainstorming/SKILL.md` and `skills/using-git-worktrees/SKILL.md`: an overview with a core principle, an announce line, numbered steps, a checklist and a two-column red-flags table. With `context: fork` the harness starts the `qa-specialist` agent and gives it this file's body as its task, without the conversation, so the body stands on its own; the same body also works inline in a harness that does not fork. Two substitution rules shape the text: the harness replaces `$ticket`, `$ARGUMENTS` and `$` followed by a digit, so the body never contains `$` plus a digit, and the one literal mention of the placeholder is written `\$ticket`.
+This skill is new, so it follows G1 fully: two-key frontmatter plus `context: fork` and `agent: qa-specialist` (spec 3.1; no `arguments:` key, because the ticket is the first word of `$ARGUMENTS`), "your human partner" voice, a checklist that becomes todos, a red-flags table, no harness tool names. It is modeled on `skills/brainstorming/SKILL.md` and `skills/using-git-worktrees/SKILL.md`: an overview with a core principle, an announce line, numbered steps, a checklist and a two-column red-flags table. With `context: fork` the harness starts the `qa-specialist` agent and gives it this file's body as its task, without the conversation, so the body stands on its own; the same body also works inline in a harness that does not fork. Two substitution rules shape the text: the harness replaces `$ticket`, `$ARGUMENTS` and `$` followed by a digit, so the body never contains `$` plus a digit, and the one literal mention of the placeholder is written `\$ticket`.
 
 - [ ] **Step 1: Extend the structure test**
 
@@ -3874,7 +3875,7 @@ if [[ -f "$ENTRY" ]]; then
   pass "skills/qa-specialist/SKILL.md exists"
   entry_fm="$(frontmatter "$ENTRY")"
   entry_body="$(body "$ENTRY")"
-  if printf '%s\n' "$entry_fm" | grep -Eq '^arguments: \[ticket\]$'; then pass "qa-specialist: arguments is [ticket]"; else fail "qa-specialist: arguments is [ticket]"; fi
+  if printf '%s\n' "$entry_fm" | grep -Eq '^arguments:'; then fail "qa-specialist: no arguments key"; else pass "qa-specialist: no arguments key"; fi
   entry_desc="$(printf '%s\n' "$entry_fm" | sed -n 's/^description: //p')"
   for word in then step dispatch preflight marker; do
     if printf '%s' "$entry_desc" | grep -qiw -- "$word"; then
@@ -3965,7 +3966,6 @@ Create `skills/qa-specialist/SKILL.md`:
 ---
 name: qa-specialist
 description: Use when a ticket's implementation is complete and your human partner wants the QA gate, a QA pass, or a go or no-go verdict before merge or release
-arguments: [ticket]
 context: fork
 agent: qa-specialist
 ---
@@ -3986,8 +3986,8 @@ marker exists, every path ends with a report, a removed marker and one verdict l
 
 ## Arguments and names
 
-- The invocation, ticket first: `$ARGUMENTS`. The ticket is `$ticket`. If that shows the
-  literal text `\$ticket` or nothing, take the first word of the trailing `ARGUMENTS:` line of
+- The invocation, ticket first: `$ARGUMENTS`. The ticket is its first word. If that shows the
+  literal text `$ARGUMENTS` or nothing, take the first word of the trailing `ARGUMENTS:` line of
   the message that invoked this skill. No ticket: print
   `usage: /ultrapowers:qa-specialist <ticket> [note]` and stop.
 - Words after the ticket are your human partner's note. A note may set emphasis (which area

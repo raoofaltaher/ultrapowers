@@ -18,14 +18,14 @@ The owner's development cycle starts with a ticket: create the four ticket folde
 | D4 | Repositories are discovered from the project config, never from a hand-written catalog. Selection order: explicit focus words, branch match on the ticket id, then one multiple-choice question. | Piece 2 records nested clones; the reference's keyword table was project-specific. |
 | D5 | The core `brainstorming` and `writing-plans` skills each gain one paragraph: with a project config and a known ticket id, write to `specs/<id>/Spec.md` and `plans/<id>/Plan.md`; otherwise keep the upstream default. Nothing else in them changes. | Owner's choice. Running writing-plans directly after brainstorm-task must land in the knowledge base. |
 | D6 | Root discovery walks up to `.agents/ultrapowers.json`. It never uses the git toplevel and never relies on a harness environment variable. | Inside a nested clone the git toplevel is the wrong repo; the variable is unset in shell tool calls. |
-| D7 | Arguments come from named frontmatter arguments, with a fallback that reads a trailing `ARGUMENTS:` line. | Current Claude Code substitutes; older versions and some harnesses append the raw text instead. |
+| D7 | Arguments come from `$ARGUMENTS` in the skill body, read by position (the ticket is the first word), with a fallback that reads a trailing `ARGUMENTS:` line. There is no `arguments:` frontmatter key. | Claude Code substitutes `$ARGUMENTS` without a declared list; older versions and other harnesses append the raw text instead. A named list would add a third frontmatter key, which G1 forbids (revised 2026-09-30 by owner decision, same ruling as the init skill). |
 | D8 | Commits made by these skills end with an optional trailer from project config; none by default. | The reference hard-coded a personal sign-off. |
 
 ## 3. Design
 
 ### 3.1 Common behavior
 
-- Frontmatter per G1. `arguments` list per skill; the body says "read the values from the named arguments, or from the trailing `ARGUMENTS:` line if they did not substitute".
+- Frontmatter per G1: exactly `name` and `description`. Each body has an Arguments section that reads `$ARGUMENTS` by position, or the trailing `ARGUMENTS:` line when nothing was substituted.
 - Root: from the working directory walk up until a directory contains `.agents/ultrapowers.json`; if the filesystem root is reached, stop and say the project is not scaffolded, offering `/ultrapowers:init`.
 - Every shell block prints marked sections and the skill says "read the output before continuing; any line containing ERROR means stop".
 - Placeholders `<ID>` and `<ROOT>` are filled by the agent before running commands.

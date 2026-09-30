@@ -22,7 +22,7 @@
 - D3. Ticket ids accept any token matching a permissive pattern; default `^#?[A-Za-z0-9][A-Za-z0-9._-]*$`, overridable in project config (`ticketPattern`).
 - D4. Repositories are discovered from the project config (`repos`), never from a hand-written catalog. Selection order: explicit focus words, branch match on the ticket id, then one multiple-choice question.
 - D6. Root discovery walks up to `.agents/ultrapowers.json`. It never uses the git toplevel and never relies on a harness environment variable.
-- D7. Arguments come from named frontmatter arguments, with a fallback that reads a trailing `ARGUMENTS:` line.
+- D7. Arguments come from `$ARGUMENTS` in the skill body, read by position, with a fallback that reads a trailing `ARGUMENTS:` line. No `arguments:` frontmatter key (G1: two keys).
 - D8. Commits made by these skills end with an optional trailer from project config (`commitTrailer`); none by default.
 - 3.1. Every shell block prints marked sections; the skill says "read the output before continuing; any line containing ERROR means stop". Placeholders `<ID>` and `<ROOT>` (and here `<SKILL_DIR>`, `<REPO>`) are filled by the agent before running commands. Config keys read: `repos`, `commitTrailer`, `ticketPattern`.
 - 3.2 D2. The brief is: title line, Context, Definition of Ready, Definition of Done, Related Documentation. Two short paragraphs at most.
@@ -1036,10 +1036,11 @@ test_skill_structure() {
             fail "$name frontmatter starts with name and a Use-when description"
             sed -n '1,4p' "$file" | sed 's/^/    /'
         fi
-        if grep -q '^arguments:$' "$file" && grep -q '^  - ticket$' "$file"; then
-            pass "$name declares its arguments list starting with ticket"
+        keys="$(awk 'NR==1 && $0!="---"{exit} NR>1 && $0=="---"{exit} NR>1{print}' "$file" | grep -oE '^[a-z-]+:' | tr -d ':' | tr '\n' ' ')"
+        if [[ "$keys" == "name description " ]]; then
+            pass "$name frontmatter has exactly name and description"
         else
-            fail "$name declares its arguments list starting with ticket"
+            fail "$name frontmatter has exactly name and description (got: $keys)"
         fi
         if grep -q 'your human partner' "$file"; then
             pass "$name speaks to your human partner"
@@ -1194,9 +1195,6 @@ Create `skills/new-task/SKILL.md`:
 ---
 name: new-task
 description: Use when a ticket id arrives and its task, spec, plan and review folders do not exist yet, before any brainstorming or code
-arguments:
-  - ticket
-  - title
 ---
 
 # New Task
@@ -1813,9 +1811,6 @@ Create `skills/brainstorm-task/SKILL.md`:
 ---
 name: brainstorm-task
 description: Use when a ticket has a brief in tasks/<id>/ and needs a spec grounded in the code, before writing any design or plan
-arguments:
-  - ticket
-  - focus
 ---
 
 # Brainstorm Task
@@ -2145,8 +2140,6 @@ Create `skills/task/SKILL.md`:
 ---
 name: task
 description: Use when your human partner names a ticket id and wants to know where it stands, resume it, or load its documents, before doing any work on it
-arguments:
-  - ticket
 ---
 
 # Task
@@ -2744,7 +2737,7 @@ No commit: this task produces evidence, not changes. If any step fails, return t
 | D4 repos from config, selection order | Task 1 (`config_repos`, selectors), Task 4 (`preflight.sh` SELECTION) |
 | D5 one paragraph each in brainstorming and writing-plans | Task 6 |
 | D6 root walk-up, no toplevel, no env var | Task 1 (`find_root`, tests from nested clone and without marker) |
-| D7 named arguments with `ARGUMENTS:` fallback | Each SKILL.md "Arguments" section; structural test in Task 3 |
+| D7 `$ARGUMENTS` read by position with `ARGUMENTS:` fallback; two-key frontmatter | Each SKILL.md "Arguments" section; structural test in Task 3 |
 | D8 optional commit trailer | Task 1 (`config_string`), Task 3 (`commit`), Task 4 (`commit-spec.sh`), trailer tests |
 | 3.1 marked sections, ERROR stop rule, placeholders, config keys | Every script and SKILL.md; structural test checks `ERROR` |
 | 3.2 steps 1-7 | Task 3 |
