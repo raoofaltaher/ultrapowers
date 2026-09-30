@@ -350,7 +350,11 @@ printf '%s' "$lc" | grep -Eq '(curl|wget)[^;&|]*(-t |--upload-file|--data-binary
 # Shell writes (spec 3.5): redirects, tee, curl -o, cp/mv/install/ln destinations, rm
 # operands, in-place editors and git subcommands, checked by the quote-aware analyzer. Its
 # inputs travel on stdin so Git Bash's argument conversion cannot rewrite the paths.
-case "${BASH_SOURCE[0]}" in */*) hook_dir="${BASH_SOURCE[0]%/*}" ;; *) hook_dir="." ;; esac
+# cmd.exe hands bash this script as S:\...\hooks\qa-guardrail, so normalize the slashes first.
+hook_src="${BASH_SOURCE[0]}"
+slash='/'
+hook_src="${hook_src//\\/$slash}"
+case "$hook_src" in */*) hook_dir="${hook_src%/*}" ;; *) hook_dir="." ;; esac
 writes_js="$hook_dir/lib/qa-shell-writes.mjs"
 if command -v cygpath >/dev/null 2>&1; then writes_js="$(cygpath -m "$writes_js" 2>/dev/null || printf '%s' "$writes_js")"; fi
 wreason="$(printf '%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$cmd" | node "$writes_js" 2>&1)" \

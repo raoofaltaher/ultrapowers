@@ -17,26 +17,21 @@ if "%~1"=="" (
 
 set "HOOK_DIR=%~dp0"
 
-REM Try Git for Windows bash in standard locations
-if exist "C:\Program Files\Git\bin\bash.exe" (
-    "C:\Program Files\Git\bin\bash.exe" "%HOOK_DIR%%~1" %2 %3 %4 %5 %6 %7 %8 %9
-    exit /b %ERRORLEVEL%
-)
-if exist "C:\Program Files (x86)\Git\bin\bash.exe" (
-    "C:\Program Files (x86)\Git\bin\bash.exe" "%HOOK_DIR%%~1" %2 %3 %4 %5 %6 %7 %8 %9
-    exit /b %ERRORLEVEL%
-)
-
-REM Try bash on PATH (e.g. user-installed Git Bash, MSYS2, Cygwin)
-where bash >nul 2>nul
-if %ERRORLEVEL% equ 0 (
-    bash "%HOOK_DIR%%~1" %2 %3 %4 %5 %6 %7 %8 %9
-    exit /b %ERRORLEVEL%
-)
+REM Find bash: Git for Windows in its standard locations, then bash on PATH (user-installed
+REM Git Bash, MSYS2, Cygwin). Single-line IFs only: inside a parenthesised block cmd expands
+REM %ERRORLEVEL% when it parses the block, before bash runs, which turned every hook exit
+REM code (a guardrail's deny = 2) into 0.
+set "HOOK_BASH="
+if exist "C:\Program Files\Git\bin\bash.exe" set "HOOK_BASH=C:\Program Files\Git\bin\bash.exe"
+if not defined HOOK_BASH if exist "C:\Program Files (x86)\Git\bin\bash.exe" set "HOOK_BASH=C:\Program Files (x86)\Git\bin\bash.exe"
+if not defined HOOK_BASH where bash >nul 2>nul && set "HOOK_BASH=bash"
 
 REM No bash found - exit silently rather than error
 REM (plugin still works, just without SessionStart context injection)
-exit /b 0
+if not defined HOOK_BASH exit /b 0
+
+"%HOOK_BASH%" "%HOOK_DIR%%~1" %2 %3 %4 %5 %6 %7 %8 %9
+exit /b %ERRORLEVEL%
 CMDBLOCK
 
 # Unix: run the named script directly

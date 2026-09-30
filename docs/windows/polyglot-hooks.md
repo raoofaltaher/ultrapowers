@@ -82,7 +82,9 @@ afterward.
    - `C:\Program Files (x86)\Git\bin\bash.exe`
    - `bash` on `PATH` (MSYS2, Cygwin, or a non-default Git install)
 3. If bash is found, it runs the named extensionless hook script from the hooks
-   directory.
+   directory. The hook's exit code is passed back unchanged (a PreToolUse deny is exit `2`):
+   the final `exit /b %ERRORLEVEL%` sits outside any parenthesised block, because
+   inside one CMD expands `%ERRORLEVEL%` before bash has run.
 4. If no bash is found, the dispatcher exits `0` silently — the plugin
    continues working, it just skips the hook.
 5. `exit /b` stops CMD before it reaches the Unix section.

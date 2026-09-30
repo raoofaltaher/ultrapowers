@@ -156,6 +156,26 @@ else
   fail "wrapper returns the hook's exit code (got ${result##*|})"
 fi
 
+if command -v cmd.exe >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
+  echo "qa-guardrail: Windows harness paths (cmd.exe wrapper, backslash hook path)"
+  # Claude Code on Windows runs run-hook.cmd through cmd.exe; the deny must reach it as exit 2.
+  # /c, not //c: MSYS_NO_PATHCONV=1 above keeps Git Bash from rewriting the switch.
+  result="$(cd "$ROOT" && render "$FIXTURES/deny_git_push.json" | cmd.exe /c "$(cygpath -w "$WRAPPER")" qa-guardrail 2>/dev/null; echo "|$?")"
+  if [[ "${result##*|}" -eq 2 ]]; then
+    pass "run-hook.cmd under cmd.exe returns the hook's exit code"
+  else
+    fail "run-hook.cmd under cmd.exe returns the hook's exit code (got ${result##*|})"
+  fi
+  # cmd.exe hands bash the hook as S:\...\hooks\qa-guardrail; the write analyzer must still be found.
+  event="{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"printf x > $ROOT/repo-a/src/app.js\"}}"
+  result="$(cd "$ROOT" && printf '%s' "$event" | bash "$(cygpath -w "$HOOK")" 2>&1; echo "|$?")"
+  if [[ "${result##*|}" -eq 2 && "$result" == *"outside reviews/1234/"* ]]; then
+    pass "a backslash hook path still finds the write analyzer"
+  else
+    fail "a backslash hook path still finds the write analyzer (got: ${result%%$'\n'*})"
+  fi
+fi
+
 echo "qa-guardrail: Cursor shape adds a permission JSON on stdout"
 result="$(cd "$ROOT" && render "$FIXTURES/deny_git_push.json" | CURSOR_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK" 2>/dev/null)"
 if printf '%s' "$result" | grep -q '"permission":"deny"'; then
