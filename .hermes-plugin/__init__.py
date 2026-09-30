@@ -135,7 +135,8 @@ def _project_nudge(directory):
     except (OSError, ValueError):
         return NUDGE_REPAIR
     recorded = data.get("pluginVersion") if isinstance(data, dict) else None
-    if not isinstance(recorded, str):
+    # The marker is project content; only a plain dotted version may reach the bootstrap.
+    if not isinstance(recorded, str) or not re.fullmatch(r"[0-9]+(?:[.][0-9]+){0,3}", recorded):
         return NUDGE_REPAIR
     current = _plugin_version()
     if current and _version_less(recorded, current):

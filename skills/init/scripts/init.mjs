@@ -404,12 +404,21 @@ export function detectRepos(root) {
 export function readMarker(root) {
   const file = path.join(root, MARKER_PATH);
   if (!fs.existsSync(file)) return null;
+  let marker;
   try {
-    return readJson(file);
+    marker = readJson(file);
   } catch (err) {
     throw new InitError('marker-corrupt', `${MARKER_PATH} is not valid JSON: ${err.message}`, { path: file });
   }
+  // The marker is project content. Its version is echoed to agents, so only a
+  // plain dotted number is accepted; anything else is treated as corrupt.
+  if (marker && typeof marker === 'object' && 'pluginVersion' in marker && !PLAIN_VERSION.test(String(marker.pluginVersion))) {
+    throw new InitError('marker-corrupt', `${MARKER_PATH} has a pluginVersion that is not a plain version number`, { path: file });
+  }
+  return marker;
 }
+
+export const PLAIN_VERSION = /^[0-9]+([.][0-9]+){0,3}$/;
 
 export function findMarkerAbove(dir) {
   let current = path.resolve(dir);

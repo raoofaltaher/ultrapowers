@@ -124,6 +124,10 @@ marker_looks_valid() {
     return 1
 }
 
+# The marker is project content; only a plain dotted version may reach the bootstrap.
+version_is_plain() {
+    [[ "$1" =~ ^[0-9]+([.][0-9]+){0,3}$ ]]
+}
 version_lt() {
     local a="$1" b="$2" x y
     while [ -n "$a" ] || [ -n "$b" ]; do
@@ -154,7 +158,7 @@ project_nudge() {
         return 0
     fi
     marker_text="$(cat "${root%/}/.agents/ultrapowers.json" 2>/dev/null || true)"
-    if ! marker_looks_valid "$marker_text" || ! marker_version="$(json_string_value "$marker_text" pluginVersion)"; then
+    if ! marker_looks_valid "$marker_text" || ! marker_version="$(json_string_value "$marker_text" pluginVersion)" || ! version_is_plain "$marker_version"; then
         printf '%s' "$NUDGE_REPAIR"
         return 0
     fi

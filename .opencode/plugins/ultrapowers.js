@@ -69,7 +69,8 @@ const projectNudge = (directory) => {
     } catch {
       return NUDGE_REPAIR;
     }
-    if (!marker || typeof marker !== 'object' || typeof marker.pluginVersion !== 'string') return NUDGE_REPAIR;
+    // The marker is project content; only a plain dotted version may reach the bootstrap.
+    if (!marker || typeof marker !== 'object' || typeof marker.pluginVersion !== 'string' || !/^[0-9]+([.][0-9]+){0,3}$/.test(marker.pluginVersion)) return NUDGE_REPAIR;
     const version = readPluginVersion();
     return version && versionLess(marker.pluginVersion, version) ? upgradeNudge(marker.pluginVersion, version) : null;
   } catch (err) {

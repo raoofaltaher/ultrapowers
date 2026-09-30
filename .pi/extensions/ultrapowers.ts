@@ -55,7 +55,8 @@ function projectNudge(directory: string): string | null {
 			return NUDGE_REPAIR;
 		}
 		const recorded = (marker as { pluginVersion?: unknown } | null)?.pluginVersion;
-		if (typeof recorded !== "string") return NUDGE_REPAIR;
+		// The marker is project content; only a plain dotted version may reach the bootstrap.
+		if (typeof recorded !== "string" || !/^[0-9]+([.][0-9]+){0,3}$/.test(recorded)) return NUDGE_REPAIR;
 		const version = pluginVersion();
 		if (version && versionLess(recorded, version)) {
 			return `This project's ultrapowers scaffold is from version ${recorded}; the plugin is ${version}. Offer /ultrapowers:init to upgrade before other work.`;
