@@ -67,16 +67,24 @@ only; never print the environment yourself.
 
 ## Step 3: Fresh, resume or stop
 
-When `markerExists` is true, read the marker: `cat "<ROOT>/.ultrapowers/qa-active"`. When
-`runState.exists` is true, test it for unfinished work:
-`grep -Eq '"status": *"(pending|running)"' "<ROOT>/reviews/<ID>/run-state.json" && echo unfinished`.
+When `markerExists` is true, read the marker: `cat "<ROOT>/.ultrapowers/qa-active"`. The
+preflight already decided whether run-state holds unfinished work: `runState.unfinished` is true
+when a plan row is still `pending` or `running` (lane and suite statuses do not count).
 
 | Marker | `reviews/<ID>/run-state.json` | Decision |
 |--------|-------------------------------|----------|
 | names another ticket | any | **stop**: tell your human partner that a QA run for that ticket is active or died, and that removing `.ultrapowers/qa-active` is their call |
-| absent, or this ticket | unfinished | **resume** |
-| absent, or this ticket | finished (nothing pending or running) | move it aside, then **fresh**: `mv "<ROOT>/reviews/<ID>/run-state.json" "<ROOT>/.ultrapowers/run-state-<ID>.previous.json"` |
+| absent, or this ticket | `runState.unfinished` true | **resume** |
+| absent, or this ticket | exists, `runState.unfinished` false, or `runState.error` set (print it) | move the previous run aside, then **fresh** |
 | absent, or this ticket | absent | **fresh** |
+
+Moving the previous run aside, with `<STAMP>` the current UTC time as `YYYYMMDDTHHMMSSZ`, so
+its screenshots and suite results are never read as this run's:
+
+```bash
+mv "<ROOT>/reviews/<ID>/run-state.json" "<ROOT>/.ultrapowers/run-state-<ID>-<STAMP>.previous.json"
+test -d "<ROOT>/reviews/<ID>/artifacts" && mv "<ROOT>/reviews/<ID>/artifacts" "<ROOT>/.ultrapowers/artifacts-<ID>-<STAMP>"
+```
 
 A fresh run replaces an existing `QA-REPORT.md` (`docs.reviewFiles` lists it); say so in one
 line. Git history keeps the old one when it was committed.

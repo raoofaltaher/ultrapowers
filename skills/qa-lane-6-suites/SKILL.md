@@ -49,7 +49,10 @@ node <plugin root>/skills/qa-lane-6-suites/scripts/judge.mjs <ROOT>/reviews/<ID>
 ```
 
 The judge prints `NEW-FAILING <name>` (not in the baseline), `SUPPRESSED <name>` (in the
-baseline), or `INCOMPLETE ...` when the suite crashed or produced no results.
+baseline), or `INCOMPLETE ...` when the suite crashed, produced no results or reported a run
+that did not finish. Then set that suite's run-state `status` to its final value: `judged` when
+the judge's summary line counts new-failing and suppressed names, `INCOMPLETE` otherwise. A
+suite is never left `running` once STEP 6 is past.
 
 ## Judging rules (the baseline discipline)
 

@@ -167,6 +167,19 @@ while IFS= read -r gate; do
   if grep -Eq "^[[:space:]]+$name: " "$PREFLIGHT"; then pass "gate $name exists in the preflight"; else fail "gate $name exists in the preflight"; fi
 done <<<"$gate_names"
 
+
+# Final review I2/I3: the fresh-or-resume decision reads plan rows (runState.unfinished), the
+# fresh path moves the previous artifacts aside, and lane 6 names its final suite statuses.
+ENTRY_FILE="$REPO_ROOT/skills/qa-specialist/SKILL.md"
+LANE6_FILE="$REPO_ROOT/skills/qa-lane-6-suites/SKILL.md"
+if [[ -f "$ENTRY_FILE" ]]; then
+  if grep -q 'runState.unfinished' "$ENTRY_FILE" && ! grep -q "grep -Eq '\"status\"" "$ENTRY_FILE"; then pass "qa-specialist: Step 3 decides from runState.unfinished"; else fail "qa-specialist: Step 3 decides from runState.unfinished"; fi
+  if grep -q 'artifacts-<ID>' "$ENTRY_FILE"; then pass "qa-specialist: a fresh run moves the previous artifacts aside"; else fail "qa-specialist: a fresh run moves the previous artifacts aside"; fi
+fi
+if [[ -f "$LANE6_FILE" ]]; then
+  if grep -q '`judged`' "$LANE6_FILE"; then pass "qa-lane-6-suites: names the final suite statuses"; else fail "qa-lane-6-suites: names the final suite statuses"; fi
+fi
+
 if [[ "$FAILURES" -gt 0 ]]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"
   exit 1

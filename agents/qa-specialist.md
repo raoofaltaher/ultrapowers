@@ -203,7 +203,7 @@ Maintain `<ROOT>/reviews/<ID>/run-state.json` with the schema the entry skill sh
 `lang`, `status` in `pending|done|failed|not-covered`, `reason`), `findings[]` (`id`, `severity`,
 `dimension`, `classification`, `lanes`, `evidence`), `lanes{1..7}` (`status` in
 `pending|running|done|not-covered|INCOMPLETE`, `reason`), `suites[]` (`repo`, `pid`, `outDir`,
-`startedAt`, `timeoutSec`, `status`).
+`startedAt`, `timeoutSec`, `status` in `running|judged|INCOMPLETE`).
 
 - Initialize at STEP 2; update after EVERY plan row and EVERY finding.
 - Write each finding's evidence to `reviews/<ID>/artifacts/` **at capture time**, not at report

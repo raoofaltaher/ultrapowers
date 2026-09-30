@@ -254,6 +254,18 @@ export function preflight({ cwd, ticket, env }) {
   const knownIssues = { path: validated.knownIssuesPath, exists: validated.knownIssuesPath ? existsSync(join(root, validated.knownIssuesPath)) : false };
   if (validated.knownIssuesPath && !knownIssues.exists) validated.warnings.push(`known-issues file not found at ${validated.knownIssuesPath}; lanes 2 and 6 judge without a baseline`);
   const runStateRel = `reviews/${ticket}/run-state.json`;
+  // Fresh or resume is decided by the PLAN rows alone: a lane or a suite left `pending` or
+  // `running` in a finished run must not turn it into a resume.
+  const runState = { path: runStateRel, exists: existsSync(join(root, runStateRel)), unfinished: false, error: '' };
+  if (runState.exists) {
+    try {
+      const saved = JSON.parse(readFileSync(join(root, runStateRel), 'utf8').replace(/^﻿/, ''));
+      const plan = Array.isArray(saved?.plan) ? saved.plan : [];
+      runState.unfinished = plan.length === 0 || plan.some((row) => row && (row.status === 'pending' || row.status === 'running'));
+    } catch (error) {
+      runState.error = `run-state.json is not valid JSON: ${error.message}`;
+    }
+  }
   const report = {
     ok: validated.missing.length === 0,
     root, ticket,
@@ -267,7 +279,7 @@ export function preflight({ cwd, ticket, env }) {
     knownIssues,
     gates: validated.gates,
     docs,
-    runState: { path: runStateRel, exists: existsSync(join(root, runStateRel)) },
+    runState,
     markerExists: existsSync(join(root, '.ultrapowers', 'qa-active')),
     changeSet: changeSetFor(root, repoList, ticket),
     contentHint: hint,

@@ -253,3 +253,20 @@ test('a marker with a UTF-8 byte order mark is read', () => {
   assert.equal(result.ok, true);
   rmSync(root, { recursive: true, force: true });
 });
+
+test('runState.unfinished reads plan rows only, never lane or suite statuses', () => {
+  const root = makeProject();
+  const rs = join(root, 'reviews', '1234', 'run-state.json');
+  writeFileSync(rs, JSON.stringify({ ticket: '1234', plan: [{ id: 'P1', status: 'done' }, { id: 'P2', status: 'not-covered' }], lanes: { 3: { status: 'pending' }, 6: { status: 'running' } }, suites: [{ repo: 'repo-a', status: 'running' }] }));
+  let r = preflight({ cwd: root, ticket: '1234', env: ENV_ALL });
+  assert.equal(r.runState.exists, true);
+  assert.equal(r.runState.unfinished, false);
+  writeFileSync(rs, JSON.stringify({ ticket: '1234', plan: [{ id: 'P1', status: 'done' }, { id: 'P2', status: 'pending' }] }));
+  r = preflight({ cwd: root, ticket: '1234', env: ENV_ALL });
+  assert.equal(r.runState.unfinished, true);
+  writeFileSync(rs, '{ "plan": [');
+  r = preflight({ cwd: root, ticket: '1234', env: ENV_ALL });
+  assert.equal(r.runState.unfinished, false);
+  assert.match(r.runState.error, /JSON|Unexpected|end/i);
+  rmSync(root, { recursive: true, force: true });
+});
