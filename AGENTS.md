@@ -44,6 +44,7 @@ node --test tests/team-memory/memory-lint.test.mjs
 bash tests/team-memory/test-templates.sh
 bash tests/team-memory/test-skill-structure.sh
 bash tests/team-memory/test-precommit-lint.sh
+bash tests/task-lifecycle/test-task-lifecycle.sh
 node --test tests/pi/test-pi-extension.mjs
 bash tests/opencode/run-tests.sh            # unit tests; add --integration for a live OpenCode
 python -m pytest tests/hermes

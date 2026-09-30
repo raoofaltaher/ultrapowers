@@ -754,6 +754,40 @@ test_core_skill_edits() {
     fi
 }
 
+test_manifests() {
+    echo "--- manifests ---"
+    local out rc=0
+    out="$(cd "$REPO_ROOT" && node -e '
+const fs = require("fs");
+const m = JSON.parse(fs.readFileSync(".muse-plugin/plugin.json", "utf8"));
+const listed = new Set(m.capabilities.skills.map(s => s.path));
+const ids = new Set(m.capabilities.skills.map(s => s.id));
+const onDisk = fs.readdirSync("skills")
+  .filter(d => fs.existsSync(`skills/${d}/SKILL.md`))
+  .map(d => `skills/${d}/SKILL.md`);
+const missing = onDisk.filter(p => !listed.has(p));
+const stale = [...listed].filter(p => !fs.existsSync(p));
+const badIds = m.capabilities.skills.filter(s => s.path !== `skills/${s.id}/SKILL.md`).map(s => s.id);
+if (missing.length || stale.length || badIds.length) {
+  console.log(JSON.stringify({ missing, stale, badIds }));
+  process.exit(1);
+}
+console.log("ok");
+' 2>&1)" || rc=$?
+    if [[ "$rc" -eq 0 && "$out" == "ok" ]]; then
+        pass "Muse manifest lists every skills/*/SKILL.md with id matching its folder"
+    else
+        fail "Muse manifest lists every skills/*/SKILL.md with id matching its folder"
+        echo "    $out"
+    fi
+
+    if grep -q 'tests/task-lifecycle/test-task-lifecycle.sh' "$REPO_ROOT/docs/testing.md"; then
+        pass "docs/testing.md lists the task lifecycle test"
+    else
+        fail "docs/testing.md lists the task lifecycle test"
+    fi
+}
+
 test_skill_structure() {
     echo "--- skill structure ---"
     local name file
@@ -815,6 +849,7 @@ main() {
     test_brainstorm_task
     test_task
     test_core_skill_edits
+    test_manifests
     test_skill_structure
 
     echo ""

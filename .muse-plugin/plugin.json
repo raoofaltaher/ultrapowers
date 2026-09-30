@@ -11,6 +11,10 @@
   "capabilities": {
     "skills": [
       {
+        "id": "brainstorm-task",
+        "path": "skills/brainstorm-task/SKILL.md"
+      },
+      {
         "id": "brainstorming",
         "path": "skills/brainstorming/SKILL.md"
       },
@@ -35,6 +39,10 @@
         "path": "skills/init/SKILL.md"
       },
       {
+        "id": "new-task",
+        "path": "skills/new-task/SKILL.md"
+      },
+      {
         "id": "receiving-code-review",
         "path": "skills/receiving-code-review/SKILL.md"
       },
@@ -49,6 +57,10 @@
       {
         "id": "systematic-debugging",
         "path": "skills/systematic-debugging/SKILL.md"
+      },
+      {
+        "id": "task",
+        "path": "skills/task/SKILL.md"
       },
       {
         "id": "team-memory",
