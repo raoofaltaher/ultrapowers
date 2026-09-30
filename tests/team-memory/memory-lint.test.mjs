@@ -160,6 +160,29 @@ test('WIKILINK fires for [[name]] that names no entry, in any folder', () => {
   assert.match(f[0].message, /\[\[nowhere\]\]/);
 });
 
+test('WIKILINK ignores [[ ]] inside inline code and fenced code blocks', () => {
+  const fence = '`'.repeat(3);
+  const body = [
+    'Bash tests need `[[ -n "$x" ]]` and TOML tables look like `[[bin]]`.',
+    '',
+    `${fence}bash`,
+    'if [[ -f .env ]]; then echo yes; fi',
+    fence,
+    '',
+    '**Why:** x.',
+    '',
+    '**How to apply:** y.',
+    '',
+  ].join('\n');
+  const { store } = makeStore({ entries: [{ name: 'bash-double-brackets', type: 'gotcha', body }] });
+  assert.deepEqual(lintStore(store), []);
+});
+
+test('STRAY ignores dot-entries and operating-system files at the store root', () => {
+  const { store } = makeStore({ extraFiles: { '.DS_Store': 'x', 'Thumbs.db': 'x', 'desktop.ini': 'x', '.obsidian/app.json': '{}' } });
+  assert.deepEqual(lintStore(store), []);
+});
+
 test('NEAR_DUP fires once for names differing only by punctuation or a trailing s', () => {
   const { store } = makeStore({ entries: [
     { name: 'docker-tests-gitbash', type: 'gotcha' },

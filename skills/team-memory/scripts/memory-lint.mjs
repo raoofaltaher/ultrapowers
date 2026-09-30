@@ -21,6 +21,8 @@ export const CODES = Object.freeze([
 const DIRS = Object.freeze({ gotchas: 'gotcha', decisions: 'decision', subsystems: 'subsystem' });
 const TYPES = Object.freeze(Object.values(DIRS));
 const TOP_LEVEL_FILES = new Set(['README.md', 'MEMORY.md']);
+// Files an operating system or editor drops next to a teammate's files.
+const OS_FILES = new Set(['Thumbs.db', 'desktop.ini']);
 const TOP_LEVEL_KEYS = 'date,description,metadata,name';
 const DEFAULT_BUDGET = 150;
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
@@ -96,6 +98,14 @@ function bodyOf(text) {
   return match ? text.slice(match[0].length) : text;
 }
 
+// The body without fenced blocks and inline code, where [[ ]] is bash or TOML
+// syntax rather than a link to another entry.
+function proseOf(text) {
+  return bodyOf(text)
+    .replace(/^(```|~~~)[^\n]*\n[\s\S]*?^\1[^\n]*$/gm, '')
+    .replace(/`[^`\n]*`/g, '');
+}
+
 export function lintStore(storeDir, { budget } = {}) {
   const store = resolve(storeDir);
   const findings = [];
@@ -125,6 +135,7 @@ export function lintStore(storeDir, { budget } = {}) {
   });
 
   for (const entry of readdirSync(store, { withFileTypes: true })) {
+    if (entry.name.startsWith('.') || OS_FILES.has(entry.name)) continue;
     if (entry.isFile() && !TOP_LEVEL_FILES.has(entry.name)) {
       add('STRAY', entry.name, 'only README.md and MEMORY.md may live at the store root');
     } else if (entry.isDirectory() && !(entry.name in DIRS)) {
@@ -170,7 +181,7 @@ export function lintStore(storeDir, { budget } = {}) {
       if (!isIsoDate(d.date)) add('FM_DATE', rel, `date "${d.date}" is not YYYY-MM-DD`);
     }
 
-    for (const link of bodyOf(text).matchAll(WIKILINK_RE)) {
+    for (const link of proseOf(text).matchAll(WIKILINK_RE)) {
       if (!entryNames.has(link[1].trim())) add('WIKILINK', rel, `[[${link[1]}]] does not name an entry`);
     }
 
