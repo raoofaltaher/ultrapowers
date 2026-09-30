@@ -11,6 +11,7 @@ SUITES=(
   "bash tests/qa-gatekeeper/test-templates.sh"
   "bash tests/qa-gatekeeper/test-no-reference-leaks.sh"
   "bash tests/qa-gatekeeper/test-qa-guardrail.sh"
+  "node --test tests/qa-gatekeeper/qa-shell-writes.test.mjs"
   "node --test tests/qa-gatekeeper/judge.test.mjs"
   "bash tests/qa-gatekeeper/test-run-suite.sh"
   "node --test tests/qa-gatekeeper/qa-preflight.test.mjs"

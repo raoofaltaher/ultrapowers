@@ -114,6 +114,40 @@ else
   fail "event cwd activates the guardrail (exit ${result%%|*})"
 fi
 
+echo "qa-guardrail: a config with a byte order mark keeps its host lists"
+BOMROOT="$TEST_ROOT/bomproject"
+mkdir -p "$BOMROOT/.agents" "$BOMROOT/.ultrapowers"
+{ printf '\357\273\277'; cat "$ROOT/.agents/ultrapowers.json"; } > "$BOMROOT/.agents/ultrapowers.json"
+printf '%s' "1234" > "$BOMROOT/.ultrapowers/qa-active"
+result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"curl -s http://prod.example.com/"}}' "$BOMROOT")"
+if [[ "${result%%|*}" -eq 2 ]]; then
+  pass "a forbidden host stays denied when the config starts with a BOM"
+else
+  fail "a forbidden host stays denied when the config starts with a BOM (exit ${result%%|*})"
+fi
+
+echo "qa-guardrail: an unreadable config denies while a run is active"
+BADROOT="$TEST_ROOT/badconfig"
+mkdir -p "$BADROOT/.agents" "$BADROOT/.ultrapowers"
+printf '%s' '{ "qa": { "hosts": ' > "$BADROOT/.agents/ultrapowers.json"
+printf '%s' "1234" > "$BADROOT/.ultrapowers/qa-active"
+result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"curl -s http://prod.example.com/"}}' "$BADROOT")"
+rest="${result#*|}"
+if [[ "${result%%|*}" -eq 2 && "$rest" == *"QA-GUARDRAIL DENY: "* ]]; then
+  pass "a config that does not parse is refused, not read as empty"
+else
+  fail "a config that does not parse is refused, not read as empty (exit ${result%%|*})"
+fi
+
+echo "qa-guardrail: the inert path runs on shell builtins alone"
+mkdir -p "$TEST_ROOT/emptybin"
+result="$(cd "$TEST_ROOT/elsewhere" && printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"/nowhere"}' | PATH="$TEST_ROOT/emptybin" "$BASH" "$HOOK" 2>&1; echo "|$?")"
+if [[ "$result" == "|0" ]]; then
+  pass "no marker: exit 0 and no output with an empty PATH"
+else
+  fail "no marker: exit 0 and no output with an empty PATH (got: $result)"
+fi
+
 echo "qa-guardrail: run-hook.cmd wrapper dispatches to the hook"
 result="$(cd "$ROOT" && render "$FIXTURES/deny_git_push.json" | bash "$WRAPPER" qa-guardrail 2>&1; echo "|$?")"
 if [[ "${result##*|}" -eq 2 ]]; then

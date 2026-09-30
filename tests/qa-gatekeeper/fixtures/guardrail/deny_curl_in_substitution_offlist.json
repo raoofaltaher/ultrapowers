@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"echo $(curl -s https://elsewhere.example.org/)"}}

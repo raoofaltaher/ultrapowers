@@ -17,6 +17,7 @@ collect_files() {
   local candidates=(
     "$REPO_ROOT/agents/qa-specialist.md"
     "$REPO_ROOT/hooks/qa-guardrail"
+    "$REPO_ROOT/hooks/lib/qa-shell-writes.mjs"
     "$REPO_ROOT/templates/qa"
     "$REPO_ROOT/templates/.agents/ultrapowers.json.tmpl"
     "$REPO_ROOT/tests/qa-gatekeeper"

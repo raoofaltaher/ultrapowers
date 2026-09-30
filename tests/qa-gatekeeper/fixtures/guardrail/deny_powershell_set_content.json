@@ -1,0 +1,1 @@
+{"tool_name":"PowerShell","tool_input":{"command":"Set-Content -Path {{ROOT}}/repo-a/src/app.js -Value x"}}

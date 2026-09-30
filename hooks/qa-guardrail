@@ -25,23 +25,36 @@ deny() {
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
-# Forward slashes, collapsed; a Windows drive prefix `X:` becomes `/x`; no trailing slash.
-norm_path() {
-  local p
-  p="$(printf '%s' "$1" | tr '\\' '/' | sed -E 's#/+#/#g; s#(.)/$#\1#')"
-  case "$p" in
-    [A-Za-z]:*) p="/$(lower "${p:0:1}")${p:2}" ;;
-  esac
-  printf '%s' "$p"
-}
+# The inert path below runs on every tool call of every session with the plugin installed,
+# so everything up to the marker check uses shell builtins only: no process is started.
+# Results come back in REPLY; `${x,,}` is avoided because macOS still ships bash 3.2.
+UPPER=ABCDEFGHIJKLMNOPQRSTUVWXYZ
+LOWER=abcdefghijklmnopqrstuvwxyz
 
-# Walk up from $1 looking for the run marker; print the directory that holds it.
-find_root() {
+# Forward slashes, collapsed; a Windows drive prefix `X:` becomes `/x`; no trailing slash.
+norm_path_r() {
+  local p="$1" slash='/' head letter
+  p="${p//\\/$slash}"
+  while [[ "$p" == *//* ]]; do p="${p//\/\//$slash}"; done
+  if [[ ${#p} -gt 1 && "$p" == */ ]]; then p="${p%/}"; fi
+  if [[ "$p" =~ ^([A-Za-z]):(.*)$ ]]; then
+    letter="${BASH_REMATCH[1]}"
+    head="${UPPER%%"$letter"*}"
+    if [[ ${#head} -lt 26 ]]; then letter="${LOWER:${#head}:1}"; fi
+    p="/$letter${BASH_REMATCH[2]}"
+  fi
+  REPLY="$p"
+}
+norm_path() { norm_path_r "$1"; printf '%s' "$REPLY"; }
+
+# Walk up from $1 looking for the run marker; REPLY is the directory that holds it.
+find_root_r() {
   local d="$1"
+  REPLY=""
   [ -n "$d" ] || return 1
   while :; do
     if [ -f "$d/.ultrapowers/qa-active" ]; then
-      printf '%s' "$d"
+      REPLY="$d"
       return 0
     fi
     case "$d" in
@@ -51,22 +64,31 @@ find_root() {
     [ -n "$d" ] || d="/"
   done
 }
+find_root() { find_root_r "$1" || return 1; printf '%s' "$REPLY"; }
 
-event="$(cat)"
+event=""
+IFS= read -r -d '' event || true
 
 # --- Fast path: is a run active? Check the process cwd, then EVERY "cwd" string in the
 # event (all occurrences, so text inside a command can add a candidate but never hide the
-# real one). No node process is started for an inert session.
+# real one). No process is started for an inert session.
 root=""
-if ! root="$(find_root "$(norm_path "$PWD")")"; then
-  root=""
-  while IFS= read -r candidate; do
+norm_path_r "$PWD"
+if find_root_r "$REPLY"; then
+  root="$REPLY"
+else
+  rest="$event"
+  cwd_re='"cwd"[[:space:]]*:[[:space:]]*"([^"]*)"'
+  while [[ "$rest" =~ $cwd_re ]]; do
+    rest="${rest#*"${BASH_REMATCH[0]}"}"
+    candidate="${BASH_REMATCH[1]}"
     [ -n "$candidate" ] || continue
-    if root="$(find_root "$(norm_path "$candidate")")"; then
+    norm_path_r "$candidate"
+    if find_root_r "$REPLY"; then
+      root="$REPLY"
       break
     fi
-    root=""
-  done < <(printf '%s' "$event" | grep -oE '"cwd"[[:space:]]*:[[:space:]]*"[^"]*"' | sed -E 's/^"cwd"[[:space:]]*:[[:space:]]*"//; s/"$//')
+  done
 fi
 [ -n "$root" ] || exit 0
 
@@ -80,7 +102,7 @@ if command -v cygpath >/dev/null 2>&1; then
   root_node="$(cygpath -m "$root" 2>/dev/null)" || root_node="$root"
 fi
 
-parse_status=""; tool=""; cmd=""; wpath=""; url=""; event_cwd=""; allowed=""; forbidden=""; ticket=""
+parse_status=""; tool=""; cmd=""; wpath=""; url=""; event_cwd=""; allowed=""; forbidden=""; ticket=""; keypaths=""
 {
   IFS= read -r -d '' parse_status || true
   IFS= read -r -d '' tool || true
@@ -91,6 +113,7 @@ parse_status=""; tool=""; cmd=""; wpath=""; url=""; event_cwd=""; allowed=""; fo
   IFS= read -r -d '' allowed || true
   IFS= read -r -d '' forbidden || true
   IFS= read -r -d '' ticket || true
+  IFS= read -r -d '' keypaths || true
 } < <(printf '%s' "$event" | node -e '
 const fs = require("node:fs");
 const path = require("node:path");
@@ -104,7 +127,15 @@ const root = process.argv[1];
 const inp = ev.tool_input && typeof ev.tool_input === "object" ? ev.tool_input : {};
 const str = (v) => (typeof v === "string" ? v : "");
 let qa = {};
-try { qa = JSON.parse(fs.readFileSync(path.join(root, ".agents", "ultrapowers.json"), "utf8")).qa || {}; } catch (e) { qa = {}; }
+try {
+  // A byte order mark is valid for the preflight, so it is valid here; any other read or
+  // parse failure is reported, never taken as an empty config with no host lists.
+  const raw = fs.readFileSync(path.join(root, ".agents", "ultrapowers.json"), "utf8").replace(/^\uFEFF/, "");
+  qa = JSON.parse(raw).qa || {};
+} catch (e) {
+  process.stdout.write(["badconfig:" + String(e.message).split("\n")[0], "", "", "", "", "", "", "", ""].join("\0") + "\0");
+  process.exit(0);
+}
 const hosts = qa.hosts && typeof qa.hosts === "object" ? qa.hosts : {};
 const norm = (list) => (Array.isArray(list) ? list : []).map((h) => str(h).trim().toLowerCase()).filter(Boolean);
 const allowed = norm(hosts.allowed);
@@ -114,12 +145,25 @@ for (const value of Object.values(urls)) {
 }
 let ticket = "";
 try { ticket = fs.readFileSync(path.join(root, ".ultrapowers", "qa-active"), "utf8").trim(); } catch (e) { ticket = ""; }
+// Every path-shaped field any tool carries (a read, a search, an upload), for the
+// key-material check that applies to all tools, not only to file writes.
+const pathFields = [];
+for (const key of ["file_path", "notebook_path", "path", "source", "destination", "filename"]) {
+  if (str(inp[key])) pathFields.push(str(inp[key]));
+}
+for (const key of ["paths", "files"]) {
+  if (Array.isArray(inp[key])) for (const v of inp[key]) if (str(v)) pathFields.push(str(v));
+}
 process.stdout.write([
   "ok", str(ev.tool_name), str(inp.command),
   str(inp.file_path) || str(inp.notebook_path) || str(inp.path),
   str(inp.url), str(ev.cwd), allowed.join(","), norm(hosts.forbidden).join(","), ticket,
+  pathFields.join("\n"),
 ].join("\0") + "\0");
 ' "$root_node")
+case "$parse_status" in
+  badconfig:*) deny "the project config .agents/ultrapowers.json cannot be read (${parse_status#badconfig:}); every call is refused while .ultrapowers/qa-active exists" ;;
+esac
 [ "$parse_status" = "ok" ] || deny "the tool event could not be parsed; an uninspectable call is refused during a QA run"
 
 # Prefer the event's real cwd for the root and for resolving relative paths: on Windows the
@@ -137,6 +181,18 @@ fi
 
 tool_lc="$(lower "$tool")"
 root_lc="$(lower "$root")"
+
+# Key material: never read, searched, uploaded or written by any tool during a run. A
+# `.env.example` file is the documented template and stays readable.
+KEY_RE='(^|/)\.ssh/|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws/|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|/)\.env($|\.)'
+if [ -n "$keypaths" ]; then
+  while IFS= read -r kp; do
+    [ -n "$kp" ] || continue
+    kl="$(lower "$(norm_path "$kp")")"
+    kl="${kl//.env.example/}"
+    printf '%s' "$kl" | grep -Eq "$KEY_RE" && deny "key material ($kp) is never read, searched, uploaded or written during a QA run"
+  done <<< "$keypaths"
+fi
 
 # --- File tools: the only legitimate writes are the report, its artifacts and run-state
 # under reviews/<ticket>/, plus the run's own state under .ultrapowers/. Protected paths are
@@ -204,6 +260,11 @@ fi
 [ -n "$cmd" ] || exit 0
 lc="$(lower "$cmd")"
 
+# Left boundary of a command word: start, a separator, whitespace, a quote, an opening
+# parenthesis, a backtick or a path slash, so `sh -c "rm -rf x"`, `(rm -rf x)`,
+# `$(curl ...)` and `/bin/rm` match like the bare spelling.
+B="(^|[;&|[:space:]\"'(\`/\\\\])"
+
 # Never push. Fail closed on any git command carrying a push token.
 printf '%s' "$lc" | grep -Eq '\bgit\b[^;&|]*\bpush\b' && deny "git push is never allowed during a QA run"
 
@@ -217,6 +278,13 @@ done
 # volume, network and image sub-noun forms; any docker ... prune.
 printf '%s' "$lc" | grep -Eq 'docker[-[:space:]]compose[^;&|]*\b(down|stop|rm)\b|docker[[:space:]]+(rm|kill|stop)\b|docker[[:space:]]+(container|volume|network|image)[[:space:]]+(rm|stop|prune)\b|docker[^;&|]*\bprune\b' \
   && deny "container stop, remove, down or prune is never allowed; the stack stays as found"
+# Nor a restart, start, rebuild or pause: the run observes the stack, it does not change it.
+printf '%s' "$lc" | grep -Eq 'docker[-[:space:]]compose[^;&|]*[[:space:]](up|build|restart|start|kill|pause|unpause|create)\b|docker[[:space:]]+(restart|start|pause|unpause|update)\b|docker[[:space:]]+container[[:space:]]+(restart|start|kill|pause)\b' \
+  && deny "restarting, starting, rebuilding or pausing containers is never allowed; the stack stays as found"
+# Killing processes by name reaches the app under test; a targeted kill <pid> of the run's
+# own background suite stays allowed.
+printf '%s' "$lc" | grep -Eq "${B}(pkill|killall|taskkill)([[:space:]]|\$)|stop-process([[:space:]]|\$)" \
+  && deny "killing processes by name is blocked; the stack stays as found"
 
 # Database read-only. A mutating verb is blocked when it LEADS a psql statement (right after
 # the -c quote or a `;`), so column names and filter literals like action='delete' pass.
@@ -242,30 +310,35 @@ if printf '%s' "$lc" | grep -Eq '\bpsql\b'; then
 fi
 
 # Destructive filesystem: short and long rm options, find -delete, disk tools, device writes.
-printf '%s' "$lc" | grep -Eq '(^|[;&|[:space:]])rm[[:space:]]+-[a-z]*[rf]|(^|[;&|[:space:]])rm[[:space:]]+--(recursive|force|dir)|(^|[;&|[:space:]])(rmdir|shred|mkfs|dd)[[:space:]]|>[[:space:]]*/dev/(sd|nvme)|(^|[;&|[:space:]])find[[:space:]][^;&|]*[[:space:]]-delete\b' \
+printf '%s' "$lc" | grep -Eq "${B}rm[[:space:]]+-[a-z]*[rf]|${B}rm[[:space:]]+--(recursive|force|dir)|${B}(rmdir|shred|mkfs|dd)[[:space:]]|>[[:space:]]*/dev/(sd|nvme)|${B}find[[:space:]][^;&|]*[[:space:]]-delete\\b|${B}(rd|rmdir)[[:space:]]+/s|${B}del[[:space:]][^;&|]*/[sfq]\\b|remove-item[^;&|]*[[:space:]]-(recurse|force)" \
   && deny "recursive or forced delete is blocked"
+# PowerShell file cmdlets write, move or delete files; the file tools are gated to
+# reviews/<id>/ and .ultrapowers/, these are not.
+printf '%s' "$lc" | grep -Eq '(^|[^a-z-])(set-content|add-content|out-file|new-item|copy-item|move-item|remove-item|rename-item|clear-content|set-item)([^a-z-]|$)' \
+  && deny "PowerShell file cmdlets are blocked during a QA run; write reports and evidence with the file tools"
 
 # Git working-tree destruction.
 printf '%s' "$lc" | grep -Eq '\bgit\b[^;&|]*\b(reset[[:space:]]+--hard|clean[[:space:]]+-[a-z]*f|checkout[[:space:]]+--[[:space:]]|restore[[:space:]]|stash[[:space:]]+drop|branch[[:space:]]+-d)' \
   && deny "git commands that discard work (reset --hard, clean -f, checkout --, restore, stash drop, branch -D) are blocked"
 
 # Permission and ownership changes.
-printf '%s' "$lc" | grep -Eq '(^|[;&|[:space:]])(chmod|chown|chgrp|icacls|takeown)[[:space:]]' \
+printf '%s' "$lc" | grep -Eq "${B}(chmod|chown|chgrp|icacls|takeown)[[:space:]]" \
   && deny "permission or ownership change is blocked"
 
 # Remote shells and copies; inline interpreters; raw network redirection.
-printf '%s' "$lc" | grep -Eq '(^|[;&|[:space:]])(ssh|scp|sftp|rsync|telnet|nc|ncat|netcat)[[:space:]]' \
+printf '%s' "$lc" | grep -Eq "${B}(ssh|scp|sftp|rsync|telnet|nc|ncat|netcat)(\\.exe)?[[:space:]]" \
   && deny "remote shell or copy is blocked"
-printf '%s' "$lc" | grep -Eq '(^|[;&|[:space:]])(python3?|node|nodejs|perl|ruby|php|deno|bun)[[:space:]]+(-c|-e|-)([[:space:]]|$)' \
+printf '%s' "$lc" | grep -Eq "${B}(python3?|node|nodejs|perl|ruby|php|deno|bun)(\\.exe)?[[:space:]]+(-c|-e|-)([[:space:]]|\$)" \
   && deny "inline interpreter code is blocked; it is an unbounded egress and execution bypass"
 printf '%s' "$lc" | grep -Eq '/dev/(tcp|udp)/' \
   && deny "/dev/tcp and /dev/udp network redirection is blocked"
 
-# Key material touched alongside a read or transfer tool; environment dumps; uploads.
-printf '%s' "$lc" | grep -Eq '(^|/)\.ssh/|id_rsa|id_ed25519|\.aws/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|[/[:space:]])\.env([^a-z0-9_]|$)' \
-  && printf '%s' "$lc" | grep -Eq '(curl|wget|nc |ncat|scp |base64|xxd|openssl|cat|type)' \
+# Key material named anywhere in a command, whatever reads or sends it; environment dumps;
+# uploads. `.env.example` is the documented template and stays readable.
+key_lc="${lc//.env.example/}"
+printf '%s' "$key_lc" | grep -Eq '(^|/)\.ssh/|authorized_keys|id_rsa|id_ed25519|\.aws/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|[/[:space:]@"'"'"'=])\.env([^a-z0-9_]|$)' \
   && deny "reading or transferring key material is blocked"
-printf '%s' "$lc" | grep -Eq '(^|[;&|[:space:]])(printenv|env)[[:space:]]*($|[;&|])' \
+printf '%s' "$lc" | grep -Eq "${B}(printenv|env)[[:space:]]*(\$|[;&|])" \
   && deny "dumping the environment is blocked; check a variable with \${NAME:+set} instead"
 printf '%s' "$lc" | grep -Eq '(curl|wget)[^;&|]*(-t |--upload-file|--data-binary[[:space:]]*@|-d[[:space:]]*@|-f[[:space:]][^;&|]*@)' \
   && deny "outbound file upload is blocked"
@@ -274,7 +347,17 @@ printf '%s' "$lc" | grep -Eq '(curl|wget)[^;&|]*(-t |--upload-file|--data-binary
 # and only through literal URLs; a $VAR target fails closed. The host ends at a shell word
 # terminator (`;`, `&`, `|`, `(`, `)`, `<`, `>`), but a `$` or backtick stays in it: a variable
 # right after the authority can append `@other-host` and change the target.
-if [ -n "$allowed" ] && printf '%s' "$lc" | grep -Eq '(^|[;&|[:space:]])(curl|wget)[[:space:]]'; then
+# Shell writes (spec 3.5): redirects, tee, curl -o, cp/mv/install/ln destinations, rm
+# operands, in-place editors and git subcommands, checked by the quote-aware analyzer. Its
+# inputs travel on stdin so Git Bash's argument conversion cannot rewrite the paths.
+case "${BASH_SOURCE[0]}" in */*) hook_dir="${BASH_SOURCE[0]%/*}" ;; *) hook_dir="." ;; esac
+writes_js="$hook_dir/lib/qa-shell-writes.mjs"
+if command -v cygpath >/dev/null 2>&1; then writes_js="$(cygpath -m "$writes_js" 2>/dev/null || printf '%s' "$writes_js")"; fi
+wreason="$(printf '%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$cmd" | node "$writes_js" 2>&1)" \
+  || wreason="the command could not be analysed for writes; it is refused during a QA run"
+[ -z "$wreason" ] || deny "$wreason"
+
+if [ -n "$allowed" ] && printf '%s' "$lc" | grep -Eq "${B}(curl|wget)(\\.exe)?[[:space:]]|invoke-webrequest|invoke-restmethod|${B}(iwr|irm)[[:space:]]"; then
   urls="$(printf '%s' "$cmd" | grep -Eoi 'https?://[^/"'"'"'[:space:];&|()<>]+' || true)"
   [ -n "$urls" ] || deny "curl/wget without a literal http(s) URL; the target cannot be verified"
   while IFS= read -r u; do
