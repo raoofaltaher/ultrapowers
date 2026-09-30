@@ -15,7 +15,7 @@ PREFLIGHT="$REPO_ROOT/skills/brainstorm-task/scripts/preflight.sh"
 GROUND="$REPO_ROOT/skills/brainstorm-task/scripts/ground.sh"
 COMMIT_SPEC="$REPO_ROOT/skills/brainstorm-task/scripts/commit-spec.sh"
 MANIFEST="$REPO_ROOT/skills/task/scripts/manifest.sh"
-LIFECYCLE_SKILLS=(new-task)
+LIFECYCLE_SKILLS=(new-task brainstorm-task)
 
 FAILURES=0
 TEST_ROOT=""
@@ -411,6 +411,244 @@ test_new_task() {
     fi
 }
 
+test_brainstorm_task() {
+    echo "--- brainstorm-task: preflight.sh, ground.sh, commit-spec.sh ---"
+    local proj="$TEST_ROOT/proj"
+    local out rc line listed before after i
+
+    # --- brief and spec work ---
+    out="$(cd "$proj/api" && bash "$PREFLIGHT" 1234)"
+    if [[ "$out" == *"present  "*" bytes  tasks/1234/1234.md"* && "$out" == *"(specs/1234 has no files)"* && "$out" != *"SPEC-COLLISION"* ]]; then
+        pass "preflight reports the brief and an empty specs folder without a collision"
+    else
+        fail "preflight reports the brief and an empty specs folder without a collision"
+        echo "    out: $out"
+    fi
+    out="$(cd "$proj" && bash "$PREFLIGHT" 9999)"
+    if [[ "$out" == *"BRIEF-MISSING  tasks/9999/9999.md"* && "$out" == *"(specs/9999 absent)"* ]]; then
+        pass "preflight reports a missing brief and an absent specs folder"
+    else
+        fail "preflight reports a missing brief and an absent specs folder"
+        echo "    out: $out"
+    fi
+
+    printf 'older design\n' > "$proj/specs/1234/spec.md"
+    out="$(cd "$proj" && bash "$PREFLIGHT" 1234)"
+    if [[ "$out" == *">>> SPEC-COLLISION: specs/1234/spec.md exists."* ]]; then
+        pass "a lowercase spec.md is flagged as a collision"
+    else
+        fail "a lowercase spec.md is flagged as a collision"
+        echo "    out: $out"
+    fi
+    rm "$proj/specs/1234/spec.md"
+    printf 'current design\n' > "$proj/specs/1234/Spec.md"
+    mkdir -p "$proj/specs/1234/notes"
+    printf 'aside\n' > "$proj/specs/1234/notes/spec.md"
+    out="$(cd "$proj" && bash "$PREFLIGHT" 1234)"
+    if [[ "$out" == *">>> SPEC-COLLISION: specs/1234/Spec.md exists."* && "$(printf '%s\n' "$out" | grep -c 'SPEC-COLLISION' || true)" -eq 1 && "$out" == *"specs/1234/notes/spec.md"* ]]; then
+        pass "an existing Spec.md is flagged once; a nested spec.md is listed but not a collision"
+    else
+        fail "an existing Spec.md is flagged once; a nested spec.md is listed but not a collision"
+        echo "    out: $out"
+    fi
+    if [[ "$out" != *".gitkeep"* ]]; then
+        pass "preflight does not list .gitkeep"
+    else
+        fail "preflight does not list .gitkeep"
+    fi
+    rm -rf "$proj/specs/1234/notes" "$proj/specs/1234/Spec.md"
+
+    # --- selection ---
+    out="$(cd "$proj" && bash "$PREFLIGHT" 1234 backend)"
+    if [[ "$out" == *"SELECTED-BY-FOCUS (backend): api"* ]]; then
+        pass "a focus word matching an area selects that repo"
+    else
+        fail "a focus word matching an area selects that repo"
+        echo "    out: $out"
+    fi
+    out="$(cd "$proj" && bash "$PREFLIGHT" 1234 WEB)"
+    if [[ "$out" == *"SELECTED-BY-FOCUS (WEB): web"* ]]; then
+        pass "a focus word matching a repo name selects it case-insensitively"
+    else
+        fail "a focus word matching a repo name selects it case-insensitively"
+        echo "    out: $out"
+    fi
+    out="$(cd "$proj" && bash "$PREFLIGHT" 1234 nothing)"
+    if [[ "$out" == *"FOCUS-NO-MATCH (nothing)"* && "$out" == *"ASK:"* && "$out" == *"api web mobile"* && "$out" != *"SELECTED-BY"* ]]; then
+        pass "unmatched focus falls through to ASK over every repo"
+    else
+        fail "unmatched focus falls through to ASK over every repo"
+        echo "    out: $out"
+    fi
+    out="$(cd "$proj" && bash "$PREFLIGHT" 1234)"
+    if [[ "$out" == *"ASK:"* && "$out" != *"SELECTED-BY"* ]]; then
+        pass "no focus and no ticket branch asks"
+    else
+        fail "no focus and no ticket branch asks"
+        echo "    out: $out"
+    fi
+    if [[ "$out" == *$'mobile\tmobile\t-\t<missing>\tno'* ]]; then
+        pass "an uncloned repo is reported as <missing> in REPOS"
+    else
+        fail "an uncloned repo is reported as <missing> in REPOS"
+        echo "    out: $out"
+    fi
+
+    git -C "$proj/web" checkout -q -b 12345-other
+    git -C "$proj/api" checkout -q -b feature/1234-thing
+    out="$(cd "$proj" && bash "$PREFLIGHT" 1234)"
+    line="$(printf '%s\n' "$out" | grep '^SELECTED-BY-BRANCH:' || true)"
+    if [[ "$line" == "SELECTED-BY-BRANCH: api" ]]; then
+        pass "a repo on a branch containing the ticket id is selected; a longer id is not"
+    else
+        fail "a repo on a branch containing the ticket id is selected; a longer id is not"
+        echo "    line: $line"
+    fi
+    if [[ "$out" == *$'api\tapi\tbackend\tfeature/1234-thing\tyes'* && "$out" == *$'web\tweb\tfrontend\t12345-other\tno'* ]]; then
+        pass "REPOS shows the branch and the ticket-branch verdict per repo"
+    else
+        fail "REPOS shows the branch and the ticket-branch verdict per repo"
+        echo "    out: $out"
+    fi
+    out="$(cd "$proj" && bash "$PREFLIGHT" '#1234')"
+    if [[ "$out" == *"SELECTED-BY-BRANCH: api"* ]]; then
+        pass "branch matching strips a leading # from the id"
+    else
+        fail "branch matching strips a leading # from the id"
+    fi
+    out="$(cd "$proj" && bash "$PREFLIGHT" 1234 frontend)"
+    if [[ "$out" == *"SELECTED-BY-FOCUS (frontend): web"* && "$out" != *"SELECTED-BY-BRANCH"* ]]; then
+        pass "focus words win over a branch match"
+    else
+        fail "focus words win over a branch match"
+        echo "    out: $out"
+    fi
+
+    local rooty="$TEST_ROOT/rooty"
+    mkdir -p "$rooty/.agents"
+    git init -q -b main "$rooty"
+    printf '{ "name": "rooty", "topology": "root", "repos": [] }\n' > "$rooty/.agents/ultrapowers.json"
+    out="$(cd "$rooty" && bash "$PREFLIGHT" 1)"
+    if [[ "$out" == *"SELECTED-ROOT: . (project has no nested repositories)"* && "$out" != *"ASK:"* ]]; then
+        pass "a project without nested repos selects the root without asking"
+    else
+        fail "a project without nested repos selects the root without asking"
+        echo "    out: $out"
+    fi
+
+    # --- grounding cap ---
+    for i in 01 02 03 04 05 06 07 08 09 10 11 12; do
+        printf 'invoice line\n' > "$proj/api/src/f$i.txt"
+    done
+    printf 'invoice\ninvoice\ninvoice\n' > "$proj/api/src/hot.txt"
+    printf 'total amount due\n' > "$proj/api/src/spaced.txt"
+    git -C "$proj/api" add -A
+    git -C "$proj/api" commit -qm "grounding fixture"
+    out="$(cd "$proj" && bash "$GROUND" 1234 api invoice)"
+    listed="$(printf '%s\n' "$out" | grep -c ' hits  ' || true)"
+    if [[ "$listed" -eq 8 ]]; then
+        pass "ground.sh lists at most eight files"
+    else
+        fail "ground.sh lists at most eight files"
+        echo "    listed: $listed"
+        echo "    out: $out"
+    fi
+    if [[ "$(printf '%s\n' "$out" | grep ' hits  ' | head -n 1)" == *"src/hot.txt" ]]; then
+        pass "the file with the most hits is listed first"
+    else
+        fail "the file with the most hits is listed first"
+        echo "    out: $out"
+    fi
+    if [[ "$out" == *"(5 more files matched; not listed. The cap is 8 files per repository, highest signal first.)"* ]]; then
+        pass "the number of files cut by the cap is reported"
+    else
+        fail "the number of files cut by the cap is reported"
+        echo "    out: $out"
+    fi
+    out="$(cd "$proj" && bash "$GROUND" 1234 api 'total amount')"
+    if [[ "$(printf '%s\n' "$out" | grep -c ' hits  ' || true)" -eq 1 && "$out" == *"src/spaced.txt"* && "$out" == *"(1 files matched; all listed)"* ]]; then
+        pass "a term with a space is one fixed-string term"
+    else
+        fail "a term with a space is one fixed-string term"
+        echo "    out: $out"
+    fi
+    out="$(cd "$proj" && bash "$GROUND" 1234 api zzznothing)"
+    if [[ "$out" == *"(0 files matched; widen the terms or pick another repository)"* ]]; then
+        pass "no match is reported without listing anything"
+    else
+        fail "no match is reported without listing anything"
+        echo "    out: $out"
+    fi
+    printf 'invoice untracked\n' > "$proj/api/src/untracked.txt"
+    out="$(cd "$proj" && bash "$GROUND" 1234 api invoice)"
+    if [[ "$out" == *"(6 more files matched"* ]]; then
+        pass "untracked files are searched too"
+    else
+        fail "untracked files are searched too"
+        echo "    out: $out"
+    fi
+    rm "$proj/api/src/untracked.txt"
+    rc=0
+    (cd "$proj" && bash "$GROUND" 1234 mobile invoice >/dev/null 2>&1) || rc=$?
+    if [[ "$rc" -eq 2 ]]; then
+        pass "grounding an uncloned repo exits 2"
+    else
+        fail "grounding an uncloned repo exits 2"
+        echo "    exit: $rc"
+    fi
+    rc=0
+    (cd "$proj" && bash "$GROUND" 1234 nosuch invoice >/dev/null 2>&1) || rc=$?
+    if [[ "$rc" -eq 2 ]]; then
+        pass "grounding an unknown repo exits 2"
+    else
+        fail "grounding an unknown repo exits 2"
+        echo "    exit: $rc"
+    fi
+    rc=0
+    (cd "$proj" && bash "$GROUND" 1234 api >/dev/null 2>&1) || rc=$?
+    if [[ "$rc" -eq 1 ]]; then
+        pass "grounding without terms exits 1 with usage"
+    else
+        fail "grounding without terms exits 1 with usage"
+        echo "    exit: $rc"
+    fi
+    out="$(cd "$rooty" && printf 'invoice here\n' > note.txt && bash "$GROUND" 1 . invoice)"
+    if [[ "$out" == *"note.txt"* ]]; then
+        pass "grounding the root repo (.) works"
+    else
+        fail "grounding the root repo (.) works"
+        echo "    out: $out"
+    fi
+
+    # --- commit-spec ---
+    printf '# 1234 design\n' > "$proj/specs/1234/Spec.md"
+    before="$(git -C "$proj" rev-list --count HEAD)"
+    (cd "$proj/api" && bash "$COMMIT_SPEC" 1234 "define invoice totals" >/dev/null)
+    after="$(git -C "$proj" rev-list --count HEAD)"
+    if [[ $((after - before)) -eq 1 && "$(git -C "$proj" log -1 --format=%s)" == "spec(1234): define invoice totals" && -z "$(git -C "$proj" status --porcelain)" ]]; then
+        pass "commit-spec commits Spec.md once with the spec subject"
+    else
+        fail "commit-spec commits Spec.md once with the spec subject"
+        echo "    subject: $(git -C "$proj" log -1 --format=%s)"
+    fi
+    rc=0
+    (cd "$proj" && bash "$COMMIT_SPEC" 9999 "nothing" >/dev/null 2>&1) || rc=$?
+    if [[ "$rc" -eq 1 ]]; then
+        pass "commit-spec without a Spec.md exits 1"
+    else
+        fail "commit-spec without a Spec.md exits 1"
+        echo "    exit: $rc"
+    fi
+    local trailered="$TEST_ROOT/trailered"
+    printf '# 500 design\n' > "$trailered/specs/500/Spec.md"
+    (cd "$trailered" && bash "$COMMIT_SPEC" 500 "trailer check" >/dev/null)
+    if [[ "$(git -C "$trailered" log -1 --format=%B | sed '/^$/d' | tail -n 1)" == "Reviewed-by: Fixture Owner" ]]; then
+        pass "commit-spec ends with the configured commitTrailer"
+    else
+        fail "commit-spec ends with the configured commitTrailer"
+    fi
+}
+
 test_skill_structure() {
     echo "--- skill structure ---"
     local name file
@@ -469,6 +707,7 @@ main() {
 
     test_lib
     test_new_task
+    test_brainstorm_task
     test_skill_structure
 
     echo ""
