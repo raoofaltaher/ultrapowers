@@ -565,14 +565,7 @@ export function applyPlan(root, plan, report, dryRun) {
     report.written.push(file.target);
   }
   for (const block of plan.blocks) {
-    const full = path.join(root, block.target);
-    const existing = fs.existsSync(full) ? fs.readFileSync(full, 'utf8') : null;
-    const { content, action } = applyBlock(existing, block.body);
-    if (action !== 'unchanged') {
-      writeFile(root, block.target, content, false, dryRun);
-      report.written.push(block.target);
-    }
-    report.blocks.push({ path: block.target, action });
+    applyBlockFile(root, block.target, block.body, report, dryRun);
   }
   report.omitted.push(...plan.omitted);
 }
@@ -687,12 +680,192 @@ export function runDetect(opts) {
   };
 }
 
+export const PROPOSAL_SUFFIX = '.ultrapowers-new';
+export const HOOKS_PATH = '.githooks';
+
+function requireMarker(opts) {
+  if (!fs.existsSync(opts.root) || !fs.statSync(opts.root).isDirectory()) {
+    throw new InitError('bad-root', `${opts.root} is not a directory`);
+  }
+  const marker = readMarker(opts.root);
+  if (marker && typeof marker === 'object' && !Array.isArray(marker)) return marker;
+  if (marker !== null) {
+    throw new InitError('marker-corrupt', `${MARKER_PATH} does not hold a JSON object`, { path: path.join(opts.root, MARKER_PATH) });
+  }
+  const workspaceRoot = findMarkerAbove(opts.root);
+  if (workspaceRoot) {
+    throw new InitError('nested-clone', `${opts.root} sits inside the ultrapowers workspace ${workspaceRoot}; run init from that root`, { workspaceRoot });
+  }
+  throw new InitError('no-marker', `${opts.root} has no ${MARKER_PATH}; run scaffold first`);
+}
+
+function markerHarnesses(marker) {
+  return Array.isArray(marker.harnesses) ? marker.harnesses : [...ALL_HARNESSES];
+}
+
+function markerOpts(opts, marker) {
+  return { ...opts, name: opts.name ?? marker.name ?? path.basename(opts.root), nestedPointers: false };
+}
+
+export function applyBlockFile(root, target, body, report, dryRun) {
+  const full = path.join(root, target);
+  const existing = fs.existsSync(full) ? fs.readFileSync(full, 'utf8') : null;
+  const { content, action } = applyBlock(existing, body);
+  if (action !== 'unchanged') {
+    writeFile(root, target, content, false, dryRun);
+    report.written.push(target);
+  }
+  report.blocks.push({ path: target, action });
+}
+
+function reconcileRepos(opts, marker, report) {
+  const onDisk = detectRepos(opts.root);
+  const recorded = Array.isArray(marker.repos) ? marker.repos : [];
+  report.repos = onDisk;
+  report.newRepos = onDisk.filter((repo) => !recorded.some((known) => known.path === repo.path));
+  if (!opts.recordRepos || report.newRepos.length === 0) return false;
+  marker.repos = [...recorded, ...report.newRepos].sort((a, b) => a.path.localeCompare(b.path));
+  marker.topology = 'nested';
+  return true;
+}
+
+function gitignoreBody(opts, marker) {
+  const vars = buildVars(markerOpts(opts, marker), marker.repos ?? [], markerHarnesses(marker), []);
+  return render(readTemplate(path.join(TEMPLATES_DIR, '_blocks', 'gitignore.tmpl')), vars, '_blocks/gitignore.tmpl');
+}
+
+function ensureHooksPath(opts) {
+  if (!fs.existsSync(path.join(opts.root, '.git'))) return 'no-git';
+  const current = gitConfigGet(opts.root, 'core.hooksPath');
+  if (current === HOOKS_PATH) return 'already-set';
+  if (current) return `kept:${current}`;
+  if (opts.dryRun) return 'would-set';
+  try {
+    gitConfigSet(opts.root, 'core.hooksPath', HOOKS_PATH);
+    return 'set';
+  } catch {
+    return 'failed';
+  }
+}
+
+function localNextSteps(report) {
+  const steps = [];
+  const hooks = {
+    set: `core.hooksPath now points at ${HOOKS_PATH} for this clone.`,
+    'would-set': `Join will set core.hooksPath to ${HOOKS_PATH} for this clone.`,
+    'already-set': `core.hooksPath already points at ${HOOKS_PATH}.`,
+    failed: `Setting core.hooksPath failed; run by hand: git config core.hooksPath ${HOOKS_PATH}`,
+    'no-git': `This directory is not a git clone; after cloning, run: git config core.hooksPath ${HOOKS_PATH}`,
+  };
+  if (report.hooksPath.startsWith('kept:')) {
+    steps.push(`core.hooksPath is ${report.hooksPath.slice(5)}; left unchanged. The secret scan in ${HOOKS_PATH}/pre-commit runs only from ${HOOKS_PATH}.`);
+  } else if (hooks[report.hooksPath]) {
+    steps.push(hooks[report.hooksPath]);
+  }
+  if (report.missingSecrets.length) {
+    steps.push(`Define these variables in your user environment (see .agents/mcp-secrets.env.example): ${report.missingSecrets.join(', ')}`);
+  }
+  steps.push('Approve the project MCP servers when your harness prompts for them.');
+  return steps;
+}
+
+function repoNextSteps(report, recorded) {
+  if (!report.newRepos.length) return [];
+  const names = report.newRepos.map((r) => r.name).join(', ');
+  if (recorded) return [`Recorded ${names} in ${MARKER_PATH} and the managed .gitignore block; commit both files.`];
+  return [`New nested clones not recorded in ${MARKER_PATH}: ${names}. Run again with --record-repos to record them and add them to the managed .gitignore block.`];
+}
+
 export function runJoin(opts) {
-  throw new InitError('not-implemented', `${opts.mode} mode is not implemented yet`);
+  const report = emptyReport('join', opts);
+  const marker = requireMarker(opts);
+  report.hooksPath = ensureHooksPath(opts);
+  report.missingSecrets = missingSecrets(opts.root);
+  const recorded = reconcileRepos(opts, marker, report);
+  if (recorded) {
+    applyBlockFile(opts.root, '.gitignore', gitignoreBody(opts, marker), report, opts.dryRun);
+    saveMarker(opts.root, marker, opts.dryRun);
+    report.written.push(MARKER_PATH);
+  }
+  report.written.sort();
+  report.nextSteps = [...localNextSteps(report), ...repoNextSteps(report, recorded)];
+  return report;
+}
+
+function changedTargets(opts, plan, from) {
+  const changes = readJson(path.join(TEMPLATES_DIR, 'CHANGES.json'));
+  const targets = [...plan.files.map((f) => f.target), ...plan.blocks.map((b) => b.target)];
+  return targets
+    .filter((target) => typeof changes[target] === 'string' && compareVersions(changes[target], from) > 0)
+    .sort()
+    .map((target) => ({ path: target, version: changes[target], exists: fs.existsSync(path.join(opts.root, target)) }));
+}
+
+function upgradeNextSteps(report, from, version, applied) {
+  if (!applied) {
+    if (!report.changed.length) {
+      return [`No template changed since ${from}. Run upgrade with --apply none to record version ${version} in ${MARKER_PATH}.`];
+    }
+    return [
+      'Choose the targets to apply, then run upgrade with --apply <target,target> or --apply none.',
+      `An existing file is never overwritten: its new version is written next to it as <target>${PROPOSAL_SUFFIX}.`,
+    ];
+  }
+  const steps = report.written
+    .filter((p) => p.endsWith(PROPOSAL_SUFFIX))
+    .map((p) => `Compare ${p} with ${p.slice(0, -PROPOSAL_SUFFIX.length)}, merge what you want by hand, then delete ${p}.`);
+  steps.push(`${MARKER_PATH} records version ${version}.`);
+  steps.push('Review the changes, then commit them.');
+  return steps;
 }
 
 export function runUpgrade(opts) {
-  throw new InitError('not-implemented', `${opts.mode} mode is not implemented yet`);
+  const report = emptyReport('upgrade', opts);
+  const marker = requireMarker(opts);
+  const version = pluginVersion();
+  const from = typeof marker.pluginVersion === 'string' ? marker.pluginVersion : '0.0.0';
+  const recorded = reconcileRepos(opts, marker, report);
+  const plan = planPayload(markerOpts(opts, marker), marker.repos ?? [], markerHarnesses(marker));
+  report.changed = changedTargets(opts, plan, from);
+  let markerChanged = recorded;
+  if (recorded && !(opts.apply ?? []).includes('.gitignore')) {
+    applyBlockFile(opts.root, '.gitignore', gitignoreBody(opts, marker), report, opts.dryRun);
+  }
+  if (opts.apply !== null) {
+    const changedPaths = new Set(report.changed.map((c) => c.path));
+    const unknown = opts.apply.filter((t) => !changedPaths.has(t));
+    if (unknown.length) {
+      throw new InitError('bad-args', `--apply names targets that did not change since ${from}: ${unknown.join(', ')}`, { unknown });
+    }
+    const created = [];
+    for (const target of new Set(opts.apply)) {
+      const block = plan.blocks.find((b) => b.target === target);
+      if (block) {
+        applyBlockFile(opts.root, target, block.body, report, opts.dryRun);
+        continue;
+      }
+      const file = plan.files.find((f) => f.target === target);
+      if (!fs.existsSync(path.join(opts.root, target))) {
+        writeFile(opts.root, target, file.content, file.executable, opts.dryRun);
+        report.written.push(target);
+        created.push(target);
+        continue;
+      }
+      writeFile(opts.root, `${target}${PROPOSAL_SUFFIX}`, file.content, false, opts.dryRun);
+      report.written.push(`${target}${PROPOSAL_SUFFIX}`);
+    }
+    if (compareVersions(from, version) < 0) marker.pluginVersion = version;
+    marker.written = [...new Set([...(Array.isArray(marker.written) ? marker.written : []), ...created])].sort();
+    markerChanged = true;
+  }
+  if (markerChanged) {
+    saveMarker(opts.root, marker, opts.dryRun);
+    report.written.push(MARKER_PATH);
+  }
+  report.written.sort();
+  report.skipped.sort();
+  report.nextSteps = [...upgradeNextSteps(report, from, version, opts.apply !== null), ...repoNextSteps(report, recorded)];
+  return report;
 }
 
 export function main(argv) {
