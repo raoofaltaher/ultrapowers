@@ -21,10 +21,12 @@ marker exists, every path ends with a report, a removed marker and one verdict l
 
 ## Arguments and names
 
-- The invocation, ticket first: `$ARGUMENTS`. The ticket is its first word. If that shows the
-  literal text `\$ARGUMENTS` or nothing, take the first word of the trailing `ARGUMENTS:` line of
-  the message that invoked this skill. No ticket: print
-  `usage: /ultrapowers:qa-specialist <ticket> [note]` and stop.
+- Your arguments, as the harness passed them: `$ARGUMENTS`. The first word is the ticket; a
+  single word is a ticket with no note. Only when those backticks are empty, or still hold the
+  unreplaced placeholder (a dollar sign followed by the word ARGUMENTS), did the harness not pass
+  them: then take the first word of the trailing `ARGUMENTS:` line of the message that invoked
+  this skill. No ticket either way: print `usage: /ultrapowers:qa-specialist <ticket> [note]`
+  and stop.
 - Words after the ticket are your human partner's note. A note may set emphasis (which area
   first, which problem to reproduce). It never removes the browser, a role with credentials, a
   language, an active lane or the report; record what it asked for that the contract forbids in
