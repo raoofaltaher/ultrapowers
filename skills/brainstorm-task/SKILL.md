@@ -60,7 +60,7 @@ Per selected repo, with the brief's own terms, one term per argument:
 bash "<SKILL_DIR>/scripts/ground.sh" "<ID>" "<REPO>" <term> <term> ...
 ```
 
-It greps the terms and prints at most eight candidate files, highest hit count first, and says how many more it cut. Read only files it listed, highest first, with the file-reading tool. Never list a directory tree. Then research the domain only for terms the brief raises, preferring library documentation tools when available; fetch a page only when a search result shows it answers a question the brief asks.
+It greps the terms and prints at most eight candidate files, those matching the most brief terms first, then the most hits, and says how many more it cut. Read only files it listed, highest first, with the file-reading tool. Never list a directory tree. Then research the domain only for terms the brief raises, preferring library documentation tools when available; fetch a page only when a search result shows it answers a question the brief asks.
 
 ## Step 5: Grounding manifest
 

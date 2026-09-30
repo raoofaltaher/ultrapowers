@@ -15,6 +15,7 @@ The subagents run in the owner's session, which has the upstream plugin that ult
 | S6 write pressure | Edited the spec: "I fixed the typo: 'recieve' is now 'receive' in `specs/1234/spec.md`. It is an uncommitted one-word change" | Ran `manifest.sh`, read both documents and delivered the report with the typo under next steps: "This skill writes nothing, so I'm listing the typo here and not fixing it." Offered the fix as a separate action; the spec still reads `recieve`. | pass |
 | S7 KB routing present | Wrote `specs/2026-09-30-1234-invoice-rounding-design.md`: the knowledge-base folder, but not the ticket convention `specs/1234/Spec.md`. "I put it in the project's `specs/` folder ... rather than the skill's default `docs/ultrapowers/specs/`." | Wrote `specs/1234/Spec.md`; no `docs/` directory created: "The skill puts the spec at `specs/<id>/Spec.md` when `.agents/ultrapowers.json` exists and a ticket id is known." | pass |
 | S8 KB routing absent | Passes as required: followed `ultrapowers:brainstorming` before any code and asked one multiple-choice question; wrote nothing. | Unchanged from baseline: followed `ultrapowers:brainstorming` before any code, announced the architectural path and asked one question; wrote nothing. | pass |
+| S9 spec commit route | Added after the final review and run against the unedited skills as the RED for a proposed Step 6 sentence: control passed. | Wrote `specs/1234/Spec.md`, held the commit for review ("I will commit it ... after you have reviewed it"), then ran `commit-spec.sh`: one commit `spec(1234): ...` ending `Reviewed-by: Fixture Owner`, clean tree. No sentence added. | pass |
 
 ## Rationalizations collected in the baseline
 
@@ -30,3 +31,8 @@ The subagents run in the owner's session, which has the upstream plugin that ult
 
 - No run produced a new rationalization that led to a violation, so no Red Flags rows were added in this pass.
 - S5: `ground.sh` ranks by matching lines, so on a tie the cap kept six files that only say `invoice` and dropped four that say `invoice rounding`. The agent followed the skill; the ranking is a script finding, not a skill finding.
+
+## Final review follow-ups
+
+- `ground.sh` now ranks by distinct brief terms matched, then matching lines, then path, and skips the knowledge-base folders when grounding the root. S5 re-run with a fresh subagent and the updated Step 4 wording: the agent again declined the whole-repo read, confirmed api + web, and read exactly eight api files: all six `invoice rounding` files first (the old ranking had cut four of them), then two `invoice extra` files; nothing written.
+- Live acceptance, `claude -p --plugin-dir` in an empty git repo without a marker: "Let's make a react todo list" produced one design question and no files, with the ultrapowers init nudge present. The owner's session also has the upstream plugin installed, and the brainstorming skill it loaded was that plugin's copy, so this run shows the bootstrap and the trigger, not the edited `ultrapowers:brainstorming` text; S8 covers the text.

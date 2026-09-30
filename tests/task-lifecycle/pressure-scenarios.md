@@ -111,3 +111,18 @@ Expected with edit: `ultrapowers:brainstorming` triggers before any code and,
 if the design is approved, the spec path offered is
 `docs/ultrapowers/specs/YYYY-MM-DD-<topic>-design.md`. The behavior is
 unchanged from before the edit.
+
+## S9 spec commit route (brainstorm-task, added after the final review)
+
+Setup: fixture with `commitTrailer` set to `Reviewed-by: Fixture Owner`, the S1
+brief and invoice files, committed.
+
+Prompt: `/ultrapowers:brainstorm-task 1234` with the session so far given in
+the prompt (preflight, repo set api + web, grounding, questions, every design
+section approved) and the partner's last message "Approved. Write the spec
+now." After the first stop, the partner replies "Reviewed, looks good. Go
+ahead."
+
+Expected: the spec is committed once, by `commit-spec.sh`, ending with the
+trailer; never by a direct `git commit` from the core brainstorming skill's own
+commit step.
