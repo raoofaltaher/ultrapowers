@@ -147,7 +147,7 @@ check "README.md.tmpl names the trailer, the ladder, prune and the secret gate" 
 # names, package managers named in the reference, and any capitalised
 # two-word name followed by a period (the reference named its DRI that way).
 check "store templates contain no reference-project data" bash -c '
-  ! grep -rEi "https?://|@[a-z0-9-]+\.[a-z]{2,}|gitlab|github|bitbucket|winget|nextit|next-it|DRI:" "$1"' _ "$STORE_TPL"
+  ! grep -rEi "https?://|@[a-z0-9-]+\.[a-z]{2,}|gitlab|github|bitbucket|winget|DRI:" "$1"' _ "$STORE_TPL"
 
 check "ultrapowers.json.tmpl has the memory section with the four keys" bash -c '
   grep -q "\"memory\": {" "$1" && grep -q "\"path\": \".agents/memory\"" "$1" &&
@@ -1501,7 +1501,7 @@ check "body carries the four criteria and the never-store list verbatim" bash -c
 check "body names the lint script and the file exists" bash -c '
   grep -q "scripts/memory-lint.mjs" "$1" && test -f "$2"' _ "$SKILL" "$REPO_ROOT/skills/team-memory/scripts/memory-lint.mjs"
 check "body is forge-neutral and free of reference-project data" bash -c '
-  ! grep -Eiq "gitlab|github|bitbucket|merge request|pull request|nextit|next-it|https?://" "$1"' _ "$SKILL"
+  ! grep -Eiq "gitlab|github|bitbucket|merge request|pull request|https?://" "$1"' _ "$SKILL"
 check "body says your human partner, never the user" bash -c '
   ! grep -qi "the user" "$1" && grep -q "your human partner" "$1"' _ "$SKILL"
 check "body reads repos from the project config, not hard-coded names" bash -c '

@@ -38,11 +38,12 @@ check "README.md.tmpl documents the D2 entry schema" bash -c '
 check "README.md.tmpl names the trailer, the ladder, prune and the secret gate" bash -c '
   grep -q "Memory-Ref" "$1" && grep -qi "recall ladder" "$1" && grep -qi "prune" "$1" && grep -qi "secret gate" "$1"' _ "$STORE_TPL/README.md.tmpl"
 
-# G4: nothing from the reference project. Patterns cover emails, URLs, forge
-# names, package managers named in the reference, and any capitalised
-# two-word name followed by a period (the reference named its DRI that way).
+# G4: nothing from the reference project. Generic patterns only: emails,
+# URLs, forge and package-manager names, a DRI line. Project-specific names
+# belong in the untracked ULTRAPOWERS_FORBIDDEN_PATTERNS_FILE, which the
+# template leak scan in tests/init/test-templates-clean.sh reads.
 check "store templates contain no reference-project data" bash -c '
-  ! grep -rEi "https?://|@[a-z0-9-]+\.[a-z]{2,}|gitlab|github|bitbucket|winget|nextit|next-it|DRI:" "$1"' _ "$STORE_TPL"
+  ! grep -rEi "https?://|@[a-z0-9-]+\.[a-z]{2,}|gitlab|github|bitbucket|winget|DRI:" "$1"' _ "$STORE_TPL"
 
 # Promotion is a transformation, not a copy: a personal auto-memory layer has
 # its own metadata types and keys, which the D2 schema rejects.

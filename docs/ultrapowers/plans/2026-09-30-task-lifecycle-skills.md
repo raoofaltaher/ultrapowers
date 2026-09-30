@@ -2574,10 +2574,10 @@ Expected: no output. The only address anywhere in the new files is the git ident
 
 - [ ] **Step 2: Sweep for the reference project's fixed vocabulary**
 
-Run:
+The owner keeps the reference project's names in the untracked file that `ULTRAPOWERS_FORBIDDEN_PATTERNS_FILE` points at (piece 2's convention), so no committed file lists them. Run:
 
 ```bash
-grep -rEin 'nextit|next-it|datanextstep|scm\.|odoo|glab|nango|keycloak|langfuse|ciso|/x/|X:' skills/new-task skills/brainstorm-task skills/task tests/task-lifecycle templates/specs templates/plans skills/brainstorming/SKILL.md skills/writing-plans/SKILL.md
+[ -f "${ULTRAPOWERS_FORBIDDEN_PATTERNS_FILE:-}" ] && grep -rEin -f "$ULTRAPOWERS_FORBIDDEN_PATTERNS_FILE" skills/new-task skills/brainstorm-task skills/task tests/task-lifecycle templates/specs templates/plans skills/brainstorming/SKILL.md skills/writing-plans/SKILL.md
 ```
 
 Expected: no output.

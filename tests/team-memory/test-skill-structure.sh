@@ -27,7 +27,7 @@ check "body carries the four criteria and the never-store list verbatim" bash -c
 check "body names the lint script and the file exists" bash -c '
   grep -q "scripts/memory-lint.mjs" "$1" && test -f "$2"' _ "$SKILL" "$REPO_ROOT/skills/team-memory/scripts/memory-lint.mjs"
 check "body is forge-neutral and free of reference-project data" bash -c '
-  ! grep -Eiq "gitlab|github|bitbucket|merge request|pull request|nextit|next-it|https?://" "$1"' _ "$SKILL"
+  ! grep -Eiq "gitlab|github|bitbucket|merge request|pull request|https?://" "$1"' _ "$SKILL"
 check "body says your human partner, never the user" bash -c '
   ! grep -qi "the user" "$1" && grep -q "your human partner" "$1"' _ "$SKILL"
 check "body reads repos from the project config, not hard-coded names" bash -c '
