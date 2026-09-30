@@ -88,6 +88,15 @@ else
   printf '%s\n' "$crlf_hits" | sed 's/^/      /'
 fi
 
+# The settings template selects this style for every session in a scaffolded
+# project, so it must keep Claude Code's built-in coding instructions.
+STYLE="$REPO_ROOT/output-styles/ste-explanatory.md"
+if sed -n '2,/^---$/p' "$STYLE" | grep -qx 'keep-coding-instructions: true'; then
+  pass "output style keeps the coding instructions"
+else
+  fail "output style keeps the coding instructions"
+fi
+
 if [[ "$FAILURES" -gt 0 ]]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"
   exit 1
