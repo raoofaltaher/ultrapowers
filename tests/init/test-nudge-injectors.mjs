@@ -124,6 +124,37 @@ test('Pi without ctx.cwd uses the process working directory', async () => {
   }
 });
 
+test('OpenCode computes the nudge once per session, so every later step repeats the first text', async () => {
+  const v1Dir = dirAt('later-init-v1');
+  const v1 = await (await load(OPENCODE)).UltrapowersPlugin({ client: null, directory: v1Dir });
+  const v1Step = async () => {
+    const output = { messages: [{ info: { role: 'user', sessionID: 's9' }, parts: [{ type: 'text', text: 'hi' }] }] };
+    await v1['experimental.chat.messages.transform']({}, output);
+    return output.messages[0].parts[0].text;
+  };
+  const v1First = await v1Step();
+  assertNudge(v1First, SCAFFOLD, 'v1 first step');
+  markerAt(v1Dir, JSON.stringify({ name: 'x', pluginVersion: VERSION }));
+  assert.equal(await v1Step(), v1First, 'v1: a later step of the same session keeps the first text');
+
+  const v2Dir = dirAt('later-init-v2');
+  let hook;
+  await (await load(OPENCODE)).default.setup({
+    directory: v2Dir,
+    skill: { transform: async (fn) => fn({ add: () => {} }) },
+    session: { hook: async (name, callback) => { if (name === 'context') hook = callback; } },
+  });
+  const v2Step = async () => {
+    const payload = { sessionID: 's10', messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] };
+    await hook(payload);
+    return payload.messages[0].content[0].text;
+  };
+  const v2First = await v2Step();
+  assertNudge(v2First, SCAFFOLD, 'v2 first step');
+  markerAt(v2Dir, JSON.stringify({ name: 'x', pluginVersion: VERSION }));
+  assert.equal(await v2Step(), v2First, 'v2: a later step of the same session keeps the first text');
+});
+
 test('the injectors never write into the project', async () => {
   const list = (dir) => fs.readdirSync(dir, { recursive: true }).sort();
   const before = list(base);

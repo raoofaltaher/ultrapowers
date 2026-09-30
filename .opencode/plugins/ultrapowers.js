@@ -26,8 +26,9 @@ const ultrapowersSkillsDir = path.resolve(__dirname, '../../skills');
 
 // Project scaffold nudge (spec 4.2): one line inside the bootstrap when the
 // project directory has no .agents/ultrapowers.json at or above it, or has one
-// that is older than this plugin or unreadable. Read-only; recomputed per
-// injection so the line disappears as soon as init has run.
+// that is older than this plugin or unreadable. Read-only. Computed once per
+// session: the transform fires on every agent step, and a first message that
+// changed mid-session would cost disk work each step and the prompt cache.
 const NUDGE_SCAFFOLD = 'This project has no ultrapowers scaffold. Offer /ultrapowers:init before other work.';
 const NUDGE_REPAIR = "This project's .agents/ultrapowers.json is unreadable. Offer /ultrapowers:init to repair it before other work.";
 const upgradeNudge = (from, to) => `This project's ultrapowers scaffold is from version ${from}; the plugin is ${to}. Offer /ultrapowers:init to upgrade before other work.`;
@@ -79,8 +80,21 @@ const projectNudge = (directory) => {
   }
 };
 
-const withProjectNudge = (bootstrap, directory) => {
-  const nudge = projectNudge(directory);
+const _nudgeBySession = new Map();
+const NUDGE_CACHE_MAX = 256;
+const sessionNudge = (sessionID, directory) => {
+  if (!sessionID) return projectNudge(directory);
+  if (!_nudgeBySession.has(sessionID)) {
+    if (_nudgeBySession.size >= NUDGE_CACHE_MAX) {
+      for (const key of [..._nudgeBySession.keys()].slice(0, NUDGE_CACHE_MAX / 4)) _nudgeBySession.delete(key);
+    }
+    _nudgeBySession.set(sessionID, projectNudge(directory));
+  }
+  return _nudgeBySession.get(sessionID);
+};
+
+const withProjectNudge = (bootstrap, directory, sessionID) => {
+  const nudge = sessionNudge(sessionID, directory);
   if (!nudge) return bootstrap;
   const close = '</EXTREMELY_IMPORTANT>';
   const at = bootstrap.lastIndexOf(close);
@@ -323,7 +337,7 @@ export const UltrapowersPlugin = async ({ client, directory }) => {
       )) return;
 
       const ref = firstUser.parts[0];
-      firstUser.parts.unshift({ ...ref, type: 'text', text: withProjectNudge(bootstrap, directory) });
+      firstUser.parts.unshift({ ...ref, type: 'text', text: withProjectNudge(bootstrap, directory, firstUser.info.sessionID) });
     }
   };
 };
@@ -418,7 +432,7 @@ async function setup(ctx) {
 
         // Native compaction can leave only an opaque checkpoint. Keep it
         // intact and append the transient bootstrap as a user message.
-        const text = withProjectNudge(bootstrap, typeof event.directory === 'string' ? event.directory : projectDirectory);
+        const text = withProjectNudge(bootstrap, typeof event.directory === 'string' ? event.directory : projectDirectory, event.sessionID);
         if (firstUser) {
           firstUser.content.unshift({ type: 'text', text });
         } else {
