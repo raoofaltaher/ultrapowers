@@ -85,6 +85,25 @@
           "hooks/session-start"
         ],
         "timeoutMs": 5000
+      },
+      {
+        "id": "team-memory-nudge",
+        "event": "UserPromptSubmit",
+        "command": [
+          "bash",
+          "hooks/team-memory-nudge"
+        ],
+        "timeoutMs": 5000
+      },
+      {
+        "id": "team-memory-postcompact",
+        "event": "SessionStart",
+        "matcher": "compact",
+        "command": [
+          "bash",
+          "hooks/team-memory-postcompact"
+        ],
+        "timeoutMs": 5000
       }
     ],
     "mcpServers": [],

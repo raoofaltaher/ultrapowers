@@ -177,6 +177,51 @@ else
   echo "  [SKIP] Windows-style cwd (cygpath not available)"
 fi
 
+echo "Registrations"
+if node -e '
+const fs = require("fs");
+const hooks = JSON.parse(fs.readFileSync(process.argv[1], "utf8")).hooks;
+const die = (m) => { console.error(m); process.exit(1); };
+if (!/run-hook\.cmd" session-start$/.test(hooks.SessionStart[0].hooks[0].command)) die("SessionStart[0] must stay session-start");
+const compact = hooks.SessionStart.find((g) => g.matcher === "compact");
+if (!compact) die("no SessionStart group with matcher compact");
+const pc = compact.hooks[0];
+if (pc.shell !== "bash" || pc.type !== "command" || !/run-hook\.cmd" team-memory-postcompact$/.test(pc.command)) die(`bad postcompact entry: ${JSON.stringify(pc)}`);
+const ups = (hooks.UserPromptSubmit || [])[0]?.hooks?.[0];
+if (!ups) die("no UserPromptSubmit hook");
+if (ups.shell !== "bash" || ups.type !== "command" || !/run-hook\.cmd" team-memory-nudge$/.test(ups.command)) die(`bad nudge entry: ${JSON.stringify(ups)}`);
+' "$REPO_ROOT/hooks/hooks.json"; then
+  pass "hooks.json registers nudge (UserPromptSubmit) and postcompact (SessionStart compact) with shell:bash"
+else
+  fail "hooks.json registers nudge (UserPromptSubmit) and postcompact (SessionStart compact) with shell:bash"
+fi
+
+if node -e '
+const hooks = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).hooks;
+const ok = (hooks.beforeSubmitPrompt || []).some((h) => h.command === "./hooks/run-hook.cmd team-memory-nudge")
+  && hooks.sessionStart.some((h) => h.command === "./hooks/run-hook.cmd session-start");
+process.exit(ok ? 0 : 1);
+' "$REPO_ROOT/hooks/hooks-cursor.json"; then
+  pass "hooks-cursor.json registers the nudge on beforeSubmitPrompt and keeps sessionStart"
+else
+  fail "hooks-cursor.json registers the nudge on beforeSubmitPrompt and keeps sessionStart"
+fi
+
+if node -e '
+const m = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+const hooks = m.capabilities.hooks;
+const nudge = hooks.find((h) => h.id === "team-memory-nudge");
+const pc = hooks.find((h) => h.id === "team-memory-postcompact");
+const ok = nudge && nudge.event === "UserPromptSubmit" && nudge.command[1] === "hooks/team-memory-nudge"
+  && pc && pc.event === "SessionStart" && pc.matcher === "compact" && pc.command[1] === "hooks/team-memory-postcompact"
+  && hooks.some((h) => h.id === "session-start");
+process.exit(ok ? 0 : 1);
+' "$REPO_ROOT/.muse-plugin/plugin.json"; then
+  pass "Muse manifest registers both team-memory hooks"
+else
+  fail "Muse manifest registers both team-memory hooks"
+fi
+
 if [[ "$FAILURES" -gt 0 ]]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"
   exit 1
