@@ -8,7 +8,7 @@ require.
 
 ## Cheaper orchestration for subagent-driven development
 
-The controller session is the most expensive seat in a
+The controller session is the most expensive seat in an
 ultrapowers:subagent-driven-development run: it reads every dispatch
 result and every report, and it usually runs on the session's most
 capable model. Claude Code supports nested subagents (three layers below

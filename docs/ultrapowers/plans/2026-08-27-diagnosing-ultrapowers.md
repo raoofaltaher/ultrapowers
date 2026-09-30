@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use ultrapowers:subagent-driven-development (recommended) or ultrapowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship `skills/diagnosing-ultrapowers`, a pure-prose skill that helps a human partner pin down what went wrong in a ultrapowers session, reports what happened with `path:line` evidence, and on request exports a scrubbed bundle, files or finds a GitHub issue, and searches for similar local sessions.
+**Goal:** Ship `skills/diagnosing-ultrapowers`, a pure-prose skill that helps a human partner pin down what went wrong in an ultrapowers session, reports what happened with `path:line` evidence, and on request exports a scrubbed bundle, files or finds a GitHub issue, and searches for similar local sessions.
 
 **Architecture:** One lean `SKILL.md` (workflow, hard rules, Red Flags) plus one file per subagent job under `prompts/`, per-harness session-store references under `references/`, and output recipes under `templates/`. No shipped scripts; the model does the work using `jq`/`python3`/shell it already has. Skill content is developed RED → GREEN → REFACTOR per `ultrapowers:writing-skills`: baseline scenarios first, skill written to the observed failures, re-run, loopholes closed.
 
@@ -151,7 +151,7 @@ For scenario 3 the subagent must have real shell access to the fixture; if its r
 
 - [ ] **Step 3: Extract rationalizations**
 
-Read every baseline response. Copy each phrase an agent used to justify skipping intake, proposing a ultrapowers fix, reading the whole file, archiving without review, or posting without approval into `## Rationalizations observed` as `- (N) "<verbatim phrase>"`. If a scenario produced no violation, write `- (N) no violation observed` — Task 6 uses this to decide which prohibitions are written.
+Read every baseline response. Copy each phrase an agent used to justify skipping intake, proposing an ultrapowers fix, reading the whole file, archiving without review, or posting without approval into `## Rationalizations observed` as `- (N) "<verbatim phrase>"`. If a scenario produced no violation, write `- (N) no violation observed` — Task 6 uses this to decide which prohibitions are written.
 
 - [ ] **Step 4: Commit**
 
@@ -578,7 +578,7 @@ Created: <ISO timestamp>
 expected, what happened, and the observable that matters: wall-clock,
 tokens, repeated actions, a specific unexpected action.>
 
-Goal is a ultrapowers bug report: yes | no
+Goal is an ultrapowers bug report: yes | no
 
 ## Sessions
 
@@ -769,7 +769,7 @@ This follows `.github/ISSUE_TEMPLATE/bug_report.md` in this repo so the created 
 | All plugins installed | <list> |
 | OS + shell | <os version>, <shell> |
 
-## Is this a Ultrapowers issue or a platform issue?
+## Is this an Ultrapowers issue or a platform issue?
 
 - [ ] I confirmed this issue does not occur without Ultrapowers installed
 
@@ -1305,7 +1305,7 @@ The Red Flags table below holds the design hypotheses. Before writing the file, 
 ````markdown
 ---
 name: diagnosing-ultrapowers
-description: Use when a ultrapowers session went wrong and your human partner wants to know why — repeated work, ignored plans, stumbles, poor results, a skill that didn't fire, "it took too long", "why is it so expensive", "what is it doing" — or wants to build a bug report for the ultrapowers maintainers, for the current session or a past one identified by id or path, on any harness.
+description: Use when an ultrapowers session went wrong and your human partner wants to know why — repeated work, ignored plans, stumbles, poor results, a skill that didn't fire, "it took too long", "why is it so expensive", "what is it doing" — or wants to build a bug report for the ultrapowers maintainers, for the current session or a past one identified by id or path, on any harness.
 ---
 
 # Diagnosing Ultrapowers
@@ -1328,7 +1328,7 @@ Create a todo per step. Steps 5–7 run only on their stated condition.
    partner expected, what happened, and the observable they care about
    (wall-clock, tokens, repeated actions, one specific action). "It took
    too long" is a complaint, not a problem statement. Note whether the
-   goal is a ultrapowers bug report.
+   goal is an ultrapowers bug report.
 2. **Locate.** Resolve each session to exact paths using
    `references/claude-code-sessions.md`, `references/codex-sessions.md`,
    or `references/other-harnesses.md` for any other harness. Confirm a

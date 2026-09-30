@@ -6,7 +6,7 @@ Branch: `diagnosing-ultrapowers` off `dev`
 
 ## Goal
 
-A core skill, `diagnosing-ultrapowers`, that a user invokes when a
+A core skill, `diagnosing-ultrapowers`, that a user invokes when an
 ultrapowers session went wrong. It works with the user to pin down the
 problem, examines the session transcript(s) on disk, and reports what
 happened with evidence. On request it exports a scrubbed bundle that a
@@ -37,7 +37,7 @@ job, and the skill says so if asked.
   claims, commits matching claims, review feedback handled). It is not a
   code review of the resulting diff.
 - **Redaction level is the user's call.** The skill asks, and tells the
-  user that for a ultrapowers bug report, more information gives a better
+  user that for an ultrapowers bug report, more information gives a better
   chance of help.
 - **Ultrapowers identity is recorded precisely**: install root actually
   loaded, version, git sha if a checkout, and a sha1 for every skill file
@@ -87,7 +87,7 @@ harness matches.
 
 ```
 name: diagnosing-ultrapowers
-description: Use when a ultrapowers session went wrong and the user wants
+description: Use when an ultrapowers session went wrong and the user wants
   to know why — repeated work, ignored plans, stumbles, poor results, a
   skill that didn't fire — or wants to build a bug report for the
   ultrapowers maintainers, for the current session or a past one
@@ -401,7 +401,7 @@ Verified against files on this machine, Claude Code 2.1.247:
   including SessionStart output, which shows exactly which ultrapowers
   bootstrap was injected.
 - Plugin registry: `~/.claude/plugins/installed_plugins.json`
-  (`installPath`, `version`, `gitCommitSha` per plugin). A ultrapowers
+  (`installPath`, `version`, `gitCommitSha` per plugin). An ultrapowers
   loaded via a dev checkout instead of the marketplace cache shows up in
   the SessionStart hook attachment's plugin root, so both are checked.
 

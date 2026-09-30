@@ -9,7 +9,7 @@ Created: <ISO timestamp>
 expected, what happened, and the observable that matters: wall-clock,
 tokens, repeated actions, a specific unexpected action.>
 
-Goal is a ultrapowers bug report: yes | no
+Goal is an ultrapowers bug report: yes | no
 
 ## Sessions
 

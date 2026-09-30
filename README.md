@@ -2,7 +2,7 @@
 
 Ultrapowers is a complete software development methodology for your coding agents, built on a set of composable skills and a session-start bootstrap that makes sure your agent uses them.
 
-Ultrapowers is a fork of superpowers 6.4.2 by Jesse Vincent, MIT licensed; upstream lives at https://github.com/obra/superpowers.
+Ultrapowers is a fork of Jesse Vincent's MIT-licensed skills library, cut from its version 6.4.2. The original copyright notice is kept in `LICENSE`.
 
 ## Table of Contents
 

@@ -13,7 +13,7 @@ Title: <skill or symptom>: <one-line observable> (<harness>)
 | All plugins installed | <list> | <label>; <location> |
 | OS + shell | <os version>, <shell> | <label>; <location> |
 
-## Is this a Ultrapowers issue or a platform issue?
+## Is this an Ultrapowers issue or a platform issue?
 
 - [ ] I confirmed this issue does not occur without Ultrapowers installed
 

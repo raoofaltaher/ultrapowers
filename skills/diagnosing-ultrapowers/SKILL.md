@@ -1,6 +1,6 @@
 ---
 name: diagnosing-ultrapowers
-description: Use when a ultrapowers session went wrong and your human partner wants to know why — repeated work, ignored plans, stumbles, poor results, a skill that didn't fire, "it took too long", "why is it so expensive", "what is it doing" — or wants to build a bug report for the ultrapowers maintainers, for the current session or a past one identified by id or path, on any harness.
+description: Use when an ultrapowers session went wrong and your human partner wants to know why — repeated work, ignored plans, stumbles, poor results, a skill that didn't fire, "it took too long", "why is it so expensive", "what is it doing" — or wants to build a bug report for the ultrapowers maintainers, for the current session or a past one identified by id or path, on any harness.
 ---
 
 # Diagnosing Ultrapowers
@@ -25,7 +25,7 @@ Create a todo per step. Steps 5–7 run only on their stated condition.
    partner expected, what happened, and the observable they care about
    (wall-clock, tokens, repeated actions, one specific action). "It took
    too long" is a complaint, not a problem statement. Note whether the
-   goal is a ultrapowers bug report.
+   goal is an ultrapowers bug report.
 2. **Locate.** Resolve each session to verified absolute filesystem paths using
    `references/session-discovery.md`. Confirm a past session by quoting its
    first prompt and timestamp, and list every candidate you rejected with the

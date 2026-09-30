@@ -25,14 +25,14 @@ When a skill mentions "your instructions file," on Hermes Agent this is **`AGENT
 ## Invoking a skill
 
 Hermes Agent has a `skills` toolset with `skill_view` and `skills_list` tools.
-To invoke a ultrapowers skill, use:
+To invoke an ultrapowers skill, use:
 
 ```
 skill_view("brainstorming")
 skill_view("test-driven-development")
 ```
 
-If `skill_view` cannot find a ultrapowers skill (it may not appear in the catalog
+If `skill_view` cannot find an ultrapowers skill (it may not appear in the catalog
 until the plugin fully registers it), fall back to reading the SKILL.md directly:
 
 ```

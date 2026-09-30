@@ -1,8 +1,10 @@
 # Rename and Fork Hygiene Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> Naming note: this document describes the rename away from the upstream name. The upstream name is written `<old-name>` (`<Old-name>`, `<OLD-NAME>` for the other cases) so that no file in the repository carries it. Commands that must match it build it at run time as `OLD="$(printf 'super%s' powers)"`.
 
-**Goal:** Turn the upstream superpowers 6.4.2 copy at `S:\ultrapowers` into ultrapowers 1.0.0: one name everywhere, fork-owner identity in every manifest, upstream-only tooling and telemetry removed, every offline suite green.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use <old-name>:subagent-driven-development (recommended) or <old-name>:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Turn the upstream <old-name> 6.4.2 copy at `S:\ultrapowers` into ultrapowers 1.0.0: one name everywhere, fork-owner identity in every manifest, upstream-only tooling and telemetry removed, every offline suite green.
 
 **Architecture:** A committed, parameterised rename script (`scripts/rename-fork.sh`) performs the blind three-variant substitution and the `git mv` path moves over `git ls-files`. A curated manual pass then fixes what a blind pass gets wrong: manifest identity and version, the brainstorm companion's remote-logo telemetry, deletions, the README/AGENTS/template rewrites, docs, and the tests that assert on names or on deleted tooling. A final task runs every acceptance criterion from spec section 5.
 
@@ -15,7 +17,7 @@
 Copied from the spec; every task's requirements implicitly include these.
 
 - D1: Rename every occurrence, including upstream history documents. One name in the repo, no dual vocabulary.
-- D2: The only permitted occurrences of the old name after the rename are: the upstream copyright line in `LICENSE`, one fork notice line in `README.md`, and the piece 1 spec and this plan. (Note: `LICENSE` in fact contains no occurrence of the old name; it is excluded from the rename anyway because it must keep `Copyright (c) 2025 Jesse Vincent`.)
+- D2 (revised 2026-09-30 by the owner): no file in the repository contains the old name, in any case. Attribution is the `LICENSE` copyright line plus one README fork notice, both without the old name. `CODE_OF_CONDUCT.md` is deleted.
 - D3: Version resets to `1.0.0`. The fork notice states the upstream version it was cut from (`6.4.2`).
 - D4: Plugin name `ultrapowers`; marketplace name `ultrapowers`; one plugin with source `./`; owner `raoofaltaher`; homepage and repository `https://github.com/raoofaltaher/ultrapowers`.
 - D5: Author fields name the fork owner by git name only (`RAOOF A.`); no email in any manifest. Hermes YAML `author: raoofaltaher`.
@@ -26,8 +28,8 @@ Copied from the spec; every task's requirements implicitly include these.
 - D10: Skill bodies are renamed only where the name appears; their behavior-shaping content is otherwise untouched.
 - Spec 4.2: `hooks/session-start` keeps its file name; `.gitattributes` needs no change. Renamed hook and shell files must stay LF.
 - Spec 4.2: Excluded from the blind pass: `LICENSE`, the spec, this plan, `.git/`, `.remember/`, and binary assets.
-- Spec 4.2: Every `SUPERPOWERS_*` environment variable becomes `ULTRAPOWERS_*` except the three telemetry variables, which are deleted.
-- Spec 4.2: Runtime folder `.superpowers/` becomes `.ultrapowers/`; no migration of existing ledgers.
+- Spec 4.2: Every `<OLD-NAME>_*` environment variable becomes `ULTRAPOWERS_*` except the three telemetry variables, which are deleted.
+- Spec 4.2: Runtime folder `.<old-name>/` becomes `.ultrapowers/`; no migration of existing ledgers.
 - Every commit message in this plan ends with the exact final line `RAOOF A.`.
 - Work happens on branch `rename-ultrapowers`. The upstream "PRs must target `dev`" rule is removed by spec 4.3 and does not apply here.
 
@@ -35,8 +37,8 @@ Copied from the spec; every task's requirements implicitly include these.
 
 Five input classes the spec implies but no spec bullet tests, most likely to bite first. Each has its pinning test in the owning task.
 
-1. **The owner/name pair.** A blind three-variant pass turns `obra/superpowers` into `obra/ultrapowers`, a URL that does not exist. Expected behavior: `obra/superpowers` becomes `raoofaltaher/ultrapowers` in one pass, before the bare-name substitution runs. Pinned in Task 1's `test-rename-fork.sh` ("owner/name pair is rewritten before the bare name").
-2. **Empty directories left behind by per-file `git mv`.** Git tracks files, not directories; after moving every file out of `docs/superpowers/`, the empty directory remains on disk and acceptance criterion 2 (`find -iname '*superpowers*'` returns nothing) fails. Expected behavior: emptied old-name directories are removed. Pinned in Task 1's test ("emptied old directories are removed").
+1. **The owner/name pair.** A blind three-variant pass turns `obra/<old-name>` into `obra/ultrapowers`, a URL that does not exist. Expected behavior: `obra/<old-name>` becomes `raoofaltaher/ultrapowers` in one pass, before the bare-name substitution runs. Pinned in Task 1's `test-rename-fork.sh` ("owner/name pair is rewritten before the bare name").
+2. **Empty directories left behind by per-file `git mv`.** Git tracks files, not directories; after moving every file out of `docs/<old-name>/`, the empty directory remains on disk and acceptance criterion 2 (`find -iname '*<old-name>*'` returns nothing) fails. Expected behavior: emptied old-name directories are removed. Pinned in Task 1's test ("emptied old directories are removed").
 3. **Binary files touched by `sed`.** `assets/app-icon.png` is tracked; a byte-level substitution corrupts it silently. Expected behavior: binary files are byte-identical after the run. Pinned in Task 1's test ("binary file is byte-identical").
 4. **The new logo route bypassing the session key.** Every companion route is gated by `isAuthorized`; a logo route added outside that gate would be the only unauthenticated endpoint. Expected behavior: `GET /brand-logo.svg` without the key returns 403; with the key returns the bundled SVG; when the packaged tree lacks `assets/` it returns 404 and the HTML still renders. Pinned in Task 3's rewritten `branding.test.js`.
 5. **Version audit false positives.** `scripts/bump-version.sh --audit` greps the whole repo for the literal `1.0.0`; `tests/brainstorm-server/package.json` and `package-lock.json` are version `1.0.0` themselves, and the spec and history plans mention `1.0.0`. Expected behavior: `--audit` prints "All clear" after the bump. Pinned in Task 2 by extending `.version-bump.json` `audit.exclude` and running `--audit`.
@@ -53,7 +55,7 @@ Facts verified on the authoring machine (Windows 11, Git Bash, repo at `/s/ultra
   - macOS: `brew install yq shellcheck`.
   - Confirm with `yq --version` (must print a `v4.x` mikefarah build, not the Python `yq` wrapper) and `shellcheck --version`.
 - `tests/brainstorm-server/node_modules` is absent. `npm test` there needs `npm install` (the `ws` dev dependency). Whether `npm install` works offline was not verified; if it fails, run the branding test directly with `node branding.test.js` (it needs no dependency) and report the rest of that suite as **skipped, not passed**, exactly as spec section 6 requires.
-- Counts for expected output: 145 tracked text files contain the old name (excluding the spec); 68 tracked paths contain it (36 under `docs/superpowers/`, 8 under `skills/using-superpowers/`, 20 under `skills/diagnosing-superpowers/`, `tests/diagnosing-superpowers/test-skill-structure.sh`, `.opencode/plugins/superpowers.js`, `.pi/extensions/superpowers.ts`, `assets/superpowers-small.svg`).
+- Counts for expected output: 145 tracked text files contain the old name (excluding the spec); 68 tracked paths contain it (36 under `docs/<old-name>/`, 8 under `skills/using-<old-name>/`, 20 under `skills/diagnosing-<old-name>/`, `tests/diagnosing-<old-name>/test-skill-structure.sh`, `.opencode/plugins/<old-name>.js`, `.pi/extensions/<old-name>.ts`, `assets/<old-name>-small.svg`).
 - **Untracked files in the working tree:** `docs/ultrapowers-requirements.md` (16 old-name hits), `Screenshot 2026-09-30 083306.png`, `Screenshot 2026-09-30 083338.png`. The rename script only touches `git ls-files`. The requirements document is a permitted exception under spec D2 (it records the owner's own words), so acceptance criterion 1 lists it as expected. Suggest to your human partner that it be committed as-is; do not rename its text.
 - Line numbers quoted below are from the current tree. Task 1 substitutes text within lines and never adds or removes lines, so line numbers stay valid after Task 1 for every file that Task 1 does not move. For moved files the new path is given.
 - Acceptance criterion 6 (install into Claude Code, bootstrap says `You have ultrapowers.`, `/ultrapowers:brainstorming` loads) is a manual check in a real Claude Code session. Task 11 gives the steps; it cannot be scripted here.
@@ -334,9 +336,9 @@ bash scripts/rename-fork.sh --dry-run \
   -x LICENSE \
   -x docs/ultrapowers/specs/2026-09-30-rename-and-fork-hygiene-design.md \
   -x docs/ultrapowers/plans/2026-09-30-rename-and-fork-hygiene.md \
-  superpowers ultrapowers obra raoofaltaher | tail -3
+  <old-name> ultrapowers obra raoofaltaher | tail -3
 ```
-Expected last line: `rename-fork: 145 file(s) edited, 68 path(s) moved (dry run)`. (145 counts tracked text files containing the old name minus the excluded spec; if this plan has been committed before you run it, the count is unchanged because the plan is excluded by `-x`.) Spot-check two `move` lines exist: `move  docs/superpowers/specs/2026-08-27-diagnosing-superpowers-design.md -> docs/ultrapowers/specs/2026-08-27-diagnosing-ultrapowers-design.md` and `move  skills/using-superpowers/SKILL.md -> skills/using-ultrapowers/SKILL.md`.
+Expected last line: `rename-fork: 145 file(s) edited, 68 path(s) moved (dry run)`. (145 counts tracked text files containing the old name minus the excluded spec; if this plan has been committed before you run it, the count is unchanged because the plan is excluded by `-x`.) Spot-check two `move` lines exist: `move  docs/<old-name>/specs/2026-08-27-diagnosing-<old-name>-design.md -> docs/ultrapowers/specs/2026-08-27-diagnosing-ultrapowers-design.md` and `move  skills/using-<old-name>/SKILL.md -> skills/using-ultrapowers/SKILL.md`.
 
 - [ ] **Step 8: Run the real rename**
 
@@ -346,15 +348,15 @@ bash scripts/rename-fork.sh \
   -x LICENSE \
   -x docs/ultrapowers/specs/2026-09-30-rename-and-fork-hygiene-design.md \
   -x docs/ultrapowers/plans/2026-09-30-rename-and-fork-hygiene.md \
-  superpowers ultrapowers obra raoofaltaher
+  <old-name> ultrapowers obra raoofaltaher
 ```
-Expected output ends with `rmdir ./docs/superpowers/specs`, `rmdir ./docs/superpowers/plans`, `rmdir ./docs/superpowers`, `rmdir ./skills/using-superpowers/references`, `rmdir ./skills/using-superpowers`, `rmdir ./skills/diagnosing-superpowers/templates` (and the other diagnosing subdirs), `rmdir ./skills/diagnosing-superpowers`, `rmdir ./tests/diagnosing-superpowers`, then `rename-fork: 145 file(s) edited, 68 path(s) moved`.
+Expected output ends with `rmdir ./docs/<old-name>/specs`, `rmdir ./docs/<old-name>/plans`, `rmdir ./docs/<old-name>`, `rmdir ./skills/using-<old-name>/references`, `rmdir ./skills/using-<old-name>`, `rmdir ./skills/diagnosing-<old-name>/templates` (and the other diagnosing subdirs), `rmdir ./skills/diagnosing-<old-name>`, `rmdir ./tests/diagnosing-<old-name>`, then `rename-fork: 145 file(s) edited, 68 path(s) moved`.
 
 - [ ] **Step 9: Verify the blind pass left nothing behind**
 
 Run:
 ```bash
-grep -rIl -i superpowers . --exclude-dir=.git --exclude-dir=.remember | sort
+grep -rIl -i <old-name> . --exclude-dir=.git --exclude-dir=.remember | sort
 ```
 Expected exactly these lines (the two excluded spec/plan files plus the untracked requirements file noted above):
 ```
@@ -364,7 +366,7 @@ Expected exactly these lines (the two excluded spec/plan files plus the untracke
 ```
 (`README.md` does not appear yet: its fork notice is written in Task 5.)
 
-Run: `find . -path ./.git -prune -o -iname '*superpowers*' -print`
+Run: `find . -path ./.git -prune -o -iname '*<old-name>*' -print`
 Expected: no output.
 
 Run: `git status --short | grep -c '^R'`
@@ -377,7 +379,7 @@ Run each and compare with the expected line:
 ```bash
 sed -n '11p;27p' hooks/session-start
 ```
-Expected (the lowercase shell variables `using_superpowers_content` / `using_superpowers_escaped` contain the old name, so the script renamed them too):
+Expected (the lowercase shell variables `using_<old-name>_content` / `using_<old-name>_escaped` contain the old name, so the script renamed them too):
 ```
 using_ultrapowers_content=$(cat "${PLUGIN_ROOT}/skills/using-ultrapowers/SKILL.md" 2>&1 || echo "Error reading using-ultrapowers skill")
 session_context="<EXTREMELY_IMPORTANT>\nYou have ultrapowers.\n\n**Below is the full content of your 'ultrapowers:using-ultrapowers' skill - your introduction to using skills. For all other skills, use the 'Skill' tool:**\n\n${using_ultrapowers_escaped}\n</EXTREMELY_IMPORTANT>"
@@ -476,11 +478,11 @@ Suites known red at this point (fixed later): `tests/codex/test-marketplace-mani
 
 ```bash
 git add -A
-git commit -m "rename: superpowers -> ultrapowers across every tracked file and path
+git commit -m "rename: <old-name> -> ultrapowers across every tracked file and path
 
 Applied with scripts/rename-fork.sh (three case variants plus
-obra/superpowers -> raoofaltaher/ultrapowers). LICENSE and the piece 1
-spec/plan were excluded. 145 files edited, 68 paths moved; docs/superpowers
+obra/<old-name> -> raoofaltaher/ultrapowers). LICENSE and the piece 1
+spec/plan were excluded. 145 files edited, 68 paths moved; docs/<old-name>
 merged into the existing docs/ultrapowers.
 
 RAOOF A."
@@ -720,7 +722,7 @@ provides_hooks:
   "sessionStart": {
     "skill": "using-ultrapowers"
   },
-  "skillInstructions": "Kimi Code tool mapping for Ultrapowers skills:\n\n- When a Ultrapowers skill says to ask the user, ask clarifying questions, ask one question at a time, present multiple-choice options, use the terminal for a question, or wait for the user's choice, call Kimi Code's `AskUserQuestion` tool. Do not render those choices as plain assistant text unless `AskUserQuestion` is unavailable or the session is in auto permission mode.\n- For `AskUserQuestion`, provide 1 question with 2-4 concrete options when possible. Put the recommended option first and suffix its label with `(Recommended)`.\n- When a Ultrapowers skill refers to `TodoWrite`, use Kimi Code's `TodoList` tool.\n- When a Ultrapowers skill says `Task tool (general-purpose)` or asks you to dispatch an implementer/reviewer subagent, use Kimi Code's `Agent` tool with a Kimi subagent type. Do not pass `general-purpose` as `subagent_type`.\n- For implementation, code review, spec review, quality review, and filled Ultrapowers subagent prompt templates, call `Agent` with `subagent_type: \"coder\"`, paste the fully filled prompt into `prompt`, and provide a short `description`.\n- For read-only codebase exploration that would take several searches, use `Agent` with `subagent_type: \"explore\"`.\n- For read-only planning or architecture design, use `Agent` with `subagent_type: \"plan\"`.\n- Keep dependent Ultrapowers subagent steps sequential. Use multiple `Agent` calls, or `run_in_background: true` only when the work is independent and background agents are available.\n- When a Ultrapowers skill refers to the `Skill` tool, use Kimi Code's native `Skill` tool.\n- Use Kimi Code's `Read`, `Write`, `Edit`, `Bash`, `Grep`, `Glob`, `FetchURL`, `WebSearch`, and MCP tools by their actual exposed names.\n- When a skill asks to search file contents, use `Grep`; when it asks to find files by path or pattern, use `Glob`; when it asks to fetch a URL, use `FetchURL`; when it asks to search the web, use `WebSearch`.",
+  "skillInstructions": "Kimi Code tool mapping for Ultrapowers skills:\n\n- When an Ultrapowers skill says to ask the user, ask clarifying questions, ask one question at a time, present multiple-choice options, use the terminal for a question, or wait for the user's choice, call Kimi Code's `AskUserQuestion` tool. Do not render those choices as plain assistant text unless `AskUserQuestion` is unavailable or the session is in auto permission mode.\n- For `AskUserQuestion`, provide 1 question with 2-4 concrete options when possible. Put the recommended option first and suffix its label with `(Recommended)`.\n- When an Ultrapowers skill refers to `TodoWrite`, use Kimi Code's `TodoList` tool.\n- When an Ultrapowers skill says `Task tool (general-purpose)` or asks you to dispatch an implementer/reviewer subagent, use Kimi Code's `Agent` tool with a Kimi subagent type. Do not pass `general-purpose` as `subagent_type`.\n- For implementation, code review, spec review, quality review, and filled Ultrapowers subagent prompt templates, call `Agent` with `subagent_type: \"coder\"`, paste the fully filled prompt into `prompt`, and provide a short `description`.\n- For read-only codebase exploration that would take several searches, use `Agent` with `subagent_type: \"explore\"`.\n- For read-only planning or architecture design, use `Agent` with `subagent_type: \"plan\"`.\n- Keep dependent Ultrapowers subagent steps sequential. Use multiple `Agent` calls, or `run_in_background: true` only when the work is independent and background agents are available.\n- When an Ultrapowers skill refers to the `Skill` tool, use Kimi Code's native `Skill` tool.\n- Use Kimi Code's `Read`, `Write`, `Edit`, `Bash`, `Grep`, `Glob`, `FetchURL`, `WebSearch`, and MCP tools by their actual exposed names.\n- When a skill asks to search file contents, use `Grep`; when it asks to find files by path or pattern, use `Glob`; when it asks to fetch a URL, use `FetchURL`; when it asks to search the web, use `WebSearch`.",
   "interface": {
     "displayName": "Ultrapowers",
     "shortDescription": "Planning, TDD, debugging, and delivery workflows for coding agents",
@@ -736,7 +738,7 @@ provides_hooks:
 }
 ```
 
-(Grammar note: "a Ultrapowers" is what the blind pass produces from "a Superpowers"; D10 says skill/prose content is renamed only where the name appears, and this string is Kimi tool-mapping prose, so leave it.)
+(Grammar note: the blind pass produced the article "a" before "Ultrapowers"; a follow-up commit corrected it to "an" everywhere.)
 
 - [ ] **Step 7: Write `.muse-plugin/marketplace.json`; verify `.muse-plugin/plugin.json`, `gemini-extension.json`, `package.json`**
 
@@ -927,7 +929,7 @@ RAOOF A."
 - Rewrite: `tests/brainstorm-server/branding.test.js`
 
 **Interfaces:**
-- Consumes: `readUltrapowersVersion()` (Task 1 rename of `readSuperpowersVersion`, `server.cjs:208`), `securityHeaders()` (`:366`), `isAuthorized()` (`:341`), `pathnameOf()` (`:355`), `escapeHtmlText()` (`:234`), `assets/ultrapowers-small.svg` (Task 1 move).
+- Consumes: `readUltrapowersVersion()` (Task 1 rename of `read<Old-name>Version`, `server.cjs:208`), `securityHeaders()` (`:366`), `isAuthorized()` (`:341`), `pathnameOf()` (`:355`), `escapeHtmlText()` (`:234`), `assets/ultrapowers-small.svg` (Task 1 move).
 - Produces: constants `BRAND_LOGO_PATH = '/brand-logo.svg'` and `BRAND_LOGO_FILE`; route `GET /brand-logo.svg` (authorized: 200 `image/svg+xml`; asset missing: 404); brand markup `<div class="brand"><a href="https://github.com/raoofaltaher/ultrapowers"><img class="brand-logo" src="/brand-logo.svg" alt="Ultrapowers" decoding="async"><span class="brand-copy">Ultrapowers v<version></span></a></div>`. Task 11 criterion 8 greps served HTML for `primeradiant.com`.
 
 - [ ] **Step 1: Write the failing test (full replacement of `tests/brainstorm-server/branding.test.js`)**
@@ -1472,7 +1474,7 @@ Honesty note on install commands: the Claude Code, Antigravity, Devin, Factory D
 
 Ultrapowers is a complete software development methodology for your coding agents, built on a set of composable skills and a session-start bootstrap that makes sure your agent uses them.
 
-Ultrapowers is a fork of superpowers 6.4.2 by Jesse Vincent, MIT licensed; upstream lives at https://github.com/obra/superpowers.
+Ultrapowers is a fork of <old-name> 6.4.2 by Jesse Vincent, MIT licensed; upstream lives at https://github.com/obra/<old-name>.
 
 ## Table of Contents
 
@@ -1778,13 +1780,13 @@ MIT License - see LICENSE file for details. Ultrapowers keeps the upstream copyr
 
 - [ ] **Step 2: Verify the single permitted occurrence**
 
-Run: `grep -n -i superpowers README.md`
+Run: `grep -n -i <old-name> README.md`
 Expected exactly one line:
 ```
-5:Ultrapowers is a fork of superpowers 6.4.2 by Jesse Vincent, MIT licensed; upstream lives at https://github.com/obra/superpowers.
+5:Ultrapowers is a fork of <old-name> 6.4.2 by Jesse Vincent, MIT licensed; upstream lives at https://github.com/obra/<old-name>.
 ```
 
-Run: `grep -n -E 'primeradiant|fsck\.com|discord|Commercial|telemetry|TELEMETRY|superpowers-marketplace|superpowers-evals|claude\.com/plugins' README.md; echo README_SCAN_DONE`
+Run: `grep -n -E 'primeradiant|fsck\.com|discord|Commercial|telemetry|TELEMETRY|<old-name>-marketplace|<old-name>-evals|claude\.com/plugins' README.md; echo README_SCAN_DONE`
 Expected: only `README_SCAN_DONE`.
 
 Run: `for s in skills/*/; do n="$(basename "$s")"; grep -q -- "- \*\*$n\*\*" README.md || echo "not in README skills list: $n"; done; echo SKILLS_LIST_DONE`
@@ -1889,7 +1891,7 @@ Fill in `.github/PULL_REQUEST_TEMPLATE.md`: what changed, why (the concrete prob
 
 - [ ] **Step 2: Verify**
 
-Run: `grep -n -i -E 'superpowers|94%|slop|dev` branch|evals|superpowers-evals|prime-radiant|Existing PRs' AGENTS.md; echo AGENTS_SCAN_DONE`
+Run: `grep -n -i -E '<old-name>|94%|slop|dev` branch|evals|<old-name>-evals|prime-radiant|Existing PRs' AGENTS.md; echo AGENTS_SCAN_DONE`
 Expected: only `AGENTS_SCAN_DONE`.
 
 Run: `grep -c 'ultrapowers:writing-skills' AGENTS.md`
@@ -2043,7 +2045,7 @@ RAOOF A."
 
 **Interfaces:**
 - Consumes: the suite list from Task 6's AGENTS.md (keep the two in agreement).
-- Produces: no reference anywhere in `docs/` to `evals/`, `SUPERPOWERS_ROOT`/`ULTRAPOWERS_ROOT` as a contract, `sync-to-codex-plugin.sh`, `tests/codex-plugin-sync/` or `CLAUDE.md` as a repo file.
+- Produces: no reference anywhere in `docs/` to `evals/`, `<OLD-NAME>_ROOT`/`ULTRAPOWERS_ROOT` as a contract, `sync-to-codex-plugin.sh`, `tests/codex-plugin-sync/` or `CLAUDE.md` as a repo file.
 
 - [ ] **Step 1: Write `docs/testing.md`**
 
@@ -2127,7 +2129,7 @@ New:
 
 - [ ] **Step 3: Verify**
 
-Run: `grep -n -E 'evals|ULTRAPOWERS_ROOT|SUPERPOWERS_ROOT|sync-to-codex|codex-plugin-sync|CLAUDE\.md|quorum|Quorum|drill|Drill' docs/testing.md docs/porting-to-a-new-harness.md docs/windows/polyglot-hooks.md docs/README.opencode.md docs/README.kimi.md .opencode/INSTALL.md; echo DOCS_SCAN_DONE`
+Run: `grep -n -E 'evals|ULTRAPOWERS_ROOT|<OLD-NAME>_ROOT|sync-to-codex|codex-plugin-sync|CLAUDE\.md|quorum|Quorum|drill|Drill' docs/testing.md docs/porting-to-a-new-harness.md docs/windows/polyglot-hooks.md docs/README.opencode.md docs/README.kimi.md .opencode/INSTALL.md; echo DOCS_SCAN_DONE`
 Expected: only `DOCS_SCAN_DONE`. (The harness variables `CLAUDE_PLUGIN_ROOT` and `CURSOR_PLUGIN_ROOT` legitimately remain in the porting and polyglot docs; the pattern above deliberately does not match them. `tests/brainstorm-server/windows-lifecycle.test.sh:12,22` keeps `ULTRAPOWERS_ROOT` as an optional override for that one script; it is a test, not a doc, and the spec's "contract" removal concerns `docs/testing.md`.)
 
 Run: `grep -c 'raoofaltaher/ultrapowers' docs/README.opencode.md docs/README.kimi.md .opencode/INSTALL.md`
@@ -2188,135 +2190,135 @@ Most test edits were produced mechanically by Task 1; for those, this task lists
 - [ ] **Step 1: Name-assertion files from spec 4.5**
 
 `tests/kimi/test-plugin-manifest.sh`
-- old 24: `assert_equal(manifest.get("name"), "superpowers", "plugin name")` → new: `assert_equal(manifest.get("name"), "ultrapowers", "plugin name")`
-- old 28: `    "using-superpowers",` → new: `    "using-ultrapowers",`
+- old 24: `assert_equal(manifest.get("name"), "<old-name>", "plugin name")` → new: `assert_equal(manifest.get("name"), "ultrapowers", "plugin name")`
+- old 28: `    "using-<old-name>",` → new: `    "using-ultrapowers",`
 - verify: `grep -c '"ultrapowers", "plugin name"' tests/kimi/test-plugin-manifest.sh`
 
 `tests/devin/test-devin-plugin.sh`
-- old 2: `# Validate the Devin CLI integration. \`devin plugins install obra/superpowers\`` → new: `# Validate the Devin CLI integration. \`devin plugins install raoofaltaher/ultrapowers\``
-- old 35: `if manifest.get("name") != "superpowers":` → new: `if manifest.get("name") != "ultrapowers":`
-- old 36: `    raise AssertionError(f"plugin name: expected 'superpowers', got {manifest.get('name')!r}")` → new: `    raise AssertionError(f"plugin name: expected 'ultrapowers', got {manifest.get('name')!r}")`
+- old 2: `# Validate the Devin CLI integration. \`devin plugins install obra/<old-name>\`` → new: `# Validate the Devin CLI integration. \`devin plugins install raoofaltaher/ultrapowers\``
+- old 35: `if manifest.get("name") != "<old-name>":` → new: `if manifest.get("name") != "ultrapowers":`
+- old 36: `    raise AssertionError(f"plugin name: expected '<old-name>', got {manifest.get('name')!r}")` → new: `    raise AssertionError(f"plugin name: expected 'ultrapowers', got {manifest.get('name')!r}")`
 - verify: `grep -c 'raoofaltaher/ultrapowers' tests/devin/test-devin-plugin.sh`
 
 `tests/codex/test-marketplace-manifest.sh` (hand-edited in Task 2 Step 10)
-- old 25: `assert_equal(marketplace.get("name"), "superpowers-dev", "marketplace name")` → new: `assert_equal(marketplace.get("name"), "ultrapowers", "marketplace name")`
-- old 28: `    "Superpowers Dev",` → new: `    "Ultrapowers",`
-- old 36: `matching_plugins = [plugin for plugin in plugins if plugin.get("name") == "superpowers"]` → new: `... == "ultrapowers"]`
-- old 37: `assert_equal(len(matching_plugins), 1, "superpowers plugin entry count")` → new: `... "ultrapowers plugin entry count")`
+- old 25: `assert_equal(marketplace.get("name"), "<old-name>-dev", "marketplace name")` → new: `assert_equal(marketplace.get("name"), "ultrapowers", "marketplace name")`
+- old 28: `    "<Old-name> Dev",` → new: `    "Ultrapowers",`
+- old 36: `matching_plugins = [plugin for plugin in plugins if plugin.get("name") == "<old-name>"]` → new: `... == "ultrapowers"]`
+- old 37: `assert_equal(len(matching_plugins), 1, "<old-name> plugin entry count")` → new: `... "ultrapowers plugin entry count")`
 - verify: `grep -c '"ultrapowers", "marketplace name"' tests/codex/test-marketplace-manifest.sh` and `grep -c 'ultrapowers-dev' tests/codex/test-marketplace-manifest.sh` (must be `0`).
 
 `tests/pi/test-pi-extension.mjs`
-- old 11: `const extensionPath = resolve(repoRoot, '.pi/extensions/superpowers.ts');` → new: `... '.pi/extensions/ultrapowers.ts');`
-- old 12: `const piToolsPath = resolve(repoRoot, 'skills/using-superpowers/references/pi-tools.md');` → new: `... 'skills/using-ultrapowers/references/pi-tools.md');`
-- old 48: `  assert.equal(pkg.name, 'superpowers');` → new: `  assert.equal(pkg.name, 'ultrapowers');`
-- old 51: `  assert.deepEqual(pkg.pi.extensions, ['./.pi/extensions/superpowers.ts']);` → new: `... ['./.pi/extensions/ultrapowers.ts']);`
-- old 87, 93, 117: `/You have superpowers/` → new: `/You have ultrapowers/`
+- old 11: `const extensionPath = resolve(repoRoot, '.pi/extensions/<old-name>.ts');` → new: `... '.pi/extensions/ultrapowers.ts');`
+- old 12: `const piToolsPath = resolve(repoRoot, 'skills/using-<old-name>/references/pi-tools.md');` → new: `... 'skills/using-ultrapowers/references/pi-tools.md');`
+- old 48: `  assert.equal(pkg.name, '<old-name>');` → new: `  assert.equal(pkg.name, 'ultrapowers');`
+- old 51: `  assert.deepEqual(pkg.pi.extensions, ['./.pi/extensions/<old-name>.ts']);` → new: `... ['./.pi/extensions/ultrapowers.ts']);`
+- old 87, 93, 117: `/You have <old-name>/` → new: `/You have ultrapowers/`
 - verify: `grep -c 'You have ultrapowers' tests/pi/test-pi-extension.mjs` (expected `3`)
 
 `tests/hermes/test_plugin.py`
-- old 16: `BOOTSTRAP_MARKER = "superpowers:using-superpowers bootstrap for hermes"` → new: `BOOTSTRAP_MARKER = "ultrapowers:using-ultrapowers bootstrap for hermes"`
-- old 52, 127, 134: `assert "using-superpowers" in mock_ctx._skills` → new: `assert "using-ultrapowers" in mock_ctx._skills`
-- old 103, 105, 106, 137: `tmp_path / "superpowers"` → new: `tmp_path / "ultrapowers"`
-- old 109: `for skill in ("using-superpowers", "brainstorming"):` → new: `for skill in ("using-ultrapowers", "brainstorming"):`
+- old 16: `BOOTSTRAP_MARKER = "<old-name>:using-<old-name> bootstrap for hermes"` → new: `BOOTSTRAP_MARKER = "ultrapowers:using-ultrapowers bootstrap for hermes"`
+- old 52, 127, 134: `assert "using-<old-name>" in mock_ctx._skills` → new: `assert "using-ultrapowers" in mock_ctx._skills`
+- old 103, 105, 106, 137: `tmp_path / "<old-name>"` → new: `tmp_path / "ultrapowers"`
+- old 109: `for skill in ("using-<old-name>", "brainstorming"):` → new: `for skill in ("using-ultrapowers", "brainstorming"):`
 - verify: `grep -c 'using-ultrapowers' tests/hermes/test_plugin.py` (expected `4`)
 
 `tests/hermes/test_bootstrap.py`
-- old 11: `BOOTSTRAP_MARKER = "superpowers:using-superpowers bootstrap for hermes"` → new: `BOOTSTRAP_MARKER = "ultrapowers:using-ultrapowers bootstrap for hermes"`
-- old 53: `os.path.join(skills, "using-superpowers", "SKILL.md")` → new: `os.path.join(skills, "using-ultrapowers", "SKILL.md")`
-- old 64: `def test_contains_using_superpowers_body(self):` → new: `def test_contains_using_ultrapowers_body(self):`
-- old 68: `assert "You have superpowers" in content` → new: `assert "You have ultrapowers" in content`
-- old 79: `m._skills_dir(), "using-superpowers", "references", "hermes-tools.md"` → new: `... "using-ultrapowers", ...`
-- old 90: `assert 'skill_view("superpowers:brainstorming")' in content` → new: `assert 'skill_view("ultrapowers:brainstorming")' in content`
+- old 11: `BOOTSTRAP_MARKER = "<old-name>:using-<old-name> bootstrap for hermes"` → new: `BOOTSTRAP_MARKER = "ultrapowers:using-ultrapowers bootstrap for hermes"`
+- old 53: `os.path.join(skills, "using-<old-name>", "SKILL.md")` → new: `os.path.join(skills, "using-ultrapowers", "SKILL.md")`
+- old 64: `def test_contains_using_<old-name>_body(self):` → new: `def test_contains_using_ultrapowers_body(self):`
+- old 68: `assert "You have <old-name>" in content` → new: `assert "You have ultrapowers" in content`
+- old 79: `m._skills_dir(), "using-<old-name>", "references", "hermes-tools.md"` → new: `... "using-ultrapowers", ...`
+- old 90: `assert 'skill_view("<old-name>:brainstorming")' in content` → new: `assert 'skill_view("ultrapowers:brainstorming")' in content`
 - verify: `grep -c 'skill_view("ultrapowers:brainstorming")' tests/hermes/test_bootstrap.py`
 
 `tests/opencode/test-skill-registration.mjs`
-- old 116: `... part.text.startsWith('<EXTREMELY_IMPORTANT>\nYou have superpowers.')` → new: `... 'You have ultrapowers.')`
-- old 144: `... path.join(os.tmpdir(), 'superpowers-frontmatter-'));` → new: `'ultrapowers-frontmatter-'`
-- old 146: `... path.join(fixtureRoot, '.opencode', 'plugins', 'superpowers.js');` → new: `'ultrapowers.js'`
+- old 116: `... part.text.startsWith('<EXTREMELY_IMPORTANT>\nYou have <old-name>.')` → new: `... 'You have ultrapowers.')`
+- old 144: `... path.join(os.tmpdir(), '<old-name>-frontmatter-'));` → new: `'ultrapowers-frontmatter-'`
+- old 146: `... path.join(fixtureRoot, '.opencode', 'plugins', '<old-name>.js');` → new: `'ultrapowers.js'`
 - verify: `grep -c "You have ultrapowers" tests/opencode/test-skill-registration.mjs`
 
 `tests/opencode/test-priority.sh` (integration test; renamed for consistency only)
-- old 22-24: `SUPERPOWERS_SKILLS_DIR` → new: `ULTRAPOWERS_SKILLS_DIR` (and every other `SUPERPOWERS_` token, markers `PRIORITY_MARKER_ULTRAPOWERS_VERSION`, `PRIORITY_MARKER_ULTRAPOWERS_ONLY_VERSION`, skill dir `ultrapowers-only-test`)
-- verify: `grep -c 'ULTRAPOWERS_SKILLS_DIR' tests/opencode/test-priority.sh` (expected `5`: lines 24, 25, 71, 202, 203) and `grep -c -i superpowers tests/opencode/test-priority.sh` (expected `0`)
+- old 22-24: `<OLD-NAME>_SKILLS_DIR` → new: `ULTRAPOWERS_SKILLS_DIR` (and every other `<OLD-NAME>_` token, markers `PRIORITY_MARKER_ULTRAPOWERS_VERSION`, `PRIORITY_MARKER_ULTRAPOWERS_ONLY_VERSION`, skill dir `ultrapowers-only-test`)
+- verify: `grep -c 'ULTRAPOWERS_SKILLS_DIR' tests/opencode/test-priority.sh` (expected `5`: lines 24, 25, 71, 202, 203) and `grep -c -i <old-name> tests/opencode/test-priority.sh` (expected `0`)
 
 `tests/opencode/setup.sh`
-- old 22: `SUPERPOWERS_DIR="$OPENCODE_CONFIG_DIR/superpowers"` → new: `ULTRAPOWERS_DIR="$OPENCODE_CONFIG_DIR/ultrapowers"`
-- old 23: `SUPERPOWERS_SKILLS_DIR="$SUPERPOWERS_DIR/skills"` → new: `ULTRAPOWERS_SKILLS_DIR="$ULTRAPOWERS_DIR/skills"`
-- old 24: `SUPERPOWERS_PLUGIN_FILE="$SUPERPOWERS_DIR/.opencode/plugins/superpowers.js"` → new: `ULTRAPOWERS_PLUGIN_FILE="$ULTRAPOWERS_DIR/.opencode/plugins/ultrapowers.js"`
-- old 32: `cp "$REPO_ROOT/.opencode/plugins/superpowers.js" "$SUPERPOWERS_PLUGIN_FILE"` → new: `cp "$REPO_ROOT/.opencode/plugins/ultrapowers.js" "$ULTRAPOWERS_PLUGIN_FILE"`
-- old 36: `ln -sf "$SUPERPOWERS_PLUGIN_FILE" "$OPENCODE_CONFIG_DIR/plugins/superpowers.js"` → new: `ln -sf "$ULTRAPOWERS_PLUGIN_FILE" "$OPENCODE_CONFIG_DIR/plugins/ultrapowers.js"`
-- old 86-88: `export SUPERPOWERS_DIR` / `..._SKILLS_DIR` / `..._PLUGIN_FILE` → new: `export ULTRAPOWERS_DIR` / `export ULTRAPOWERS_SKILLS_DIR` / `export ULTRAPOWERS_PLUGIN_FILE`
+- old 22: `<OLD-NAME>_DIR="$OPENCODE_CONFIG_DIR/<old-name>"` → new: `ULTRAPOWERS_DIR="$OPENCODE_CONFIG_DIR/ultrapowers"`
+- old 23: `<OLD-NAME>_SKILLS_DIR="$<OLD-NAME>_DIR/skills"` → new: `ULTRAPOWERS_SKILLS_DIR="$ULTRAPOWERS_DIR/skills"`
+- old 24: `<OLD-NAME>_PLUGIN_FILE="$<OLD-NAME>_DIR/.opencode/plugins/<old-name>.js"` → new: `ULTRAPOWERS_PLUGIN_FILE="$ULTRAPOWERS_DIR/.opencode/plugins/ultrapowers.js"`
+- old 32: `cp "$REPO_ROOT/.opencode/plugins/<old-name>.js" "$<OLD-NAME>_PLUGIN_FILE"` → new: `cp "$REPO_ROOT/.opencode/plugins/ultrapowers.js" "$ULTRAPOWERS_PLUGIN_FILE"`
+- old 36: `ln -sf "$<OLD-NAME>_PLUGIN_FILE" "$OPENCODE_CONFIG_DIR/plugins/<old-name>.js"` → new: `ln -sf "$ULTRAPOWERS_PLUGIN_FILE" "$OPENCODE_CONFIG_DIR/plugins/ultrapowers.js"`
+- old 86-88: `export <OLD-NAME>_DIR` / `..._SKILLS_DIR` / `..._PLUGIN_FILE` → new: `export ULTRAPOWERS_DIR` / `export ULTRAPOWERS_SKILLS_DIR` / `export ULTRAPOWERS_PLUGIN_FILE`
 - verify: `grep -c 'export ULTRAPOWERS_' tests/opencode/setup.sh` (expected `3`)
 
 `tests/opencode/test-plugin-loading.sh`
-- old 16: `plugin_link="$OPENCODE_CONFIG_DIR/plugins/superpowers.js"` → new: `.../plugins/ultrapowers.js"`
-- old 47: `if [ -f "$SUPERPOWERS_SKILLS_DIR/using-superpowers/SKILL.md" ]; then` → new: `if [ -f "$ULTRAPOWERS_SKILLS_DIR/using-ultrapowers/SKILL.md" ]; then`
-- old 56: `if node --check "$SUPERPOWERS_PLUGIN_FILE" 2>/dev/null; then` → new: `if node --check "$ULTRAPOWERS_PLUGIN_FILE" 2>/dev/null; then`
-- old 65: `if grep -q 'configDir}/skills/superpowers/' "$SUPERPOWERS_PLUGIN_FILE"; then` → new: `if grep -q 'configDir}/skills/ultrapowers/' "$ULTRAPOWERS_PLUGIN_FILE"; then` (a negative check; stays valid)
+- old 16: `plugin_link="$OPENCODE_CONFIG_DIR/plugins/<old-name>.js"` → new: `.../plugins/ultrapowers.js"`
+- old 47: `if [ -f "$<OLD-NAME>_SKILLS_DIR/using-<old-name>/SKILL.md" ]; then` → new: `if [ -f "$ULTRAPOWERS_SKILLS_DIR/using-ultrapowers/SKILL.md" ]; then`
+- old 56: `if node --check "$<OLD-NAME>_PLUGIN_FILE" 2>/dev/null; then` → new: `if node --check "$ULTRAPOWERS_PLUGIN_FILE" 2>/dev/null; then`
+- old 65: `if grep -q 'configDir}/skills/<old-name>/' "$<OLD-NAME>_PLUGIN_FILE"; then` → new: `if grep -q 'configDir}/skills/ultrapowers/' "$ULTRAPOWERS_PLUGIN_FILE"; then` (a negative check; stays valid)
 - verify: `grep -c 'ULTRAPOWERS_PLUGIN_FILE' tests/opencode/test-plugin-loading.sh` (expected `2`)
 
 Also in `tests/opencode/`: `test-bootstrap-caching.sh:14,18,20`, `test-bootstrap-caching.mjs:32,93`, `test-session-bootstrap.mjs:8,41`, `test-session-bootstrap.sh:4`, `test-skill-registration.sh:15-16`, `test-tools.sh:4,85,87` were renamed the same way (`ULTRAPOWERS_*`, `UltrapowersPlugin`, `ultrapowers.js`, `using-ultrapowers`, `You have ultrapowers.`).
-- verify: `grep -rc -i superpowers tests/opencode | grep -v ':0$'` (expected: no output)
+- verify: `grep -rc -i <old-name> tests/opencode | grep -v ':0$'` (expected: no output)
 
 `tests/brainstorm-server/branding.test.js`: rewritten in Task 3 Step 1.
-- verify: `grep -c "'/brand-logo.svg'" tests/brainstorm-server/branding.test.js` and `grep -c -i superpowers tests/brainstorm-server/branding.test.js` (expected `0`; the file spells the upstream name only as `['super', 'powers'].join('')`).
+- verify: `grep -c "'/brand-logo.svg'" tests/brainstorm-server/branding.test.js` and `grep -c -i <old-name> tests/brainstorm-server/branding.test.js` (expected `0`; the file spells the upstream name only as `['super', 'powers'].join('')`).
 
 `tests/brainstorm-server/lifecycle.test.js`
-- old 115: `'find "$1/.superpowers/brainstorm" -mindepth 1 -maxdepth 1 -type d -print | sort | tail -1',` → new: `'find "$1/.ultrapowers/brainstorm" ...'`
-- old 119: `... expected at least one session dir under ${projectDir}/.superpowers/brainstorm` → new: `.../.ultrapowers/brainstorm`
+- old 115: `'find "$1/.<old-name>/brainstorm" -mindepth 1 -maxdepth 1 -type d -print | sort | tail -1',` → new: `'find "$1/.ultrapowers/brainstorm" ...'`
+- old 119: `... expected at least one session dir under ${projectDir}/.<old-name>/brainstorm` → new: `.../.ultrapowers/brainstorm`
 - verify: `grep -c '.ultrapowers/brainstorm' tests/brainstorm-server/lifecycle.test.js` (expected `2`)
 
-`tests/brainstorm-server/start-server.test.sh:77` and `windows-lifecycle.test.sh:12,22`: `.superpowers/brainstorm` → `.ultrapowers/brainstorm`; `SUPERPOWERS_ROOT` → `ULTRAPOWERS_ROOT`.
+`tests/brainstorm-server/start-server.test.sh:77` and `windows-lifecycle.test.sh:12,22`: `.<old-name>/brainstorm` → `.ultrapowers/brainstorm`; `<OLD-NAME>_ROOT` → `ULTRAPOWERS_ROOT`.
 - verify: `grep -c 'ULTRAPOWERS_ROOT' tests/brainstorm-server/windows-lifecycle.test.sh` (expected `2`)
 
 `tests/claude-code/test-sdd-workspace.sh`
-- old 78: `if [[ "$dir_a" == "$repo/.superpowers/sdd/plan-a" ]]; then` → new: `if [[ "$dir_a" == "$repo/.ultrapowers/sdd/plan-a" ]]; then`
-- old 79/81: `pass|fail "prints <repo-root>/.superpowers/sdd/<plan-basename>"` → new: `.../.ultrapowers/sdd/...`
-- old 93-96: `.superpowers/sdd/.gitignore` → new: `.ultrapowers/sdd/.gitignore`
-- old 104, 114, 209: `if [[ "$status" != *".superpowers"* ]]; then` → new: `*".ultrapowers"*`
-- old 125, 142, 198, 223, 272-314, 344: every `.superpowers/sdd/` → `.ultrapowers/sdd/`
-- verify: `grep -c '\.ultrapowers/sdd' tests/claude-code/test-sdd-workspace.sh` (expected at least `20`; 24 lines by the author's count) and `grep -c -i superpowers tests/claude-code/test-sdd-workspace.sh` (expected `0`)
+- old 78: `if [[ "$dir_a" == "$repo/.<old-name>/sdd/plan-a" ]]; then` → new: `if [[ "$dir_a" == "$repo/.ultrapowers/sdd/plan-a" ]]; then`
+- old 79/81: `pass|fail "prints <repo-root>/.<old-name>/sdd/<plan-basename>"` → new: `.../.ultrapowers/sdd/...`
+- old 93-96: `.<old-name>/sdd/.gitignore` → new: `.ultrapowers/sdd/.gitignore`
+- old 104, 114, 209: `if [[ "$status" != *".<old-name>"* ]]; then` → new: `*".ultrapowers"*`
+- old 125, 142, 198, 223, 272-314, 344: every `.<old-name>/sdd/` → `.ultrapowers/sdd/`
+- verify: `grep -c '\.ultrapowers/sdd' tests/claude-code/test-sdd-workspace.sh` (expected at least `20`; 24 lines by the author's count) and `grep -c -i <old-name> tests/claude-code/test-sdd-workspace.sh` (expected `0`)
 
 `tests/claude-code/test-executing-plans-scripts.sh`
-- old 65: `if [[ "$out" == *"brief: $repo/.superpowers/sdd/plan/task-1-brief.md"* ]]; then` → new: `.../.ultrapowers/sdd/plan/task-1-brief.md"* ]]; then`
-- old 77, 89, 104: `$repo/.superpowers/sdd/plan/...` → new: `$repo/.ultrapowers/sdd/plan/...`
+- old 65: `if [[ "$out" == *"brief: $repo/.<old-name>/sdd/plan/task-1-brief.md"* ]]; then` → new: `.../.ultrapowers/sdd/plan/task-1-brief.md"* ]]; then`
+- old 77, 89, 104: `$repo/.<old-name>/sdd/plan/...` → new: `$repo/.ultrapowers/sdd/plan/...`
 - verify: `grep -c '\.ultrapowers/sdd/plan' tests/claude-code/test-executing-plans-scripts.sh` (expected `4`)
 
 `tests/claude-code/test-subagent-driven-development-integration.sh` (model-driven)
-- old 56, 59, 135, 149: `docs/superpowers/plans/...` → new: `docs/ultrapowers/plans/...`
-- old 208: `... "skill":"superpowers:subagent-driven-development"' ...` → new: `"skill":"ultrapowers:subagent-driven-development"`
+- old 56, 59, 135, 149: `docs/<old-name>/plans/...` → new: `docs/ultrapowers/plans/...`
+- old 208: `... "skill":"<old-name>:subagent-driven-development"' ...` → new: `"skill":"ultrapowers:subagent-driven-development"`
 - verify: `grep -c 'ultrapowers:subagent-driven-development' tests/claude-code/test-subagent-driven-development-integration.sh`
 
-`tests/diagnosing-ultrapowers/test-skill-structure.sh` (moved from `tests/diagnosing-superpowers/`)
-- old 10: `SKILL_DIR="$REPO_ROOT/skills/diagnosing-superpowers"` → new: `SKILL_DIR="$REPO_ROOT/skills/diagnosing-ultrapowers"`
-- old 26-29: `'^name: diagnosing-superpowers$'` / `"frontmatter name is diagnosing-superpowers"` → new: `diagnosing-ultrapowers`
-- verify: `grep -c 'diagnosing-ultrapowers' tests/diagnosing-ultrapowers/test-skill-structure.sh` (expected `6`: lines 2, 10, 20, 26, 27, 29) and `test -d tests/diagnosing-superpowers && echo STILL_THERE || echo OLD_DIR_GONE` (expected `OLD_DIR_GONE`)
+`tests/diagnosing-ultrapowers/test-skill-structure.sh` (moved from `tests/diagnosing-<old-name>/`)
+- old 10: `SKILL_DIR="$REPO_ROOT/skills/diagnosing-<old-name>"` → new: `SKILL_DIR="$REPO_ROOT/skills/diagnosing-ultrapowers"`
+- old 26-29: `'^name: diagnosing-<old-name>$'` / `"frontmatter name is diagnosing-<old-name>"` → new: `diagnosing-ultrapowers`
+- verify: `grep -c 'diagnosing-ultrapowers' tests/diagnosing-ultrapowers/test-skill-structure.sh` (expected `6`: lines 2, 10, 20, 26, 27, 29) and `test -d tests/diagnosing-<old-name> && echo STILL_THERE || echo OLD_DIR_GONE` (expected `OLD_DIR_GONE`)
 
 `tests/hooks/test-session-start.sh`
-- old 210: `mkdir -p "$legacy_home/.config/superpowers/skills"` → new: `.../.config/ultrapowers/skills"`
-- old 215: `"Superpowers now uses"$'\037'"~/.config/superpowers/skills"$'\037'"~/.claude/skills"$'\037'"legacy" \` → new: `"Ultrapowers now uses"$'\037'"~/.config/ultrapowers/skills"...` (a must-not-contain assertion; still valid per spec 4.5)
+- old 210: `mkdir -p "$legacy_home/.config/<old-name>/skills"` → new: `.../.config/ultrapowers/skills"`
+- old 215: `"<Old-name> now uses"$'\037'"~/.config/<old-name>/skills"$'\037'"~/.claude/skills"$'\037'"legacy" \` → new: `"Ultrapowers now uses"$'\037'"~/.config/ultrapowers/skills"...` (a must-not-contain assertion; still valid per spec 4.5)
 - verify: `grep -c 'Ultrapowers now uses' tests/hooks/test-session-start.sh`
 
 `tests/version-bump/test-bump-version.sh`
-- old 44: `make_fixture "$happy_repo" $'name: superpowers\nversion: 1.2.3'` → new: `$'name: ultrapowers\nversion: 1.2.3'`
-- old 62: `make_fixture "$invalid_repo" $'name: superpowers\nversion: 123'` → new: `$'name: ultrapowers\nversion: 123'`
+- old 44: `make_fixture "$happy_repo" $'name: <old-name>\nversion: 1.2.3'` → new: `$'name: ultrapowers\nversion: 1.2.3'`
+- old 62: `make_fixture "$invalid_repo" $'name: <old-name>\nversion: 123'` → new: `$'name: ultrapowers\nversion: 123'`
 - verify: `grep -c 'name: ultrapowers' tests/version-bump/test-bump-version.sh` (expected `2`)
 
 - [ ] **Step 2: Other test files touched by the blind pass**
 
 `tests/claude-code/test-worktree-path-policy.sh`
-- old 2: `# Regression check: Superpowers should not route ...` → new: `# Regression check: Ultrapowers should not route ...`
-- old 12: `ROTOTILL_SPEC="$REPO_ROOT/docs/superpowers/specs/2026-04-06-worktree-rototill-design.md"` → new: `.../docs/ultrapowers/specs/...` (file moved in Task 1)
-- old 13: `ROTOTILL_PLAN="$REPO_ROOT/docs/superpowers/plans/2026-04-06-worktree-rototill.md"` → new: `.../docs/ultrapowers/plans/...`
-- old 50, 55, 58, 59: `"~/.config/superpowers/worktrees"` → new: `"~/.config/ultrapowers/worktrees"` (must-not-contain; valid)
+- old 2: `# Regression check: <Old-name> should not route ...` → new: `# Regression check: Ultrapowers should not route ...`
+- old 12: `ROTOTILL_SPEC="$REPO_ROOT/docs/<old-name>/specs/2026-04-06-worktree-rototill-design.md"` → new: `.../docs/ultrapowers/specs/...` (file moved in Task 1)
+- old 13: `ROTOTILL_PLAN="$REPO_ROOT/docs/<old-name>/plans/2026-04-06-worktree-rototill.md"` → new: `.../docs/ultrapowers/plans/...`
+- old 50, 55, 58, 59: `"~/.config/<old-name>/worktrees"` → new: `"~/.config/ultrapowers/worktrees"` (must-not-contain; valid)
 - verify: `test -f docs/ultrapowers/specs/2026-04-06-worktree-rototill-design.md && test -f docs/ultrapowers/plans/2026-04-06-worktree-rototill.md && echo ROTOTILL_DOCS_MOVED`
 
-`tests/claude-code/test-helpers.sh:152`: `docs/superpowers/plans/$plan_name.md` → `docs/ultrapowers/plans/$plan_name.md`.
+`tests/claude-code/test-helpers.sh:152`: `docs/<old-name>/plans/$plan_name.md` → `docs/ultrapowers/plans/$plan_name.md`.
 `tests/claude-code/README.md:3,12`: prose renamed.
-`tests/antigravity/test-antigravity-tools.sh:16-17`: `skills/using-superpowers/...` → `skills/using-ultrapowers/...`.
-`tests/shell-lint/test-lint-shell.sh:74,123`: `SUPERPOWERS_SHELL_LINT_TEST_LOG` → `ULTRAPOWERS_SHELL_LINT_TEST_LOG` (used only by the test's own stub tools; consistent on both lines).
-`tests/explicit-skill-requests/run-*.sh` and `prompts/*.txt`: `docs/superpowers/plans/` → `docs/ultrapowers/plans/`; `/tmp/superpowers-tests/` → `/tmp/ultrapowers-tests/` (model-driven; consistency only).
-- verify all: `grep -rIl -i superpowers tests; echo TESTS_SCAN_DONE` (expected: only `TESTS_SCAN_DONE`)
+`tests/antigravity/test-antigravity-tools.sh:16-17`: `skills/using-<old-name>/...` → `skills/using-ultrapowers/...`.
+`tests/shell-lint/test-lint-shell.sh:74,123`: `<OLD-NAME>_SHELL_LINT_TEST_LOG` → `ULTRAPOWERS_SHELL_LINT_TEST_LOG` (used only by the test's own stub tools; consistent on both lines).
+`tests/explicit-skill-requests/run-*.sh` and `prompts/*.txt`: `docs/<old-name>/plans/` → `docs/ultrapowers/plans/`; `/tmp/<old-name>-tests/` → `/tmp/ultrapowers-tests/` (model-driven; consistency only).
+- verify all: `grep -rIl -i <old-name> tests; echo TESTS_SCAN_DONE` (expected: only `TESTS_SCAN_DONE`)
 
 - [ ] **Step 3: Deleted with their subject (Task 4)**
 
@@ -2368,7 +2370,7 @@ If nothing changed, skip the commit and note "Task 10: verification only, no dif
 
 - [ ] **Step 1: Criterion 1 — old name only in the permitted places**
 
-Run: `grep -rIl -i superpowers . --exclude-dir=.git --exclude-dir=.remember | sort`
+Run: `grep -rIl -i <old-name> . --exclude-dir=.git --exclude-dir=.remember | sort`
 Expected:
 ```
 ./README.md
@@ -2377,12 +2379,12 @@ Expected:
 ```
 plus `./docs/ultrapowers-requirements.md`, the permitted exception under spec D2. `LICENSE` does not appear because it never contained the old name.
 
-Run: `grep -c -i superpowers README.md`
+Run: `grep -c -i <old-name> README.md`
 Expected: `1`.
 
 - [ ] **Step 2: Criterion 2 — no path carries the old name**
 
-Run: `find . -path ./.git -prune -o -iname '*superpowers*' -print`
+Run: `find . -path ./.git -prune -o -iname '*<old-name>*' -print`
 Expected: no output.
 
 - [ ] **Step 3: Criterion 3 — version 1.0.0 everywhere, audit clean**
@@ -2457,7 +2459,7 @@ Expected: only `EOL_CHECK_DONE`.
 
 Skill prose untouched beyond names (D10). Find the commit just before Task 1's rename commit and diff `skills/` against it:
 ```bash
-BASE="$(git log --format=%H --grep='^rename: superpowers -> ultrapowers' -1)~1"
+BASE="$(git log --format=%H --grep='^rename: <old-name> -> ultrapowers' -1)~1"
 git diff --stat "$BASE" -- skills | tail -1
 git diff "$BASE" -- skills/brainstorming/SKILL.md
 ```
@@ -2471,7 +2473,7 @@ Write the criterion-by-criterion results (PASS / FAIL / SKIPPED with reason / MA
 
 ## Self-review
 
-**Spec coverage.** Section 4.1 (identity, version, LICENSE): Task 2. Section 4.2 (path moves, substitutions, consumers): Task 1, verified in Step 10 there and in Task 10. Section 4.3 deletions: Task 4; rewrites: README Task 5, AGENTS.md Task 6, templates Task 7, testing/porting docs Task 8, RELEASE-NOTES Task 9, `CODE_OF_CONDUCT.md` untouched (no task edits it). Section 4.4 telemetry: Task 3. Section 4.5 tests: Tasks 2, 3, 10. Section 5 acceptance: Task 11. Section 6 risks: Task 1's test (case variants), Task 2/11 Muse check, Task 11 EOL check, Task 3/11 npm-skipped rule. Section 7 out of scope: nothing here migrates `.superpowers/` ledgers or touches `.remember/`.
+**Spec coverage.** Section 4.1 (identity, version, LICENSE): Task 2. Section 4.2 (path moves, substitutions, consumers): Task 1, verified in Step 10 there and in Task 10. Section 4.3 deletions: Task 4; rewrites: README Task 5, AGENTS.md Task 6, templates Task 7, testing/porting docs Task 8, RELEASE-NOTES Task 9, `CODE_OF_CONDUCT.md` untouched (no task edits it). Section 4.4 telemetry: Task 3. Section 4.5 tests: Tasks 2, 3, 10. Section 5 acceptance: Task 11. Section 6 risks: Task 1's test (case variants), Task 2/11 Muse check, Task 11 EOL check, Task 3/11 npm-skipped rule. Section 7 out of scope: nothing here migrates `.<old-name>/` ledgers or touches `.remember/`.
 
 **Gaps found and handled.** (a) The spec does not mention `docs/windows/polyglot-hooks.md` beyond "renamed in place"; it contains no old name, so no task edits it (Task 8 verifies). (b) The spec's LICENSE exception is moot because LICENSE never contained the old name; noted in Global Constraints. (c) The diagnosing skill linked to the deleted `diagnosis_report.md` template; Task 7 repoints it and flags the edit. (d) `hooks/session-start:38` linked an upstream issue number under the fork URL; Task 2 rewrites the comment. (e) `bump-version.sh --audit` would flag `1.0.0` in tests and docs; Task 2 extends the exclude list. (f) `feature_request.md` is not named in the spec's delete list but the spec replaces all templates with one PR and one bug template; Task 4 deletes it.
 
