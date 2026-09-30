@@ -15,7 +15,7 @@ PREFLIGHT="$REPO_ROOT/skills/brainstorm-task/scripts/preflight.sh"
 GROUND="$REPO_ROOT/skills/brainstorm-task/scripts/ground.sh"
 COMMIT_SPEC="$REPO_ROOT/skills/brainstorm-task/scripts/commit-spec.sh"
 MANIFEST="$REPO_ROOT/skills/task/scripts/manifest.sh"
-LIFECYCLE_SKILLS=(new-task brainstorm-task)
+LIFECYCLE_SKILLS=(new-task brainstorm-task task)
 
 FAILURES=0
 TEST_ROOT=""
@@ -649,6 +649,77 @@ test_brainstorm_task() {
     fi
 }
 
+test_task() {
+    echo "--- task: manifest.sh ---"
+    local proj="$TEST_ROOT/proj"
+    local out st_before st_after md_line nonmd_line
+
+    printf 'png' > "$proj/specs/1234/diagram.png"
+    printf '# plan\n' > "$proj/plans/1234/Plan.md"
+    st_before="$(git -C "$proj" status --porcelain)"
+    out="$(cd "$proj/web" && bash "$MANIFEST" 1234)"
+    st_after="$(git -C "$proj" status --porcelain)"
+    if [[ "$st_before" == "$st_after" ]]; then
+        pass "manifest writes nothing"
+    else
+        fail "manifest writes nothing"
+        echo "    before: $st_before"
+        echo "    after:  $st_after"
+    fi
+    if [[ "$out" == *"tasks/1234/1234.md"* && "$out" == *"specs/1234/Spec.md"* && "$out" == *"plans/1234/Plan.md"* && "$out" == *"(0 markdown files in reviews/1234)"* && "$out" == *"TOTAL: 3 markdown files"* ]]; then
+        pass "manifest lists every markdown file under the four folders with a total"
+    else
+        fail "manifest lists every markdown file under the four folders with a total"
+        echo "    out: $out"
+    fi
+    md_line="$(printf '%s\n' "$out" | grep -n 'tasks/1234/1234.md' | head -n 1 | cut -d: -f1)"
+    nonmd_line="$(printf '%s\n' "$out" | grep -n 'specs/1234/diagram.png' | head -n 1 | cut -d: -f1)"
+    if [[ -n "$md_line" && -n "$nonmd_line" && "$md_line" -lt "$nonmd_line" && "$out" == *"=== NON-MARKDOWN"* ]]; then
+        pass "non-markdown files are listed after the markdown manifest as not read"
+    else
+        fail "non-markdown files are listed after the markdown manifest as not read"
+        echo "    out: $out"
+    fi
+    if [[ "$out" != *".gitkeep"* ]]; then
+        pass "manifest does not list .gitkeep"
+    else
+        fail "manifest does not list .gitkeep"
+    fi
+    if [[ "$out" == *"bytes  ~"*"tokens  tasks/1234/1234.md"* ]]; then
+        pass "each markdown line carries bytes and an estimated token count"
+    else
+        fail "each markdown line carries bytes and an estimated token count"
+        echo "    out: $out"
+    fi
+    if [[ "$out" == *"----- api  branch=feature/1234-thing  ticket branch: yes -----"* && "$out" == *"----- web  branch=12345-other  ticket branch: no -----"* ]]; then
+        pass "repo state names the branch and the ticket-branch verdict"
+    else
+        fail "repo state names the branch and the ticket-branch verdict"
+        echo "    out: $out"
+    fi
+    if [[ "$out" == *"grounding fixture"* && "$out" == *"-- working tree --"* && "$out" == *"(clean)"* ]]; then
+        pass "repo state shows recent commits and the working tree"
+    else
+        fail "repo state shows recent commits and the working tree"
+        echo "    out: $out"
+    fi
+    if [[ "$out" == *"----- mobile  branch=<missing>  ticket branch: no -----"* && "$out" == *"(not a git repository or missing:"* ]]; then
+        pass "an uncloned repo is reported, not skipped"
+    else
+        fail "an uncloned repo is reported, not skipped"
+        echo "    out: $out"
+    fi
+
+    out="$(cd "$proj" && bash "$MANIFEST" 7777)"
+    if [[ "$out" == *"tasks/7777  ABSENT"* && "$out" == *"reviews/7777  ABSENT"* && "$out" == *"ALL-ABSENT: ticket 7777 does not exist yet; suggest /ultrapowers:new-task 7777"* ]]; then
+        pass "an unknown ticket reports four ABSENT folders and suggests new-task"
+    else
+        fail "an unknown ticket reports four ABSENT folders and suggests new-task"
+        echo "    out: $out"
+    fi
+    rm "$proj/specs/1234/diagram.png" "$proj/plans/1234/Plan.md"
+}
+
 test_skill_structure() {
     echo "--- skill structure ---"
     local name file
@@ -708,6 +779,7 @@ main() {
     test_lib
     test_new_task
     test_brainstorm_task
+    test_task
     test_skill_structure
 
     echo ""
