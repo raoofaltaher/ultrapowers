@@ -80,6 +80,93 @@ process.exit(hit ? 0 : 1);
   done
 fi
 
+echo "QA gatekeeper entry skill, full-G1 and name-consistency checks"
+
+ENTRY="$REPO_ROOT/skills/qa-specialist/SKILL.md"
+PREFLIGHT="$REPO_ROOT/skills/qa-specialist/scripts/qa-preflight.mjs"
+CONFIG_TMPL="$REPO_ROOT/templates/.agents/ultrapowers.json.tmpl"
+
+if [[ -f "$ENTRY" ]]; then
+  pass "skills/qa-specialist/SKILL.md exists"
+  entry_fm="$(frontmatter "$ENTRY")"
+  entry_body="$(body "$ENTRY")"
+  if printf '%s\n' "$entry_fm" | grep -Eq '^arguments:'; then fail "qa-specialist: no arguments key"; else pass "qa-specialist: no arguments key"; fi
+  entry_desc="$(printf '%s\n' "$entry_fm" | sed -n 's/^description: //p')"
+  for word in then step dispatch preflight marker; do
+    if printf '%s' "$entry_desc" | grep -qiw -- "$word"; then
+      fail "qa-specialist: description avoids workflow word '$word'"
+    else
+      pass "qa-specialist: description avoids workflow word '$word'"
+    fi
+  done
+  for needle in '## Checklist' 'qa-preflight.mjs' '.ultrapowers/qa-active' 'agents/qa-specialist.md' \
+    'run-state.json' 'PRECONDITION-FAILED' 'inline' 'Verdict: <value> — reviews/<ID>/QA-REPORT.md'; do
+    if printf '%s\n' "$entry_body" | grep -Fq -- "$needle"; then pass "qa-specialist: body mentions $needle"; else fail "qa-specialist: body mentions $needle"; fi
+  done
+  for field in missing preconditions warnings markerExists runState changeSet onTicketBranch errors; do
+    if printf '%s\n' "$entry_body" | grep -Fq -- "\`$field" && grep -Fq -- "$field" "$PREFLIGHT"; then
+      pass "qa-specialist: preflight field $field is used and exists"
+    else
+      fail "qa-specialist: preflight field $field is used and exists"
+    fi
+  done
+  if printf '%s\n' "$entry_body" | grep -Eq '\$[0-9]'; then
+    fail "qa-specialist: body has no \$N placeholder (the harness would substitute it)"
+  else
+    pass "qa-specialist: body has no \$N placeholder"
+  fi
+  # Loaded only when invoked; about 1,300 words as written, headroom for Task 12's red-flag rows.
+  entry_words="$(printf '%s\n' "$entry_body" | wc -w | tr -d ' ')"
+  if [[ "$entry_words" -le 1500 ]]; then pass "qa-specialist: body within 1500 words ($entry_words)"; else fail "qa-specialist: body within 1500 words ($entry_words)"; fi
+else
+  fail "skills/qa-specialist/SKILL.md exists"
+fi
+
+LANE7="$REPO_ROOT/skills/qa-lane-7-content/SKILL.md"
+if [[ -f "$LANE7" ]]; then
+  for needle in '## Checklist' '## Red Flags' 'your human partner' 'gates.lane7.active' 'not-covered'; do
+    if grep -Fq -- "$needle" "$LANE7"; then pass "qa-lane-7-content: has $needle (new skill, full G1)"; else fail "qa-lane-7-content: has $needle (new skill, full G1)"; fi
+  done
+fi
+
+for skill in "${LANES[@]}" qa-specialist; do
+  file="$REPO_ROOT/skills/$skill/SKILL.md"
+  [[ -f "$file" ]] || continue
+  skill_body="$(body "$file")"
+  if printf '%s\n' "$skill_body" | grep -Eq 'browser_[a-z_]+|Playwright MCP'; then
+    fail "$skill: names the browser only as the Playwright browser tools"
+  else
+    pass "$skill: names the browser only as the Playwright browser tools"
+  fi
+done
+
+for rel in skills/qa-specialist/scripts/qa-preflight.mjs skills/qa-lane-6-suites/scripts/judge.mjs \
+  skills/qa-lane-6-suites/scripts/run-suite.sh skills/qa-lane-4-db/recipes/postgres.md \
+  skills/qa-lane-4-db/recipes/qa_agent_ro.sql skills/qa-lane-5-observability/recipes/langfuse.md; do
+  if [[ -f "$REPO_ROOT/$rel" ]]; then pass "bundled file exists: $rel"; else fail "bundled file exists: $rel"; fi
+done
+
+# Every qa.<key>[.<sub>] that the agent, the skills and the recipes name must exist in the config
+# template (Task 1), so a renamed key cannot drift between the config and its readers.
+qa_keys="$(cat "$AGENT" "$REPO_ROOT"/skills/qa-*/SKILL.md "$REPO_ROOT"/skills/qa-*/recipes/*.md 2>/dev/null \
+  | grep -oE 'qa\.[A-Za-z]+(\.[A-Za-z]+)?' | sort -u || true)"
+while IFS= read -r key; do
+  [[ -z "$key" ]] && continue
+  IFS=. read -r _ top sub <<<"$key"
+  found=1
+  grep -Fq -- "\"$top\"" "$CONFIG_TMPL" || found=0
+  if [[ -n "$sub" ]]; then grep -Fq -- "\"$sub\"" "$CONFIG_TMPL" || found=0; fi
+  if [[ "$found" -eq 1 ]]; then pass "config key $key exists in the template"; else fail "config key $key exists in the template"; fi
+done <<<"$qa_keys"
+
+# Every gates.<name> that the agent and the skills name must be a gate the preflight computes.
+gate_names="$(cat "$AGENT" "$REPO_ROOT"/skills/qa-*/SKILL.md 2>/dev/null | grep -oE 'gates\.[A-Za-z0-9]+' | sort -u || true)"
+while IFS= read -r gate; do
+  [[ -z "$gate" ]] && continue
+  name="${gate#gates.}"
+  if grep -Eq "^[[:space:]]+$name: " "$PREFLIGHT"; then pass "gate $name exists in the preflight"; else fail "gate $name exists in the preflight"; fi
+done <<<"$gate_names"
+
 if [[ "$FAILURES" -gt 0 ]]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"
   exit 1

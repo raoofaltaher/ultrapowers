@@ -75,6 +75,10 @@
         "path": "skills/qa-report/SKILL.md"
       },
       {
+        "id": "qa-specialist",
+        "path": "skills/qa-specialist/SKILL.md"
+      },
+      {
         "id": "receiving-code-review",
         "path": "skills/receiving-code-review/SKILL.md"
       },
