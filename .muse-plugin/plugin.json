@@ -51,6 +51,10 @@
         "path": "skills/systematic-debugging/SKILL.md"
       },
       {
+        "id": "team-memory",
+        "path": "skills/team-memory/SKILL.md"
+      },
+      {
         "id": "test-driven-development",
         "path": "skills/test-driven-development/SKILL.md"
       },
