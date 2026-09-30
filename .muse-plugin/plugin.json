@@ -63,6 +63,18 @@
         "path": "skills/qa-lane-5-observability/SKILL.md"
       },
       {
+        "id": "qa-lane-6-suites",
+        "path": "skills/qa-lane-6-suites/SKILL.md"
+      },
+      {
+        "id": "qa-lane-7-content",
+        "path": "skills/qa-lane-7-content/SKILL.md"
+      },
+      {
+        "id": "qa-report",
+        "path": "skills/qa-report/SKILL.md"
+      },
+      {
         "id": "receiving-code-review",
         "path": "skills/receiving-code-review/SKILL.md"
       },
