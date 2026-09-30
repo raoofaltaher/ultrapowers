@@ -4,7 +4,7 @@
 
 Ultrapowers is a complete software development methodology for your coding agents, built on a set of composable skills and a session-start bootstrap that makes sure your agent uses them.
 
-Ultrapowers is a fork of Jesse Vincent's MIT-licensed skills library, cut from its version 6.4.2. The original copyright notice is kept in `LICENSE`.
+Ultrapowers is a fork of Jesse Vincent's MIT-licensed skills library, cut from its version 6.4.2. 
 
 ## Table of Contents
 
@@ -314,4 +314,4 @@ Read `AGENTS.md` first: it describes the repository layout, the zero-dependency 
 
 ## License
 
-MIT License - see LICENSE file for details. Ultrapowers keeps the upstream copyright line alongside its own.
+MIT License - see [LICENSE](./LICENSE) file for details.
