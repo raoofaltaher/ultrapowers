@@ -1,0 +1,25 @@
+{
+  "name": "qa-sample",
+  "pluginVersion": "1.0.0",
+  "topology": "nested",
+  "repos": [ { "name": "app", "path": "app", "defaultBranch": "main" } ],
+  "ticketPattern": "^#?[A-Za-z0-9][A-Za-z0-9._-]*$",
+  "qa": {
+    "urls": { "frontend": "http://localhost:__PORT__", "backendHealth": "http://localhost:__PORT__/health", "idp": "", "observability": "" },
+    "hosts": { "allowed": ["localhost", "127.0.0.1"], "forbidden": [] },
+    "auth": { "type": "form", "route": "/login", "tokenUrl": "", "clientId": "", "recipe": "" },
+    "roles": [
+      { "name": "user", "userEnv": "QA_USER_USER", "passwordEnv": "QA_PW_USER", "required": true },
+      { "name": "admin", "userEnv": "QA_USER_ADMIN", "passwordEnv": "QA_PW_ADMIN", "required": true }
+    ],
+    "languages": [ { "code": "en", "switch": "?lang=en" }, { "code": "fr", "switch": "?lang=fr" } ],
+    "containers": { "watch": [], "errorPattern": "error|exception|fatal|unhandled" },
+    "db": { "engine": "", "container": "", "host": "", "database": "", "roRole": "", "roPasswordEnv": "", "tenantColumn": "", "auditTables": [] },
+    "suites": [ { "repo": "app", "command": "node sample-suite.mjs http://localhost:__PORT__ {{out}}/junit.xml", "resultFormat": "junit-xml", "timeoutSec": 120 } ],
+    "observability": { "provider": "none", "publicKeyEnv": "", "secretKeyEnv": "" },
+    "brand": { "logoPaths": [], "tokenPaths": [], "compareRoute": "" },
+    "regression": [ "/" ],
+    "knownIssues": "qa/known-issues.md",
+    "api": { "errorEnvelopeFields": ["message"], "crossTenantStatus": 404 }
+  }
+}
