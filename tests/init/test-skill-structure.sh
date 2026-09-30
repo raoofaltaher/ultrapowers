@@ -55,7 +55,7 @@ if [ "${#description}" -le 1024 ]; then
 else
   fail "description under 1024 characters (${#description})"
 fi
-for banned in then step dispatch run; do
+for banned in 'then' step dispatch run; do
   if printf '%s' "$description" | grep -qiw "$banned"; then
     fail "description avoids workflow word '$banned'"
   else
