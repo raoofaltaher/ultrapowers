@@ -13,6 +13,7 @@ SUITES=(
   "bash tests/qa-gatekeeper/test-qa-guardrail.sh"
   "node --test tests/qa-gatekeeper/judge.test.mjs"
   "bash tests/qa-gatekeeper/test-run-suite.sh"
+  "node --test tests/qa-gatekeeper/qa-preflight.test.mjs"
 )
 
 failed=0
