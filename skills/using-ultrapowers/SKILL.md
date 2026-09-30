@@ -62,9 +62,9 @@ If your harness appears here, read its reference file for special instructions:
 
 ## Project Scaffold
 
-On Claude Code, Cursor, Copilot CLI, Antigravity, Muse, OpenCode, Pi and Hermes, a session-start check looks for `.agents/ultrapowers.json` and adds one line at the end of this context when the project needs `/ultrapowers:init`. No line means the project is current.
+On Claude Code, Cursor, Copilot CLI, Antigravity, Muse, OpenCode, Pi and Hermes, a session-start check looks for `.agents/ultrapowers.json` and adds one line at the end of this context when the project needs `/ultrapowers:init`. It adds nothing outside a git repository or when `ULTRAPOWERS_NUDGE` is `off`.
 
-Codex, Gemini CLI, Kimi Code and Devin run no check. There, before other work in a new session, look for `.agents/ultrapowers.json` in the working directory or a parent. If it is missing, offer `/ultrapowers:init` to set the project up; if it is not valid JSON, offer init to repair it.
+Codex, Gemini CLI, Kimi Code and Devin run no check. There, before other work in a new session inside a git repository, look for `.agents/ultrapowers.json` in the working directory or a parent, unless `ULTRAPOWERS_NUDGE` is `off`. If it is missing, offer `/ultrapowers:init` to set the project up; if it is not valid JSON, offer init to repair it.
 
 Offer once. Init writes nothing without your human partner's yes, and a no ends it for this session.
 

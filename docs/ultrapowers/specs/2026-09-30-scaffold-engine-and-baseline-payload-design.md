@@ -48,6 +48,7 @@ The skill runs the engine as `node <skill dir>/scripts/init.mjs <mode> <flags>` 
 
 - `hooks/session-start` gains a check: read `cwd` from the hook's stdin JSON; if `cwd/.agents/ultrapowers.json` is missing, append one line to the injected context: "This project has no ultrapowers scaffold. Offer /ultrapowers:init before other work." If present with an older `pluginVersion`, append the upgrade variant. Otherwise append nothing. The check never writes.
 - The OpenCode, Pi and Hermes injectors do the same check in code against the project directory they receive.
+- Two exceptions apply to the hook and all three injectors (revised 2026-09-30 by owner decision). A directory with no marker that is not inside a git repository gets no line, so home and scratch folders stay quiet. An environment variable `ULTRAPOWERS_NUDGE=off` silences every line for the person who sets it.
 - `skills/using-ultrapowers/SKILL.md` gains a short section telling the agent on harnesses without hooks (Codex, Devin, Kimi, Gemini, Muse if hookless) to check for the marker at the start of a session and offer init. This is the only change to that skill's body.
 
 ### 4.3 Project config

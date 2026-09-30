@@ -119,16 +119,30 @@ def _find_marker(start):
         current = parent
 
 
+def _in_git_repo(start):
+    current = os.path.abspath(start)
+    while True:
+        if os.path.exists(os.path.join(current, ".git")):
+            return True
+        parent = os.path.dirname(current)
+        if parent == current:
+            return False
+        current = parent
+
+
 def _project_nudge(directory):
     """One line for the first turn when the project needs /ultrapowers:init.
 
     Read-only. Mirrors hooks/session-start: missing marker, older
     pluginVersion, or an unreadable marker each get a line; a current
-    project gets none.
+    project gets none. ULTRAPOWERS_NUDGE=off silences every line, and a
+    directory outside any git repository gets no scaffold line.
     """
+    if os.environ.get("ULTRAPOWERS_NUDGE", "").lower() == "off":
+        return None
     marker = _find_marker(directory)
     if marker is None:
-        return NUDGE_SCAFFOLD
+        return NUDGE_SCAFFOLD if _in_git_repo(directory) else None
     try:
         with open(marker, encoding="utf-8") as f:
             data = json.load(f)

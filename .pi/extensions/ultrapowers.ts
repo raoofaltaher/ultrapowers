@@ -38,14 +38,30 @@ function versionLess(a: string, b: string): boolean {
 	return false;
 }
 
+// ULTRAPOWERS_NUDGE=off is a personal off switch for every nudge line.
+function nudgeOff(): boolean {
+	return String(process.env.ULTRAPOWERS_NUDGE ?? "").toLowerCase() === "off";
+}
+
+// Outside a git repository (home, a scratch folder) the scaffold offer is noise.
+function inGitRepo(directory: string): boolean {
+	let current = resolve(directory);
+	while (true) {
+		if (existsSync(resolve(current, ".git"))) return true;
+		if (dirname(current) === current) return false;
+		current = dirname(current);
+	}
+}
+
 function projectNudge(directory: string): string | null {
+	if (nudgeOff()) return null;
 	try {
 		let current = resolve(directory);
 		let markerFile: string | null = null;
 		while (!markerFile) {
 			const candidate = resolve(current, ".agents", "ultrapowers.json");
 			if (existsSync(candidate)) markerFile = candidate;
-			else if (dirname(current) === current) return NUDGE_SCAFFOLD;
+			else if (dirname(current) === current) return inGitRepo(directory) ? NUDGE_SCAFFOLD : null;
 			else current = dirname(current);
 		}
 		let marker: unknown;

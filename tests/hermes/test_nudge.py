@@ -71,6 +71,9 @@ def projects(tmp_path):
         "hostile": _marker(tmp_path / "hostile", json.dumps({"pluginVersion": HOSTILE_VERSION})),
     }
     dirs["absent"].mkdir()
+    (dirs["absent"] / ".git").mkdir()
+    dirs["plain"] = tmp_path / "plain"
+    dirs["plain"].mkdir()
     dirs["nested"] = dirs["current"] / "svc-api"
     dirs["nested"].mkdir()
     return dirs
@@ -84,6 +87,7 @@ def _nudges_in(content):
     "kind, expected",
     [
         ("absent", SCAFFOLD),
+        ("plain", None),
         ("current", None),
         ("older", UPGRADE_TAIL),
         ("corrupt", REPAIR),
@@ -102,6 +106,13 @@ def test_first_turn_nudge_follows_the_marker(mock_ctx, projects, monkeypatch, ki
         assert _nudges_in(content) == [expected]
         assert f"{expected}\n</EXTREMELY_IMPORTANT>" in content
         assert "\n\nThis project" in content
+
+
+@pytest.mark.parametrize("kind", ["absent", "older", "corrupt"])
+def test_the_off_switch_silences_every_nudge(mock_ctx, projects, monkeypatch, kind):
+    monkeypatch.setenv("ULTRAPOWERS_NUDGE", "off")
+    monkeypatch.chdir(projects[kind])
+    assert _nudges_in(_first_turn(mock_ctx)) == []
 
 
 def test_upgrade_nudge_names_both_versions(mock_ctx, projects, monkeypatch):

@@ -113,6 +113,21 @@ find_marker_root() {
     return 1
 }
 
+in_git_repo() {
+    local dir="$1" parent
+    while [ -n "$dir" ]; do
+        if [ -e "${dir%/}/.git" ]; then
+            return 0
+        fi
+        parent="$(dirname "$dir")"
+        if [ "$parent" = "$dir" ] || [ "$parent" = "." ]; then
+            return 1
+        fi
+        dir="$parent"
+    done
+    return 1
+}
+
 marker_looks_valid() {
     local text="$1"
     case "$text" in
@@ -149,6 +164,10 @@ version_lt() {
 
 project_nudge() {
     local input dir root marker_text marker_version plugin_manifest plugin_version
+    # ULTRAPOWERS_NUDGE=off is a personal off switch for every line below.
+    case "${ULTRAPOWERS_NUDGE:-}" in
+        [Oo][Ff][Ff]) return 0 ;;
+    esac
     input="$(read_hook_input)"
     dir="$(json_string_value "$input" cwd || json_string_value "$input" workspace_roots || true)"
     dir="$(to_posix_dir "$dir")"
@@ -156,7 +175,10 @@ project_nudge() {
         dir="$PWD"
     fi
     if ! root="$(find_marker_root "$dir")"; then
-        printf '%s' "$NUDGE_SCAFFOLD"
+        # Outside a git repository (home, a scratch folder) the offer is noise.
+        if in_git_repo "$dir"; then
+            printf '%s' "$NUDGE_SCAFFOLD"
+        fi
         return 0
     fi
     marker_text="$(head -c 65536 "${root%/}/.agents/ultrapowers.json" 2>/dev/null || true)"

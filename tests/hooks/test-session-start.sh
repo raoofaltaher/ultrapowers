@@ -238,7 +238,7 @@ stdin_for() {
     printf '%s' "$file"
 }
 
-mkdir -p "$FIXTURES/absent" "$FIXTURES/corrupt/.agents" "$FIXTURES/conflict/.agents"
+mkdir -p "$FIXTURES/absent/.git" "$FIXTURES/plain" "$FIXTURES/corrupt/.agents" "$FIXTURES/conflict/.agents"
 make_marker "$FIXTURES/current" "$PLUGIN_VERSION"
 make_marker "$FIXTURES/older" "0.0.1"
 mkdir -p "$FIXTURES/current/svc-api"
@@ -250,6 +250,18 @@ assert_command_output \
     "marker absent: scaffold nudge" \
     "nested" "$NUDGE_SCAFFOLD" "" "$nudge_home" \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK_UNDER_TEST" <"$(stdin_for absent "$FIXTURES/absent")"
+
+assert_command_output \
+    "no marker outside any git repository: no nudge" \
+    "nested" "" "$ALL_NUDGES" "$nudge_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK_UNDER_TEST" <"$(stdin_for plain "$FIXTURES/plain")"
+
+for kind in absent older corrupt; do
+    assert_command_output \
+        "ULTRAPOWERS_NUDGE=off silences the nudge ($kind)" \
+        "nested" "" "$ALL_NUDGES" "$nudge_home" \
+        ULTRAPOWERS_NUDGE=off CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK_UNDER_TEST" <"$(stdin_for "off-$kind" "$FIXTURES/$kind")"
+done
 
 assert_command_output \
     "marker present and current: no nudge" \

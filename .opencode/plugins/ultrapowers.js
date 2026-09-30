@@ -53,15 +53,28 @@ const versionLess = (a, b) => {
   return false;
 };
 
+// ULTRAPOWERS_NUDGE=off is a personal off switch for every nudge line.
+const nudgeOff = () => String(process.env.ULTRAPOWERS_NUDGE ?? '').toLowerCase() === 'off';
+
+// Outside a git repository (home, a scratch folder) the scaffold offer is noise.
+const inGitRepo = (directory) => {
+  let current = path.resolve(directory);
+  while (true) {
+    if (fs.existsSync(path.join(current, '.git'))) return true;
+    if (path.dirname(current) === current) return false;
+    current = path.dirname(current);
+  }
+};
+
 const projectNudge = (directory) => {
-  if (typeof directory !== 'string' || directory === '') return null;
+  if (typeof directory !== 'string' || directory === '' || nudgeOff()) return null;
   try {
     let current = path.resolve(directory);
     let markerFile = null;
     while (!markerFile) {
       const candidate = path.join(current, '.agents', 'ultrapowers.json');
       if (fs.existsSync(candidate)) markerFile = candidate;
-      else if (path.dirname(current) === current) return NUDGE_SCAFFOLD;
+      else if (path.dirname(current) === current) return inGitRepo(directory) ? NUDGE_SCAFFOLD : null;
       else current = path.dirname(current);
     }
     let marker;
