@@ -6,11 +6,12 @@ Ultrapowers ships offline plugin-infrastructure tests under `tests/`, one direct
 
 | Directory | Subject | Run |
 |---|---|---|
-| `tests/hooks/` | `hooks/session-start` output shape per harness and the project scaffold nudge; executable bits on scripts run by path | `bash tests/hooks/test-session-start.sh`, `bash tests/hooks/test-executable-bits.sh` |
+| `tests/hooks/` | `hooks/session-start` output shape per harness and the project scaffold nudge; the two team-memory hooks (silent without a store, per-harness JSON shape, nested-clone discovery, Windows cwd, empty stdin, registrations in `hooks.json`, `hooks-cursor.json` and the Muse manifest); executable bits on scripts run by path | `bash tests/hooks/test-session-start.sh`, `bash tests/hooks/test-team-memory-hooks.sh`, `bash tests/hooks/test-executable-bits.sh` |
 | `tests/init/` | Init engine (rendering, managed blocks, MCP transforms, join and upgrade), template leak scan, OpenCode and Pi nudges, init skill structure | `bash tests/init/run-tests.sh` |
-| `tests/pi/` | Pi extension registration and bootstrap injection | `node --test tests/pi/test-pi-extension.mjs` |
-| `tests/opencode/` | OpenCode plugin loading, bootstrap caching, session classification, V2 skill registration | `bash tests/opencode/run-tests.sh` (unit); `--integration` needs OpenCode installed |
-| `tests/hermes/` | Hermes plugin layout resolution, bootstrap and scaffold nudge | `python -m pytest tests/hermes` |
+| `tests/team-memory/` | `memory-lint.mjs` (one test per finding code, CRLF, budget from config, promoted personal memory, CLI exit codes); store templates rendered through init; skill frontmatter and forge neutrality; the pre-commit lint block | `node --test tests/team-memory/memory-lint.test.mjs`, `bash tests/team-memory/test-templates.sh`, `bash tests/team-memory/test-skill-structure.sh`, `bash tests/team-memory/test-precommit-lint.sh` |
+| `tests/pi/` | Pi extension registration, bootstrap injection and the team-memory lines | `node --test tests/pi/test-pi-extension.mjs` |
+| `tests/opencode/` | OpenCode plugin loading, bootstrap caching, session classification, V2 skill registration, team-memory nudge and post-compaction lines | `bash tests/opencode/run-tests.sh` (unit); `--integration` needs OpenCode installed |
+| `tests/hermes/` | Hermes plugin layout resolution, bootstrap, scaffold nudge and the first-turn team-memory line | `python -m pytest tests/hermes` |
 | `tests/kimi/` | Kimi manifest wiring | `bash tests/kimi/run-tests.sh` |
 | `tests/devin/` | Devin manifest | `bash tests/devin/test-devin-plugin.sh` |
 | `tests/codex/` | Codex marketplace and manifest | `bash tests/codex/test-marketplace-manifest.sh` |
@@ -28,4 +29,4 @@ On Windows without Developer Mode, Git Bash cannot create symlinks, so `test-plu
 
 ## Model-driven tests
 
-`tests/claude-code/run-skill-tests.sh`, `tests/claude-code/test-subagent-driven-development*.sh`, `tests/claude-code/test-worktree-native-preference.sh` and everything under `tests/explicit-skill-requests/` drive a real Claude Code session and need a logged-in CLI. They are slow, cost tokens, and are run on demand, not as a gate. The init skill's pressure scenarios and their recorded baseline and with-skill results are in `tests/init/pressure-scenarios.md` and `tests/init/pressure-results.md`.
+`tests/claude-code/run-skill-tests.sh`, `tests/claude-code/test-subagent-driven-development*.sh`, `tests/claude-code/test-worktree-native-preference.sh` and everything under `tests/explicit-skill-requests/` drive a real Claude Code session and need a logged-in CLI. They are slow, cost tokens, and are run on demand, not as a gate. The init skill's pressure scenarios and their recorded baseline and with-skill results are in `tests/init/pressure-scenarios.md` and `tests/init/pressure-results.md`; the team-memory skill's are in `skills/team-memory/CREATION-LOG.md`.
