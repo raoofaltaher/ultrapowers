@@ -1,6 +1,6 @@
 .worktrees/
 .private-journal/
-.claude/
+/.claude/
 .ultrapowers/
 .DS_Store
 node_modules/
