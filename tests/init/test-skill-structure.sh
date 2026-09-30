@@ -9,7 +9,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SKILL_DIR="$REPO_ROOT/skills/init"
 SKILL_MD="$SKILL_DIR/SKILL.md"
 ENGINE="$SKILL_DIR/scripts/init.mjs"
-WORD_BUDGET=1400
+WORD_BUDGET=1450
 
 PASSES=0
 FAILURES=0
@@ -107,6 +107,14 @@ for code in $(grep -E '^\| `[a-z-]+` \|' "$SKILL_MD" | sed -E 's/^\| `([a-z-]+)`
     pass "error code '$code' is one the engine raises"
   else
     fail "error code '$code' is one the engine raises"
+  fi
+done
+
+for code in $(grep -oE "InitError\('[a-z-]+'" "$ENGINE" | sed -E "s/InitError\('([a-z-]+)'/\1/" | sort -u); do
+  if grep -qE "^\| \`$code\` \|" "$SKILL_MD"; then
+    pass "engine error '$code' has a row in Errors"
+  else
+    fail "engine error '$code' has a row in Errors"
   fi
 done
 

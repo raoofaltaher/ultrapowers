@@ -292,6 +292,46 @@ test('an unknown placeholder aborts before any file is written', () => {
   assert.deepEqual(listFiles(root), []);
 });
 
+test('a project name that JSON or TOML cannot hold is rejected before any file is written', () => {
+  for (const name of ['Acme "Next" App', 'C:\\temp', 'two\nlines', 'tab\there', '   ']) {
+    const root = tmpRepo();
+    const report = run(['scaffold', '--root', root, '--name', name, '--platform', 'linux'], { expectExit: 2 });
+    assert.equal(report.error.code, 'bad-name', JSON.stringify(name));
+    assert.deepEqual(listFiles(root), [], JSON.stringify(name));
+  }
+});
+
+test('a folder name that JSON or TOML cannot hold is rejected when no name is given', () => {
+  const opts = { root: path.join(os.tmpdir(), 'bad"name'), name: null, date: '2026-01-01' };
+  assert.throws(() => engine.buildVars(opts, [], ['claude-code'], []), (err) => err instanceof InitError && err.code === 'bad-name');
+});
+
+test('a name with quotes of other kinds and non-ASCII letters scaffolds cleanly', () => {
+  const root = tmpRepo();
+  run(['scaffold', '--root', root, '--name', "O'Brien Café", '--platform', 'linux']);
+  const marker = JSON.parse(fs.readFileSync(path.join(root, '.agents', 'ultrapowers.json'), 'utf8'));
+  assert.equal(marker.name, "O'Brien Café");
+  assert.match(fs.readFileSync(path.join(root, '.gitleaks.toml'), 'utf8'), /^title = "O'Brien Café gitleaks"$/m);
+});
+
+for (const [label, markerTemplate, code] of [
+  ['an unknown placeholder', '{ "name": "{{name}}", "typo": "{{typo}}" }\n', 'unknown-placeholder'],
+  ['invalid JSON', '{ "name": "{{name}}", }\n', 'bad-template'],
+]) {
+  test(`a marker template with ${label} aborts before any file is written`, () => {
+    const root = tmpRepo();
+    const templatesCopy = fs.mkdtempSync(path.join(os.tmpdir(), 'ultrapowers-templates-'));
+    fs.cpSync(path.join(repoRoot, 'templates'), templatesCopy, { recursive: true });
+    fs.writeFileSync(path.join(templatesCopy, '.agents', 'ultrapowers.json.tmpl'), markerTemplate);
+    const report = run(['scaffold', '--root', root, '--name', 'Demo', '--platform', 'linux'], {
+      env: { ULTRAPOWERS_TEMPLATES_DIR: templatesCopy },
+      expectExit: 2,
+    });
+    assert.equal(report.error.code, code);
+    assert.deepEqual(listFiles(root), []);
+  });
+}
+
 test('existing gitignore without trailing newline and CRLF gitattributes both gain a clean block', () => {
   const root = tmpRepo();
   fs.writeFileSync(path.join(root, '.gitignore'), 'node_modules/');

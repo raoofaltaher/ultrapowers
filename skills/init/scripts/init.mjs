@@ -470,11 +470,21 @@ export function listTemplates() {
   return out;
 }
 
+// The name lands in Markdown, JSON strings and TOML basic strings unescaped.
+const UNSAFE_NAME = /["\\\u0000-\u001f\u007f]/;
+
+export function checkName(name) {
+  if (!name.trim() || UNSAFE_NAME.test(name)) {
+    throw new InitError('bad-name', `project name ${JSON.stringify(name)} must not be blank or contain a double quote, a backslash or a control character; pass --name`, { name });
+  }
+  return name;
+}
+
 export function buildVars(opts, repos, harnesses, written) {
   const version = pluginVersion();
   const topology = repos.length ? 'nested' : 'root';
   return {
-    name: opts.name ?? path.basename(opts.root),
+    name: checkName(opts.name ?? path.basename(opts.root)),
     pluginVersion: version,
     date: opts.date,
     topology,
@@ -523,7 +533,10 @@ export function planPayload(opts, repos, harnesses) {
       omitted.push(target);
       continue;
     }
-    if (target === MARKER_PATH) continue;
+    if (target === MARKER_PATH) {
+      renderMarker(vars);
+      continue;
+    }
     const rendered = render(readTemplate(source), vars, path.relative(TEMPLATES_DIR, source));
     files.push({ target, content: provenance(target, rendered, vars), executable: path.posix.basename(target) === 'pre-commit' });
   }
@@ -585,11 +598,20 @@ export function writeMarker(root, opts, repos, harnesses, written, dryRun, repor
     report.skipped.push(MARKER_PATH);
     return;
   }
-  const source = path.join(TEMPLATES_DIR, '.agents', 'ultrapowers.json.tmpl');
-  const vars = buildVars(opts, repos, harnesses, written);
-  const content = render(readTemplate(source), vars, '.agents/ultrapowers.json.tmpl');
-  JSON.parse(content);
-  writeFile(root, MARKER_PATH, content, false, dryRun);
+  writeFile(root, MARKER_PATH, renderMarker(buildVars(opts, repos, harnesses, written)), false, dryRun);
+}
+
+// planPayload calls this before any write, so a broken marker template fails
+// the run while the project is still untouched.
+function renderMarker(vars) {
+  const sourceName = '.agents/ultrapowers.json.tmpl';
+  const content = render(readTemplate(path.join(TEMPLATES_DIR, sourceName)), vars, sourceName);
+  try {
+    JSON.parse(content);
+  } catch (err) {
+    throw new InitError('bad-template', `template ${sourceName} does not render to valid JSON: ${err.message}`, { template: sourceName });
+  }
+  return content;
 }
 
 export function saveMarker(root, marker, dryRun) {

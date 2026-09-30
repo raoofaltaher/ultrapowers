@@ -85,7 +85,9 @@ Print `markerError`. Run `git diff -- .agents/ultrapowers.json`; a merge leaves 
 | `no-marker` | join or upgrade without a scaffold | Run Detect again |
 | `bad-args` | a flag, a harness id or an `--apply` path is wrong | Fix the command; `--apply` takes paths from `changed` only |
 | `bad-root` | `<ROOT>` is not a directory | Check `<ROOT>` |
+| `bad-name` | the project name is blank or holds `"`, `\` or a control character | Ask for another name; run again with it |
 | `unknown-placeholder` | a plugin template is broken | Report a plugin bug; write nothing by hand |
+| `bad-template` | a plugin template renders to invalid JSON | Report a plugin bug; write nothing by hand |
 | `mcp-schema` | the plugin's MCP source is broken | Report a plugin bug; write nothing by hand |
 
 ## Quick Reference
