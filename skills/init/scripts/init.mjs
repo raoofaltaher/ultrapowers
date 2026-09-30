@@ -325,8 +325,9 @@ export function compareVersions(a, b) {
 }
 
 export function render(template, vars, sourceName) {
-  return template.replace(/\{\{([A-Za-z][A-Za-z0-9]*)\}\}/g, (_, key) => {
-    if (!Object.prototype.hasOwnProperty.call(vars, key)) {
+  // Any {{...}} is a placeholder, so a misspelt key fails instead of shipping braces.
+  return template.replace(/\{\{\s*([^{}]*?)\s*\}\}/g, (_, key) => {
+    if (!/^[A-Za-z][A-Za-z0-9]*$/.test(key) || !Object.prototype.hasOwnProperty.call(vars, key)) {
       throw new InitError('unknown-placeholder', `template ${sourceName} uses unknown placeholder {{${key}}}`, { template: sourceName, key });
     }
     return vars[key];

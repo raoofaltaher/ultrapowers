@@ -62,6 +62,20 @@ test('render throws InitError naming the template and the unknown key', () => {
   );
 });
 
+test('render rejects a placeholder-shaped token whose key is not a known name', () => {
+  for (const token of ['{{project_name}}', '{{repo-name}}', '{{}}', '{{ typo }}']) {
+    assert.throws(
+      () => render(`x ${token} y`, { name: 'demo' }, 'T.md.tmpl'),
+      (err) => err instanceof InitError && err.code === 'unknown-placeholder',
+      token,
+    );
+  }
+});
+
+test('render substitutes a known key written with inner spaces', () => {
+  assert.equal(render('# {{ name }}', { name: 'demo' }, 'T.md.tmpl'), '# demo');
+});
+
 test('compareVersions orders numerically', () => {
   assert.equal(compareVersions('1.0.0', '1.0.0'), 0);
   assert.equal(compareVersions('1.2.0', '1.10.0'), -1);
