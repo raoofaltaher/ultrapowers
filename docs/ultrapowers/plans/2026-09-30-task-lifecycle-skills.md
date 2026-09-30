@@ -2357,7 +2357,7 @@ git commit -m "feat(brainstorming,writing-plans): route spec and plan into the t
 **Files:**
 - Modify: `templates/specs/README.md.tmpl`
 - Modify: `templates/plans/README.md.tmpl`
-- Modify: the piece 2 source that emits the `topology` key of `.agents/ultrapowers.json` (located in Step 3; either a template under `templates/.agents/` or an object literal in `skills/init/scripts/init.mjs`)
+- Modify: `templates/.agents/ultrapowers.json.tmpl` (piece 2's marker template, rendered by `writeMarker` in `skills/init/scripts/init.mjs`; Step 3 confirms it)
 
 **Interfaces:**
 - Consumes: the piece 2 template tree (`templates/` mirrors the target tree; `X.tmpl` renders to `X`).
@@ -2394,7 +2394,7 @@ Expected: `1` and `1` (or higher if the piece 2 text already mentioned them once
 - [ ] **Step 3: Locate where init emits the config**
 
 Run: `grep -rn '"topology"\|topology:' templates skills/init/scripts`
-Expected: one hit, either in a `.tmpl` under `templates/.agents/` or in `skills/init/scripts/init.mjs` where the config object is assembled.
+Expected: one hit, `templates/.agents/ultrapowers.json.tmpl` with the line `"topology": "{{topology}}",`. The added values contain no `{{`, so the renderer accepts them.
 
 - [ ] **Step 4: Add the two defaults**
 
