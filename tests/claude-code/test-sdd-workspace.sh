@@ -350,6 +350,20 @@ PLAN
         echo "    marker: $(cat "$dir_out/plan-path" 2>/dev/null)"
     fi
 
+    # --- Outside any git repo: refuse instead of inventing a workspace ---
+    local norepo="$TEST_ROOT/norepo"
+    mkdir -p "$norepo"
+    printf '# Plan\n\n## Task 1: X\n\nX.\n' > "$norepo/plan.md"
+    local norepo_rc=0
+    ( cd "$norepo" && GIT_CEILING_DIRECTORIES="$TEST_ROOT" "$SDD_SCRIPTS/sdd-workspace" plan.md >/dev/null 2>&1 ) || norepo_rc=$?
+    if [[ "$norepo_rc" -ne 0 && ! -e "$norepo/.ultrapowers" ]]; then
+        pass "outside a git repo it exits non-zero and creates nothing"
+    else
+        fail "outside a git repo it exits non-zero and creates nothing"
+        echo "    rc: $norepo_rc"
+        echo "    created: $(ls -A "$norepo")"
+    fi
+
     echo ""
     if [[ "$FAILURES" -ne 0 ]]; then
         echo "FAILED: $FAILURES assertion(s)."
