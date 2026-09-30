@@ -40,6 +40,17 @@ out3="$TEST_ROOT/out-nonzero-with-results"
 bash "$RUNNER" "$TEST_ROOT/repo" "$out3" "printf '%s' '{\"testResults\":[]}' > {{out}}/vitest.json; exit 1"
 if [[ ! -f "$out3/.failed" ]]; then pass "non-zero exit with results is not marked .failed (failing tests are results)"; else fail "non-zero exit with results is not marked .failed"; fi
 
+# A Windows home directory holds a space; {{out}} must stay one word whether the command
+# leaves it bare, puts it inside double quotes, or passes it as an argument.
+out4="$TEST_ROOT/out with space & more"
+bash "$RUNNER" "$TEST_ROOT/repo" "$out4" "printf a > {{out}}/bare.txt; printf b > \"{{out}}/quoted.txt\"; touch {{out}}/arg.txt"
+if [[ -f "$out4/bare.txt" && -f "$out4/quoted.txt" && -f "$out4/arg.txt" ]]; then
+  pass "{{out}} holding a space and & stays one path, bare, quoted or as an argument"
+else
+  fail "{{out}} holding a space and & stays one path, bare, quoted or as an argument"
+  ls -A "$out4" | sed 's/^/    /'
+fi
+
 rc=0
 bash "$RUNNER" "$TEST_ROOT/repo" >/dev/null 2>&1 || rc=$?
 if [[ "$rc" -ne 0 ]]; then pass "missing arguments exit non-zero"; else fail "missing arguments exit non-zero"; fi

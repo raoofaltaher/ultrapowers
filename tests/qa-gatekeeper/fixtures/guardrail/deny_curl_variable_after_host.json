@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"for p in /api/items /health; do curl -s \"http://localhost:3000$p\"; done"}}

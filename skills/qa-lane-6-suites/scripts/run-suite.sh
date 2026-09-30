@@ -17,10 +17,14 @@ cmd="${3:?$usage}"
 
 mkdir -p "$out" || exit 1
 out_abs="$(cd "$out" && pwd)"
-cmd="${cmd//\{\{out\}\}/$out_abs}"
+# `{{out}}` becomes a reference to QA_SUITE_OUT, and the command runs with IFS empty, so the
+# path stays one word whether the command leaves `{{out}}` bare, double-quotes it or passes
+# it as an argument, even when it holds a space (a Windows home directory) or an `&`.
+ref='${QA_SUITE_OUT}'
+cmd="${cmd//\{\{out\}\}/$ref}"
 
 date -u +%Y-%m-%dT%H:%M:%SZ > "$out_abs/started-at"
-(cd "$repo" && QA_SUITE_OUT="$out_abs" bash -c "$cmd") > "$out_abs/stdout.txt" 2>&1
+(cd "$repo" && QA_SUITE_OUT="$out_abs" bash -c "IFS=; $cmd") > "$out_abs/stdout.txt" 2>&1
 code=$?
 printf '%s\n' "$code" > "$out_abs/exit-code"
 

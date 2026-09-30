@@ -271,12 +271,17 @@ printf '%s' "$lc" | grep -Eq '(curl|wget)[^;&|]*(-t |--upload-file|--data-binary
   && deny "outbound file upload is blocked"
 
 # Egress allow-list (active when qa.hosts.allowed is set): curl/wget reach only listed hosts,
-# and only through literal URLs; a $VAR target fails closed.
+# and only through literal URLs; a $VAR target fails closed. The host ends at a shell word
+# terminator (`;`, `&`, `|`, `(`, `)`, `<`, `>`), but a `$` or backtick stays in it: a variable
+# right after the authority can append `@other-host` and change the target.
 if [ -n "$allowed" ] && printf '%s' "$lc" | grep -Eq '(^|[;&|[:space:]])(curl|wget)[[:space:]]'; then
-  urls="$(printf '%s' "$cmd" | grep -Eoi 'https?://[^/"'"'"'[:space:]]+' || true)"
+  urls="$(printf '%s' "$cmd" | grep -Eoi 'https?://[^/"'"'"'[:space:];&|()<>]+' || true)"
   [ -n "$urls" ] || deny "curl/wget without a literal http(s) URL; the target cannot be verified"
   while IFS= read -r u; do
     [ -n "$u" ] || continue
+    case "$u" in
+      *'$'*|*'`'*) deny "the URL's host part is built from a variable or command substitution ($u); use a literal URL" ;;
+    esac
     h="$(host_of "$u")"
     on_list "$allowed" "$h" || deny "host '$h' is not in qa.hosts.allowed"
   done <<< "$urls"
