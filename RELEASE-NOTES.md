@@ -1,10 +1,20 @@
 # Ultrapowers Release Notes
 
-## Unreleased
+## v1.0.1 (2026-10-02)
+
+Brainstorming now reads all the code a design needs before it asks its first question, and the README's release badge updates itself.
 
 ### Brainstorm Task
 
 - **Grounding reads all the context the design needs.** `brainstorm-task` stopped at eight files per repository, so a change that touched more files than that reached brainstorming with some of them unread, and writing-plans found them later. `ground.sh` now lists every matching file, ranked as before, and the agent reads every file the design depends on, strongest match first, following what those files lead to until it can say where the change lands, what it touches and what already exists. There is no cap and no setting for one. The grounding manifest still lists every file read.
+
+### Documentation
+
+- **The README release badge updates itself.** It reads the latest GitHub release when the README is viewed, so a release no longer needs a hand-edited banner.
+
+### Fixes
+
+- **The version audit matches whole version numbers.** Bumping to 1.0.1 no longer flags a comment that mentions version 1.0.11.
 
 ## v1.0.0 (2026-10-01)
 
