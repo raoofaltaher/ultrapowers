@@ -50,7 +50,6 @@
       "RELEASE-NOTES.md",
       "node_modules",
       "INSTALL.md",
-      "release-banner.svg",
       "docs",
       "tests",
       ".git",

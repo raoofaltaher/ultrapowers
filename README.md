@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="RELEASE-NOTES.md"><img src="assets/release-banner.svg" alt="Current release (see the release notes)" height="56"></a>
+  <a href="https://github.com/raoofaltaher/ultrapowers/releases/latest"><img src="https://img.shields.io/github/v/release/raoofaltaher/ultrapowers?style=for-the-badge&label=release&color=8e09fa&labelColor=2d0789&cacheSeconds=300" alt="Latest release" height="40"></a>
 </p>
 
 # Ultrapowers
