@@ -457,3 +457,13 @@ test('the engine runs when invoked through a symlinked or junctioned plugin dire
   const stdout = execFileSync(process.execPath, [path.join(linkedScripts, 'init.mjs'), 'detect', '--root', root], { encoding: 'utf8' });
   assert.equal(JSON.parse(stdout).suggestedMode, 'scaffold');
 });
+
+test('the Claude Code settings template allows every skill the plugin ships', () => {
+  const settings = JSON.parse(fs.readFileSync(path.join(repoRoot, 'templates', '.claude', 'settings.json.tmpl'), 'utf8'));
+  const allowed = new Set(settings.permissions.allow);
+  const skills = fs.readdirSync(path.join(repoRoot, 'skills'), { withFileTypes: true })
+    .filter((d) => d.isDirectory() && fs.existsSync(path.join(repoRoot, 'skills', d.name, 'SKILL.md')))
+    .map((d) => d.name);
+  const missing = skills.filter((name) => !allowed.has(`Skill(ultrapowers:${name})`));
+  assert.deepEqual(missing, [], `settings template misses Skill() entries for: ${missing.join(', ')}`);
+});
