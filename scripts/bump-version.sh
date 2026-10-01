@@ -194,7 +194,10 @@ cmd_audit() {
     declared_paths+=("$path")
   done < <(declared_files)
 
-  # Grep for the version string
+  # Grep for the version as a whole number, so it never matches inside a longer
+  # version that starts or ends with the same digits. Dots are written as [.]
+  # so no backslash is needed.
+  local version_re="(^|[^0-9.])${current_version//./[.]}([^0-9]|\$)"
   local found_undeclared=0
   while IFS= read -r match; do
     local match_file
@@ -218,7 +221,7 @@ cmd_audit() {
       fi
       echo "  $match"
     fi
-  done < <(grep -rn "${exclude_args[@]}" -F "$current_version" "$REPO_ROOT" 2>/dev/null || true)
+  done < <(grep -rnE "${exclude_args[@]}" "$version_re" "$REPO_ROOT" 2>/dev/null || true)
 
   if [[ "$found_undeclared" -eq 0 ]]; then
     echo "No undeclared files contain the version string. All clear."

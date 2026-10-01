@@ -58,6 +58,19 @@ jq -e '
 ' "$REPO_ROOT/.version-bump.json" >/dev/null \
   || fail "Hermes manifest is not registered"
 
+# The audit matches whole version numbers: a longer version that merely starts
+# with the current one (1.2.30, v11.2.3) is not a stray copy of it.
+whole_repo="$TEST_ROOT/whole"
+make_fixture "$whole_repo" $'name: ultrapowers\nversion: 1.2.3'
+printf '# needs tool v1.2.30+ or 11.2.3\n' >"$whole_repo/notes.sh"
+/bin/bash "$whole_repo/scripts/bump-version.sh" --audit >"$TEST_ROOT/whole.out"
+grep -q 'All clear' "$TEST_ROOT/whole.out" \
+  || fail "audit flagged a longer version as the current one: $(cat "$TEST_ROOT/whole.out")"
+printf 'pinned at 1.2.3.\n' >"$whole_repo/stray.md"
+/bin/bash "$whole_repo/scripts/bump-version.sh" --audit >"$TEST_ROOT/stray.out"
+grep -q 'stray.md' "$TEST_ROOT/stray.out" \
+  || fail "audit missed a stray copy of the current version: $(cat "$TEST_ROOT/stray.out")"
+
 invalid_repo="$TEST_ROOT/invalid"
 make_fixture "$invalid_repo" $'name: ultrapowers\nversion: 123'
 cp "$invalid_repo/package.json" "$TEST_ROOT/package.before"
