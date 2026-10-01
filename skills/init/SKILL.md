@@ -15,7 +15,7 @@ Set up, join or upgrade an ultrapowers project. A bundled engine renders the tem
 
 ## Arguments
 
-`name` (optional): the project name for scaffold mode. Substituted value, when the harness substitutes it: `$ARGUMENTS`. If that shows the literal text `$ARGUMENTS` or nothing, read the trailing `ARGUMENTS:` line of the message that invoked this skill instead.
+`name` (optional): the project name for scaffold mode. Your argument, as passed: `$ARGUMENTS`; that is the name. Empty, or still the unreplaced placeholder (a dollar sign and the word ARGUMENTS): read the trailing `ARGUMENTS:` line of the invocation.
 
 ## Before running anything
 

@@ -1015,6 +1015,19 @@ test_skill_structure() {
             fail "$name frontmatter is at most 1024 characters"
         fi
     done
+
+    # Claude Code substitutes every occurrence of the placeholder, so a second one in a
+    # sentence about the unsubstituted case reads as the argument value itself.
+    local count
+    for file in "$REPO_ROOT"/skills/*/SKILL.md; do
+        name="$(basename "$(dirname "$file")")"
+        count="$({ grep -o '\$ARGUMENTS' "$file" || true; } | wc -l | tr -d ' ')"
+        if [[ "$count" -le 1 ]]; then
+            pass "$name writes the argument placeholder at most once"
+        else
+            fail "$name writes the argument placeholder at most once (found $count)"
+        fi
+    done
 }
 
 main() {

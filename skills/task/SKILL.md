@@ -13,7 +13,7 @@ Load every markdown document a ticket has and report where it stands. This is a 
 
 ## Arguments
 
-`ticket` (required). Substituted value, when the harness substitutes it: `$ARGUMENTS`. If that shows the literal text `$ARGUMENTS` or nothing, read the trailing `ARGUMENTS:` line of the message that invoked this skill instead.
+`ticket` (required). Your argument, as the harness passed it: `$ARGUMENTS`. A single word there is the ticket. Only when those backticks are empty, or still hold the unreplaced placeholder (a dollar sign followed by the word ARGUMENTS), did the harness not pass it: then read it from the trailing `ARGUMENTS:` line of the message that invoked this skill.
 
 With no ticket, stop and print `usage: /ultrapowers:task <ticket>`.
 

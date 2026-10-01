@@ -15,7 +15,7 @@ Ground a ticket in the code it touches, then run `ultrapowers:brainstorming` so 
 
 ## Arguments
 
-`ticket` (required) then `focus` (optional words: repo names from the project config, or areas such as `backend` or `frontend`). Substituted values, when the harness substitutes them: `$ARGUMENTS`. If that shows the literal text `$ARGUMENTS` or nothing, read the trailing `ARGUMENTS:` line of the message that invoked this skill instead.
+`ticket` (required) then `focus` (optional words: repo names from the project config, or areas such as `backend` or `frontend`). Your arguments, as the harness passed them: `$ARGUMENTS`. The first word is the ticket; a single word is a ticket with no focus. Only when those backticks are empty, or still hold the unreplaced placeholder (a dollar sign followed by the word ARGUMENTS), did the harness not pass them: then read them from the trailing `ARGUMENTS:` line of the message that invoked this skill.
 
 With no ticket, stop and print `usage: /ultrapowers:brainstorm-task <ticket> [focus...]`.
 

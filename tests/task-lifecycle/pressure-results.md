@@ -36,3 +36,19 @@ The subagents run in the owner's session, which has the upstream plugin that ult
 
 - `ground.sh` now ranks by distinct brief terms matched, then matching lines, then path, and skips the knowledge-base folders when grounding the root. S5 re-run with a fresh subagent and the updated Step 4 wording: the agent again declined the whole-repo read, confirmed api + web, and read exactly eight api files: all six `invoice rounding` files first (the old ranking had cut four of them), then two `invoice extra` files; nothing written.
 - Live acceptance, `claude -p --plugin-dir` in an empty git repo without a marker: "Let's make a react todo list" produced one design question and no files, with the ultrapowers init nudge present. The owner's session also has the upstream plugin installed, and the brainstorming skill it loaded was that plugin's copy, so this run shows the bootstrap and the trigger, not the edited `ultrapowers:brainstorming` text; S8 covers the text.
+
+## Bare-argument probe (v1.0.0 release preparation, 2026-10-01)
+
+Why: Claude Code substitutes every occurrence of the argument placeholder in a skill body, so the old sentence ("If that shows the literal text <placeholder> or nothing, read the trailing `ARGUMENTS:` line instead") became self-contradictory. A baseline transcript shows the model reading "Substituted value, when the harness substitutes it: `1234`. If that shows the literal text `1234` or nothing, read the trailing `ARGUMENTS:` line of the message that invoked this skill instead.", and no `ARGUMENTS:` line exists when the harness substitutes. In the forked qa-specialist the same sentence made the model print the usage line in 5 of 6 runs (fixed in f27a37a).
+
+Harness: Claude Code 2.1.286, headless (`claude -p`) with `--setting-sources project,local --strict-mcp-config --plugin-dir <copy of the tree>`, claude-sonnet-5-5. One fresh fixture per run: `make-fixture.sh`, with ticket 1234 scaffolded for task and brainstorm-task, and an empty git repo for init.
+
+| Skill | Prompt | Before (old sentence) | After (new sentence) |
+|-------|--------|-----------------------|----------------------|
+| task | `/ultrapowers:task 1234` | 3/3 reported ticket 1234 | 3/3 |
+| task | "Use the ultrapowers:task skill for ticket 1234." (the model invokes the skill) | 3/3 | 3/3 |
+| new-task | `/ultrapowers:new-task 5555` | 3/3 created `tasks/5555` and asked for context | 3/3 |
+| brainstorm-task | `/ultrapowers:brainstorm-task 1234` | 3/3 ran the preflight for 1234 | 3/3 |
+| init | `/ultrapowers:init Acme` | 3/3 offered `Acme` as the name | 3/3 |
+
+Reading: inline, the old sentence did not fail. The model took the argument from the visible slash-command arguments, not from the instruction, which pointed at a line that does not exist. The new sentence removes the contradiction (the model now reads "Your argument, as the harness passed it: `1234`. A single word there is the ticket.") with no regression, and it matters where the command arguments are not visible, as in a forked skill. `test-task-lifecycle.sh` now fails any SKILL.md that writes the placeholder more than once.

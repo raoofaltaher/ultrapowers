@@ -15,7 +15,7 @@ Turn a ticket id into the four knowledge base folders and a short kickoff brief,
 
 ## Arguments
 
-`ticket` (required) then `title` (optional, every remaining word), in that order. Substituted values, when the harness substitutes them: `$ARGUMENTS`. If that shows the literal text `$ARGUMENTS` or nothing, read the trailing `ARGUMENTS:` line of the message that invoked this skill instead. Context for the brief comes from the conversation, not from the arguments.
+`ticket` (required) then `title` (optional, every remaining word), in that order. Your arguments, as the harness passed them: `$ARGUMENTS`. The first word is the ticket; a single word is a ticket with no title. Only when those backticks are empty, or still hold the unreplaced placeholder (a dollar sign followed by the word ARGUMENTS), did the harness not pass them: then read them from the trailing `ARGUMENTS:` line of the message that invoked this skill. Context for the brief comes from the conversation, not from the arguments.
 
 With no ticket, stop and print `usage: /ultrapowers:new-task <ticket> [title]`.
 
