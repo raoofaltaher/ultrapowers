@@ -467,3 +467,18 @@ test('the Claude Code settings template allows every skill the plugin ships', ()
   const missing = skills.filter((name) => !allowed.has(`Skill(ultrapowers:${name})`));
   assert.deepEqual(missing, [], `settings template misses Skill() entries for: ${missing.join(', ')}`);
 });
+
+test('the tasks README describes the brief new-task writes', () => {
+  const readme = fs.readFileSync(path.join(repoRoot, 'templates', 'tasks', 'README.md.tmpl'), 'utf8');
+  for (const section of ['Context', 'Definition of Ready', 'Definition of Done', 'Related Documentation']) {
+    assert.match(readme, new RegExp(section), `tasks README should name the brief section ${section}`);
+  }
+  assert.doesNotMatch(readme, /owner, the status/);
+});
+
+test('the scaffolded AGENTS.md keeps tests in git, as test-driven development commits them', () => {
+  const agents = fs.readFileSync(path.join(repoRoot, 'templates', 'AGENTS.md.tmpl'), 'utf8');
+  assert.doesNotMatch(agents, /never commit test files/i);
+  assert.doesNotMatch(agents, /delete them before the commit/i);
+  assert.match(agents, /failing test first/i);
+});
