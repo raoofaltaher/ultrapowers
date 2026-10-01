@@ -350,6 +350,32 @@ PLAN
         echo "    marker: $(cat "$dir_out/plan-path" 2>/dev/null)"
     fi
 
+    # --- A repo's own committed .ultrapowers/sdd/.gitignore is left alone ---
+    git init -q -b main "$TEST_ROOT/own-ignore"
+    local own own_ignore
+    own="$(cd "$TEST_ROOT/own-ignore" && git rev-parse --show-toplevel)"
+    own_ignore=$'*
+!.gitignore
+!*/
+!*/progress.md'
+    mkdir -p "$own/.ultrapowers/sdd"
+    printf '%s
+' "$own_ignore" > "$own/.ultrapowers/sdd/.gitignore"
+    printf '# Plan
+
+## Task 1: One
+
+One.
+' > "$own/plan.md"
+    (cd "$own" && git add -A && git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm init)
+    (cd "$own" && "$SDD_SCRIPTS/sdd-workspace" plan.md >/dev/null)
+    if [[ "$(cat "$own/.ultrapowers/sdd/.gitignore")" == "$own_ignore"         && -z "$(cd "$own" && git status --porcelain -- .ultrapowers/sdd/.gitignore)" ]]; then
+        pass "an existing .ultrapowers/sdd/.gitignore is not overwritten"
+    else
+        fail "an existing .ultrapowers/sdd/.gitignore is not overwritten"
+        echo "    now: $(cat "$own/.ultrapowers/sdd/.gitignore")"
+    fi
+
     # --- Outside any git repo: refuse instead of inventing a workspace ---
     local norepo="$TEST_ROOT/norepo"
     mkdir -p "$norepo"
