@@ -39,6 +39,7 @@ All of these run offline. Prerequisites: bash, node 18+, python 3 with pytest, `
 bash tests/hooks/test-session-start.sh
 bash tests/hooks/test-team-memory-hooks.sh
 bash tests/hooks/test-executable-bits.sh
+bash tests/hooks/test-run-hook-cmd-windows.sh     # Windows only; skips elsewhere
 bash tests/init/run-tests.sh
 node --test tests/team-memory/memory-lint.test.mjs
 bash tests/team-memory/test-templates.sh
