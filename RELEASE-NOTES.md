@@ -1,5 +1,11 @@
 # Ultrapowers Release Notes
 
+## Unreleased
+
+### Brainstorm Task
+
+- **Grounding reads all the context the design needs.** `brainstorm-task` stopped at eight files per repository, so a change that touched more files than that reached brainstorming with some of them unread, and writing-plans found them later. `ground.sh` now lists every matching file, ranked as before, and the agent reads every file the design depends on, strongest match first, following what those files lead to until it can say where the change lands, what it touches and what already exists. There is no cap and no setting for one. The grounding manifest still lists every file read.
+
 ## v1.0.0 (2026-10-01)
 
 The first release of Ultrapowers, a fork of Jesse Vincent's MIT-licensed skills library cut from its version 6.4.2. It keeps the whole methodology (brainstorming, plans, subagent-driven and inline execution, test-driven development, systematic debugging, code review, worktrees) and adds what a working developer repeats on every project: one-command project setup for every coding agent, a ticket-driven lifecycle with brainstorming grounded in the code, team memory kept in git, and a seven-lane QA gatekeeper. It also carries the upstream fixes made after 6.4.2 and a round of Windows and hook hardening.
