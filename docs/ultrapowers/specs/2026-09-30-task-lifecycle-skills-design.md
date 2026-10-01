@@ -1,7 +1,7 @@
 # Ultrapowers piece 3: task lifecycle skills
 
 - Date: 2026-09-30
-- Status: approved design, pending implementation plan
+- Status: implemented (2026-09-30); released in v1.0.0. 2026-10-01: the argument sentence of the three skills writes the placeholder once (evidence in `tests/task-lifecycle/pressure-results.md`)
 - Scope: sub-project 3 of 5. Covers requirements 3 (`/new-task`) and 4 (`/brainstorm-task`), plus the read-only `/task` loader the owner accepted. Depends on piece 1 (namespace) and piece 2 (scaffold marker, knowledge base folders, config file). Inherits the global constraints G1 to G5 from the piece 2 spec.
 
 ## 1. Problem

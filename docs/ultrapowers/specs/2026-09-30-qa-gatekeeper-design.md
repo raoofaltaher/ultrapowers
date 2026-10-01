@@ -1,7 +1,7 @@
 # Ultrapowers piece 5: QA gatekeeper
 
 - Date: 2026-09-30
-- Status: approved design, pending implementation plan
+- Status: implemented (2026-09-30, final-review fixes 2026-10-01); released in v1.0.0 as beta
 - Scope: sub-project 5 of 5. Covers requirement 5: the seven-lane QA specialist as an in-session skill that forks into a shipped agent and writes the report into the knowledge base. Depends on pieces 1 to 3 (namespace, config, knowledge base, ticket folders) and on the Playwright MCP server from the piece 2 payload. Inherits G1 to G5 from the piece 2 spec.
 
 ## 1. Problem

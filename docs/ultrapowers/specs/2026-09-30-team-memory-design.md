@@ -1,7 +1,7 @@
 # Ultrapowers piece 4: team memory
 
 - Date: 2026-09-30
-- Status: approved design, pending implementation plan
+- Status: implemented (2026-09-30); released in v1.0.0
 - Scope: sub-project 4 of 5. Covers requirement 1: a git-native shared memory for every developer, every harness and every session on a project. Depends on piece 2 (init writes the store; AGENTS.md carries the read path) and piece 1 (hook wrapper, namespace). Inherits G1 to G5 from the piece 2 spec.
 
 ## 1. Problem

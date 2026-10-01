@@ -292,7 +292,7 @@ part of the installed extension** — never substitute "edit the user's global
 | runs a shell command at session start and reads its stdout | A (shell-hook) | Cursor (`hooks/session-start` + `hooks/hooks-cursor.json` + `.cursor-plugin/`) |
 | is a JS/TS plugin host with session/message lifecycle callbacks | B (in-process) | OpenCode (`.opencode/`) — or pi (`.pi/`) if it has no native skill tool |
 | ships an extension-declared context file it always loads | C (instructions-file) | Gemini (`gemini-extension.json` + `GEMINI.md` + `references/gemini-tools.md`) |
-| has a plugin install command and a manifest `contextFileName` (or equivalent) the installer keeps | C via the plugin installer | Antigravity (`.antigravity-plugin/` — `agy plugin install` ships a generated context file; verify the installer preserves it — Part 6) |
+| has a plugin install command that takes this repository as is and runs its hooks | A via the plugin installer | Antigravity (`agy plugin install <repo-url>` loads the bundled skills and runs `hooks/session-start`; only the tool mapping, `references/antigravity-tools.md`, is Antigravity-specific) |
 
 Most real harnesses fit one row cleanly; the last is the hybrid case (rule 2 still
 holds — the bootstrap rides the install mechanism, never a user-config edit).
@@ -526,8 +526,8 @@ honors the rule rather than breaking it. Distinguish three cases:
    the way `references/pi-tools.md` states it.
 
    **For the bootstrap itself, prefer a declared context file (Part 6).** If the
-   harness has a `contextFileName`-style manifest field — as Antigravity does —
-   ship a generated context file through the installer: it's guaranteed-loaded and
+   harness has a `contextFileName`-style manifest field, ship a generated context
+   file through the installer: it's guaranteed-loaded and
    carries both the `using-ultrapowers` content and the tool mapping. That is the
    strong, preferred path.
 
@@ -677,7 +677,7 @@ it. Distribution differs per harness ecosystem — find yours:
 | Native plugin marketplace | Claude Code, Codex | Register in `.claude-plugin/marketplace.json` (Claude Code) or `.agents/plugins/marketplace.json` (Codex); this repository is its own marketplace, so users add the repo and `/plugin install`. |
 | Git-URL extension install | Gemini, Kimi Code, OpenCode | Users install from a git URL (`gemini extensions install …`; Kimi Code `/plugins install …`; an `opencode.json` `plugin` array entry). Document the exact command. |
 | Package-manifest fields | pi | Declared through fields in the repo-root `package.json`; users install via the harness's package command. |
-| Local installer (plugin install) | Antigravity (`agy`) | A small `install.sh` that runs the harness's own `agy plugin install` against a staging dir holding the manifest, the skills, and a generated `contextFileName` context file (the bootstrap). Everything arrives through the install mechanism — *not* by editing the user's config (see below). |
+| Plugin install from the repository | Antigravity (`agy`), Devin CLI, Hermes | The harness's own install command takes this repository as is (`agy plugin install <repo-url>`, `devin plugins install raoofaltaher/ultrapowers`, `hermes plugins install raoofaltaher/ultrapowers`). Everything arrives through the install mechanism — *not* by editing the user's config (see below). |
 
 Then:
 
@@ -693,11 +693,8 @@ Then:
     session), that is the strongest clean bootstrap: declare it, and the installer
     preserves it *and* the harness loads it. Generate it at install time from the
     live `using-ultrapowers/SKILL.md` + the tool mapping (wrapped in
-    `<EXTREMELY_IMPORTANT>`) so the installed bootstrap never drifts. This is what
-    `.antigravity-plugin/install.sh` does — `agy plugin install` reports
-    `✔ context : ANTIGRAVITY.md`, and a clean session reads `using-ultrapowers`'s
-    SKILL.md, loads `brainstorming`, and enters the brainstorming flow before any
-    code. **Verify with a marker** that the installer keeps the file and the
+    `<EXTREMELY_IMPORTANT>`) so the installed bootstrap never drifts.
+    **Verify with a marker** that the installer keeps the file and the
     harness loads it: one porter wrongly concluded it couldn't, because they
     shipped the file *without* declaring `contextFileName` and it was stripped as
     unrecognized.
@@ -771,11 +768,11 @@ dispatcher pattern.
 
 ## Part 8 — Submitting the PR
 
-- Target the **`dev`** branch. One harness per PR.
-- Fill in the PR template's **"New harness support"** section and paste the
-  complete acceptance-test transcript (the "Let's make a react todo list"
-  session showing `brainstorming` auto-triggering). A PR without this proof will
-  be closed.
+- One harness per PR.
+- Fill in `.github/PULL_REQUEST_TEMPLATE.md`: name the harness and its version in
+  the Harness table, and paste the complete acceptance-test transcript (the
+  "Let's make a react todo list" session showing `brainstorming` auto-triggering)
+  under "How it was tested". A port without this proof is not done.
 - Ultrapowers is a zero-dependency plugin. Don't add a third-party runtime
   dependency. Adding a new harness is the one carve-out the contributor rules
   allow, and even then keep it to what the integration strictly requires —
@@ -799,6 +796,12 @@ Use this as the live index; when in doubt, read the files, not this table.
 | Kimi Code | `.kimi-plugin/plugin.json` | manifest `sessionStart.skill` loads `using-ultrapowers` | inline `skillInstructions` in manifest | `tests/kimi/` | marketplace or `/plugins install` GitHub URL |
 | OpenCode | `.opencode/plugins/ultrapowers.js` (root `package.json` `main` for package installs; root `index.js` re-export for the V2 directory form) | in-process: `config` hook registers skills dir; `experimental.chat.messages.transform` (V1) / `session.hook("context")` (V2) injects user message | inline in `ultrapowers.js` | `tests/opencode/` | `opencode.json` `plugin` (V1) / `plugins` (V2) git URL |
 | pi | `.pi/extensions/ultrapowers.ts` | in-process: `resources_discover` registers skills; `context` event injects user message; lifecycle-flag + compaction-aware | `piToolMapping()` inline **and** `references/pi-tools.md` | `tests/pi/` | repo-root `package.json` fields |
+| Antigravity | this repository, installed as is | runs the plugin's SessionStart hook → `hooks/session-start` | `references/antigravity-tools.md` | `tests/antigravity/` | `agy plugin install <repo-url>` |
+| Devin CLI | `.devin-plugin/plugin.json` | native skill discovery: every installed skill's name and description is in the system prompt, loaded with Devin's `skill` tool; no hook | none needed (Devin documents its own tools) | `tests/devin/` | `devin plugins install raoofaltaher/ultrapowers` |
+| Hermes Agent | `.hermes-plugin/plugin.yaml` + `__init__.py` | in-process: `register_skill` per skill (with its description); `pre_llm_call` returns the bootstrap as first-turn context; no post-compaction hook | `references/hermes-tools.md` | `tests/hermes/` | `hermes plugins install raoofaltaher/ultrapowers --enable` |
+| Muse | `.muse-plugin/plugin.json` + `.muse-plugin/marketplace.json` | native `SessionStart` hook → `hooks/session-start` (`MUSE_PLUGIN_ROOT`; `hookSpecificOutput.additionalContext`) | `references/muse-tools.md` | `tests/hooks/` (manifest checks) | `muse plugins install` from a checkout |
+| Factory Droid | the Claude Code plugin (`.claude-plugin/`) | as Claude Code, through Droid's own installer (Part 2) | — | — | `droid plugin marketplace add` + `droid plugin install ultrapowers@ultrapowers` |
+| Qwen Code | the Claude Code marketplace (`.claude-plugin/`) | as Claude Code, through Qwen's extension installer | — | — | `qwen extensions install raoofaltaher/ultrapowers` |
 
 ## Appendix B — Gotchas that have bitten porters
 

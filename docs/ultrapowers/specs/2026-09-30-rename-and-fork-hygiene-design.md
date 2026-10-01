@@ -3,7 +3,7 @@
 > Naming note: this document describes the rename away from the upstream name. The upstream name is written `<old-name>` (`<Old-name>`, `<OLD-NAME>` for the other cases) so that no file in the repository carries it. Commands that must match it build it at run time as `OLD="$(printf 'super%s' powers)"`.
 
 - Date: 2026-09-30
-- Status: approved design, pending implementation plan
+- Status: implemented (2026-09-30); released in v1.0.0
 - Scope: sub-project 1 of 5 in the ultrapowers build-out. Pieces 2 to 5 (scaffold engine and baseline payload, task lifecycle skills, team memory, QA gatekeeper) each get their own spec.
 
 ## 1. Problem
