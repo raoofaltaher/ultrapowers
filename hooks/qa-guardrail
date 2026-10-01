@@ -94,6 +94,11 @@ fi
 
 # --- Active. From here on an uninspectable call is denied, never waved through.
 command -v node >/dev/null 2>&1 || deny "node is required to inspect tool calls during a QA run and is not on PATH"
+# The rules below are grep, sed and tr pipelines: a missing tool would make every rule
+# "not match" and allow the call.
+for tool in grep sed tr; do
+  command -v "$tool" >/dev/null 2>&1 || deny "$tool is required to inspect tool calls during a QA run and is not on PATH"
+done
 
 # Node on Windows reads `/c/x` as `C:\c\x` unless Git Bash converts the argument, and a
 # harness may run hooks with that conversion off. Hand node a mixed path (`C:/x`) instead.

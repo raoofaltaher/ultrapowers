@@ -148,6 +148,23 @@ else
   fail "no marker: exit 0 and no output with an empty PATH (got: $result)"
 fi
 
+echo "qa-guardrail: an active run with a PATH that resolves node but not the text tools"
+mkdir -p "$TEST_ROOT/nodebin"
+# node, and cygpath where it exists so node can still open the config: a rule that only
+# grep enforces (stack teardown) must still deny when grep is the missing tool.
+for tool in node cygpath; do
+  if command -v "$tool" >/dev/null 2>&1; then
+    printf '#!%s\nexec "%s" "$@"\n' "$BASH" "$(command -v "$tool")" > "$TEST_ROOT/nodebin/$tool"
+    chmod +x "$TEST_ROOT/nodebin/$tool"
+  fi
+done
+result="$(cd "$ROOT" && render "$FIXTURES/deny_compose_down.json" | PATH="$TEST_ROOT/nodebin" "$BASH" "$HOOK" 2>&1; echo "|$?")"
+if [[ "${result##*|}" -eq 2 && "$result" == *"QA-GUARDRAIL DENY: "* && "$result" != *"cannot be read"* ]]; then
+  pass "missing grep, sed or tr during a run is a deny, not a silent allow"
+else
+  fail "missing grep, sed or tr during a run is a deny, not a silent allow (got: $result)"
+fi
+
 echo "qa-guardrail: run-hook.cmd wrapper dispatches to the hook"
 result="$(cd "$ROOT" && render "$FIXTURES/deny_git_push.json" | bash "$WRAPPER" qa-guardrail 2>&1; echo "|$?")"
 if [[ "${result##*|}" -eq 2 ]]; then
