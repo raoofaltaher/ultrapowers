@@ -226,6 +226,17 @@ else
   fail "Muse manifest registers both team-memory hooks"
 fi
 
+# The hook scripts are bash ([[ =~ ]], read -d, ${s//}, +=); sh is dash on many systems.
+if node -e '
+const m = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+const bad = m.capabilities.hooks.filter((h) => h.command[0] !== "bash").map((h) => h.id);
+if (bad.length) { console.error(`not run with bash: ${bad.join(", ")}`); process.exit(1); }
+' "$REPO_ROOT/.muse-plugin/plugin.json"; then
+  pass "Muse manifest runs every hook with bash"
+else
+  fail "Muse manifest runs every hook with bash"
+fi
+
 echo "Robustness"
 # Cursor sends workspace_roots and no cwd.
 cursor_input="$(printf '{"conversation_id":"c1","workspace_roots":["%s"],"hook_event_name":"sessionStart"}' "$TEST_ROOT/proj")"
