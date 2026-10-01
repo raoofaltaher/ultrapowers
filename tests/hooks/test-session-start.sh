@@ -380,6 +380,65 @@ else
     fail "the nudge check writes nothing into the project"
 fi
 
+echo "Broken PATH tests"
+# Claude Code can start SessionStart hooks with a broken or empty PATH
+# (anthropics/claude-code#43127, upstream #2310). The hook and the Unix half
+# of run-hook.cmd must not need dirname, cat, head or bash from PATH; bash
+# itself is started by absolute path.
+bash_bin="$(command -v bash)"
+broken_home="$(make_home broken-path)"
+
+assert_command_output \
+    "session-start with an empty PATH still emits the bootstrap" \
+    "nested" "" "Error reading using-ultrapowers skill" "$broken_home" \
+    PATH="" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" "$bash_bin" "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "run-hook.cmd with an empty PATH still dispatches session-start" \
+    "nested" "" "Error reading using-ultrapowers skill" "$broken_home" \
+    PATH="" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" "$bash_bin" "$WRAPPER_UNDER_TEST" session-start
+
+assert_command_output \
+    "empty PATH, older marker: the upgrade nudge still appears" \
+    "nested" "$NUDGE_UPGRADE_TAIL" "" "$broken_home" \
+    PATH="" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" "$bash_bin" "$HOOK_UNDER_TEST" <"$(stdin_for broken-older "$FIXTURES/older")"
+
+assert_command_output \
+    "empty PATH, no marker in a git repo: the scaffold nudge still appears" \
+    "nested" "$NUDGE_SCAFFOLD" "" "$broken_home" \
+    PATH="" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" "$bash_bin" "$HOOK_UNDER_TEST" <"$(stdin_for broken-absent "$FIXTURES/absent")"
+
+assert_command_output \
+    "session-start run by bare filename from hooks/ still reads the skill" \
+    "nested" "" "Error reading using-ultrapowers skill" "$broken_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    "$bash_bin" -c 'cd "$1" && exec "$2" session-start' _ "$REPO_ROOT/hooks" "$bash_bin"
+
+if command -v cygpath >/dev/null 2>&1; then
+    # run-hook.cmd's Windows half starts bash with a backslash path.
+    assert_command_output \
+        "session-start reached through a backslash path still reads the skill" \
+        "nested" "" "Error reading using-ultrapowers skill" "$broken_home" \
+        CLAUDE_PLUGIN_ROOT="$REPO_ROOT" "$bash_bin" "$(cygpath -w "$HOOK_UNDER_TEST")"
+fi
+
+# With cat on PATH the JSON still goes through it: the pipe absorbs EPIPE on
+# Windows + Git Bash (upstream #1612). The stub records that it ran.
+cat_stub_dir="$TEST_ROOT/cat-stub/bin"
+cat_marker="$TEST_ROOT/cat-stub/used"
+mkdir -p "$cat_stub_dir"
+printf '#!%s\n: > "%s"\nexec "%s" "$@"\n' "$bash_bin" "$cat_marker" "$(command -v cat)" > "$cat_stub_dir/cat"
+chmod +x "$cat_stub_dir/cat"
+assert_command_output \
+    "session-start with cat on PATH emits the bootstrap" \
+    "nested" "" "" "$broken_home" \
+    PATH="$cat_stub_dir" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" "$bash_bin" "$HOOK_UNDER_TEST"
+if [[ -f "$cat_marker" ]]; then
+    pass "session-start pipes its JSON through cat when cat is on PATH"
+else
+    fail "session-start pipes its JSON through cat when cat is on PATH"
+fi
+
 if [[ "$FAILURES" -gt 0 ]]; then
     echo "STATUS: FAILED ($FAILURES failure(s))"
     exit 1

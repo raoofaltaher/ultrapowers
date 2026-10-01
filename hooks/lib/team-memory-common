@@ -117,17 +117,27 @@ escape_for_json() {
 # Cursor sets CURSOR_PLUGIN_ROOT (may also set CLAUDE_PLUGIN_ROOT); Claude Code
 # sets CLAUDE_PLUGIN_ROOT without COPILOT_CLI or MUSE_PLUGIN_ROOT; Muse sets
 # MUSE_PLUGIN_ROOT; Copilot CLI and unknown platforms get the SDK shape.
-# printf piped through cat mirrors session-start's bash 5.3 heredoc workaround.
+# emit_json mirrors session-start: printf piped through cat (which absorbs EPIPE on
+# Windows + Git Bash) when cat is on PATH, printf alone when PATH is broken.
+emit_json() {
+  # shellcheck disable=SC2059 # every caller passes a literal format string
+  if command -v cat >/dev/null 2>&1; then
+    printf "$@" | cat
+  else
+    printf "$@"
+  fi
+}
+
 emit_context() {
   local event="$1" text="$2" escaped
   escaped="$(escape_for_json "$text")"
   if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
-    printf '{\n  "additional_context": "%s"\n}\n' "$escaped" | cat
+    emit_json '{\n  "additional_context": "%s"\n}\n' "$escaped"
   elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -z "${COPILOT_CLI:-}" ] && [ -z "${MUSE_PLUGIN_ROOT:-}" ]; then
-    printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "%s",\n    "additionalContext": "%s"\n  }\n}\n' "$event" "$escaped" | cat
+    emit_json '{\n  "hookSpecificOutput": {\n    "hookEventName": "%s",\n    "additionalContext": "%s"\n  }\n}\n' "$event" "$escaped"
   elif [ -n "${MUSE_PLUGIN_ROOT:-}" ]; then
-    printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "%s",\n    "additionalContext": "%s"\n  }\n}\n' "$event" "$escaped" | cat
+    emit_json '{\n  "hookSpecificOutput": {\n    "hookEventName": "%s",\n    "additionalContext": "%s"\n  }\n}\n' "$event" "$escaped"
   else
-    printf '{\n  "additionalContext": "%s"\n}\n' "$escaped" | cat
+    emit_json '{\n  "additionalContext": "%s"\n}\n' "$escaped"
   fi
 }

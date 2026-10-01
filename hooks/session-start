@@ -3,12 +3,25 @@
 
 set -euo pipefail
 
-# Determine plugin root directory
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Determine plugin root directory.
+# Splits $0 on its last / or \ (run-hook.cmd's cmd half passes a Windows
+# path), with no separator meaning the current directory. This avoids
+# dirname because a SessionStart:startup hook can run with a broken/empty
+# PATH (anthropics/claude-code#43127). Everything below uses bash builtins
+# for the same reason; cygpath and cat are used only when PATH has them.
+case "$0" in
+  */*|*\\*) SCRIPT_DIR="$(cd "${0%[/\\]*}" && pwd)" ;;
+  *) SCRIPT_DIR="$(pwd)" ;;
+esac
 PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-# Read using-ultrapowers content
-using_ultrapowers_content=$(cat "${PLUGIN_ROOT}/skills/using-ultrapowers/SKILL.md" 2>&1 || echo "Error reading using-ultrapowers skill")
+# Read using-ultrapowers content via bash's builtin $(< file) instead of cat.
+skill_md="${PLUGIN_ROOT}/skills/using-ultrapowers/SKILL.md"
+if [ -r "$skill_md" ]; then
+  using_ultrapowers_content="$(<"$skill_md")"
+else
+  using_ultrapowers_content="Error reading using-ultrapowers skill"
+fi
 
 # Escape string for JSON embedding using bash parameter substitution.
 # Each ${s//old/new} is a single C-level pass - orders of magnitude
@@ -97,6 +110,15 @@ to_posix_dir() {
     printf '%s' "$dir"
 }
 
+# dirname without the external binary: the parent of a/b is a, of /a is /, of a is .
+parent_dir() {
+    local d="${1%/}"
+    case "$d" in
+        */*) d="${d%/*}"; printf '%s' "${d:-/}" ;;
+        *) printf '.' ;;
+    esac
+}
+
 find_marker_root() {
     local dir="$1" parent
     while [ -n "$dir" ]; do
@@ -104,7 +126,7 @@ find_marker_root() {
             printf '%s' "$dir"
             return 0
         fi
-        parent="$(dirname "$dir")"
+        parent="$(parent_dir "$dir")"
         if [ "$parent" = "$dir" ] || [ "$parent" = "." ]; then
             return 1
         fi
@@ -119,7 +141,7 @@ in_git_repo() {
         if [ -e "${dir%/}/.git" ]; then
             return 0
         fi
-        parent="$(dirname "$dir")"
+        parent="$(parent_dir "$dir")"
         if [ "$parent" = "$dir" ] || [ "$parent" = "." ]; then
             return 1
         fi
@@ -181,12 +203,16 @@ project_nudge() {
         fi
         return 0
     fi
-    marker_text="$(head -c 65536 "${root%/}/.agents/ultrapowers.json" 2>/dev/null || true)"
+    marker_text=""
+    IFS= read -r -d '' -n 65536 marker_text <"${root%/}/.agents/ultrapowers.json" 2>/dev/null || true
     if ! marker_looks_valid "$marker_text" || ! marker_version="$(json_string_value "$marker_text" pluginVersion)" || ! version_is_plain "$marker_version"; then
         printf '%s' "$NUDGE_REPAIR"
         return 0
     fi
-    plugin_manifest="$(cat "${PLUGIN_ROOT}/.claude-plugin/plugin.json" 2>/dev/null || true)"
+    plugin_manifest=""
+    if [ -r "${PLUGIN_ROOT}/.claude-plugin/plugin.json" ]; then
+        plugin_manifest="$(<"${PLUGIN_ROOT}/.claude-plugin/plugin.json")"
+    fi
     if plugin_version="$(json_string_value "$plugin_manifest" version)" && version_lt "$marker_version" "$plugin_version"; then
         printf "This project's ultrapowers scaffold is from version %s; the plugin is %s. Offer /ultrapowers:init to upgrade before other work." "$marker_version" "$plugin_version"
     fi
@@ -208,20 +234,34 @@ session_context="<EXTREMELY_IMPORTANT>\nYou have ultrapowers.\n\n**Below is the 
 # deduplication, so we must emit only the field the current platform consumes.
 # Muse sets MUSE_PLUGIN_ROOT and expects additionalContext (SDK standard).
 #
-# Uses printf instead of heredoc to work around bash 5.3+ heredoc hang.
-# See upstream issue obra#571 (bash 5.3+ heredoc hang).
+# Uses printf instead of heredoc to work around bash 5.3+ heredoc hang
+# (upstream issue #571).
+#
+# emit_json pipes printf through cat when cat is on PATH, to absorb EPIPE on
+# Windows: Git Bash's printf reports a closed stdout as "write error:
+# Permission denied", which set -euo pipefail would raise every session
+# (upstream #1612). With a broken PATH it falls back to printf alone.
+emit_json() {
+  # shellcheck disable=SC2059 # every caller passes a literal format string
+  if command -v cat >/dev/null 2>&1; then
+    printf "$@" | cat
+  else
+    printf "$@"
+  fi
+}
+
 if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
   # Cursor sets CURSOR_PLUGIN_ROOT (may also set CLAUDE_PLUGIN_ROOT)
-  printf '{\n  "additional_context": "%s"\n}\n' "$session_context" | cat
+  emit_json '{\n  "additional_context": "%s"\n}\n' "$session_context"
 elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -z "${COPILOT_CLI:-}" ] && [ -z "${MUSE_PLUGIN_ROOT:-}" ]; then
   # Claude Code sets CLAUDE_PLUGIN_ROOT without COPILOT_CLI/MUSE_PLUGIN_ROOT
-  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$session_context" | cat
+  emit_json '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$session_context"
 elif [ -n "${MUSE_PLUGIN_ROOT:-}" ]; then
   # Muse sets MUSE_PLUGIN_ROOT — try Claude-style nested output for Muse Spark
-  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$session_context" | cat
+  emit_json '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$session_context"
 else
   # Copilot CLI (sets COPILOT_CLI=1) or unknown platform — SDK standard format
-  printf '{\n  "additionalContext": "%s"\n}\n' "$session_context" | cat
+  emit_json '{\n  "additionalContext": "%s"\n}\n' "$session_context"
 fi
 
 exit 0

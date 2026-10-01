@@ -8,7 +8,12 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Split $0 on its last / or \ instead of calling dirname: a hook can run with a
+# broken or empty PATH (anthropics/claude-code#43127).
+case "$0" in
+  */*|*\\*) SCRIPT_DIR="$(cd "${0%[/\\]*}" && pwd)" ;;
+  *) SCRIPT_DIR="$(pwd)" ;;
+esac
 # shellcheck source=lib/team-memory-common
 . "${SCRIPT_DIR}/lib/team-memory-common"
 

@@ -262,6 +262,16 @@ else
   fail "nudge: emits its line without starting node"; echo "$OUTPUT" | sed 's/^/      /'
 fi
 
+# A broken or empty PATH (anthropics/claude-code#43127) must not drop the lines: the hooks
+# use bash builtins and take cat only when PATH has it. bash is started by absolute path.
+bash_bin="$(command -v bash)"
+run_hook "$(hook_input "$TEST_ROOT/proj" UserPromptSubmit)" "${CLAUDE_ENV[@]}" PATH="" -- "$bash_bin" "$NUDGE"
+assert_context "nudge: an empty PATH still emits the line" nested UserPromptSubmit "$NUDGE_TEXT" ".agents/memory/"
+run_hook "$(hook_input "$TEST_ROOT/proj" SessionStart compact)" "${CLAUDE_ENV[@]}" PATH="" -- "$bash_bin" "$POSTCOMPACT"
+assert_context "postcompact: an empty PATH still emits the line" nested SessionStart "$POSTCOMPACT_TEXT" ".agents/memory/"
+run_hook "$(hook_input "$TEST_ROOT/proj" UserPromptSubmit)" "${CLAUDE_ENV[@]}" PATH="" -- "$bash_bin" "$WRAPPER" team-memory-nudge
+assert_context "run-hook.cmd: an empty PATH still dispatches the nudge" nested UserPromptSubmit "$NUDGE_TEXT" ".agents/memory/"
+
 if [[ "$FAILURES" -gt 0 ]]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"
   exit 1
