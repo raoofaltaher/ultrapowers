@@ -1,10 +1,18 @@
-![ultrapowers logo](assets/ultrapowers-small.svg)
+<p align="center">
+  <img src="assets/ultrapowers-small.svg" alt="Ultrapowers logo" width="420">
+</p>
 
-# Ultrapowers 
+<p align="center">
+  <a href="RELEASE-NOTES.md"><img src="assets/release-banner.svg" alt="Current release (see the release notes)" height="56"></a>
+</p>
+
+# Ultrapowers
 
 Ultrapowers is a complete software development methodology for your coding agents, built on a set of composable skills and a session-start bootstrap that makes sure your agent uses them.
 
-Ultrapowers is a fork of Jesse Vincent's MIT-licensed skills library, cut from its version 6.4.2. 
+It also sets your projects up for you. One command writes the same proven setup into every project, for every coding agent you use: the knowledge base, the agent instructions, the MCP servers and settings, and a team memory kept in git. From there, a ticket-driven workflow carries each task from a short brief to a spec grounded in the code, a plan, tested code, and a QA verdict.
+
+Ultrapowers is a fork of Jesse Vincent's MIT-licensed skills library, cut from its version 6.4.2.
 
 ## Table of Contents
 
@@ -32,19 +40,24 @@ Ultrapowers is a fork of Jesse Vincent's MIT-licensed skills library, cut from i
   - [What ultrapowers adds](#what-ultrapowers-adds)
   - [What's Inside](#whats-inside)
     - [Skills Library](#skills-library)
+    - [Agents and Output Styles](#agents-and-output-styles)
   - [Philosophy](#philosophy)
   - [Contributing](#contributing)
   - [License](#license)
 
 ## How it works
 
-It starts from the moment you fire up your coding agent. As soon as it sees that you're building something, it *doesn't* just jump into trying to write code. Instead, it steps back and asks you what you're really trying to do.
+It starts from the moment you fire up your coding agent. The first time you open a project, it notices the project has no Ultrapowers setup and offers `/ultrapowers:init`. You see the exact list of files first, and nothing is written until you say yes.
+
+Then the work runs ticket by ticket. As soon as it sees that you're building something, it *doesn't* just jump into trying to write code. Instead, it steps back and asks you what you're really trying to do. And before it asks its first question, it reads the ticket's brief and the code it is about to change, so the questions are about your real system, not a guess.
 
 Once it's teased a spec out of the conversation, it shows it to you in chunks short enough to actually read and digest.
 
 After you've signed off on the design, your agent puts together an implementation plan that's clear enough for an enthusiastic junior engineer with poor taste, no judgement, no project context, and an aversion to testing to follow. It emphasizes true red/green TDD, YAGNI (You Aren't Gonna Need It), and DRY.
 
 Next up, once you say "go", it launches a *subagent-driven-development* process, having agents work through each engineering task, inspecting and reviewing their work, and continuing forward. It's not uncommon for your agent to work autonomously for a couple hours at a time without deviating from the plan you put together.
+
+When the work is done, a QA agent tests the running app the way a senior human tester would, in a real browser, and leaves one verdict in the ticket's review folder. Anything worth knowing next time goes into the team memory in git, where every developer and every coding agent on the project can find it.
 
 There's a bunch more to it, but that's the core of the system. And because the skills trigger automatically, you don't need to do anything special. Your coding agent just has Ultrapowers.
 
@@ -237,25 +250,25 @@ Restart any active Muse sessions after installing so the `SessionStart` hook tak
 
 ## The Basic Workflow
 
-1. /**Init** - and Scaffolding: KB, AI config, and baseline payload are loaded. The agent is ready to receive your project description.
+1. **`/ultrapowers:init`** - Sets the project up, once. Offered at session start in any git repository without an Ultrapowers setup. It works out the mode (scaffold a new project, join an existing one, upgrade after a plugin update, or repair a broken setup), asks for the project name and the coding agents you use, shows a dry run, and writes only after your yes. It never overwrites a file. You get the knowledge base folders (`tasks/`, `specs/`, `plans/`, `reviews/`, `evals/`, `handbooks/`, `playbooks/`, `brand-book/`, `business/`, `release-notes/`), one `AGENTS.md` for every agent (imported by `CLAUDE.md` and `GEMINI.md`), MCP configuration for nine harnesses, Claude Code settings and output style, the team-memory store, and repo hygiene (a gitleaks pre-commit hook, managed `.gitignore` and `.gitattributes` blocks).
 
-2. **/new-task <ticket_id> (ticket title)** - Activates to create and scaffold a new task and directory structure. tasks/<ticket_id>/task.md, specs/<ticket_id>, plans/<ticket_id>, and reviews/<ticket_id> are created. and a short summary of the task is added to the tasks/<ticket_id>/task.md file.
+2. **`/ultrapowers:new-task <ticket> [title]`** - Starts a ticket. Creates `tasks/<ID>/`, `specs/<ID>/`, `plans/<ID>/` and `reviews/<ID>/`, writes the brief `tasks/<ID>/<ID>.md` (Context, Definition of Ready, Definition of Done, Related Documentation; two short paragraphs at most), commits it, and hands off to brainstorm-task. A ticket that already exists is never overwritten; it points you to `/ultrapowers:task`.
 
-3. **/brainstorming-task <ticket_id> (optional repository name)** - Activates before writing code. Refines rough ideas through questions, explores alternatives, presents design in sections for validation. Saves design document. and generates specification files in specs/<ticket_id>/spec.md.
+3. **`/ultrapowers:brainstorm-task <ticket> [focus]`** - Grounds before it asks. Reads the brief, confirms which repositories to read (focus words such as `backend`, `frontend` or a repository name narrow the choice), reads at most eight relevant files per repository, and prints what it read. Only then does it run **brainstorming**: questions one at a time, alternatives, and the design in sections for your approval. The spec is saved as `specs/<ID>/Spec.md` and committed after your review.
 
-4. **using-git-worktrees** - Activates after design approval. Creates isolated workspace on new branch, runs project setup, verifies clean test baseline.
+4. **writing-plans** - Activates with the approved spec. Writes `plans/<ID>/Plan.md`: small steps, each one action with a checkable result, with exact file paths, interfaces, test assertions and verification commands. You review the plan before anything runs.
 
-5. **writing-plans** - Activates with approved design. Breaks work into bite-sized tasks (2-5 minutes each). Every task has exact file paths, complete code, verification steps.
+5. **subagent-driven-development** or **executing-plans** - Activates with the plan, in an isolated workspace on a new branch (**using-git-worktrees**). Either dispatches a fresh subagent per task with a review after each (most thorough), or implements every task inline in the current session with one fresh review of the whole branch at the end (cheapest).
 
-6. **subagent-driven-development** or **executing-plans** - Activates with plan. Either dispatches a fresh subagent per task with a review after each (most thorough), or implements every task inline in the current session with one fresh review of the whole branch at the end (cheapest).
+6. **test-driven-development** - Activates during implementation. Enforces RED-GREEN-REFACTOR: write failing test, watch it fail, write minimal code, watch it pass, commit. Deletes code written before tests.
 
-7. **test-driven-development** - Activates during implementation. Enforces RED-GREEN-REFACTOR: write failing test, watch it fail, write minimal code, watch it pass, commit. Deletes code written before tests.
+7. **requesting-code-review** - The review gate: a review after each task and a review of the whole branch at the end. Reports issues by severity. Critical issues block progress.
 
-8. **requesting-code-review** - Activates between tasks. Reviews against plan, reports issues by severity. Critical issues block progress.
+8. **`/ultrapowers:qa-specialist <ticket> [note]`** *(beta)* - The QA gate, which you run before you finish the branch. It tests the running app in a real browser for every configured role and language, across seven lanes: UI, logs, API, database, observability, test suites and content. A guardrail keeps the run read-only. It writes `reviews/<ID>/QA-REPORT.md` with one verdict: PASS, PASS-WITH-ISSUES, FAIL, INCOMPLETE or PRECONDITION-FAILED. It never starts or stops your stack and never commits.
 
-9. **/qa-specialists** - Activates for QA gatekeeping and testing. Reviews code against standards, tests the feature, validates it, reports issues by severity. Critical issues block progress.
+9. **finishing-a-development-branch** - Activates when tasks complete. Verifies tests, offers to merge, open a pull request or keep the branch, and cleans up the worktree. Discarding the work needs your explicit request and a typed confirmation.
 
-10. **finishing-a-development-branch** - Activates when tasks complete. Verifies tests, presents options (merge/PR/keep/discard), cleans up worktree.
+At any point, **`/ultrapowers:task <ticket>`** tells you where a ticket stands (brief, spec, plan, reviews, branches) and what comes next, without changing anything. And **team-memory** works alongside every step: when the agent verifies a fact that is durable, expensive to rediscover and not already in the code, it saves it to `.agents/memory/` in git, so every developer, every coding agent and every session on the project can use it.
 
 **The agent checks for relevant skills before any task.** Mandatory workflows, not suggestions.
 
@@ -267,19 +280,34 @@ The skill reads the session transcript, reports what happened with line-level ev
 
 ## What ultrapowers adds
 
-- Scaffold engine and baseline payload
-- Scaffold Knowledge base set and AI configurations for the full development lifecycle
-- Easy-to-repeat workflows and setup for new projects, eliminating the need for a human to repeat the same steps for every new project
-- Task lifecycle skills
-- Team memory
-- QA gatekeeper
+Everything above the original methodology, built from real daily work across many projects:
+
+- **Scaffold engine and baseline payload** - `/ultrapowers:init` writes the same proven setup into every project and keeps it current with join, upgrade and repair modes. No more copying the setup from the last project and adapting it by hand every few days.
+- **Knowledge base and AI configuration for the full development lifecycle** - Ten knowledge base folders, each with a README that says what belongs there. One `AGENTS.md` serves every coding agent; one `.mcp.json` is rendered into each harness's own MCP format; settings, output style and repo hygiene come with it.
+- **Easy-to-repeat workflows for new projects** - The same commands and the same folder layout in every project, so neither you nor your agents relearn the setup each time.
+- **Task lifecycle skills** - `new-task`, `brainstorm-task` and `task` keep one ticket id across `tasks/`, `specs/`, `plans/` and `reviews/`, so every brief, spec, plan and QA report for a ticket is in one predictable place. Brainstorming reads the code first, so the plan meets no surprises.
+- **Team memory** - Verified, durable lessons live in `.agents/memory/` in the repository: shared across developers, across coding agents and across sessions. Hooks remind the agent to save them, and a lint keeps the store small and clean.
+- **QA gatekeeper** *(beta)* - A seven-lane QA agent that tests the running app the way a senior human tester does, under a read-only guardrail, and leaves one verdict per ticket.
 
 ## What's Inside
 
 ### Skills Library
 
+**Project setup and tickets**
+- **init** - Scaffold, join, upgrade or repair a project's Ultrapowers setup; writes only after your yes
+- **new-task** - Open a ticket: its four folders and a short brief
+- **brainstorm-task** - Read the brief and the code, then brainstorm the ticket's spec
+- **task** - Where a ticket stands and what comes next (read-only)
+
+**Team knowledge**
+- **team-memory** - Remember, recall, prune and lint the team's shared memory in `.agents/memory/`
+
+**Quality gate** *(beta)*
+- **qa-specialist** - Run the seven-lane QA gate for a ticket and leave one verdict in `reviews/<ID>/QA-REPORT.md`
+- **qa-lane-1-ui**, **qa-lane-2-logs**, **qa-lane-3-api**, **qa-lane-4-db**, **qa-lane-5-observability**, **qa-lane-6-suites**, **qa-lane-7-content**, **qa-report** - The lanes and the report format the QA agent uses; not invoked directly
+
 **Testing**
-- **test-driven-development** - RED-GREEN-REFACTOR cycle (includes testing anti-patterns reference)
+- **test-driven-development** - RED-GREEN-REFACTOR cycle (includes the writing-good-tests reference)
 
 **Debugging**
 - **systematic-debugging** - 4-phase root cause process (includes root-cause-tracing, defense-in-depth, condition-based-waiting techniques)
@@ -295,11 +323,16 @@ The skill reads the session transcript, reports what happened with line-level ev
 - **receiving-code-review** - Responding to feedback
 - **using-git-worktrees** - Parallel development branches
 - **finishing-a-development-branch** - Merge/PR decision workflow
-- **subagent-driven-development** - Fast iteration with two-stage review (spec compliance, then code quality)
+- **subagent-driven-development** - A fresh subagent per task, a review after each task, and a final review of the whole branch
 
 **Meta**
 - **writing-skills** - Create new skills following best practices (includes testing methodology)
 - **using-ultrapowers** - Introduction to the skills system
+
+### Agents and Output Styles
+
+- **`agents/qa-specialist.md`** *(beta)* - The QA gatekeeper's contract: the agent the qa-specialist skill runs, forked where the harness supports it and inline elsewhere
+- **`output-styles/ste-explanatory.md`** - Explanatory answers in Simplified Technical English, with short insights about the choices made; init installs it for Claude Code, and every other agent gets the same rules through `AGENTS.md`
 
 ## Philosophy
 
@@ -307,6 +340,11 @@ The skill reads the session transcript, reports what happened with line-level ev
 - **Systematic over ad-hoc** - Process over guessing
 - **Complexity reduction** - Simplicity as primary goal
 - **Evidence over claims** - Verify before declaring success
+- **Set up once, reuse everywhere** - A project's setup is generated, never copied by hand
+- **Ground before you ask** - Read the code before designing against it
+- **One ticket, one trail** - Brief, spec, plan and review share the ticket id
+- **Memory belongs to the team** - What one agent learns, every developer and every agent can reuse, in git
+- **Quality is a gate** - A tester's eye on the running app, and one verdict per ticket
 
 ## Contributing
 
