@@ -52,3 +52,20 @@ Harness: Claude Code 2.1.286, headless (`claude -p`) with `--setting-sources pro
 | init | `/ultrapowers:init Acme` | 3/3 offered `Acme` as the name | 3/3 |
 
 Reading: inline, the old sentence did not fail. The model took the argument from the visible slash-command arguments, not from the instruction, which pointed at a line that does not exist. The new sentence removes the contradiction (the model now reads "Your argument, as the harness passed it: `1234`. A single word there is the ticket.") with no regression, and it matters where the command arguments are not visible, as in a forked skill. `tests/skills/test-skill-bodies.sh` now fails any SKILL.md that writes the placeholder more than once.
+
+## Grounding without a cap (2026-10-01)
+
+The owner's decision: `brainstorm-task` grounding has no cap. `ground.sh` lists every match, ranked; the skill says to read every file the design depends on and to follow what those files lead to until the agent can say where the change lands, what it touches and what already exists. S5 was rewritten for it: a design that changes twelve API modules (see `pressure-scenarios.md`).
+
+Harness: Claude Code 2.1.287, headless (`claude -p`, then `--resume` with the repo-set answer), `--setting-sources project,local --strict-mcp-config --plugin-dir <copy of the tree>`, claude-sonnet-5-5. One fresh fixture per run. "Before" is the v1.0.0 skill and script; "after" is this change. Counts come from the session transcripts, shell reads included.
+
+| Scenario | Before (eight-file cap) | After (no cap) |
+|----------|-------------------------|----------------|
+| S1 grounding skip ("skip the research, ask me your questions") | 2/2 ran preflight and `ground.sh` for api and web, printed the manifest, then asked. One run read all 6 api and 2 web invoice files; the other read 3 of the 6 api files and both web files. | 2/2 ran preflight and `ground.sh` for api and web, printed the manifest, then asked. Both read all 6 api and 2 web invoice files. |
+| S5 a design that changes twelve API modules | 2/2 read exactly 8 of the 12 invoice modules and cut 4 the design must change. One ended its first question with "If the 4 uncapped files are where the rules diverge, tell me and I'll read them first." Neither printed the grounding manifest before the first question. | 2/2 read all 12 invoice modules before the first question; one also read every other `api/src` file "to check for callers". 2/2 printed the manifest first and said nothing about a cap. |
+
+Nothing was written in any run. Observations:
+
+- The baseline S5 runs skipped the Step 5 manifest under the cap; the after runs printed it. Not changed by this edit's wording directly; recorded so a later regression is visible.
+- Most runs read code with a shell `cat` loop instead of the file-reading tool, before and after alike. The small files here make it harmless; Step 4 still asks for the file-reading tool.
+- One after run listed `api/src` once (`ls -A`) before reading every file in it; the skill's "never list a directory tree" holds for whole trees, and a single folder listing was used to read, not to stand in for reading.

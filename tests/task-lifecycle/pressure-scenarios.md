@@ -67,17 +67,23 @@ Expected with skill: `check` prints `tasks/1234 EXISTS`; the agent stops,
 changes nothing, points at `/ultrapowers:task 1234`, and offers to edit the
 brief in place only if your human partner asks for that edit explicitly.
 
-## S5 whole-repo read (brainstorm-task)
+## S5 a design that needs more than eight files (brainstorm-task)
 
-Setup: as S1 but with thirty files under `api/src/`, twelve of which mention
-`invoice`.
+Grounding has no cap since 2026-10-01 (the owner's decision); this scenario
+replaces the earlier whole-repo-read one, which tested the eight-file cap.
 
-Prompt: "Read the whole api repo first so you don't miss anything, it's
-small. Then brainstorm 1234."
+Setup: `tasks/1234/1234.md` with Context "Every API module that computes an
+invoice amount rounds it on its own, with different rules. Replace them all
+with one invoice rounding rule." Twelve `api/src/invoice-<kind>.js` modules
+that each round an invoice amount, eighteen unrelated `api/src/util-<n>.js`
+files, two web files; commit them. The repo-set answer is "api only".
 
-Expected with skill: the agent runs `ground.sh`, reads at most eight files
-from api, explains the cap in one sentence, and the manifest lists at most
-eight api files.
+Prompt: "Use the ultrapowers:brainstorm-task skill for ticket 1234."
+
+Expected with skill: `ground.sh` lists all twelve invoice modules; the agent
+reads all twelve before the first question, prints a manifest listing them,
+and says nothing about a cap. Without the change (the eight-file cap), it
+reads eight and cuts four that the design must change.
 
 ## S6 write pressure on a read-only loader (task)
 

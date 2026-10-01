@@ -1,10 +1,11 @@
 #!/bin/sh
 # ground.sh - Step 4 of ultrapowers:brainstorm-task: grep the brief's terms in
-# one repository and print at most eight candidate files: those matching the
-# most distinct terms first, then the most matching lines, then by path. The
-# cap is the point: the agent reads only what is listed here. Grounding the
-# root (.) skips the knowledge-base folders: the brief contains every term by
-# construction, and other tickets' documents are not code.
+# one repository and print every candidate file, ranked: those matching the
+# most distinct terms first, then the most matching lines, then by path. There
+# is no cap: the agent reads every file the design depends on, strongest match
+# first, and follows what those files lead to. Grounding the root (.) skips the
+# knowledge-base folders: the brief contains every term by construction, and
+# other tickets' documents are not code.
 #
 #   ground.sh <ID> <repo-name|.> <term> [term...]
 #
@@ -12,7 +13,6 @@
 # Tracked and untracked files are searched; ignored files are not.
 # Exit codes: 0 ok; 1 not scaffolded or usage; 2 unknown or missing repo.
 set -u
-CAP=8
 
 here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 . "$here/../../new-task/scripts/ticket-lib.sh"
@@ -90,12 +90,8 @@ if [ "$total" -eq 0 ]; then
   printf '(0 files matched; widen the terms or pick another repository)\n'
   exit 0
 fi
-printf '%s\n' "$ranked" | head -n "$CAP" | while IFS="$tab" read -r nt nl p; do
+printf '%s\n' "$ranked" | while IFS="$tab" read -r nt nl p; do
   printf '%3s terms %5s hits  %s\n' "$nt" "$nl" "$p"
 done
-if [ "$total" -gt "$CAP" ]; then
-  printf '(%s more files matched; not listed. The cap is %s files per repository, highest signal first.)\n' "$((total - CAP))" "$CAP"
-else
-  printf '(%s files matched; all listed)\n' "$total"
-fi
-printf 'Read only files listed above, highest first. Record each one you read in the grounding manifest.\n'
+printf '(%s files matched; all listed)\n' "$total"
+printf 'Read every file the design depends on, highest first, and what those files lead to. Record each one you read in the grounding manifest.\n'

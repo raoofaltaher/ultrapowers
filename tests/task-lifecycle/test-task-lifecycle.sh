@@ -3,7 +3,7 @@
 # brainstorm-task and task skills, run against temp scaffolded projects built
 # by make-fixture.sh: root walk-up to .agents/ultrapowers.json, ticket pattern
 # accept and reject, refusal on an existing task, spec collision detection,
-# repository selection and the eight-file grounding cap.
+# repository selection and grounding that lists every matching file, ranked.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -536,7 +536,7 @@ test_brainstorm_task() {
         echo "    out: $out"
     fi
 
-    # --- grounding cap ---
+    # --- grounding lists every match: no cap (owner's decision, 2026-10-01) ---
     for i in 01 02 03 04 05 06 07 08 09 10 11 12; do
         printf 'invoice line\n' > "$proj/api/src/f$i.txt"
     done
@@ -546,10 +546,10 @@ test_brainstorm_task() {
     git -C "$proj/api" commit -qm "grounding fixture"
     out="$(cd "$proj" && bash "$GROUND" 1234 api invoice)"
     listed="$(printf '%s\n' "$out" | grep -c ' hits  ' || true)"
-    if [[ "$listed" -eq 8 ]]; then
-        pass "ground.sh lists at most eight files"
+    if [[ "$listed" -eq 13 ]]; then
+        pass "ground.sh lists every matching file"
     else
-        fail "ground.sh lists at most eight files"
+        fail "ground.sh lists every matching file"
         echo "    listed: $listed"
         echo "    out: $out"
     fi
@@ -559,10 +559,16 @@ test_brainstorm_task() {
         fail "the file with the most hits is listed first"
         echo "    out: $out"
     fi
-    if [[ "$out" == *"(5 more files matched; not listed. The cap is 8 files per repository, highest signal first.)"* ]]; then
-        pass "the number of files cut by the cap is reported"
+    if [[ "$out" == *"(13 files matched; all listed)"* && "$out" != *"cap"* && "$out" != *"not listed"* ]]; then
+        pass "nothing is cut and no cap is mentioned"
     else
-        fail "the number of files cut by the cap is reported"
+        fail "nothing is cut and no cap is mentioned"
+        echo "    out: $out"
+    fi
+    if [[ "$out" == *"Read every file the design depends on"* && "$out" != *"Read only files listed above"* ]]; then
+        pass "the closing line asks for every file the design depends on"
+    else
+        fail "the closing line asks for every file the design depends on"
         echo "    out: $out"
     fi
     out="$(cd "$proj" && bash "$GROUND" 1234 api 'total amount')"
@@ -581,7 +587,7 @@ test_brainstorm_task() {
     fi
     printf 'invoice untracked\n' > "$proj/api/src/untracked.txt"
     out="$(cd "$proj" && bash "$GROUND" 1234 api invoice)"
-    if [[ "$out" == *"(6 more files matched"* ]]; then
+    if [[ "$out" == *"src/untracked.txt"* && "$out" == *"(14 files matched; all listed)"* ]]; then
         pass "untracked files are searched too"
     else
         fail "untracked files are searched too"

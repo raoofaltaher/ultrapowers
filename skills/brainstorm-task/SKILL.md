@@ -60,7 +60,7 @@ Per selected repo, with the brief's own terms, one term per argument:
 bash "<SKILL_DIR>/scripts/ground.sh" "<ID>" "<REPO>" <term> <term> ...
 ```
 
-It greps the terms and prints at most eight candidate files, those matching the most brief terms first, then the most hits, and says how many more it cut. Read only files it listed, highest first, with the file-reading tool. Never list a directory tree. Then research the domain only for terms the brief raises, preferring library documentation tools when available; fetch a page only when a search result shows it answers a question the brief asks.
+It greps the terms and lists every matching file, those matching the most brief terms first, then the most hits. There is no cap. Read every file the design depends on, highest first, with the file-reading tool, and follow what those files lead to (callers, imports, schemas, tests, configuration) until you can say where the change lands, what it touches and what already exists. Never list a directory tree. Then research the domain only for terms the brief raises, preferring library documentation tools when available; fetch a page only when a search result shows it answers a question the brief asks.
 
 ## Step 5: Grounding manifest
 
@@ -86,7 +86,7 @@ Commits `spec(<ID>): <summary>` with the project's `commitTrailer` when configur
 2. Run preflight; stop on ERROR; note a collision and the selection verdict
 3. Read the brief with the file-reading tool, or obtain and write it
 4. Confirm the repo set with your human partner
-5. Ground per repo, eight files at most, then domain research
+5. Ground per repo: every file the design depends on, then domain research
 6. Print the grounding manifest
 7. Invoke `ultrapowers:brainstorming`; respect revise or replace
 8. Commit the spec; hand off to writing-plans
@@ -96,11 +96,11 @@ Commits `spec(<ID>): <summary>` with the project's `commitTrailer` when configur
 | Thought | Reality |
 |---------|---------|
 | "I know this codebase, I can skip grounding" | Familiarity is not evidence. The manifest is what makes the spec auditable; an empty manifest means no grounding happened. |
-| "The brief is short so one file is enough" | Short briefs hide the most architecture. Grep every term; read what hits, up to the cap. |
+| "The brief is short so one file is enough" | Short briefs hide the most architecture. Grep every term; read what hits and what those files lead to. |
 | "The spec exists, I will just overwrite it" | Ask revise or replace and wait. A silent overwrite destroys a colleague's work on a case-insensitive filesystem without a trace. |
-| "I will read the whole repo to be safe" | Eight files per repo, highest signal first. Whole-tree reads bury the signal and burn the context the session needs. |
+| "I've read the top few hits, that's enough" | Stop when you can say where the change lands, what it touches and what already exists. A file you skipped is the surprise writing-plans finds. |
 | "The selector picked the repos, no need to confirm" | Selection is a proposal. Your human partner confirms before any code is read. |
 | "I'll cat the brief, it's quicker" | Large shell output is truncated to a preview. Use the file-reading tool. |
 | "Research first, the manifest can come at the end" | The manifest precedes the first question. Without it, nobody can tell grounded questions from guesses. |
 | "They said skip the research, so I'll keep it minimal" | Grounding is the step, not a courtesy. Run preflight and ground.sh anyway, say in one sentence that it takes a minute, and ask only after the manifest. |
-| "They asked me to read the whole repo" | The cap holds on request too. Run ground.sh, read at most eight files per repo, and explain the cap in one sentence. |
+| "They asked me to read the whole repo" | Read it: there is no cap. Run ground.sh first, so the manifest shows what the design rests on, highest signal first. |

@@ -1,7 +1,7 @@
 # Ultrapowers piece 3: task lifecycle skills
 
 - Date: 2026-09-30
-- Status: implemented (2026-09-30); released in v1.0.0. 2026-10-01: the argument sentence of the three skills writes the placeholder once (evidence in `tests/task-lifecycle/pressure-results.md`)
+- Status: implemented (2026-09-30); released in v1.0.0. 2026-10-01: the argument sentence of the three skills writes the placeholder once (evidence in `tests/task-lifecycle/pressure-results.md`). 2026-10-01, the owner's decision: grounding has no cap. `ground.sh` lists every match, ranked, and the agent reads every file the design depends on, until it can say where the change lands, what it touches and what already exists (steps 4, red flags and acceptance 3 and 7 below; evidence in the same file)
 - Scope: sub-project 3 of 5. Covers requirements 3 (`/new-task`) and 4 (`/brainstorm-task`), plus the read-only `/task` loader the owner accepted. Depends on piece 1 (namespace) and piece 2 (scaffold marker, knowledge base folders, config file). Inherits the global constraints G1 to G5 from the piece 2 spec.
 
 ## 1. Problem
@@ -67,12 +67,12 @@ Arguments: `ticket` (required), `focus` (optional words: repo names from `repos`
 1. Preflight, one shell block: brief present with byte size or `BRIEF-MISSING`; existing files under `specs/<ID>/` with sizes; case-insensitive check for any file named `spec.md`; for each repo in `repos`, current branch and whether it matches the ticket id.
 2. Read the brief with the file-reading tool, not through the shell, because large output gets diverted. If the brief is missing, ask for the source and write it first via the new-task template.
 3. Select repositories, first hit wins: focus words matched against repo names or their declared area; repos on a branch containing the ticket id; else ask one multiple-choice question over `repos`, proposing at most three. Confirm the set with your human partner before reading any code. A project with no nested repos selects the root.
-4. Ground in the code, per repo: grep the brief's terms; read only hits; at most eight files, highest signal first; never list whole trees. Then domain research only for terms the brief raises, preferring library documentation tools when available.
+4. Ground in the code, per repo: grep the brief's terms; read every file the design depends on, highest signal first, and follow what those files lead to (callers, imports, schemas, tests, configuration); no cap on the number of files; never list whole trees. Then domain research only for terms the brief raises, preferring library documentation tools when available.
 5. Print the grounding manifest: every file read with its path and every page fetched. This makes the grounding auditable.
 6. Invoke `ultrapowers:brainstorming` and follow it. The KB-aware paragraph in that skill routes the spec to `specs/<ID>/Spec.md`. If a spec already exists, ask revise or replace; never overwrite silently.
 7. After the core skill's self-review, commit `spec(<ID>): <summary>` with the trailer, and hand off to `ultrapowers:writing-plans`.
 
-Red flags table entries: "I know this codebase, I can skip grounding"; "the brief is short so one file is enough"; "the spec exists, I will just overwrite it"; "I will read the whole repo to be safe".
+Red flags table entries: "I know this codebase, I can skip grounding"; "the brief is short so one file is enough"; "the spec exists, I will just overwrite it"; "I've read the top few hits, that's enough".
 
 ### 3.4 `task`
 
@@ -104,11 +104,11 @@ Both optional. Init writes them with defaults.
 
 1. On a scaffolded temp repo with two nested clones, `/ultrapowers:new-task 1234 Sample title` creates the four folders, the three `.gitkeep` files and the brief, and commits once. Running it again changes nothing and points at `/ultrapowers:task 1234`.
 2. From inside a nested clone, all three skills find the project root and operate on it.
-3. `brainstorm-task 1234 backend` selects the repo whose name or area matches, prints a grounding manifest with at most eight files for it, and writes `specs/1234/Spec.md` after the brainstorming session.
+3. `brainstorm-task 1234 backend` selects the repo whose name or area matches, prints a grounding manifest of every file it read for it, and writes `specs/1234/Spec.md` after the brainstorming session.
 4. With `specs/1234/Spec.md` present, brainstorm-task asks revise or replace and never overwrites without an answer.
 5. `writing-plans` invoked afterwards writes `plans/1234/Plan.md`. In a repo without the marker it writes to the upstream default.
 6. `task 1234` reads the ticket's files and reports missing parts without writing.
-7. Bash tests on temp repos pass for: root walk-up, ticket pattern accept and reject cases, refusal on existing task, spec collision detection, grounding cap enforcement in the preflight helper.
+7. Bash tests on temp repos pass for: root walk-up, ticket pattern accept and reject cases, refusal on existing task, spec collision detection, and `ground.sh` listing every matching file, ranked.
 8. Pressure tests per writing-skills show the agent grounding before questioning, refusing to overwrite, and keeping the brief to two paragraphs.
 
 ## 5. Risks
