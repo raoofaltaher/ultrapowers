@@ -4,6 +4,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { effectiveTransport, serverId as ticketServerId, validateTickets } from '../../new-task/scripts/ticket-sources.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const PLUGIN_ROOT = path.resolve(SCRIPT_DIR, '..', '..', '..');
@@ -466,8 +467,54 @@ export function loadCanonicalMcp() {
   return { servers: canonical.mcpServers ?? {} };
 }
 
-export function generateMcpFiles(harnesses) {
-  const { servers } = loadCanonicalMcp();
+// One http server per ticket source, in the canonical .mcp.json shape
+// (spec docs/ultrapowers/specs/2026-10-02-ticket-sources-design.md, section 8).
+// A source whose transport is cli gets none; Odoo always gets one.
+export function ticketServers(tickets) {
+  const servers = {};
+  for (const source of tickets?.sources ?? []) {
+    if (effectiveTransport(tickets, source) === 'cli') continue;
+    const id = ticketServerId(source.prefix);
+    if (source.provider === 'github') {
+      servers[id] = {
+        type: 'http',
+        url: 'https://api.githubcopilot.com/mcp/',
+        headers: { Authorization: 'Bearer ${GH_TOKEN}', 'X-MCP-Readonly': 'true' },
+      };
+    } else if (source.provider === 'gitlab') {
+      servers[id] = { type: 'http', url: `https://${source.host ?? 'gitlab.com'}/api/v4/mcp` };
+    } else if (source.provider === 'odoo') {
+      servers[id] = { type: 'http', url: source.mcpUrl };
+      if (source.mcpHeader) {
+        const [name, scheme] = source.mcpHeader.split(': ');
+        servers[id].headers = { [name]: scheme ? `${scheme} \${ODOO_API_KEY}` : '${ODOO_API_KEY}' };
+      }
+    }
+  }
+  return servers;
+}
+
+const TICKET_SECRETS = [
+  ['GH_TOKEN', (s) => s.provider === 'github', (s) => `tickets ${s.prefix}: gh CLI and the GitHub MCP server`],
+  ['GITLAB_TOKEN', (s) => s.provider === 'gitlab', (s) => `tickets ${s.prefix}: glab CLI (the GitLab MCP server signs in in the browser)`],
+  ['ODOO_API_KEY', (s) => s.provider === 'odoo' && Boolean(s.mcpHeader), (s) => `tickets ${s.prefix}: the Odoo MCP server`],
+];
+
+// The .agents/mcp-secrets.env.example lines the ticket sources need, one per variable.
+export function ticketSecretLines(tickets) {
+  const sources = tickets?.sources ?? [];
+  const lines = [];
+  for (const [name, needs, note] of TICKET_SECRETS) {
+    const first = sources.find(needs);
+    if (first) lines.push(`${`${name}=`.padEnd(17)}# ${note(first)}`);
+  }
+  return lines;
+}
+
+// `extra` servers follow the canonical ones; `canonical: false` renders the
+// extra servers alone (a harness file that does not exist yet).
+export function generateMcpFiles(harnesses, { extra = {}, canonical = true } = {}) {
+  const servers = { ...(canonical ? loadCanonicalMcp().servers : {}), ...extra };
   validateServers(servers);
   const files = [];
   for (const [target, schema] of Object.entries(MCP_TARGETS)) {

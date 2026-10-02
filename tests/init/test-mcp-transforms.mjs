@@ -10,7 +10,10 @@ import { parseToml } from './toml-mini.mjs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
 const ENGINE = path.join(repoRoot, 'skills', 'init', 'scripts', 'init.mjs');
-const { MCP_GENERATORS, MCP_TARGETS, ALL_HARNESSES, InitError, NPX_LAUNCHER, generateMcpFiles } = await import(pathToFileURL(ENGINE).href);
+const {
+  MCP_GENERATORS, MCP_TARGETS, ALL_HARNESSES, InitError, NPX_LAUNCHER, generateMcpFiles,
+  ticketServers, ticketSecretLines,
+} = await import(pathToFileURL(ENGINE).href);
 
 const canonical = JSON.parse(fs.readFileSync(path.join(repoRoot, 'templates', '.mcp.json'), 'utf8'));
 const CANONICAL_IDS = Object.keys(canonical.mcpServers).sort();
@@ -184,6 +187,74 @@ test('headers, literal values and embedded references map per schema', () => {
   assert.deepEqual(codex.tool.env_vars, ['TOOL_KEY']);
   assert.deepEqual(codex.tool.env, { MODE: 'strict' });
   assert.equal(codex.tool.command, 'node');
+});
+
+// Ticket sources (spec docs/ultrapowers/specs/2026-10-02-ticket-sources-design.md, section 8).
+function ticketsExample() {
+  return {
+    transport: 'auto',
+    sources: [
+      { prefix: 'GL', provider: 'gitlab', host: 'gitlab.com', namespace: 'acme/platform', defaultProject: 'tracker' },
+      { prefix: 'GH', provider: 'github', owner: 'acme' },
+      { prefix: 'ODOO', provider: 'odoo', url: 'https://erp.example.com', mcpUrl: 'https://erp.example.com/mcp' },
+    ],
+  };
+}
+
+test('ticketServers renders one http server per source', () => {
+  assert.deepEqual(ticketServers(ticketsExample()), {
+    'tickets-gl': { type: 'http', url: 'https://gitlab.com/api/v4/mcp' },
+    'tickets-gh': {
+      type: 'http', url: 'https://api.githubcopilot.com/mcp/',
+      headers: { Authorization: 'Bearer ${GH_TOKEN}', 'X-MCP-Readonly': 'true' },
+    },
+    'tickets-odoo': { type: 'http', url: 'https://erp.example.com/mcp' },
+  });
+});
+
+test('an Odoo token header takes the form mcpHeader names', () => {
+  const t = ticketsExample();
+  t.sources[2].mcpHeader = 'Authorization: Bearer';
+  assert.deepEqual(ticketServers(t)['tickets-odoo'].headers, { Authorization: 'Bearer ${ODOO_API_KEY}' });
+  t.sources[2].mcpHeader = 'X-Api-Key';
+  assert.deepEqual(ticketServers(t)['tickets-odoo'].headers, { 'X-Api-Key': '${ODOO_API_KEY}' });
+});
+
+test('a cli-only source gets no MCP server; a self-hosted GitLab uses its host', () => {
+  const t = ticketsExample();
+  t.sources[0].transport = 'cli';
+  assert.equal('tickets-gl' in ticketServers(t), false);
+  t.sources[0].transport = 'mcp';
+  t.sources[0].host = 'git.example.com';
+  assert.equal(ticketServers(t)['tickets-gl'].url, 'https://git.example.com/api/v4/mcp');
+});
+
+test('ticketSecretLines names each token variable once', () => {
+  const names = (t) => ticketSecretLines(t).map((l) => l.split('=')[0]);
+  assert.deepEqual(names(ticketsExample()), ['GH_TOKEN', 'GITLAB_TOKEN']);
+  const t = ticketsExample();
+  t.sources[2].mcpHeader = 'Authorization: Bearer';
+  t.sources.push({ prefix: 'GH2', provider: 'github', owner: 'other' });
+  assert.deepEqual(names(t), ['GH_TOKEN', 'GITLAB_TOKEN', 'ODOO_API_KEY']);
+  assert.match(ticketSecretLines(ticketsExample())[0], /^GH_TOKEN= +# tickets GH: gh CLI and the GitHub MCP server$/);
+});
+
+test('ticket servers render in each harness format, after the canonical ones', () => {
+  const files = Object.fromEntries(
+    generateMcpFiles(['claude-code', 'codex', 'cursor'], { extra: ticketServers(ticketsExample()) })
+      .map(({ target, content }) => [target, parseGenerated(target, content)]),
+  );
+  const claude = files['.mcp.json'].mcpServers;
+  assert.deepEqual(Object.keys(claude), [...Object.keys(canonical.mcpServers), 'tickets-gl', 'tickets-gh', 'tickets-odoo']);
+  assert.equal(files['.cursor/mcp.json'].mcpServers['tickets-gh'].headers.Authorization, 'Bearer ${env:GH_TOKEN}');
+  const codex = files['.codex/config.toml'].mcp_servers['tickets-gh'];
+  assert.equal(codex.bearer_token_env_var, 'GH_TOKEN');
+  assert.deepEqual(codex.http_headers, { 'X-MCP-Readonly': 'true' });
+});
+
+test('generateMcpFiles can render the ticket servers alone', () => {
+  const [only] = generateMcpFiles(['claude-code'], { extra: ticketServers(ticketsExample()), canonical: false });
+  assert.deepEqual(Object.keys(JSON.parse(only.content).mcpServers), ['tickets-gl', 'tickets-gh', 'tickets-odoo']);
 });
 
 test('codex refuses a secret it cannot pass by variable name', () => {
