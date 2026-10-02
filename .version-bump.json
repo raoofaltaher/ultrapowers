@@ -56,7 +56,11 @@
       ".remember",
       ".version-bump.json",
       "scripts/bump-version.sh",
-      "CHANGES.json"
+      "CHANGES.json",
+      ".agents/ultrapowers.json",
+      ".agents/memory",
+      ".githooks/pre-commit",
+      ".gitleaks.toml"
     ]
   }
 }

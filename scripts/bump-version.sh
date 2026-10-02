@@ -179,10 +179,17 @@ cmd_audit() {
   echo "Audit: scanning repo for version string '$current_version'..."
   echo ""
 
-  # Build grep exclude args
+  # Build grep exclude args. A recursive grep matches --exclude against base
+  # names only, so an entry holding a slash is a path from the repo root
+  # instead: it skips that file or everything under that directory.
   local -a exclude_args=()
+  local -a exclude_paths=()
   while IFS= read -r pattern; do
-    exclude_args+=("--exclude=$pattern" "--exclude-dir=$pattern")
+    if [[ "$pattern" == */* ]]; then
+      exclude_paths+=("${pattern%/}")
+    else
+      exclude_args+=("--exclude=$pattern" "--exclude-dir=$pattern")
+    fi
   done < <(audit_excludes)
 
   # Also always exclude binary files and .git
@@ -204,6 +211,15 @@ cmd_audit() {
     match_file=$(echo "$match" | cut -d: -f1)
     # Make path relative to repo root
     local rel_path="${match_file#$REPO_ROOT/}"
+
+    local is_excluded=0
+    for ep in ${exclude_paths[@]+"${exclude_paths[@]}"}; do
+      if [[ "$rel_path" == "$ep" || "$rel_path" == "$ep"/* ]]; then
+        is_excluded=1
+        break
+      fi
+    done
+    [[ "$is_excluded" -eq 0 ]] || continue
 
     # Check if this file is in the declared list
     local is_declared=0
