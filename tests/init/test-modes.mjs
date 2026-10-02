@@ -431,6 +431,19 @@ test('scaffold without --sources writes no tickets key', () => {
   assert.doesNotMatch(fs.readFileSync(path.join(root, '.agents', 'mcp-secrets.env.example'), 'utf8'), /GH_TOKEN/);
 });
 
+test('upgrade proposals keep the configured ticket servers (final review)', () => {
+  const changes = JSON.parse(fs.readFileSync(path.join(repoRoot, 'templates', 'CHANGES.json'), 'utf8'));
+  for (const key of Object.keys(changes)) changes[key] = '0.0.1';
+  changes['.mcp.json'] = pluginVersion;
+  const env = { ULTRAPOWERS_TEMPLATES_DIR: templatesCopy(changes) };
+  const root = tmpWorkspace();
+  run(['scaffold', '--root', root, '--name', 'WS', '--platform', 'linux', '--sources', sourcesFile(ticketsExample())], { env });
+  setMarkerVersion(root, '0.0.1');
+  run(['upgrade', '--root', root, '--apply', '.mcp.json'], { env });
+  const proposal = JSON.parse(fs.readFileSync(path.join(root, `.mcp.json${PROPOSAL_SUFFIX}`), 'utf8'));
+  for (const id of TICKET_IDS) assert.ok(id in proposal.mcpServers, id);
+});
+
 test('tickets next steps name the token scopes and the GitLab sign-in', () => {
   const root = scaffolded();
   const report = run(['tickets', '--root', root, '--sources', sourcesFile(ticketsExample()), '--dry-run']);

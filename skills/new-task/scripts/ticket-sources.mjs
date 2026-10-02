@@ -16,7 +16,8 @@ export class TicketError extends Error {
 const PROVIDERS = ['github', 'gitlab', 'odoo'];
 const TRANSPORTS = ['auto', 'cli', 'mcp'];
 const PREFIX = /^[A-Z][A-Z0-9]{0,9}$/;
-const HEADER = /^[A-Za-z0-9-]+(: [A-Za-z]+)?$/;
+// Codex passes a header secret only whole or as a Bearer token.
+const HEADER = /^(Authorization: Bearer|[A-Za-z0-9-]+)$/;
 const NUMBER = /^[0-9]+$/;
 const REQUIRED = { github: ['owner'], gitlab: ['namespace'], odoo: ['url', 'mcpUrl'] };
 
@@ -71,7 +72,7 @@ export function validateTickets(tickets) {
       errors.push(`${at}.transport must be one of ${TRANSPORTS.join(', ')}`);
     }
     if ('mcpHeader' in source && (typeof source.mcpHeader !== 'string' || !HEADER.test(source.mcpHeader))) {
-      errors.push(`${at}.mcpHeader must be "Name" or "Name: Scheme", for example "Authorization: Bearer"`);
+      errors.push(`${at}.mcpHeader must be a header name such as "X-Api-Key", or "Authorization: Bearer"`);
     }
     if ('projects' in source) {
       if (!isObject(source.projects) || !Object.values(source.projects).every(isText)) {

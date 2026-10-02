@@ -893,8 +893,10 @@ function markerHarnesses(marker) {
   return Array.isArray(marker.harnesses) ? marker.harnesses : [...ALL_HARNESSES];
 }
 
+// A valid tickets block rides along, so upgrade proposals keep the ticket servers.
 function markerOpts(opts, marker) {
-  return { ...opts, name: opts.name ?? marker.name ?? path.basename(opts.root), nestedPointers: false };
+  const tickets = marker.tickets && validateTickets(marker.tickets).length === 0 ? marker.tickets : null;
+  return { ...opts, name: opts.name ?? marker.name ?? path.basename(opts.root), nestedPointers: false, tickets };
 }
 
 function planBlock(root, target, body) {

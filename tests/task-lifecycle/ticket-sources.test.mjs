@@ -105,6 +105,8 @@ const invalid = [
   ['transport ssh', (t) => { t.transport = 'ssh'; }, 'tickets.transport'],
   ['source transport ssh', (t) => { t.sources[0].transport = 'ssh'; }, 'tickets.sources[0].transport'],
   ['bad mcpHeader', (t) => { t.sources[2].mcpHeader = 'Authorization: Bearer token'; }, 'tickets.sources[2].mcpHeader'],
+  // Codex passes a header secret only whole or as a Bearer token (final review).
+  ['mcpHeader scheme other than Bearer', (t) => { t.sources[2].mcpHeader = 'Authorization: Token'; }, 'tickets.sources[2].mcpHeader'],
 ];
 
 for (const [label, mutate, field] of invalid) {

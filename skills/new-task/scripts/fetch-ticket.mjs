@@ -55,13 +55,16 @@ function timeoutMs() {
 }
 
 // The user's gh or glab, or the binary ULTRAPOWERS_GH / ULTRAPOWERS_GLAB
-// names; a .js, .mjs or .cjs override runs under this node.
-function runCli(provider, args) {
+// names; a .js, .mjs or .cjs override runs under this node. glab reads its
+// host from GITLAB_HOST for `-R group/project`, so a self-hosted source sets it.
+function runCli(resolution, args) {
+  const { provider, host } = resolution;
   const override = process.env[CLI[provider].env];
   const command = override || CLI[provider].name;
   const [file, argv] = /\.[cm]?js$/i.test(command) ? [process.execPath, [command, ...args]] : [command, args];
+  const env = provider === 'gitlab' ? { ...process.env, GITLAB_HOST: host } : process.env;
   return new Promise((resolve) => {
-    execFile(file, argv, { timeout: timeoutMs(), windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+    execFile(file, argv, { env, timeout: timeoutMs(), windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (!error) return resolve({ ok: true, stdout, stderr });
       if (error.code === 'ENOENT') return resolve({ ok: false, missing: true });
       if (error.killed) return resolve({ ok: false, timedOut: true });
@@ -71,7 +74,7 @@ function runCli(provider, args) {
 }
 
 async function cliReady(resolution) {
-  const result = await runCli(resolution.provider, ['auth', 'status', '--hostname', resolution.host]);
+  const result = await runCli(resolution, ['auth', 'status', '--hostname', resolution.host]);
   return result.ok;
 }
 
@@ -126,31 +129,34 @@ async function fetchTicket(resolution) {
     }
     return mcpAnswer(resolution);
   }
-  const view = await runCli(resolution.provider, viewArgs(resolution));
+  const view = await runCli(resolution, viewArgs(resolution));
   if (view.timedOut) throw new FetchError('timeout', `${cli.name} did not answer within ${timeoutMs()} ms`);
   if (view.missing) throw new FetchError('no-cli', `${cli.name} disappeared between the sign-in check and the fetch`);
   if (!view.ok) {
     const message = firstLine(view.stderr);
     throw new FetchError(NOT_FOUND.test(view.stderr) ? 'not-found' : 'cli-failed', `${cli.name}: ${message}`);
   }
+  let ticket;
   try {
-    return normalize(resolution.provider, view.stdout);
+    ticket = normalize(resolution.provider, view.stdout);
   } catch (err) {
     throw new FetchError('cli-failed', `${cli.name} printed output that is not the expected JSON: ${err.message}`);
   }
+  // gh issue view answers for a pull-request number too; that is not a ticket.
+  if (resolution.provider === 'github' && /\/pull\/\d+/.test(ticket.url)) {
+    throw new FetchError('not-found', `${resolution.path}#${resolution.number} is a pull request, not an issue`);
+  }
+  return ticket;
 }
 
 const BEGIN = '<!-- ultrapowers:ticket-begin -->';
 const END = '<!-- ultrapowers:ticket-end -->';
 const BODY_LIMIT = 64 * 1024;
 
-// A line that reads as either marker is escaped, so ticket text cannot close
-// the quote and pass itself off as the file's own words.
+// Every comment opener in ticket text is escaped, so no variant of a marker
+// can close the quote and pass ticket text off as the file's own words.
 function escapeMarkers(text) {
-  return text.split('\n').map((line) => {
-    const t = line.trim();
-    return t === BEGIN || t === END ? line.replace('<!--', '&lt;!--') : line;
-  }).join('\n');
+  return text.replaceAll('<!--', '&lt;!--');
 }
 
 // Cut at a whole UTF-8 character at or below the limit.
@@ -241,6 +247,10 @@ function parseArgs(argv) {
 export async function main(argv) {
   try {
     const opts = parseArgs(argv);
+    // Whatever the project's ticketPattern allows, an id never names another path.
+    if (/[/\\]|\.\./.test(opts.id)) {
+      throw new FetchError('bad-ticket', `${opts.id} names a path; a ticket id holds no "/", "\\" or ".."`);
+    }
     const root = opts.root ? path.resolve(opts.root) : findRoot(process.cwd());
     if (opts.root && !fs.existsSync(path.join(root, MARKER))) {
       throw new FetchError('no-marker', `no ${MARKER.replace(/\\/g, '/')} in ${root}`);

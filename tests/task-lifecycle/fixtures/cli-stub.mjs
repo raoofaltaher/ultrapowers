@@ -9,6 +9,8 @@ import fs from 'node:fs';
 
 const args = process.argv.slice(2);
 if (process.env.STUB_LOG) fs.appendFileSync(process.env.STUB_LOG, `${JSON.stringify(args)}\n`);
+// STUB_ENV_LOG receives the GITLAB_HOST each call saw.
+if (process.env.STUB_ENV_LOG) fs.appendFileSync(process.env.STUB_ENV_LOG, `${process.env.GITLAB_HOST ?? ''}\n`);
 
 if (args[0] === 'auth') process.exit(Number(process.env.STUB_AUTH_EXIT ?? 0));
 
