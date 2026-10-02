@@ -47,6 +47,7 @@
   ],
   "audit": {
     "exclude": [
+      "LICENSE",
       "RELEASE-NOTES.md",
       "node_modules",
       "INSTALL.md",

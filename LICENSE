@@ -1,22 +1,126 @@
-MIT License
+Ultrapowers Proprietary Use License
 
-Copyright (c) 2026 RAOOF A.
-Copyright (c) 2025 Jesse Vincent
+Copyright (c) 2026 RAOOF ALTAHER. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This repository, the Ultrapowers plugin and every file in them, including
+skills, agents, hooks, scripts, templates, tests, documentation and assets
+(together, the "Software"), are owned exclusively by RAOOF ALTAHER (the
+"Owner"), except for the third-party portions described in section 7. The
+source code is published for transparency only. Publication does not place
+the Software in the public domain and does not grant any open-source license.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. Grant of use
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+   Subject to the terms of this license, the Owner grants you a personal,
+   worldwide, non-exclusive, non-transferable, non-sublicensable, revocable,
+   free-of-charge permission to:
+
+   a. install the Software into an AI agent or AI coding tool that you use,
+      through that tool's plugin, extension or marketplace installation
+      mechanism; and
+
+   b. run and use the installed Software in that tool, for your own work or
+      for the internal work of the organization that employs or engages you.
+
+   Copies that the installation or update mechanism makes automatically, and
+   that are kept only for running the Software, are permitted. Files that the
+   Software writes into your own projects when you run it, such as the project
+   scaffold, are yours to use in those projects. No other right is granted,
+   whether by implication, estoppel or otherwise.
+
+2. Restrictions
+
+   Except as expressly permitted in section 1, you may not, and may not allow
+   anyone else to:
+
+   a. copy, clone, download, mirror or archive the Software or any part of it;
+   b. modify, adapt, translate or create derivative works of the Software,
+      including skills, agents, prompts or other works based on its content;
+   c. distribute, publish, republish, share, sublicense, rent, lease or lend
+      the Software or any part of it;
+   d. sell, resell or otherwise commercialize the Software, including offering
+      it, or a service substantially based on it, to third parties;
+   e. include the Software or any part of it in another product, plugin,
+      marketplace, template, dataset or repository;
+   f. use the Software or its content to train, fine-tune or evaluate a
+      machine learning model, other than running it as an installed plugin;
+   g. remove, alter or obscure this license or any copyright notice; or
+   h. fork the repository, except for the fork that GitHub's terms of service
+      permit within GitHub itself, which may not be used for any purpose other
+      than viewing.
+
+3. Feedback
+
+   You may open issues and take part in discussions in the official
+   repository. Any idea, suggestion or report you submit there may be used by
+   the Owner freely, without obligation or compensation to you, and creates no
+   ownership interest for you in the Software. Pull requests and other code
+   contributions are not accepted from anyone other than the Owner.
+
+4. Ownership
+
+   The Owner retains all right, title and interest in and to the Software,
+   including all intellectual property rights, except for the third-party
+   portions described in section 7. Every right not expressly granted in this
+   license is reserved by the Owner.
+
+5. Termination
+
+   This license terminates automatically if you breach any of its terms. The
+   Owner may also revoke it at any time. On termination you must stop using
+   the Software and uninstall and delete every copy in your possession.
+
+6. Earlier versions
+
+   Versions of the Software released before this license was adopted, up to
+   and including v1.0.1, were released under the MIT License, and copies of
+   those versions remain under it. This license governs every later version.
+
+7. Third-party portions
+
+   The Software is a fork of a skills library by Jesse Vincent, cut from its
+   version 6.4.2 and released under the MIT License. The portions of the
+   Software that come from that library remain under the MIT License, and
+   nothing in this license limits the rights the MIT License grants in those
+   portions. Its copyright and permission notice is reproduced here, as that
+   license requires:
+
+      Copyright (c) 2025 Jesse Vincent
+
+      Permission is hereby granted, free of charge, to any person obtaining a
+      copy of this software and associated documentation files (the
+      "Software"), to deal in the Software without restriction, including
+      without limitation the rights to use, copy, modify, merge, publish,
+      distribute, sublicense, and/or sell copies of the Software, and to
+      permit persons to whom the Software is furnished to do so, subject to
+      the following conditions:
+
+      The above copyright notice and this permission notice shall be included
+      in all copies or substantial portions of the Software.
+
+      THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+      OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+      MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+      IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+      CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+      TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+      SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+8. Disclaimer of warranty
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. THE SOFTWARE DIRECTS
+   AI AGENTS THAT READ AND CHANGE CODE; EVERY CHANGE YOU ACCEPT IS YOURS.
+
+9. Limitation of liability
+
+   IN NO EVENT SHALL THE OWNER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+   FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OF OR OTHER
+   DEALINGS IN THE SOFTWARE.
+
+10. Permissions
+
+   For any use not permitted by this license, request written permission from
+   the Owner through https://github.com/raoofaltaher.

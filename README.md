@@ -372,8 +372,8 @@ Found a bug? [Open an issue](https://github.com/raoofaltaher/ultrapowers/issues/
 
 ## Contributing
 
-Read `AGENTS.md` first: it describes the repository layout, the zero-dependency rule, how to run each test suite, and how skill changes are developed and tested with `ultrapowers:writing-skills`. Skill bodies are behavior-shaping content; change them with evidence, not taste.
+Pull requests are not accepted. Report bugs and request features through issues, and ask questions in Discussions. See [CONTRIBUTING.md](./CONTRIBUTING.md). This project follows the [Contributor Covenant](./CODE_OF_CONDUCT.md).
 
 ## License
 
-MIT License - see [LICENSE](./LICENSE) file for details.
+Proprietary, source-available. Copyright (c) 2026 RAOOF ALTAHER. All rights reserved. You may install the plugin in your AI agent or coding tool and use it there; you may not copy, modify, redistribute or sell it. See [LICENSE](./LICENSE). Releases published before this license were under the MIT License and stay under it; section 6 of the license sets the cutoff. The portions that come from the upstream library keep their MIT License; section 7 of the license reproduces its notice.

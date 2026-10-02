@@ -1,4 +1,7 @@
 <!--
+Pull requests are accepted from the repository owner only; see LICENSE and
+CONTRIBUTING.md. Others: open an issue instead.
+
 BEFORE SUBMITTING: fill in every section with specifics. PRs that leave
 sections blank, bundle unrelated changes, or show no human review are
 closed without review. One concern per PR.
