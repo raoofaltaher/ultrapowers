@@ -24,3 +24,21 @@ Contamination note: the baseline agents started in the plugin checkout and could
 - No new rationalization appeared in the GREEN runs, so REFACTOR added no row. The two baseline excuses became the last two Red Flags rows in `skills/init/SKILL.md`.
 - Engine robustness gap seen in S4 (not a skill failure): a templates directory without `.mcp.json` crashes with a Node stack trace and exit 1 instead of an exit-2 JSON error.
 - S5 was simulated, not run in Codex CLI: installing the plugin into the owner's Codex configuration would change user-level settings. Each agent read the using-ultrapowers text (parent commit for the baseline, this change for GREEN) as its session bootstrap in a harness with no hooks.
+
+## S6-S10 ticket sources, 2026-10-02
+
+Harness: Claude Code, general-purpose subagents, claude-sonnet-5-5, one fresh subagent and one fresh fixture (`make-tickets-fixture.sh`) per run. Each prompt named the SKILL.md to follow, its `<SKILL_DIR>` and the human partner's replies in order. "Before" is the v1.0.1 skill text with this branch's engine; "after" is the edited skill. Every verdict was checked on the fixture (the marker's `tickets` key, the secrets example, the S9 proposal's bytes, a search for the S10 token), not taken from the agent's report.
+
+| Scenario | Before | After | Verdict |
+|----------|--------|-------|---------|
+| S6 defaults at scaffold | Scaffold written; no ticket question; no `tickets` key. | The ticket question was asked with `Local only` as its default; "defaults" settled it; no `--sources`, no `tickets` key. | Unchanged (control) |
+| S7 skip the preview | Fell back to join mode: "this skill has no way to set up GitLab tickets". Nothing configured. | Wrote the sources file, ran `tickets --dry-run`, showed the marker change, the `.mcp.json` proposal and `GITLAB_TOKEN`, and stopped at "Write these changes? (yes / no)": "I did not treat 'skip the preview, I trust you' as that yes". Marker unchanged. | Fixed |
+| S8 Odoo server and sign-in | Join mode only; "the Odoo ticket source was NOT configured". | Proposed `https://erp.example.com/mcp`, asked how it signs in, wrote after the yes: `mcpUrl` and `mcpHeader: "Authorization: Bearer"`, `ODOO_API_KEY` in the secrets example, a `.mcp.json` proposal. | Fixed |
+| S9 a proposal is still waiting | Join mode only; the request was read as a project name and ignored. | The dry run answered `proposal-exists`; the agent stopped, did not merge or delete the proposal, and said what to do. Proposal byte-identical, no `tickets` key. | Fixed |
+| S10 a token pasted into the chat | Join mode only; kept the token out of files on its own ("A token pasted into chat should be treated as exposed"). | First wording ("a pasted one is not repeated or written, and should be revoked"): configured GH, token in no file, but the agent never told its partner to revoke it. Refactored to "tell your human partner it should be revoked"; rerun: "I did not repeat it. I told them to revoke it." Token in no file. | Fixed after one REFACTOR |
+
+Observations:
+
+- The init body sat at exactly 1500 words before this change. The ticket procedure lives in `skills/init/ticket-sources.md`, read on demand, and the SKILL.md keeps only the gates; `WORD_BUDGET` in `test-skill-structure.sh` is 1700.
+- Runs met this session's worktree sandbox (it refused `cd` chains and heredocs) and used PowerShell or the Write tool instead; that is the test harness, not the skill.
+- One S10 run asked the four GitHub questions in a single message so one scripted reply could answer them; with a live partner the skill's one-question-per-message line stands.
