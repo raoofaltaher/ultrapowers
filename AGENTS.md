@@ -12,7 +12,8 @@ Ultrapowers is a skills plugin for coding agents: a `skills/` library, a session
 |---|---|
 | `skills/<name>/SKILL.md` | One skill per directory. Frontmatter `name` must equal the directory name. Supporting prompts, templates and references live beside it. |
 | `skills/using-ultrapowers/` | The bootstrap skill injected at session start on every harness; `references/<harness>-tools.md` holds per-harness tool mappings. |
-| `skills/init/scripts/init.mjs` | The scaffold engine behind `ultrapowers:init` (scaffold, join, upgrade and repair modes). It renders `templates/` and never overwrites a file. |
+| `skills/init/scripts/init.mjs` | The scaffold engine behind `ultrapowers:init` (scaffold, join, upgrade and repair modes, and `tickets` for ticket sources). It renders `templates/` and never overwrites a file. |
+| `skills/new-task/scripts/` | `scaffold-task.sh` and `ticket-lib.sh` (ticket folders, shared with brainstorm-task and task); `ticket-sources.mjs` and `fetch-ticket.mjs` (ticket ids, and fetching a ticket through `gh`, `glab` or the source's MCP server). |
 | `templates/` | The project payload init writes: `AGENTS.md` and its importers, the knowledge-base folder READMEs, MCP and harness settings, the repo-hygiene blocks (`_blocks/`), the team-memory store and `qa/known-issues.md`. `CHANGES.json` records the plugin version in which each target last changed, for upgrade mode. |
 | `agents/` | `qa-specialist.md`: the QA gatekeeper's contract, the agent the `qa-specialist` skill forks into (or reads inline). |
 | `output-styles/` | `ste-explanatory.md`: the Claude Code output style init copies into a project. |
@@ -30,7 +31,7 @@ Ultrapowers is a skills plugin for coding agents: a `skills/` library, a session
 2. **Skill bodies are code.** The prose in `skills/*/SKILL.md` shapes agent behavior and was tuned against real sessions. Do not restructure, reword or "modernise" it without evidence from real sessions that the change is an improvement. Red Flags tables, rationalization lists and the phrase "your human partner" are deliberate.
 3. **Skill changes go through `ultrapowers:writing-skills`.** Use that skill to develop and test any new or changed skill. Test with subagents under pressure, not just on the happy path, and keep the before/after evidence with the change.
 4. **Names.** The plugin, marketplace and skill namespace are `ultrapowers`; skills are invoked as `ultrapowers:<skill>`. The runtime folder is `.ultrapowers/`; environment variables are `ULTRAPOWERS_*`. Do not introduce a second vocabulary.
-5. **No telemetry.** Nothing in this repository fetches from or reports to a remote host at runtime. The brainstorm companion serves its own logo.
+5. **No telemetry.** Nothing in this repository reports on its users, their projects or their usage to anyone. The plugin's own code opens no network connection; the brainstorm companion serves its own logo. When a skill needs the network for the user's task, such as `new-task` reading a ticket, it goes through a tool the user installed and authenticated (a CLI or an MCP server) to a host the user named in `.agents/ultrapowers.json`.
 6. **Versions.** Change the version only with `scripts/bump-version.sh <x.y.z>`, which needs `jq` and mikefarah `yq`. `scripts/bump-version.sh --audit` must end with "All clear". The `#v<version>` install pins in `.opencode/INSTALL.md` and `docs/README.opencode.md` are prose, so update them by hand when you bump, and add the release to `RELEASE-NOTES.md`. The README's release badge reads the latest GitHub release, so it updates itself once the `v<version>` release is published.
 7. **Line endings.** Shell scripts, the extensionless helpers under `skills/*/scripts/`, `hooks/session-start` and `*.cmd` are pinned to LF in `.gitattributes`. Keep them that way; a CRLF checkout breaks them in bash.
 8. **Commits.** Small, one concern each, with a message that says what changed and why.
@@ -50,6 +51,8 @@ bash tests/team-memory/test-templates.sh
 bash tests/team-memory/test-skill-structure.sh
 bash tests/team-memory/test-precommit-lint.sh
 bash tests/task-lifecycle/test-task-lifecycle.sh
+node --test tests/task-lifecycle/ticket-sources.test.mjs
+node --test tests/task-lifecycle/fetch-ticket.test.mjs
 bash tests/qa-gatekeeper/run-tests.sh
 bash tests/skills/test-skill-bodies.sh
 node --test tests/pi/test-pi-extension.mjs
