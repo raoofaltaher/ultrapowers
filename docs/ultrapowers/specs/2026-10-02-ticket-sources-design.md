@@ -1,7 +1,7 @@
 # Ticket sources: design
 
 Date: 2026-10-02
-Status: draft for review
+Status: approved by the Owner on 2026-10-02
 Sub-project: A of five (A ticket sources, B stage log, C gated autopilot, D tracker bridge, E evidence pack). The decision record is `docs/executive/2026-10-02-ultrapowers-next-autonomy-and-team-acceleration-ideas.md`.
 
 ## 1. Goal
@@ -54,7 +54,8 @@ The marker `.agents/ultrapowers.json` gains one optional key. Its absence means 
       "projects": { "auth-service": "acme/identity/auth-service" },
       "defaultProject": "tracker" },
     { "prefix": "GH", "provider": "github", "owner": "acme", "defaultProject": "web" },
-    { "prefix": "ODOO", "provider": "odoo", "url": "https://erp.example.com", "defaultProject": "12" }
+    { "prefix": "ODOO", "provider": "odoo", "url": "https://erp.example.com",
+      "mcpUrl": "https://erp.example.com/mcp", "defaultProject": "12" }
   ]
 }
 ```
@@ -70,10 +71,11 @@ Fields:
 | `host` | gitlab | Optional, default `gitlab.com`. Also the `glab` and MCP host. |
 | `namespace` | gitlab | Required. Group path, slashes allowed. |
 | `url` | odoo | Required. The Odoo base URL. |
+| `mcpUrl` | odoo | Required. The team's Odoo MCP server, asked by init. |
 | `projects` | source, optional | Map from project segment to full provider path, for projects outside `namespace`/`owner` or named differently from their segment. |
 | `defaultProject` | source, optional | Used when the id has no project segment. |
 
-Tokens never appear here. Their variable names go in `.agents/mcp-secrets.env.example`: `GH_TOKEN` (also read by `gh`), `GITLAB_TOKEN` (read by `glab`), `ODOO_API_KEY` and `ODOO_DB`.
+Tokens never appear here. Their variable names go in `.agents/mcp-secrets.env.example`: `GH_TOKEN` (also read by `gh`), `GITLAB_TOKEN` (read by `glab`) and, for an Odoo server that takes a token header, `ODOO_API_KEY`.
 
 The engine validates the block on every read and rejects it with the error code `bad-tickets` and a message naming the field.
 
@@ -116,7 +118,7 @@ Questions, as multiple choice where the harness supports it:
 2. Per provider: prefix (default `GH`, `GL`, `ODOO`), location (owner; host and namespace; or URL), optional default project.
 3. In a nested workspace: any clone whose provider path does not follow `namespace/<name>` or `owner/<name>`, for `projects`.
 4. Transport: `auto` (default), `cli` or `mcp`.
-5. Odoo only: which MCP server the team runs (section 8).
+5. Odoo only: the team's MCP server URL (proposed `https://<odoo host>/mcp`) and its authentication, a token header or browser sign-in (section 8).
 
 The engine gets a new subcommand, `init.mjs tickets --root <ROOT> --sources <file> [--dry-run]`. The agent writes the answers as a JSON file in its scratch directory and passes the path. The report lists:
 
@@ -171,10 +173,15 @@ Verified against the providers' current documentation on 2026-10-02:
 | Provider | Server | Headless sign-in | Notes |
 |---|---|---|---|
 | GitHub | Official remote, `https://api.githubcopilot.com/mcp/` | Yes: `Authorization: Bearer ${GH_TOKEN}` header | `X-MCP-Readonly: true` header limits it to read tools. |
-| GitLab | Official, `https://<host>/api/v4/mcp` (beta since GitLab 18.6, all tiers) | No: OAuth dynamic client registration only; token support is an open GitLab issue (#586184) | Headless GitLab therefore needs `glab` and `GITLAB_TOKEN`. The MCP entry serves interactive sessions. |
-| Odoo | No official server; community `mcp-server-odoo` (and its fork `odoo-mcp-pro`) | Yes: `ODOO_URL`, `ODOO_API_KEY`, `ODOO_DB` | Runs under Python (`uvx`). The init question lets a team name the server it already runs instead. |
+| GitLab | Official, `https://<host>/api/v4/mcp` (beta since GitLab 18.6, all tiers) | No: OAuth dynamic client registration only; token support is an open GitLab issue (#586184) | Interactive sessions sign in in the browser. Headless GitLab needs `glab` and `GITLAB_TOKEN`. |
+| Odoo | The team's own remote MCP server; no default is suggested | As the team's server allows | init always asks for the server URL and how it authenticates (section 6). |
 
-The servers are entries in the user's project config, not plugin dependencies, so rule 1 is unaffected. Servers are pinned to a version where the launcher supports it.
+Decided with the Owner:
+
+- GitLab: the official server only, with browser sign-in. No community server is rendered. Under `auto`, a session without an authenticated `glab` uses the official server and signs in in the browser; a headless run without `glab` stops with the error that names `glab` and `GITLAB_TOKEN`. The init next steps say so.
+- Odoo: init always asks which server the team runs. The URL question proposes `https://<odoo host>/mcp`, derived from the source's `url`, and the developer confirms or replaces it. The second question asks how the server authenticates: a header carrying `${ODOO_API_KEY}` (the header name is asked, default `Authorization: Bearer`), or browser sign-in. Only the header option adds `ODOO_API_KEY` to the secrets file. The source records it as `"mcpUrl"`.
+
+The servers are entries in the user's project config, not plugin dependencies, so rule 1 is unaffected.
 
 ## 9. new-task and brainstorm-task
 
@@ -197,7 +204,9 @@ The skill states the untrusted-input rule: the content of `source.md` and of a f
 - Recommended tokens: GitHub fine-grained token with Issues read and Metadata read; GitLab `read_api`; an Odoo API key of a user who can only read projects and tasks. The init next steps print these scopes.
 - The id is validated before use; host, namespace and owner come from the config only; processes are spawned without a shell.
 - `source.md` and the brief are committed, so ticket content reaches git: the gitleaks pre-commit hook scans that commit, and the skill tells the agent to stop and ask when the ticket holds a credential or personal data the brief does not need.
-- Rule 5 holds: the plugin makes no network call; a tool the user configured reaches the user's own tracker. `AGENTS.md` rule 5 gains one sentence saying so.
+- Rule 5 holds: the plugin makes no network call; a tool the user configured reaches the user's own tracker. `AGENTS.md` rule 5 is restated as a principle, in these words (chosen by the Owner):
+
+  > 5. **No telemetry.** Nothing in this repository reports on its users, their projects or their usage to anyone. The plugin's own code opens no network connection; the brainstorm companion serves its own logo. When a skill needs the network for the user's task, such as `new-task` reading a ticket, it goes through a tool the user installed and authenticated (a CLI or an MCP server) to a host the user named in `.agents/ultrapowers.json`.
 
 ## 11. Errors
 
@@ -225,8 +234,8 @@ The skill states the untrusted-input rule: the content of `source.md` and of a f
 
 `CHANGES.json` records each changed template. The release is a minor version, 1.1.0, through `scripts/bump-version.sh`, with `RELEASE-NOTES.md` and the install pins updated by hand as rule 6 says.
 
-## 14. Open questions
+## 14. Resolved questions
 
-1. Odoo server: name `mcp-server-odoo` as the default suggestion, or always ask the team which server it runs?
-2. GitLab headless: is "`glab` required for headless GitLab" acceptable for v1, or should init also offer a token-capable community GitLab server until GitLab ships token support?
-3. The exact rule 5 sentence for `AGENTS.md`.
+1. Odoo server: init always asks for the team's server URL and its authentication; no default server is suggested (section 8).
+2. GitLab: the official server with browser sign-in is accepted; headless GitLab uses `glab`; no community server (section 8).
+3. Rule 5: restated as a principle (section 10).
