@@ -6,6 +6,18 @@
   <a href="https://github.com/raoofaltaher/ultrapowers/releases/latest"><img src="https://img.shields.io/github/v/release/raoofaltaher/ultrapowers?style=for-the-badge&label=release&color=8e09fa&labelColor=2d0789&cacheSeconds=300" alt="Latest release" height="40"></a>
 </p>
 
+<p align="center">
+  🙏 <a href="https://github.com/raoofaltaher/ultrapowers/discussions/new?category=q-a">Ask a question</a>
+  &nbsp;·&nbsp;
+  💡 <a href="https://github.com/raoofaltaher/ultrapowers/discussions/new?category=ideas">Suggest an idea</a>
+  &nbsp;·&nbsp;
+  🙌 <a href="https://github.com/raoofaltaher/ultrapowers/discussions/new?category=show-and-tell">Show what you built</a>
+  &nbsp;·&nbsp;
+  🐛 <a href="https://github.com/raoofaltaher/ultrapowers/issues/new/choose">Report a bug</a>
+  &nbsp;·&nbsp;
+  💬 <a href="https://github.com/raoofaltaher/ultrapowers/discussions">Join the discussion</a>
+</p>
+
 # Ultrapowers
 
 Ultrapowers is a complete software development methodology for your coding agents, built on a set of composable skills and a session-start bootstrap that makes sure your agent uses them.
@@ -42,6 +54,7 @@ Ultrapowers is a fork of Jesse Vincent's MIT-licensed skills library, cut from i
     - [Skills Library](#skills-library)
     - [Agents and Output Styles](#agents-and-output-styles)
   - [Philosophy](#philosophy)
+  - [Community](#community)
   - [Contributing](#contributing)
   - [License](#license)
 
@@ -345,6 +358,17 @@ Everything above the original methodology, built from real daily work across man
 - **One ticket, one trail** - Brief, spec, plan and review share the ticket id
 - **Memory belongs to the team** - What one agent learns, every developer and every agent can reuse, in git
 - **Quality is a gate** - A tester's eye on the running app, and one verdict per ticket
+
+## Community
+
+Questions, ideas and feedback are welcome in [Discussions](https://github.com/raoofaltaher/ultrapowers/discussions):
+
+- **[Q&A](https://github.com/raoofaltaher/ultrapowers/discussions/categories/q-a)** - Ask for help with setup or with a skill
+- **[Ideas](https://github.com/raoofaltaher/ultrapowers/discussions/categories/ideas)** - Suggest a new skill, harness or feature
+- **[Show and tell](https://github.com/raoofaltaher/ultrapowers/discussions/categories/show-and-tell)** - Share what you built with ultrapowers
+- **[Announcements](https://github.com/raoofaltaher/ultrapowers/discussions/categories/announcements)** - Release news from the maintainers
+
+Found a bug? [Open an issue](https://github.com/raoofaltaher/ultrapowers/issues/new/choose) with the bug report template.
 
 ## Contributing
 

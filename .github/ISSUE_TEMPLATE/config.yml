@@ -1,1 +1,8 @@
 blank_issues_enabled: false
+contact_links:
+  - name: Ask a question
+    url: https://github.com/raoofaltaher/ultrapowers/discussions/categories/q-a
+    about: For how-to questions and help with setup, use Q&A in Discussions instead of opening an issue.
+  - name: Share an idea
+    url: https://github.com/raoofaltaher/ultrapowers/discussions/categories/ideas
+    about: Not sure an idea is ready for a feature request? Start it in Ideas first.
