@@ -72,6 +72,7 @@ Fields:
 | `namespace` | gitlab | Required. Group path, slashes allowed. |
 | `url` | odoo | Required. The Odoo base URL. |
 | `mcpUrl` | odoo | Required. The team's Odoo MCP server, asked by init. |
+| `mcpHeader` | odoo, optional | The token header as `Name` or `Name: Scheme`, for example `Authorization: Bearer`. Absent means browser sign-in. |
 | `projects` | source, optional | Map from project segment to full provider path, for projects outside `namespace`/`owner` or named differently from their segment. |
 | `defaultProject` | source, optional | Used when the id has no project segment. |
 
@@ -122,7 +123,7 @@ Questions, as multiple choice where the harness supports it:
 
 The engine gets a new subcommand, `init.mjs tickets --root <ROOT> --sources <file> [--dry-run]`. The agent writes the answers as a JSON file in its scratch directory and passes the path. The report lists:
 
-- `marker`: the `tickets` block before and after. Only that key changes; every other key and its formatting stay byte-identical, through the existing `saveMarker`.
+- `marker`: the `tickets` block before and after. Only that key changes and every other key keeps its value. The file is written through the existing `saveMarker`, which normalizes the layout to two-space JSON, as `join` and `upgrade` already do.
 - `mcp`: for `auto` or `mcp`, each harness MCP file the chosen providers' servers go into. A file that does not exist yet is created. An existing file gets a `<path>.ultrapowers-new` proposal beside it, merged with the human partner as in upgrade mode. The engine never overwrites.
 - `secrets`: the variable names added to `.agents/mcp-secrets.env.example`, created if missing.
 
@@ -180,6 +181,8 @@ Decided with the Owner:
 
 - GitLab: the official server only, with browser sign-in. No community server is rendered. Under `auto`, a session without an authenticated `glab` uses the official server and signs in in the browser; a headless run without `glab` stops with the error that names `glab` and `GITLAB_TOKEN`. The init next steps say so.
 - Odoo: init always asks which server the team runs. The URL question proposes `https://<odoo host>/mcp`, derived from the source's `url`, and the developer confirms or replaces it. The second question asks how the server authenticates: a header carrying `${ODOO_API_KEY}` (the header name is asked, default `Authorization: Bearer`), or browser sign-in. Only the header option adds `ODOO_API_KEY` to the secrets file. The source records it as `"mcpUrl"`.
+
+Each source's server is named `tickets-<prefix in lower case>` (for example `tickets-gl`), so the skill can name the exact MCP tools to use. A source with `transport: cli` gets no server; Odoo always gets one.
 
 The servers are entries in the user's project config, not plugin dependencies, so rule 1 is unaffected.
 
