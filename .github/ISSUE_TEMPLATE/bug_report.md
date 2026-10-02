@@ -1,30 +1,27 @@
 ---
-name: Bug Report
-about: Something isn't working as expected
+name: Bug report
+about: A skill, the session bootstrap, a hook, init or a harness adapter did not behave as documented
 labels: bug
 ---
 
-## Environment
+- [ ] I searched open and closed issues and this is not a duplicate
+
+## Environment (required)
 
 | Field | Value |
 |-------|-------|
-| Ultrapowers version | |
-| Harness and version | |
+| Ultrapowers version (`.claude-plugin/plugin.json`) | |
+| Harness and version (e.g. `claude --version`) | |
 | Model | |
-| OS and shell | |
+| Operating system and shell | |
+| Installed from (`main` / `dev` / local folder) | |
+| Other plugins installed | |
 
-## What happened
+## What did you run?
+<!-- The exact message or command, e.g. `Let's make a react todo list` or `/ultrapowers:init`, and whether `.agents/ultrapowers.json` exists in the project -->
 
-<!-- Be specific. Include the exact error text if there is one. -->
+## What happened?
+<!-- Quote the relevant part of the transcript. Remove anything confidential. For bootstrap problems, paste the output of `bash hooks/session-start` run from the plugin folder. The ultrapowers:diagnosing-ultrapowers skill can build a scrubbed bundle for you. -->
 
-## Steps to reproduce
-
-1.
-2.
-3.
-
-## Expected behavior
-
-## Transcript or log
-
-<!-- A session transcript or debug log is the most useful thing you can attach. The diagnosing-ultrapowers skill can build a scrubbed bundle for you. -->
+## What did you expect?
+<!-- Point to the rule in skills/<name>/SKILL.md, skills/using-ultrapowers/SKILL.md or AGENTS.md that was not followed, if you can. -->
