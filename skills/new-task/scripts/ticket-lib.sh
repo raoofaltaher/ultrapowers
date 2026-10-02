@@ -165,6 +165,16 @@ select_by_branch() { # $1=root $2=id -> repo names on a ticket branch
   done
 }
 
+select_by_brief() { # $1=root $2=id -> the repo a fetched ticket's brief names in "- Repository: <name>", when configured
+  brief="$1/tasks/$2/$2.md"
+  [ -f "$brief" ] || return 0
+  want=$(sed -n 's/^- Repository: *\([^[:space:]][^[:space:]]*\)[[:space:]]*$/\1/p' "$brief" | head -n 1)
+  [ -n "$want" ] || return 0
+  config_repos "$1" | cut -f1 | while IFS= read -r n; do
+    if [ "$n" = "$want" ]; then printf '%s\n' "$n"; fi
+  done
+}
+
 select_by_focus() { # $1=root $2...=focus words -> repo names whose name or area equals a word
   root=$1
   shift

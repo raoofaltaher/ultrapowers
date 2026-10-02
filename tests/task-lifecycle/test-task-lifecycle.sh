@@ -494,6 +494,40 @@ test_brainstorm_task() {
         echo "    out: $out"
     fi
 
+    # A fetched ticket's brief names its repository (ticket sources, spec section 9).
+    printf -- '- Repository: web\n' >> "$proj/tasks/1234/1234.md"
+    out="$(cd "$proj" && bash "$PREFLIGHT" 1234)"
+    if [[ "$out" == *"SELECTED-BY-TICKET: web"* && "$out" != *"ASK:"* ]]; then
+        pass "the brief's Repository line selects that repo"
+    else
+        fail "the brief's Repository line selects that repo"
+        echo "    out: $out"
+    fi
+    out="$(cd "$proj" && bash "$PREFLIGHT" 1234 backend)"
+    if [[ "$out" == *"SELECTED-BY-FOCUS (backend): api"* && "$out" != *"SELECTED-BY-TICKET"* ]]; then
+        pass "focus words win over the brief's Repository line"
+    else
+        fail "focus words win over the brief's Repository line"
+        echo "    out: $out"
+    fi
+    git -C "$proj" checkout -q -- "tasks/1234/1234.md"
+    printf -- '- Repository: ghost\n' >> "$proj/tasks/1234/1234.md"
+    out="$(cd "$proj" && bash "$PREFLIGHT" 1234)"
+    if [[ "$out" == *"ASK:"* && "$out" != *"SELECTED-BY"* ]]; then
+        pass "a Repository line naming no configured repo falls through"
+    else
+        fail "a Repository line naming no configured repo falls through"
+        echo "    out: $out"
+    fi
+    git -C "$proj" checkout -q -- "tasks/1234/1234.md"
+    out="$(cd "$proj" && sh -c '. "$1"; select_by_brief "$2" 1234' sh "$LIB" "$proj")"
+    if [[ -z "$out" ]]; then
+        pass "select_by_brief prints nothing for a brief without a Repository line"
+    else
+        fail "select_by_brief prints nothing for a brief without a Repository line"
+        echo "    out: $out"
+    fi
+
     git -C "$proj/web" checkout -q -b 12345-other
     git -C "$proj/api" checkout -q -b feature/1234-thing
     out="$(cd "$proj" && bash "$PREFLIGHT" 1234)"
