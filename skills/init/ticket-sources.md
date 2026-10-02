@@ -10,7 +10,7 @@ One question per message; use multiple choice where the harness has it.
 2. Per provider: its prefix (default `GH`, `GL`, `ODOO`); where its tickets live (GitHub owner; GitLab host, default `gitlab.com`, and group path; Odoo URL); a default project, optional.
 3. Only when `repos` is not empty: any clone whose provider path is not `<owner or group>/<clone name>`, for `projects`.
 4. Transport: `auto` (default: the CLI when installed and signed in, else the MCP server), `cli` or `mcp`.
-5. Odoo only, always: the team's MCP server URL. Propose `https://<Odoo host>/mcp` from its URL and let your human partner confirm or replace it. Then how it signs in: a token header (ask its name, default `Authorization: Bearer`) or browser sign-in.
+5. Odoo only, always: the team's MCP server URL. Propose `https://<Odoo host>/mcp` from its URL and let your human partner confirm or replace it. Then how it signs in: a token header (`Authorization: Bearer`, the default, or a header that carries the key alone, such as `X-Api-Key`) or browser sign-in.
 
 ## The sources file
 
