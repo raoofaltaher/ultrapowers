@@ -4,6 +4,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { effectiveTransport, serverId as ticketServerId, validateTickets } from '../../new-task/scripts/ticket-sources.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const PLUGIN_ROOT = path.resolve(SCRIPT_DIR, '..', '..', '..');
@@ -17,7 +18,8 @@ export const BLOCK_START = '# >>> ultrapowers';
 export const BLOCK_END = '# <<< ultrapowers';
 const SPECIAL_DIRS = new Set(['_blocks', '_nested']);
 const NON_TEMPLATE_FILES = new Set(['.mcp.json', 'CHANGES.json']);
-const MODES = ['scaffold', 'join', 'upgrade', 'detect'];
+const MODES = ['scaffold', 'join', 'upgrade', 'detect', 'tickets'];
+const SECRETS_EXAMPLE = '.agents/mcp-secrets.env.example';
 
 export const ALL_HARNESSES = [
   'claude-code', 'codex', 'cursor', 'copilot', 'gemini', 'qwen', 'opencode',
@@ -280,6 +282,8 @@ export function parseArgs(argv) {
     dryRun: false,
     date: new Date().toISOString().slice(0, 10),
     platform: process.platform,
+    sources: null,
+    tickets: null,
   };
   if (!MODES.includes(opts.mode)) {
     throw new InitError('bad-args', `mode must be one of ${MODES.join(', ')}`);
@@ -301,6 +305,7 @@ export function parseArgs(argv) {
       case '--dry-run': opts.dryRun = true; break;
       case '--date': opts.date = value(); break;
       case '--platform': opts.platform = value(); break;
+      case '--sources': opts.sources = path.resolve(value()); break;
       default: throw new InitError('bad-args', `unknown argument ${arg}`);
     }
   }
@@ -466,8 +471,54 @@ export function loadCanonicalMcp() {
   return { servers: canonical.mcpServers ?? {} };
 }
 
-export function generateMcpFiles(harnesses) {
-  const { servers } = loadCanonicalMcp();
+// One http server per ticket source, in the canonical .mcp.json shape
+// (spec docs/ultrapowers/specs/2026-10-02-ticket-sources-design.md, section 8).
+// A source whose transport is cli gets none; Odoo always gets one.
+export function ticketServers(tickets) {
+  const servers = {};
+  for (const source of tickets?.sources ?? []) {
+    if (effectiveTransport(tickets, source) === 'cli') continue;
+    const id = ticketServerId(source.prefix);
+    if (source.provider === 'github') {
+      servers[id] = {
+        type: 'http',
+        url: 'https://api.githubcopilot.com/mcp/',
+        headers: { Authorization: 'Bearer ${GH_TOKEN}', 'X-MCP-Readonly': 'true' },
+      };
+    } else if (source.provider === 'gitlab') {
+      servers[id] = { type: 'http', url: `https://${source.host ?? 'gitlab.com'}/api/v4/mcp` };
+    } else if (source.provider === 'odoo') {
+      servers[id] = { type: 'http', url: source.mcpUrl };
+      if (source.mcpHeader) {
+        const [name, scheme] = source.mcpHeader.split(': ');
+        servers[id].headers = { [name]: scheme ? `${scheme} \${ODOO_API_KEY}` : '${ODOO_API_KEY}' };
+      }
+    }
+  }
+  return servers;
+}
+
+const TICKET_SECRETS = [
+  ['GH_TOKEN', (s) => s.provider === 'github', (s) => `tickets ${s.prefix}: gh CLI and the GitHub MCP server`],
+  ['GITLAB_TOKEN', (s) => s.provider === 'gitlab', (s) => `tickets ${s.prefix}: glab CLI (the GitLab MCP server signs in in the browser)`],
+  ['ODOO_API_KEY', (s) => s.provider === 'odoo' && Boolean(s.mcpHeader), (s) => `tickets ${s.prefix}: the Odoo MCP server`],
+];
+
+// The .agents/mcp-secrets.env.example lines the ticket sources need, one per variable.
+export function ticketSecretLines(tickets) {
+  const sources = tickets?.sources ?? [];
+  const lines = [];
+  for (const [name, needs, note] of TICKET_SECRETS) {
+    const first = sources.find(needs);
+    if (first) lines.push(`${`${name}=`.padEnd(17)}# ${note(first)}`);
+  }
+  return lines;
+}
+
+// `extra` servers follow the canonical ones; `canonical: false` renders the
+// extra servers alone (a harness file that does not exist yet).
+export function generateMcpFiles(harnesses, { extra = {}, canonical = true } = {}) {
+  const servers = { ...(canonical ? loadCanonicalMcp().servers : {}), ...extra };
   validateServers(servers);
   const files = [];
   for (const [target, schema] of Object.entries(MCP_TARGETS)) {
@@ -572,9 +623,12 @@ export function planPayload(opts, repos, harnesses) {
   } else {
     omitted.push(OUTPUT_STYLE_TARGET);
   }
-  for (const { target, content } of generateMcpFiles(harnesses)) {
+  for (const { target, content } of generateMcpFiles(harnesses, { extra: ticketServers(opts.tickets) })) {
     files.push({ target, content: provenance(target, content, vars), executable: false });
   }
+  const secretLines = ticketSecretLines(opts.tickets);
+  const secrets = files.find((f) => f.target === SECRETS_EXAMPLE);
+  if (secrets && secretLines.length) secrets.content = applyBlock(secrets.content, secretLines.join('\n'), SECRETS_EXAMPLE).content;
   for (const [target, owner] of Object.entries(TARGET_HARNESS)) {
     if (MCP_TARGETS[target] && !harnesses.includes(owner) && !omitted.includes(target)) omitted.push(target);
   }
@@ -656,7 +710,7 @@ export function writeMarker(root, opts, repos, harnesses, written, dryRun, repor
     report.skipped.push(MARKER_PATH);
     return;
   }
-  writeFile(root, MARKER_PATH, renderMarker(buildVars(opts, repos, harnesses, written)), false, dryRun, 'wx');
+  writeFile(root, MARKER_PATH, withTickets(renderMarker(buildVars(opts, repos, harnesses, written)), opts.tickets), false, dryRun, 'wx');
   report.written.push(MARKER_PATH);
 }
 
@@ -671,6 +725,45 @@ function renderMarker(vars) {
     throw new InitError('bad-template', `template ${sourceName} does not render to valid JSON: ${err.message}`, { template: sourceName });
   }
   return content;
+}
+
+// A new marker keeps its template layout: the tickets key goes in before the
+// closing brace, indented like the other top-level keys.
+function withTickets(content, tickets) {
+  if (!tickets) return content;
+  const member = JSON.stringify(tickets, null, 2).replace(/\n/g, '\n  ');
+  const next = content.replace(/\n\}\s*$/, `,\n  "tickets": ${member}\n}\n`);
+  JSON.parse(next);
+  return next;
+}
+
+// The --sources file holds the tickets object. No sources means local only.
+export function loadTickets(file) {
+  let tickets;
+  try {
+    tickets = readJson(file);
+  } catch (err) {
+    throw new InitError('bad-args', `--sources ${file} is not readable JSON: ${err.message}`);
+  }
+  if (tickets && typeof tickets === 'object' && Array.isArray(tickets.sources) && tickets.sources.length === 0) return null;
+  const errors = validateTickets(tickets);
+  if (errors.length) throw new InitError('bad-tickets', errors.join('; '), { errors });
+  return tickets;
+}
+
+function ticketNextSteps(tickets) {
+  const providers = new Set((tickets?.sources ?? []).map((s) => s.provider));
+  const steps = [];
+  if (providers.has('github')) steps.push('GitHub: use a fine-grained token with Issues read and Metadata read, in GH_TOKEN.');
+  if (providers.has('gitlab')) {
+    steps.push('GitLab: use a token with the read_api scope, in GITLAB_TOKEN.');
+    steps.push('Headless GitLab needs glab with GITLAB_TOKEN; the GitLab MCP server signs in in the browser');
+  }
+  if ((tickets?.sources ?? []).some((s) => s.provider === 'odoo' && s.mcpHeader)) {
+    steps.push('Odoo: use the API key of a user who can only read projects and tasks, in ODOO_API_KEY.');
+  }
+  if (Object.keys(ticketServers(tickets)).length) steps.push('Approve the ticket MCP servers when your harness prompts for them.');
+  return steps;
 }
 
 export function saveMarker(root, marker, dryRun) {
@@ -735,12 +828,13 @@ export function runScaffold(opts) {
   if (!opts.name && existingMarker?.name) opts.name = existingMarker.name;
   const repos = detectRepos(opts.root);
   report.repos = repos;
+  if (opts.sources) opts.tickets = loadTickets(opts.sources);
   const plan = planPayload(opts, repos, harnesses);
   applyPlan(opts.root, plan, report, opts.dryRun);
   writeMarker(opts.root, opts, repos, harnesses, report.written, opts.dryRun, report);
   report.written.sort();
   report.skipped.sort();
-  report.nextSteps = scaffoldNextSteps(opts, report, repos);
+  report.nextSteps = [...scaffoldNextSteps(opts, report, repos), ...ticketNextSteps(opts.tickets)];
   return report;
 }
 
@@ -772,6 +866,7 @@ export function runDetect(opts) {
     repos: fs.existsSync(opts.root) ? detectRepos(opts.root) : [],
     workspaceRoot: findMarkerAbove(opts.root),
     nodeVersion: process.version,
+    ticketsConfigured: Boolean(marker && typeof marker === 'object' && marker.tickets),
   };
 }
 
@@ -798,8 +893,10 @@ function markerHarnesses(marker) {
   return Array.isArray(marker.harnesses) ? marker.harnesses : [...ALL_HARNESSES];
 }
 
+// A valid tickets block rides along, so upgrade proposals keep the ticket servers.
 function markerOpts(opts, marker) {
-  return { ...opts, name: opts.name ?? marker.name ?? path.basename(opts.root), nestedPointers: false };
+  const tickets = marker.tickets && validateTickets(marker.tickets).length === 0 ? marker.tickets : null;
+  return { ...opts, name: opts.name ?? marker.name ?? path.basename(opts.root), nestedPointers: false, tickets };
 }
 
 function planBlock(root, target, body) {
@@ -996,10 +1093,66 @@ export function runUpgrade(opts) {
   return report;
 }
 
+// Configure ticket sources in a scaffolded project. Only the marker's tickets
+// key changes; an existing harness MCP file gets a proposal beside it, a
+// missing one is created with the ticket servers alone, and the secret names
+// go in a managed block of .agents/mcp-secrets.env.example.
+export function runTickets(opts) {
+  const report = { ...emptyReport('tickets', opts), marker: null, mcp: [], secrets: [] };
+  const marker = requireMarker(opts);
+  if (!opts.sources) throw new InitError('bad-args', 'tickets needs --sources <file>');
+  const tickets = loadTickets(opts.sources);
+  report.marker = { before: marker.tickets ?? null, after: tickets };
+  const harnesses = markerHarnesses(marker);
+  const servers = ticketServers(tickets);
+  const vars = buildVars(markerOpts(opts, marker), marker.repos ?? [], harnesses, []);
+  const writes = [];
+  if (Object.keys(servers).length) {
+    const full = generateMcpFiles(harnesses, { extra: servers });
+    const alone = Object.fromEntries(generateMcpFiles(harnesses, { extra: servers, canonical: false }).map((f) => [f.target, f.content]));
+    for (const { target, content } of full) {
+      if (fs.existsSync(path.join(opts.root, target))) {
+        const proposal = `${target}${PROPOSAL_SUFFIX}`;
+        if (fs.existsSync(path.join(opts.root, proposal))) {
+          throw new InitError('proposal-exists', `an earlier proposal is still there: ${proposal}; merge or delete it, then run init tickets again`, { paths: [proposal] });
+        }
+        writes.push({ target: proposal, content: provenance(target, content, vars) });
+        report.mcp.push({ path: target, action: 'proposal' });
+      } else {
+        writes.push({ target, content: provenance(target, alone[target], vars) });
+        report.mcp.push({ path: target, action: 'created' });
+      }
+    }
+  }
+  const secretLines = ticketSecretLines(tickets);
+  const block = secretLines.length ? planBlock(opts.root, SECRETS_EXAMPLE, secretLines.join('\n')) : null;
+  report.secrets = secretLines.map((line) => line.split('=')[0]);
+  // Every target is checked before the first write, so an error leaves the project untouched.
+  for (const target of [...writes.map((w) => w.target), ...(block ? [SECRETS_EXAMPLE] : []), MARKER_PATH]) {
+    guardTarget(opts.root, target);
+  }
+  for (const { target, content } of writes) {
+    writeFile(opts.root, target, content, false, opts.dryRun, 'wx');
+    report.written.push(target);
+  }
+  if (block) writeBlock(opts.root, block, report, opts.dryRun);
+  if (tickets) marker.tickets = tickets;
+  else delete marker.tickets;
+  saveMarker(opts.root, marker, opts.dryRun);
+  report.written.push(MARKER_PATH);
+  report.written.sort();
+  const proposals = report.mcp.filter((m) => m.action === 'proposal').map((m) => m.path);
+  report.nextSteps = [
+    ...ticketNextSteps(tickets),
+    ...proposals.map((p) => `Merge ${p}${PROPOSAL_SUFFIX} into ${p} (git diff --no-index ${p} ${p}${PROPOSAL_SUFFIX}), then delete the proposal.`),
+  ];
+  return report;
+}
+
 export function main(argv) {
   try {
     const opts = parseArgs(argv);
-    const runners = { scaffold: runScaffold, detect: runDetect, join: runJoin, upgrade: runUpgrade };
+    const runners = { scaffold: runScaffold, detect: runDetect, join: runJoin, upgrade: runUpgrade, tickets: runTickets };
     const report = runners[opts.mode](opts);
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     return 0;

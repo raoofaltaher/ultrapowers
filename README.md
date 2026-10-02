@@ -48,6 +48,7 @@ Ultrapowers is a fork of Jesse Vincent's MIT-licensed skills library, cut from i
     - [Hermes Agent](#hermes-agent)
     - [Muse](#muse)
   - [The Basic Workflow](#the-basic-workflow)
+  - [Project configuration](#project-configuration)
   - [When Something Goes Wrong](#when-something-goes-wrong)
   - [What ultrapowers adds](#what-ultrapowers-adds)
   - [What's Inside](#whats-inside)
@@ -263,9 +264,11 @@ Restart any active Muse sessions after installing so the `SessionStart` hook tak
 
 ## The Basic Workflow
 
-1. **`/ultrapowers:init`** - Sets the project up, once. Offered at session start in any git repository without an Ultrapowers setup. It works out the mode (scaffold a new project, join an existing one, upgrade after a plugin update, or repair a broken setup), asks for the project name and the coding agents you use, shows a dry run, and writes only after your yes. It never overwrites a file. You get the knowledge base folders (`tasks/`, `specs/`, `plans/`, `reviews/`, `evals/`, `handbooks/`, `playbooks/`, `brand-book/`, `business/`, `release-notes/`), one `AGENTS.md` for every agent (imported by `CLAUDE.md` and `GEMINI.md`), MCP configuration for nine harnesses, Claude Code settings and output style, the team-memory store, and repo hygiene (a gitleaks pre-commit hook, managed `.gitignore` and `.gitattributes` blocks).
+From a ticket to a reviewed, tested branch. The agents do the repeatable work; an experienced developer approves the spec and the plan.
 
-2. **`/ultrapowers:new-task <ticket> [title]`** - Starts a ticket. Creates `tasks/<ID>/`, `specs/<ID>/`, `plans/<ID>/` and `reviews/<ID>/`, writes the brief `tasks/<ID>/<ID>.md` (Context, Definition of Ready, Definition of Done, Related Documentation; two short paragraphs at most), commits it, and hands off to brainstorm-task. A ticket that already exists is never overwritten; it points you to `/ultrapowers:task`.
+1. **`/ultrapowers:init`** - Sets the project up, once. Offered at session start in any git repository without an Ultrapowers setup. It works out the mode (scaffold a new project, join an existing one, upgrade after a plugin update, or repair a broken setup), asks for the project name and the coding agents you use, shows a dry run, and writes only after your yes. It never overwrites a file. You get the knowledge base folders (`tasks/`, `specs/`, `plans/`, `reviews/`, `evals/`, `handbooks/`, `playbooks/`, `brand-book/`, `business/`, `release-notes/`), one `AGENTS.md` for every agent (imported by `CLAUDE.md` and `GEMINI.md`), MCP configuration for nine harnesses, Claude Code settings and output style, the team-memory store, and repo hygiene (a gitleaks pre-commit hook, managed `.gitignore` and `.gitattributes` blocks). It also asks where your tickets live (GitHub Issues, GitLab Issues, Odoo tasks, or local only); `/ultrapowers:init tickets` sets or changes that later. Every setting lands in one file, described in [Project configuration](#project-configuration).
+
+2. **`/ultrapowers:new-task <ticket> [title]`** - Starts a ticket. Creates `tasks/<ID>/`, `specs/<ID>/`, `plans/<ID>/` and `reviews/<ID>/`, writes the brief `tasks/<ID>/<ID>.md` (Context, Definition of Ready, Definition of Done, Related Documentation; two short paragraphs at most), commits it, and hands off to brainstorm-task. A ticket that already exists is never overwritten; it points you to `/ultrapowers:task`. With a ticket source configured, an id such as `GH-web-7`, `GL-billing-api-42` or `ODOO-12-1203` fills the brief from that ticket, through `gh` or `glab` when they are signed in and the source's MCP server otherwise, and keeps a quoted copy in `tasks/<ID>/source.md`. Any other id is a local ticket, as before.
 
 3. **`/ultrapowers:brainstorm-task <ticket> [focus]`** - Grounds before it asks. Reads the brief, confirms which repositories to read (focus words such as `backend`, `frontend` or a repository name narrow the choice), reads every file the design depends on, strongest match first, with no cap, and prints what it read. Only then does it run **brainstorming**: questions one at a time, alternatives, and the design in sections for your approval. The spec is saved as `specs/<ID>/Spec.md` and committed after your review.
 
@@ -284,6 +287,69 @@ Restart any active Muse sessions after installing so the `SessionStart` hook tak
 At any point, **`/ultrapowers:task <ticket>`** tells you where a ticket stands (brief, spec, plan, reviews, branches) and what comes next, without changing anything. And **team-memory** works alongside every step: when the agent verifies a fact that is durable, expensive to rediscover and not already in the code, it saves it to `.agents/memory/` in git, so every developer, every coding agent and every session on the project can use it.
 
 **The agent checks for relevant skills before any task.** Mandatory workflows, not suggestions.
+
+**Where this is going** *(roadmap, not shipped yet)*: the same workflow started by a label on a GitHub, GitLab or Odoo ticket, running headless on a CI runner or a VM, and stopping for your spec and plan approval on the pull request.
+
+## Project configuration
+
+`/ultrapowers:init` writes `.agents/ultrapowers.json`. Commit it: every developer and every agent on the project reads the same settings. Change it by hand, or with `/ultrapowers:init tickets` for ticket sources.
+
+```json
+{
+  "name": "acme-platform",
+  "pluginVersion": "x.y.z",
+  "scaffoldedAt": "2026-10-02",
+  "topology": "nested",
+  "commitTrailer": "",
+  "ticketPattern": "^#?[A-Za-z0-9][A-Za-z0-9._-]*$",
+  "repos": [
+    { "name": "billing-api", "path": "billing-api", "defaultBranch": "main", "area": "backend" },
+    { "name": "web", "path": "web", "defaultBranch": "develop", "area": "frontend" }
+  ],
+  "harnesses": ["claude-code", "codex", "cursor"],
+  "kb": ["tasks", "specs", "plans", "reviews", "evals", "handbooks", "brand-book", "business", "playbooks", "release-notes"],
+  "memory": { "path": ".agents/memory", "indexBudget": 150, "rediscoveryMinutes": 15, "trailer": "Memory-Ref" },
+  "tickets": {
+    "transport": "auto",
+    "sources": [
+      { "prefix": "GL", "provider": "gitlab", "host": "gitlab.com", "namespace": "acme/platform", "defaultProject": "tracker" },
+      { "prefix": "GH", "provider": "github", "owner": "acme" },
+      { "prefix": "ODOO", "provider": "odoo", "url": "https://erp.example.com", "mcpUrl": "https://erp.example.com/mcp", "mcpHeader": "Authorization: Bearer" }
+    ]
+  },
+  "qa": { "urls": { "frontend": "http://localhost:3000" }, "roles": [ { "name": "user", "userEnv": "QA_USER_USER", "passwordEnv": "QA_PW_USER", "required": true } ] },
+  "written": [".mcp.json", "AGENTS.md"]
+}
+```
+
+| Key | What it holds | Your options |
+|---|---|---|
+| `name` | The project name | Any text without `"` or `\` |
+| `pluginVersion`, `scaffoldedAt`, `written` | The plugin version, date and files of the last init | Init sets these; do not edit |
+| `topology` | `root` (one repository) or `nested` (clones inside the workspace) | Init detects it |
+| `commitTrailer` | A line added to every commit the skills make | Empty, or for example `Reviewed-by: Name` |
+| `ticketPattern` | The regular expression a ticket id must match | Tighten it, for example `^PROJ-[0-9]+$` |
+| `repos` | The nested clones: `name`, `path`, `defaultBranch` | Add `area` (for example `backend`) so `brainstorm-task backend` picks that clone |
+| `harnesses` | The coding agents init writes files for | Any of `claude-code`, `codex`, `cursor`, `copilot`, `gemini`, `qwen`, `opencode`, `factory`, `kimi`, `devin`, `antigravity`, `hermes`, `pi`, `muse` |
+| `kb` | The knowledge base folders | The ten folders init writes |
+| `memory` | Team memory: its folder, the index line budget, the minutes a fact must take to rediscover before it is worth saving, the commit trailer | Raise `indexBudget` for a large team |
+| `tickets` | Where tickets come from; no key means local tickets only | See the next table |
+| `qa` | QA gatekeeper settings: `urls`, `hosts`, `auth`, `roles`, `languages`, `containers`, `db`, `suites`, `observability`, `brand`, `regression`, `knownIssues`, `api` | Fill what your app has; the qa-specialist skill lists any missing key before a run |
+
+One entry of `tickets.sources` (the id of its tickets is `<prefix>-<project>-<number>`, for example `GL-billing-api-42`):
+
+| Field | For | Value |
+|---|---|---|
+| `prefix` | all | Capital letters and digits, unique, for example `GL` |
+| `provider` | all | `github`, `gitlab` or `odoo` |
+| `owner` | GitHub | The user or organization |
+| `host`, `namespace` | GitLab | `host` defaults to `gitlab.com`; `namespace` is the group path |
+| `url`, `mcpUrl`, `mcpHeader` | Odoo | The Odoo address, your team's MCP server, and `Authorization: Bearer` or a key header such as `X-Api-Key` (leave it out for browser sign-in) |
+| `projects` | GitHub, GitLab | Optional map from a short project name to its full path |
+| `defaultProject` | all | Optional; lets `GL-42` mean the default project |
+| `transport` | all, or the whole block | `auto` (the CLI when signed in, else the MCP server), `cli` or `mcp` |
+
+Tokens never go in this file. Put them in your environment; `.agents/mcp-secrets.env.example` lists their names (`GH_TOKEN`, `GITLAB_TOKEN`, `ODOO_API_KEY`).
 
 ## When Something Goes Wrong
 
@@ -349,6 +415,10 @@ Everything above the original methodology, built from real daily work across man
 
 ## Philosophy
 
+Ultrapowers exists to help developers and teams who work from tickets automate as much of their work as they can, without lowering its quality. Agents take the repeatable steps; experienced people keep the decisions that need judgment. Have an idea for where this goes next? Bring it to [Discussions](https://github.com/raoofaltaher/ultrapowers/discussions/categories/ideas).
+
+- **Automate the repeatable, keep the judgment** - Agents do the routine work; people approve the spec and the plan
+- **Speed with gates** - Every step that runs faster still passes TDD, review and the QA verdict
 - **Test-Driven Development** - Write tests first, always
 - **Systematic over ad-hoc** - Process over guessing
 - **Complexity reduction** - Simplicity as primary goal

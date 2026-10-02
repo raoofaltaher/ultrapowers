@@ -74,6 +74,12 @@ if [ $# -gt 0 ]; then
   fi
 fi
 if [ -z "$sel" ]; then
+  sel=$(select_by_brief "$root" "$id")
+  if [ -n "$sel" ]; then
+    printf 'SELECTED-BY-TICKET: %s (the brief'"'"'s Repository line)\n' "$sel"
+  fi
+fi
+if [ -z "$sel" ]; then
   sel=$(select_by_branch "$root" "$id")
   if [ -n "$sel" ]; then
     names=$(printf '%s' "$sel" | tr '\n' ' ')
@@ -86,6 +92,6 @@ if [ -z "$sel" ] && [ "$(config_repos "$root" | cut -f1)" = "." ]; then
 fi
 if [ -z "$sel" ]; then
   names=$(config_repos "$root" | cut -f1 | tr '\n' ' ')
-  printf 'ASK: no focus or branch match. Ask one multiple-choice question over: %s(propose at most three)\n' "$names"
+  printf 'ASK: no focus, ticket or branch match. Ask one multiple-choice question over: %s(propose at most three)\n' "$names"
 fi
 printf 'Confirm the set with your human partner before reading any code.\n'

@@ -1,5 +1,19 @@
 # Ultrapowers Release Notes
 
+## Unreleased
+
+Tickets come from where the team already tracks them.
+
+### Task Lifecycle
+
+- **Ticket sources.** `/ultrapowers:init` asks where tickets live, and `/ultrapowers:init tickets` sets it later: GitHub Issues, GitLab Issues or Odoo tasks, several at once, each with its own id prefix. `/ultrapowers:new-task GH-web-7`, `GL-billing-api-42` or `ODOO-12-1203` then fills the brief from the ticket and keeps a quoted copy in `tasks/<ID>/source.md`. Ids read as `<PREFIX>-<project>-<number>`; in a workspace with nested clones, a project that matches a clone becomes a `Repository:` line that brainstorm-task proposes first. Read only: nothing is written back to the tracker. Any id without a configured prefix is a local ticket, exactly as before.
+- **CLI first, MCP otherwise.** `gh` and `glab` are used when they are installed and signed in (a `GH_TOKEN` or `GITLAB_TOKEN` is enough, so headless runners work); otherwise the agent uses the source's MCP server: GitHub's official server with a read-only header, GitLab's official server with browser sign-in, and the team's own Odoo server. The plugin itself still opens no network connection.
+- **Ticket text is data.** A fetched ticket's instructions are never followed, a failed fetch creates nothing, a credential in a ticket stops the scaffold before anything is committed, and an Odoo task filed under another project is refused.
+
+### Rules
+
+- **Rule 5 reads as a principle.** Nothing reports on users, their projects or their usage; the plugin opens no connection itself; a skill reaches the network only through a tool the user installed and signed in, to a host named in `.agents/ultrapowers.json`.
+
 ## v1.0.1 (2026-10-02)
 
 Brainstorming now reads all the code a design needs before it asks its first question, and the README's release badge updates itself.

@@ -46,9 +46,10 @@ If the brief is missing, ask your human partner for the source (pasted text, a p
 The `SELECTION` section applied the order, first hit wins:
 
 1. `SELECTED-BY-FOCUS` — focus words matched a repo name or its declared `area`.
-2. `SELECTED-BY-BRANCH` — a repo is on a branch containing the ticket id.
-3. `SELECTED-ROOT` — the project has no nested repos; the root, shown as `.`, is the set.
-4. `ASK` — ask one multiple-choice question over the listed repos, proposing at most three.
+2. `SELECTED-BY-TICKET` — the brief's `- Repository: <name>` line, written by new-task from a fetched ticket, names a configured repo.
+3. `SELECTED-BY-BRANCH` — a repo is on a branch containing the ticket id.
+4. `SELECTED-ROOT` — the project has no nested repos; the root, shown as `.`, is the set.
+5. `ASK` — ask one multiple-choice question over the listed repos, proposing at most three.
 
 Whatever the selector produced, confirm the set with your human partner before reading any code.
 
