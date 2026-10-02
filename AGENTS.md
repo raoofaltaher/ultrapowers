@@ -70,6 +70,8 @@ bash tests/claude-code/test-worktree-path-policy.sh
 scripts/lint-shell.sh --all
 ```
 
+`.github/workflows/ci.yml` runs this list on Linux, and the hook and init suites on Windows, for every pull request to `dev` or `main`. When you add a suite here, add it there too.
+
 On Windows without Developer Mode, Git Bash cannot create symlinks, so `test-plugin-loading.sh` and `test-skill-registration.sh` in `tests/opencode/` fail there for that reason alone; run them on a machine with symlink support.
 
 Model-driven tests (`tests/claude-code/run-skill-tests.sh`, `tests/explicit-skill-requests/`, the OpenCode `--integration` tests) need a logged-in harness and are not part of the offline gate.
