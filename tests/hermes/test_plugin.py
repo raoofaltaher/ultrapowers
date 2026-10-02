@@ -71,7 +71,9 @@ class TestPluginRegistration:
 
 
 class TestBootstrapInjection:
-    def test_first_turn_returns_bootstrap_context(self, mock_ctx):
+    def test_first_turn_returns_bootstrap_context(self, mock_ctx, tmp_path, monkeypatch):
+        # Outside any project, so no scaffold or team-memory line follows the bootstrap.
+        monkeypatch.chdir(tmp_path)
         plugin = _load_plugin()
         plugin.register(mock_ctx)
         result = _fire_pre_llm(mock_ctx, is_first_turn=True)
