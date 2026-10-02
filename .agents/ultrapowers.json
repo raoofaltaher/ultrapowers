@@ -1,0 +1,33 @@
+{
+  "name": "ultrapowers",
+  "pluginVersion": "1.0.1",
+  "scaffoldedAt": "2026-10-02",
+  "topology": "root",
+  "commitTrailer": "",
+  "ticketPattern": "^#?[A-Za-z0-9][A-Za-z0-9._-]*$",
+  "repos": [],
+  "harnesses": ["claude-code"],
+  "kb": ["tasks","specs","plans","reviews","evals","handbooks","brand-book","business","playbooks","release-notes"],
+  "memory": {
+    "path": ".agents/memory",
+    "indexBudget": 150,
+    "rediscoveryMinutes": 15,
+    "trailer": "Memory-Ref"
+  },
+  "qa": {
+    "urls": { "frontend": "", "backendHealth": "", "idp": "", "observability": "" },
+    "hosts": { "allowed": [], "forbidden": [] },
+    "auth": { "type": "form|oidc-password|custom", "route": "", "tokenUrl": "", "clientId": "", "recipe": "" },
+    "roles": [ { "name": "user", "userEnv": "QA_USER_USER", "passwordEnv": "QA_PW_USER", "required": true } ],
+    "languages": [ { "code": "en", "switch": "" } ],
+    "containers": { "watch": [], "errorPattern": "error|exception|fatal|unhandled" },
+    "db": { "engine": "postgres", "container": "", "host": "", "database": "", "roRole": "qa_agent_ro", "roPasswordEnv": "QA_DB_RO_PASSWORD", "tenantColumn": "", "auditTables": [] },
+    "suites": [ { "repo": "", "command": "", "resultFormat": "trx|vitest-json|junit-xml", "timeoutSec": 1800 } ],
+    "observability": { "provider": "langfuse|none", "publicKeyEnv": "", "secretKeyEnv": "" },
+    "brand": { "logoPaths": [], "tokenPaths": [], "compareRoute": "" },
+    "regression": [ "" ],
+    "knownIssues": "qa/known-issues.md",
+    "api": { "errorEnvelopeFields": [], "crossTenantStatus": 404 }
+  },
+  "written": [".agents/mcp-secrets.env.example",".agents/memory/MEMORY.md",".agents/memory/README.md",".agents/memory/decisions/.gitkeep",".agents/memory/gotchas/.gitkeep",".agents/memory/subsystems/.gitkeep",".claude/output-styles/ste-explanatory.md",".claude/settings.json",".gitattributes",".githooks/pre-commit",".gitignore",".gitleaks.toml",".mcp.json","CLAUDE.md","brand-book/.gitkeep","brand-book/README.md","business/.gitkeep","business/README.md","evals/.gitkeep","evals/README.md","handbooks/.gitkeep","handbooks/README.md","plans/.gitkeep","plans/README.md","playbooks/.gitkeep","playbooks/README.md","qa/known-issues.md","release-notes/.gitkeep","release-notes/README.md","reviews/.gitkeep","reviews/README.md","specs/.gitkeep","specs/README.md","tasks/.gitkeep","tasks/README.md"]
+}
