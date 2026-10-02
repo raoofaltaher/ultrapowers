@@ -322,6 +322,125 @@ test('a nested clone records its remote default branch, not the branch checked o
   assert.deepEqual(marker(root).repos, [{ name: 'svc', path: 'svc', defaultBranch: 'trunk' }]);
 });
 
+// tickets mode (spec docs/ultrapowers/specs/2026-10-02-ticket-sources-design.md, section 6).
+function ticketsExample() {
+  return {
+    transport: 'auto',
+    sources: [
+      { prefix: 'GL', provider: 'gitlab', host: 'gitlab.com', namespace: 'acme/platform', defaultProject: 'tracker' },
+      { prefix: 'GH', provider: 'github', owner: 'acme' },
+      { prefix: 'ODOO', provider: 'odoo', url: 'https://erp.example.com', mcpUrl: 'https://erp.example.com/mcp', mcpHeader: 'Authorization: Bearer' },
+    ],
+  };
+}
+
+function sourcesFile(tickets) {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ultrapowers-sources-')), 'sources.json');
+  fs.writeFileSync(file, JSON.stringify(tickets));
+  return file;
+}
+
+const TICKET_IDS = ['tickets-gl', 'tickets-gh', 'tickets-odoo'];
+
+test('tickets --dry-run reports the change and writes nothing', () => {
+  const root = scaffolded();
+  const before = snapshot(root);
+  const report = run(['tickets', '--root', root, '--sources', sourcesFile(ticketsExample()), '--dry-run']);
+  assert.equal(report.marker.before, null);
+  assert.deepEqual(report.marker.after, ticketsExample());
+  assert.deepEqual(report.secrets, ['GH_TOKEN', 'GITLAB_TOKEN', 'ODOO_API_KEY']);
+  assert.ok(report.mcp.some((m) => m.path === '.mcp.json' && m.action === 'proposal'));
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
+});
+
+test('tickets writes the block, proposals for existing MCP files and the secret names', () => {
+  const root = scaffolded();
+  const markerBefore = marker(root);
+  const mcpBefore = fs.readFileSync(path.join(root, '.mcp.json'), 'utf8');
+  const secretsFile = path.join(root, '.agents', 'mcp-secrets.env.example');
+  const secretsBefore = fs.readFileSync(secretsFile, 'utf8');
+  run(['tickets', '--root', root, '--sources', sourcesFile(ticketsExample())]);
+  const after = marker(root);
+  assert.deepEqual(after.tickets, ticketsExample());
+  const { tickets, ...rest } = after;
+  assert.deepEqual(rest, markerBefore);
+  assert.equal(fs.readFileSync(path.join(root, '.mcp.json'), 'utf8'), mcpBefore);
+  const proposal = JSON.parse(fs.readFileSync(path.join(root, `.mcp.json${PROPOSAL_SUFFIX}`), 'utf8'));
+  for (const id of TICKET_IDS) assert.ok(id in proposal.mcpServers, id);
+  assert.ok('context7' in proposal.mcpServers, 'the proposal keeps the canonical servers');
+  const secrets = fs.readFileSync(secretsFile, 'utf8');
+  assert.ok(secrets.startsWith(secretsBefore), 'lines above the block stay byte-identical');
+  assert.match(secrets, /# >>> ultrapowers\nGH_TOKEN=.*\nGITLAB_TOKEN=.*\nODOO_API_KEY=.*\n# <<< ultrapowers\n$/);
+});
+
+test('tickets creates a missing harness MCP file with the ticket servers only', () => {
+  const root = scaffolded();
+  fs.rmSync(path.join(root, '.mcp.json'));
+  const report = run(['tickets', '--root', root, '--sources', sourcesFile(ticketsExample())]);
+  assert.ok(report.mcp.some((m) => m.path === '.mcp.json' && m.action === 'created'));
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(root, '.mcp.json'), 'utf8')).mcpServers), TICKET_IDS);
+  assert.equal(fs.existsSync(path.join(root, `.mcp.json${PROPOSAL_SUFFIX}`)), false);
+});
+
+test('tickets refuses to run over a proposal still waiting to be merged', () => {
+  const root = scaffolded();
+  run(['tickets', '--root', root, '--sources', sourcesFile(ticketsExample())]);
+  const report = run(['tickets', '--root', root, '--sources', sourcesFile(ticketsExample())], { expectExit: 2 });
+  assert.equal(report.error.code, 'proposal-exists');
+});
+
+test('tickets with no sources removes the block', () => {
+  const root = scaffolded();
+  const cliOnly = { transport: 'cli', sources: [{ prefix: 'GH', provider: 'github', owner: 'acme' }] };
+  run(['tickets', '--root', root, '--sources', sourcesFile(cliOnly)]);
+  assert.deepEqual(marker(root).tickets, cliOnly);
+  run(['tickets', '--root', root, '--sources', sourcesFile({ sources: [] })]);
+  assert.equal('tickets' in marker(root), false);
+});
+
+test('an invalid tickets block is bad-tickets and writes nothing', () => {
+  const root = scaffolded();
+  const before = snapshot(root);
+  const bad = ticketsExample();
+  bad.sources[1].provider = 'slack';
+  const report = run(['tickets', '--root', root, '--sources', sourcesFile(bad)], { expectExit: 2 });
+  assert.equal(report.error.code, 'bad-tickets');
+  assert.match(report.error.message, /tickets\.sources\[1\]\.provider/);
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
+});
+
+test('detect reports whether ticket sources are configured', () => {
+  const root = scaffolded();
+  assert.equal(run(['detect', '--root', root]).ticketsConfigured, false);
+  run(['tickets', '--root', root, '--sources', sourcesFile(ticketsExample())]);
+  assert.equal(run(['detect', '--root', root]).ticketsConfigured, true);
+});
+
+test('scaffold --sources writes the block, the servers and the secrets in one run', () => {
+  const root = scaffolded('ws', ['--sources', sourcesFile(ticketsExample())]);
+  assert.deepEqual(marker(root).tickets, ticketsExample());
+  const servers = JSON.parse(fs.readFileSync(path.join(root, '.mcp.json'), 'utf8')).mcpServers;
+  for (const id of ['context7', ...TICKET_IDS]) assert.ok(id in servers, id);
+  assert.equal(fs.existsSync(path.join(root, `.mcp.json${PROPOSAL_SUFFIX}`)), false);
+  assert.match(fs.readFileSync(path.join(root, '.agents', 'mcp-secrets.env.example'), 'utf8'), /^GITLAB_TOKEN=/m);
+});
+
+test('scaffold without --sources writes no tickets key', () => {
+  const root = scaffolded();
+  assert.equal('tickets' in marker(root), false);
+  assert.doesNotMatch(fs.readFileSync(path.join(root, '.agents', 'mcp-secrets.env.example'), 'utf8'), /GH_TOKEN/);
+});
+
+test('tickets next steps name the token scopes and the GitLab sign-in', () => {
+  const root = scaffolded();
+  const report = run(['tickets', '--root', root, '--sources', sourcesFile(ticketsExample()), '--dry-run']);
+  const steps = report.nextSteps.join('\n');
+  assert.match(steps, /Issues read and Metadata read/);
+  assert.match(steps, /read_api/);
+  assert.match(steps, /can only read projects and tasks/);
+  assert.ok(report.nextSteps.includes('Headless GitLab needs glab with GITLAB_TOKEN; the GitLab MCP server signs in in the browser'));
+});
+
 test('upgrade --apply .gitignore replaces only the managed block', () => {
   const root = scaffolded();
   const file = path.join(root, '.gitignore');
