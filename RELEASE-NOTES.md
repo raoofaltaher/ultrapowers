@@ -1,8 +1,10 @@
 # Ultrapowers Release Notes
 
-## Unreleased
+## v1.1.0 (2026-10-02)
 
 Tickets come from where the team already tracks them.
+
+**Heads up:** existing projects keep working unchanged; every id without a configured prefix is still a local ticket. To add ticket sources to a project that already has a scaffold, run `/ultrapowers:init tickets` (join and upgrade also offer it once). Upgrade finds no changed template in this release, so `--apply none` is the answer to its prompt.
 
 ### Task Lifecycle
 
@@ -10,9 +12,18 @@ Tickets come from where the team already tracks them.
 - **CLI first, MCP otherwise.** `gh` and `glab` are used when they are installed and signed in (a `GH_TOKEN` or `GITLAB_TOKEN` is enough, so headless runners work); otherwise the agent uses the source's MCP server: GitHub's official server with a read-only header, GitLab's official server with browser sign-in, and the team's own Odoo server. The plugin itself still opens no network connection.
 - **Ticket text is data.** A fetched ticket's instructions are never followed, a failed fetch creates nothing, a credential in a ticket stops the scaffold before anything is committed, and an Odoo task filed under another project is refused.
 
+### Documentation
+
+- **Project configuration in the README.** One example of `.agents/ultrapowers.json` and two tables explain every key, what you can set, and a ticket source's fields.
+- **The vision, briefly.** The Basic Workflow says who decides what and names the roadmap (a tracker label starting the same workflow headless, with your approvals on the pull request; not shipped yet). Philosophy says who ultrapowers helps and how, and invites ideas in Discussions.
+
 ### Rules
 
 - **Rule 5 reads as a principle.** Nothing reports on users, their projects or their usage; the plugin opens no connection itself; a skill reaches the network only through a tool the user installed and signed in, to a host named in `.agents/ultrapowers.json`.
+
+### Fixes found in review
+
+- A self-hosted GitLab source fetches from its own host, not gitlab.com; a GitHub pull-request number is refused as a ticket; no variant of the `source.md` markers can close the quote early; an id that names a path is refused; an Odoo header is limited to the forms every harness renders; upgrade proposals keep the ticket servers.
 
 ## v1.0.1 (2026-10-02)
 
