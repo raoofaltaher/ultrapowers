@@ -37,9 +37,9 @@
     "tips": {}
   },
   "pr": {
-    "docs": null
+    "docs": "https://github.com/raoofaltaher/ultrapowers/pull/20"
   },
-  "stageStatus": "running",
+  "stageStatus": "finished",
   "door": "command",
-  "logHead": "b07fb1711a0a3bb02a74bb81c3b49e0494f3eb8de872dc195fa77d6fa561c770"
+  "logHead": "e168d4bdd03d5b93627301b0a36cc2fb6c3f8ae507de3780d4dfac523726499c"
 }
