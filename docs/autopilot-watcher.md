@@ -59,7 +59,26 @@ Two kinds, and the difference is the whole point: the engine writes to the track
 
 A headless stage runs the coding agent with permission prompts bypassed. Inside it, two things hold: the autopilot profile of the guardrail, which denies pushes, merges, tracker writes and edits to the project's configuration, hooks, CI and settings and limits shell writes to the workspace; and the stage token, which cannot write even when a command gets past the hook. A regex hook is not a sandbox. Run the watcher on a machine that holds nothing else of value: no production credentials, no other repositories, no personal files. An ephemeral virtual machine rebuilt from an image is the right shape.
 
-The watcher runs `claude-code` stages only. `opencode` has no PreToolUse guardrail yet, so the watcher refuses it (`harness-unguarded`); its tickets run from a session with `/ultrapowers:autopilot <ID>`.
+## The harnesses
+
+`autopilot.harness` names the headless CLI the watcher spawns for each stage; `skills/autopilot/scripts/harnesses.mjs` holds the exact command lines, and `tests/autopilot/test-adapters.sh` checks them against the CLIs installed on a machine. Every harness but Devin runs the stage inside the guardrail, so the watcher accepts all of them and refuses `devin` (`harness-unguarded`), whose plugin hooks are documented as fail-open.
+
+| `harness` | CLI | What the stage loads |
+|---|---|---|
+| `claude-code` | `claude -p` | only the project's `.mcp.json` servers (`--strict-mcp-config`) |
+| `codex` | `codex exec` | `--ignore-user-config`: the project's `.codex/config.toml` only; `--dangerously-bypass-hook-trust` runs the plugin's guardrail hook without the interactive trust step |
+| `copilot` | `copilot -p` | `--disable-builtin-mcps` |
+| `cursor` | `agent -p` | the project's MCP configuration |
+| `gemini` | `gemini -p` | `-e ultrapowers`: this extension only; the guardrail comes from the project's `.gemini/settings.json` hook that init wrote |
+| `qwen` | `qwen -p` | `-e ultrapowers` |
+| `opencode` | `opencode run` | the project's `opencode.json`; never `--pure` |
+| `pi` | `pi -p` | `--no-extensions -e <this plugin's extension>` |
+| `droid` | `droid exec` | the project's `.factory/` configuration |
+| `kimi` | `kimi -p` | the project's `.kimi-code/mcp.json` |
+| `hermes` | `hermes chat --oneshot` | the user's enabled plugins and MCP servers; `--accept-hooks` answers the hook consent |
+| `antigravity` | `agy -p` | the project's configuration |
+
+Two of them need a one-time step on the machine: Codex asks you to trust the plugin's hooks once (`/hooks` in an interactive session) before a session-door run, and Hermes loads the plugin only when `ultrapowers` is in `plugins.enabled`. Gemini CLI, Qwen Code, Droid and Kimi Code let a hook that crashes or times out through; the deny path is exit 2 everywhere and is what the tests exercise.
 
 ## Stopping and resuming
 

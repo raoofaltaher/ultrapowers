@@ -10,7 +10,7 @@ One question per message; use multiple choice where the harness has it.
 2. Base branch of the documents repository, this workspace root, for ticket branches: default the remote HEAD. Code repositories keep their own `defaultBranch` from `repos`.
 3. Approvers: tracker logins allowed to approve a packet. Empty means any member with write access.
 4. Execution: `subagent` (default; a fresh subagent per task) or `inline`.
-5. Harness for the watcher's headless stages: `claude-code` (default) or `opencode`. The watcher runs `claude-code` only until `opencode` has a guardrail.
+5. Harness for the watcher's headless stages: `claude-code` (default), `codex`, `copilot`, `cursor`, `gemini`, `qwen`, `opencode`, `pi`, `droid`, `kimi`, `hermes` or `antigravity`. `devin` runs tickets from a session only.
 6. Only when a watcher will run: may the watcher take an approval from the account it runs as? Default no (`watchSelfApproval` false). Yes is for a solo developer whose own account runs the watcher, together with the read-only stage tokens the next steps name.
 7. Label names, only when the team already uses labels with these names: defaults `up:ready`, `up:approve`, `up:changes`, `up:hold`, `up:running`, `up:blocked`.
 

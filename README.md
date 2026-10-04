@@ -364,12 +364,33 @@ The `autopilot` block (every field but `mode` is optional):
 | `baseBranch` | The base of the ticket branch in the documents repository, this workspace root; default the remote HEAD. Code repositories use their own `defaultBranch` from `repos` |
 | `approvers` | Tracker logins allowed to approve a packet; empty means any member with write access, including the account the engine runs as, so you approve your own tickets. If the engine runs as a bot, list your human approvers here to keep the bot out |
 | `execution` | `subagent` (a fresh subagent per plan task, the default) or `inline` |
-| `harness` | The headless harness the watcher spawns: `claude-code` (default) or `opencode`. The watcher runs `claude-code` only until `opencode` has a guardrail; `opencode` tickets run from a session |
+| `harness` | The headless harness the watcher spawns for each stage: `claude-code` (default), `codex`, `copilot`, `cursor`, `gemini`, `qwen`, `opencode`, `pi`, `droid`, `kimi`, `hermes` or `antigravity`. `devin` is accepted for a session and refused by the watcher, because its plugin hooks fail open. See "Where the envelope runs" below |
 | `watchSelfApproval` | `false` by default: the watcher does not take an approval from the account it runs as. `true` lets a solo developer approve their own tickets from a watcher that runs under their account; set it together with the read-only stage tokens in `docs/autopilot-watcher.md` |
 | `events` | The six label names, defaults `up:ready`, `up:approve`, `up:changes`, `up:hold`, `up:running`, `up:blocked` |
 | `watch` | `intervalSec` (default 60) and `maxConcurrent` (default 1) for the watcher |
 
 Autopilot needs a GitHub or GitLab source in `tickets`. The engine writes `tasks/<ID>/autopilot.json` and a hash-chained `tasks/<ID>/stage-log.jsonl` on the ticket branch; `/ultrapowers:task` reads them first.
+
+**Where the envelope runs.** The engine, the skill, the tracker write-back through `gh` and `glab`, and the watcher are the same on every harness. What differs is how each harness runs the guardrail, the hook that denies a push, a merge or a tracker write to the agent during a stage:
+
+| Harness | The guardrail during a session stage | A watcher stage (`autopilot.harness`) | Notes |
+|---|---|---|---|
+| Claude Code | plugin hook `hooks/hooks.json` (PreToolUse) | yes | Only the project's `.mcp.json` servers load into a headless stage |
+| Codex | plugin hook `hooks/hooks-codex.json` | yes | Trust the plugin's hooks once with `/hooks`; the watcher passes `--dangerously-bypass-hook-trust`. Edits through `apply_patch` are checked file by file |
+| GitHub Copilot CLI | plugin hook `hooks/hooks.json` | yes | A failing hook denies the call |
+| Cursor | plugin hook `hooks/hooks-cursor.json`, `failClosed` | yes (`agent -p`) | |
+| Muse | plugin hook (PreToolUse) | no headless CLI | |
+| Qwen Code | the extension's `hooks/hooks.json` (PreToolUse) | yes | |
+| Gemini CLI | the project `BeforeTool` hook init writes to `.gemini/settings.json`, which runs the extension's guardrail | yes | Set `ULTRAPOWERS_PLUGIN_ROOT` when the extension is not under `~/.gemini/extensions/ultrapowers`. A hook that writes anything but JSON to stdout is ignored by Gemini |
+| Factory Droid | plugin hook `hooks/hooks.json` | yes | |
+| Kimi Code | plugin hook in `.kimi-plugin/plugin.json`, through `hooks/lib/guardrail-cli.mjs` | yes | Kimi lets a crashed or timed-out hook through; the deny path itself is exit 2 |
+| OpenCode | in process, `tool.execute.before` in the plugin | yes | Never run it with `--pure`, which drops the plugin |
+| Pi | in process, the extension's `tool_call` handler | yes | The watcher loads this extension and no other |
+| Hermes Agent | in process, the plugin's `pre_tool_call` (fails closed) | yes | The plugin must be in `plugins.enabled`; the watcher passes `--accept-hooks` |
+| Antigravity | plugin hook `hooks.json` at the plugin root, through `guardrail-cli.mjs --antigravity` | yes (`agy -p`) | Antigravity runs plugin hooks in its CLI; the IDE surface is not confirmed |
+| Devin | `hooks/hooks.json`, which Devin documents as best effort and fail open | refused | Run Devin tickets from a session, with the project's own `permissions.deny` rules as the brake |
+
+On every harness the deny is the same exit code 2 with the reason on stderr, which each of them turns into a blocked call the agent can read.
 
 ## When Something Goes Wrong
 
