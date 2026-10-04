@@ -62,7 +62,11 @@
       ".agents/ultrapowers.json",
       ".agents/memory",
       ".githooks/pre-commit",
-      ".gitleaks.toml"
+      ".gitleaks.toml",
+      "tasks",
+      "specs",
+      "plans",
+      "reviews"
     ]
   }
 }

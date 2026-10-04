@@ -117,7 +117,7 @@ Rows assume `gated`, the default mode. During a stage, a guardrail hook denies t
 2. Run `/ultrapowers:autopilot <ticket>` in a session, or add `up:ready` if a watcher *(beta)* runs.
 3. Read the review packet on the ticket (brief, spec, plan), then add `up:approve`.
 4. Review the pull requests (one per repository); they cite the packet, the approver and the log.
-5. Merge the pull requests yourself; in v1.2.0 neither the agent nor the engine merges.
+5. Merge the pull requests yourself; in this release neither the agent nor the engine merges.
 
 ### Questions teams ask first
 
