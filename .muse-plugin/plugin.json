@@ -11,6 +11,10 @@
   "capabilities": {
     "skills": [
       {
+        "id": "autopilot",
+        "path": "skills/autopilot/SKILL.md"
+      },
+      {
         "id": "brainstorm-task",
         "path": "skills/brainstorm-task/SKILL.md"
       },

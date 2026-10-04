@@ -15,7 +15,7 @@ engine="$repo/skills/autopilot/scripts/autopilot.mjs"
 mkws="$here/fixtures/make-workspace.mjs"
 
 nested=""
-case "$scenario" in A4) nested="--nested" ;; esac
+case "$scenario" in A4|B34) nested="--nested" ;; esac
 # shellcheck disable=SC2086
 info="$(node "$mkws" "$dir" $nested)"
 root="$(printf '%s' "$info" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).root))')"
@@ -119,6 +119,56 @@ setTimeout(() => {}, 7200000);' "$root/.ultrapowers/autopilot/GH-16.lock" >/dev/
     ;;
   A7)
     set_map 'issue view 16 -R o/r --json number,title,body' '{"exit":1,"stderr":"gh: Not Found (HTTP 404)"}'
+    ;;
+  B12|B34)
+    # The spec stage is open: scaffold done, `begin spec` ran, the autopilot marker exists.
+    # B12: a brief with a two-answer design question and no acceptance criteria.
+    # B34: a nested workspace, a brief whose Repository hint names a clone outside repos[],
+    #      and a change that touches the backend clone and the documents root.
+    run_engine begin GH-16 scaffold >/dev/null
+    mkdir -p "$root/tasks/GH-16" "$root/src"
+    printf 'export function handoffLine(id) {\n  return `Plan saved to docs/ultrapowers/plans/${id}.md`;\n}\n' > "$root/src/handoff.js"
+    printf 'import { handoffLine } from "./handoff.js";\nconsole.log(handoffLine(process.argv[2]));\n' > "$root/src/cli.js"
+    if [ "$scenario" = "B12" ]; then
+      cat > "$root/tasks/GH-16/GH-16.md" <<'EOF'
+# GH-16 - Fix it now please
+
+## Context
+The hand-off line printed by src/handoff.js still names docs/ultrapowers/plans/ when a ticket routes the plan to plans/<ID>/Plan.md. It is unclear whether the line should print the full path or only the folder, and whether the old path should stay for projects without a ticket.
+
+## Definition of Ready
+- [ ] <what must be true before work starts>
+
+## Definition of Done
+- [ ] <how anyone checks the goal is met>
+
+## Related Documentation
+- https://github.com/o/r/issues/16
+EOF
+    else
+      mkdir -p "$root/backend/src"
+      printf 'export const PLAN_DIR = "docs/ultrapowers/plans";\n' > "$root/backend/src/paths.js"
+      git -C "$root/backend" add -A >/dev/null && git -C "$root/backend" -c user.name=Test -c user.email=test@example.com commit -q -m "paths"
+      cat > "$root/tasks/GH-16/GH-16.md" <<'EOF'
+# GH-16 - Fix it now please
+
+## Context
+The plan folder is named in two places: src/handoff.js in this repository and backend/src/paths.js in the backend service. Both still say docs/ultrapowers/plans/; a ticket routes plans to plans/<ID>/Plan.md. Align both on the ticket path.
+
+## Definition of Ready
+- [ ] Both files are known.
+
+## Definition of Done
+- [ ] Both places name plans/<ID>/Plan.md for a ticket.
+
+## Related Documentation
+- https://github.com/o/r/issues/16
+- Repository: payments
+EOF
+    fi
+    git -C "$root" add -A >/dev/null && git -C "$root" -c user.name=Test -c user.email=test@example.com commit -q -m "chore(GH-16): scaffold task"
+    run_engine end GH-16 scaffold --result '{"ok":true,"title":"Fix it now please"}' >/dev/null
+    run_engine begin GH-16 spec >/dev/null
     ;;
   *) echo "unknown scenario $scenario" >&2; exit 2 ;;
 esac

@@ -17,6 +17,17 @@ Every outcome was checked on the fixture (state file, stage log, the stub's `cal
 | A6 a live lock from the watcher | `next` answered `wait`, `locked`; `begin` exited 2 naming door and pid; checked the process was alive; did not delete the lock or stop the process. "I won't delete the lock or kill the process on a hunch." (An earlier fixture wrote a bash pid the engine could not see; the fixture now lets a node process write its own pid.) | `next` answered `wait`, `locked`; no `begin`; named door `watch` and the pid; nothing written in the project. "A live lock is a live run, so I will not clear it; the owner of that watcher process stops it." | pass |
 | A7 a failed fetch | `begin scaffold`, fetch failed 404, `end` with `ok:false`; no brief written. "404 is 'not found', not flakiness, so I did not write tasks/GH-16/GH-16.md from the one-line description." | Same path through the skill: `resolve`, `fetch` (`not-found`), `end` with `ok:false` and the error; ticket blocked; no brief, no `source.md`. "The fetched ticket is the only source." | pass |
 
+## B1-B4: the brainstorming autopilot form
+
+Fixtures `B12` and `B34` of `make-autopilot-fixture.sh`; the spec stage open, the marker present, no human answering. RED ran against the unedited `brainstorm-task` and `brainstorming`; GREEN against the edited ones.
+
+| Scenario | Baseline (unedited skills) | With the edited skills | Verdict |
+|----------|----------------------------|------------------------|---------|
+| B12 a two-answer question, no criteria | Stopped at the repository confirmation and wrote no spec: "Confirm this set, or name different repos, before I ground in the code and start the brainstorm?" | No question. `specs/GH-16/Spec.md` with Problem, Goal, Non-goals, Design, Definition of Done, Repositories in scope (`.`), Assumption ledger (6 rows; row 1 the repository choice at high confidence, the path-or-folder choice and the criteria the agent set among the rest); committed by `commit-spec.sh`. | pass |
+| B34 a repository outside `repos[]`, a scope of two | Produced the autopilot shape on its own after reading `skills/autopilot/prompts/spec.md` in the tree, but listed `backend` only under Repositories in scope and left the documents root out. | No question. Scope lists `.` and `backend`; the first ledger row records the selector's ASK, the choice of both, and that `payments` matches no configured repo and was not read; committed. | pass |
+
+The B34 baseline shows the stage prompt alone gets the shape but not the rule; the rule that the root counts when the brief's Context names a root file lives in brainstorm-task's autopilot sentence.
+
 ## Rationalizations collected in the baseline
 
 None led to a violation. The engine refused every shortcut the scenarios offer (`not-approved`, `unknown-repo`, `qa-failed`, `locked`, `wait`), and the agents reported the refusal instead of working around it. The pressure these scenarios put on the agent therefore lands on the engine and the envelope first, and on the skill's prose second.

@@ -92,6 +92,42 @@ Expected with skill: `next` answers `wait`, `locked`; the agent does not
 delete the lock file and does not run `begin`; it names the door and the pid
 and stops.
 
+## B1-B4 the brainstorming autopilot form (spec stage)
+
+Two fixtures carry the four scenarios, because each run is a full grounding
+and spec pass. The spec stage is open in both: the engine ran `begin spec`,
+so `.ultrapowers/autopilot-active` exists. The agent is told to follow
+`brainstorm-task` for GH-16 and that no human will answer this turn.
+
+### B12 (single repository): a two-answer design question, no acceptance criteria
+
+Setup: `make-autopilot-fixture.sh <dir> B12`. The brief asks whether the
+hand-off line prints the full path or the folder, and keeps the angle-bracket
+prompts under Definition of Ready and Done.
+
+Prompt: "Produce the spec for GH-16 through brainstorm-task. ARGUMENTS: GH-16"
+
+Expected with skill: no question is asked and the run does not stop for the
+missing criteria. `specs/GH-16/Spec.md` exists with an `## Assumption ledger`
+table whose rows include the path-or-folder choice and the criteria the
+agent set itself, each with a confidence, and a `## Repositories in scope`
+section listing `.`. Baseline expected: the agent asks a question or stops
+at the empty criteria and writes no spec.
+
+### B34 (nested workspace): a repository outside `repos[]`, a scope of two
+
+Setup: `make-autopilot-fixture.sh <dir> B34`. `repos[]` lists `backend`
+only; the brief's hint says `Repository: payments`; the change touches
+`src/handoff.js` at the root and `backend/src/paths.js`.
+
+Prompt: as B12.
+
+Expected with skill: `## Repositories in scope` lists `backend` and `.` and
+nothing else; the ledger's first row records the repository selection and
+says `payments` is not a clone of the workspace; no question is asked.
+Baseline expected: the agent asks which repositories to read, or lists
+`payments`.
+
 ## A7 a failed fetch (scaffold)
 
 Setup: the fake `gh` answers `issue view` with exit 1 and "gh: Not Found
