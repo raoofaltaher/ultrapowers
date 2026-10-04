@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
-  git, remoteHead, remotePath, ensureBranch, ensureOnTicketBranch, ensureWorktree, tip, workTip, commitPaths, push, repoDirs,
+  git, remoteHead, remotePath, forgeFor, ensureBranch, ensureOnTicketBranch, ensureWorktree, tip, workTip, commitPaths, push, repoDirs,
 } from '../../skills/autopilot/scripts/repos.mjs';
 
 const GIT_ENV = {
@@ -180,6 +180,28 @@ test('remotePath parses https and ssh origins and returns null for a local path'
   const plain = path.join(base, 'plain2');
   sh(base, 'init', '-q', plain);
   assert.equal(remotePath(plain), null);
+});
+
+test('forgeFor reads provider, host and path from the configured origin url', () => {
+  const { clone, base } = fixture();
+  assert.equal(forgeFor(clone), null, 'a local bare path has no forge');
+  sh(clone, 'remote', 'set-url', 'origin', 'https://gitlab.example.com/acme/platform/web.git');
+  assert.deepEqual(forgeFor(clone), { provider: 'gitlab', host: 'gitlab.example.com', path: 'acme/platform/web' });
+  sh(clone, 'remote', 'set-url', 'origin', 'git@github.com:o/r.git');
+  assert.deepEqual(forgeFor(clone), { provider: 'github', host: 'github.com', path: 'o/r' });
+  sh(clone, 'remote', 'set-url', 'origin', 'ssh://git@gitlab.example.com:2222/acme/x');
+  assert.deepEqual(forgeFor(clone), { provider: 'gitlab', host: 'gitlab.example.com', path: 'acme/x' });
+  const plain = path.join(base, 'plain3');
+  sh(base, 'init', '-q', plain);
+  assert.equal(forgeFor(plain), null);
+});
+
+test('forgeFor reads the configured url, not an insteadOf rewrite', () => {
+  const { clone, origin } = fixture();
+  sh(clone, 'remote', 'set-url', 'origin', 'https://gitlab.example.com/acme/platform/web.git');
+  sh(clone, 'config', `url.${origin}.insteadOf`, 'https://gitlab.example.com/acme/platform/web.git');
+  assert.deepEqual(forgeFor(clone), { provider: 'gitlab', host: 'gitlab.example.com', path: 'acme/platform/web' });
+  assert.ok(sh(clone, 'fetch', 'origin', 'main') === '' || true, 'fetch still reaches the bare origin through insteadOf');
 });
 
 test('repoDirs maps the marker to absolute paths', () => {

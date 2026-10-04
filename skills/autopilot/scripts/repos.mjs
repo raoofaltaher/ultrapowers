@@ -178,6 +178,22 @@ export function remotePath(dir) {
   return m[1];
 }
 
+// The forge of a repository, from its configured origin url (not an insteadOf rewrite): github.com
+// is GitHub through gh, any other host is GitLab through glab against that host (spec D5). Null for
+// a local path or no remote.
+export function forgeFor(dir) {
+  const r = git(dir, ['config', '--get', 'remote.origin.url']);
+  if (!r.ok) return null;
+  const url = r.stdout.trim();
+  if (/^[A-Za-z]:[\\/]|^\/|^\.\.?[\\/]/.test(url)) return null;
+  const m = /^(?:https?:\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?\/|ssh:\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?\/|(?:[^@/]+@)?([^:/]+):(?!\/))(.+?)(?:\.git)?\/?$/.exec(url);
+  if (!m) return null;
+  const host = (m[1] ?? m[2] ?? m[3] ?? '').toLowerCase();
+  const repoPath = m[4];
+  if (!host || !repoPath.includes('/') || /^[A-Za-z]:/.test(repoPath)) return null;
+  return { provider: host === 'github.com' ? 'github' : 'gitlab', host, path: repoPath };
+}
+
 // Absolute directories of the documents repository and every code repository of the marker.
 export function repoDirs(root, marker) {
   const repos = Array.isArray(marker?.repos) ? marker.repos : [];

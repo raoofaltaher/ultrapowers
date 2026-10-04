@@ -23,7 +23,7 @@ import {
 } from './autopilot-lib.mjs';
 import { trackerFor } from './tracker.mjs';
 import { HARNESSES, GUARDED_HARNESSES, PLUGIN_ROOT } from './harnesses.mjs';
-import { ensureBranch, ensureOnTicketBranch, ensureWorktree, remoteHead, remotePath, tip, workTip, commitPaths, push, repoDirs, baseAhead, pathsChanged, git } from './repos.mjs';
+import { ensureBranch, ensureOnTicketBranch, ensureWorktree, remoteHead, forgeFor, tip, workTip, commitPaths, push, repoDirs, baseAhead, pathsChanged, git } from './repos.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PACKET_TEMPLATE = path.join(HERE, '..', 'templates', 'packet.md');
@@ -437,12 +437,17 @@ async function runApproval(opts) {
 }
 
 // The tracker path of a code repository: its origin URL, else <owner or namespace>/<name>.
-function repoTrackerPath(ctx, name, dir) {
-  const fromRemote = remotePath(dir);
+// The forge a repository's pull request opens on: its origin remote (spec D5); for a GitHub or
+// GitLab ticket, a repository without a usable remote falls back to the ticket source as before.
+function forgeOf(ctx, name, dir) {
+  const fromRemote = forgeFor(dir);
   if (fromRemote) return fromRemote;
+  if (!['github', 'gitlab'].includes(ctx.resolution.provider)) {
+    throw new AutopilotError('no-forge', `${name} has no origin remote on a forge; an ${ctx.resolution.provider} ticket opens pull requests on the forge of each repository`);
+  }
   const source = (ctx.marker.tickets?.sources ?? []).find((s) => s.prefix === ctx.resolution.prefix) ?? {};
   const base = source.provider === 'gitlab' ? source.namespace : source.owner;
-  return `${base}/${name}`;
+  return { ...ctx.resolution, path: name === 'docs' && ctx.resolution.path ? ctx.resolution.path : `${base}/${name}` };
 }
 
 // The last stage: push every branch in scope, one PR per repository plus the documents PR.
@@ -512,7 +517,7 @@ async function openPullRequests(ctx, opts, state, { resuming, qaOn }) {
     const workDir = r.worktree && fs.existsSync(r.worktree) ? r.worktree : dir;
     push(workDir, r.branch, { state, repoName: r.name, ticket: opts.id });
     r.tip = tip(workDir, r.branch);
-    const tracker = trackerFor({ ...ctx.resolution, path: repoTrackerPath(ctx, r.name, dir) }, process.env);
+    const tracker = trackerFor(forgeOf(ctx, r.name, dir), process.env);
     r.prUrl = await tracker.createPr({ head: r.branch, base: r.base, title, body: cite(`the ${r.name} repository`) });
     r.status = 'pr';
     prs[r.name] = r.prUrl;
@@ -521,7 +526,7 @@ async function openPullRequests(ctx, opts, state, { resuming, qaOn }) {
   push(ctx.dirs.docs, state.docs.branch, { state, repoName: 'docs', ticket: opts.id });
   if (!state.pr.docs) {
     const docsBody = `${cite('the documents repository')}\n${Object.entries(prs).map(([n, u]) => `- ${n}: ${u}`).join('\n')}`;
-    state.pr.docs = await ctx.tracker.createPr({ head: state.docs.branch, base: state.docs.base, title, body: docsBody });
+    state.pr.docs = await trackerFor(forgeOf(ctx, 'docs', ctx.dirs.docs), process.env).createPr({ head: state.docs.branch, base: state.docs.base, title, body: docsBody });
   }
   prs.docs = state.pr.docs;
   state.stageStatus = 'finished';

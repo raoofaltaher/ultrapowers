@@ -370,6 +370,34 @@ test('nested: execute creates a worktree per frozen repo and pr opens one PR per
   assert.match(closing, /pull\/9/);
 });
 
+test('pr opens the code repository MR on the forge its remote names, with GITLAB_HOST set', () => {
+  const ws = workspace({ nested: true, backendRemote: 'https://gitlab.example.com/acme/backend.git' });
+  throughPlan(ws, { scope: ['backend'] });
+  run(ws, ['packet', 'GH-16']);
+  ws.setMap({
+    ...approvedBy('alice'),
+    'pr create -R o/r --head GH-16-fix-it-now-please --base main': { stdout: 'https://github.com/o/r/pull/9\n' },
+    'mr create -R acme/backend --source-branch GH-16-fix-it-now-please --target-branch main': { stdout: 'https://gitlab.example.com/acme/backend/-/merge_requests/4\n' },
+  });
+  run(ws, ['next', 'GH-16']);
+  const b = run(ws, ['begin', 'GH-16', 'execute']);
+  assert.equal(b.code, 0, b.stdout + b.stderr);
+  const wt = b.json.worktrees.backend;
+  fs.writeFileSync(path.join(wt, 'feature.js'), 'ok\n');
+  git(wt, 'add', '-A');
+  git(wt, 'commit', '-q', '-m', 'feat: backend work');
+  run(ws, ['end', 'GH-16', 'execute', '--result', JSON.stringify({ ok: true })]);
+  const r = run(ws, ['pr', 'GH-16']);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.equal(r.json.prs.backend, 'https://gitlab.example.com/acme/backend/-/merge_requests/4');
+  assert.equal(r.json.prs.docs, 'https://github.com/o/r/pull/9');
+  const mr = callRecords(ws).find((c) => c.args[0] === 'mr' && c.args[1] === 'create');
+  assert.equal(mr.gitlabHost, 'gitlab.example.com');
+  assert.ok(!ws.calls().some((a) => a[0] === 'pr' && a[1] === 'create' && a.includes('o/backend')), 'no GitHub PR for the GitLab repository');
+});
+
+const callRecords = (ws) => fs.readFileSync(path.join(ws.stubDir, 'calls.log'), 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+
 // ---- Task 13: headless run ----
 const HARNESS_STUB = path.join(HERE, 'fixtures', 'harness-stub.mjs');
 const headless = (ws, extra = {}) => ({ ULTRAPOWERS_CLAUDE: HARNESS_STUB, ULTRAPOWERS_AUTOPILOT_MAX_TURNS: '7', ...extra });

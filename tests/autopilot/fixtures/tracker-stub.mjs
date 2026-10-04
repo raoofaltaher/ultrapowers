@@ -18,7 +18,7 @@ try {
 } catch {
   stdin = '';
 }
-if (process.env.STUB_LOG) fs.appendFileSync(process.env.STUB_LOG, `${JSON.stringify({ args, stdin })}\n`);
+if (process.env.STUB_LOG) fs.appendFileSync(process.env.STUB_LOG, `${JSON.stringify({ args, stdin, gitlabHost: process.env.GITLAB_HOST ?? null })}\n`);
 
 if (process.env.STUB_EXIT !== undefined) process.exit(Number(process.env.STUB_EXIT));
 // STUB_SLEEP_MS delays every answer, for timeout tests.

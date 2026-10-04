@@ -52,7 +52,7 @@ function withOrigin(base, name, dir) {
   return origin;
 }
 
-export function makeWorkspace({ dir = null, autopilot = { mode: 'gated', baseBranch: 'main' }, map = {}, qa = false, nested = false } = {}) {
+export function makeWorkspace({ dir = null, autopilot = { mode: 'gated', baseBranch: 'main' }, map = {}, qa = false, nested = false, backendRemote = null } = {}) {
   const base = dir ? path.resolve(dir) : fs.mkdtempSync(path.join(os.tmpdir(), 'autopilot-cli-'));
   fs.mkdirSync(base, { recursive: true });
   const root = path.join(base, 'ws');
@@ -86,6 +86,12 @@ export function makeWorkspace({ dir = null, autopilot = { mode: 'gated', baseBra
     git(backend, 'add', '-A');
     git(backend, 'commit', '-q', '-m', 'seed');
     backendOrigin = withOrigin(base, 'backend', backend);
+    // A forge URL as the configured origin, rewritten to the bare origin for every fetch and push,
+    // so the engine reads the forge from the remote while the test stays offline.
+    if (backendRemote) {
+      git(backend, 'remote', 'set-url', 'origin', backendRemote);
+      git(backend, 'config', `url.${backendOrigin}.insteadOf`, backendRemote);
+    }
   }
   const stubDir = path.join(base, 'stub');
   fs.mkdirSync(stubDir);
