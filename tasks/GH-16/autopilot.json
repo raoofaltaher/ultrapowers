@@ -16,7 +16,9 @@
   },
   "repos": [],
   "scope": {
-    "proposed": [],
+    "proposed": [
+      "."
+    ],
     "frozen": false
   },
   "packet": null,
@@ -24,7 +26,7 @@
   "pr": {
     "docs": null
   },
-  "stageStatus": "running",
+  "stageStatus": "finished",
   "door": "command",
   "logHead": "796eb2b30f9f53c52121fc0c661b6491776d841013a02e69b5a4c8721daecb73"
 }
