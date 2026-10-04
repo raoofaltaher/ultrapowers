@@ -260,7 +260,13 @@ function fill(template, values) {
 }
 
 // Renders the review packet from the template beside the skill; under 25 lines or it throws.
-export function renderPacket(template, { state, links, assumptions = [], events }) {
+export function renderPacket(template, { state, links, assumptions = [], events, baseAhead = [] }) {
+  // Commits on the local base that origin does not have ride into the ticket's pull request;
+  // the reviewer sees them here instead of discovering them in the diff.
+  const ahead = Array.isArray(baseAhead) ? baseAhead.filter(Boolean) : [];
+  const baseNote = ahead.length
+    ? `; base ${state.docs.base} is ${ahead.length} commit${ahead.length === 1 ? '' : 's'} ahead of origin/${state.docs.base}: ${ahead.join(', ')}`
+    : '';
   const repoNames = state.scope.frozen ? state.scope.frozen : state.scope.proposed;
   const byName = Object.fromEntries((state.repos ?? []).map((r) => [r.name, r]));
   const repoLines = (repoNames.length ? repoNames : ['.']).map((name) => {
@@ -279,6 +285,7 @@ export function renderPacket(template, { state, links, assumptions = [], events 
     MODE: state.mode,
     DOCS_BRANCH: state.docs.branch,
     DOCS_TIP: state.docs.tip ?? '',
+    BASE_NOTE: baseNote,
     BRIEF_URL: links.brief ?? '',
     SPEC_URL: links.spec ?? '',
     PLAN_URL: links.plan ?? '',
@@ -302,7 +309,11 @@ export async function verifyApproval({ events, approveLabel, packet, permissionO
   const relevant = (events ?? []).filter((e) => e.label === approveLabel).sort((a, b) => String(a.at).localeCompare(String(b.at)));
   const last = relevant[relevant.length - 1];
   if (!last || last.action !== 'labeled') return { ok: false, reason: 'no-event', detail: `no ${approveLabel} label event` };
-  if (!packet || !packet.postedAt || String(last.at) <= String(packet.postedAt)) {
+  // Instants, not strings: the tracker reports whole seconds and the packet time may carry
+  // milliseconds. A label inside the packet's own second is not after it; an unreadable time fails closed.
+  const labelAt = Date.parse(String(last.at ?? ''));
+  const packetAt = Date.parse(String(packet?.postedAt ?? ''));
+  if (!Number.isFinite(labelAt) || !Number.isFinite(packetAt) || labelAt <= packetAt) {
     return { ok: false, reason: 'before-packet', detail: `the label at ${last.at} precedes the packet at ${packet?.postedAt ?? 'none'}` };
   }
   const permission = await permissionOf(last.actor);
@@ -364,8 +375,9 @@ export function freezeScope(state, { specRepos = [], planRepos = [], knownRepos 
 }
 
 // A push is allowed only to a `<ID>-` branch, to the docs repository or a frozen repository.
-export function pushAllowed(state, repoName, branch) {
-  if (!String(branch).startsWith(`${state.ticket}-`)) return false;
+// `ticket` is the id the command validated; the state file's copy is not trusted for this.
+export function pushAllowed(state, repoName, branch, ticket = state.ticket) {
+  if (!String(branch).startsWith(`${ticket}-`)) return false;
   if (repoName === 'docs') return true;
   return Array.isArray(state.scope?.frozen) && state.scope.frozen.includes(repoName);
 }
@@ -395,6 +407,9 @@ export function nextStage(state, facts) {
   if (stage in AFTER) return { action: 'run', stage: AFTER[stage], reason: `${stage}-finished` };
   if (stage === 'gate') {
     if (labels.includes(events.changes)) return { action: 'run', stage: 'changes', reason: 'changes-requested' };
+    // A consumed approval lives in the state: the label is gone, so a crash between the
+    // consumption and `begin execute` must not strand the ticket at the gate.
+    if (state.approval) return { action: 'run', stage: 'execute', reason: 'approved' };
     if (mode === 'full') return { action: 'run', stage: 'execute', reason: 'mode-full' };
     if (approval?.ok) return { action: 'run', stage: 'execute', reason: 'approved' };
     if (approval && approval.reason === 'drift') return { action: 'run', stage: 'gate', reason: 'drift' };
@@ -406,6 +421,8 @@ export function nextStage(state, facts) {
   if (stage === 'qa') {
     const verdict = state.qa?.verdict ?? '';
     if (QA_STOPS.includes(verdict)) return { action: 'stop', reason: `qa-${verdict}` };
+    // QA is configured and the stage ended without a verdict: the gate fails closed.
+    if (!verdict && qaConfigured) return { action: 'stop', reason: 'qa-missing' };
     return { action: 'run', stage: 'pr', reason: 'qa-finished' };
   }
   if (stage === 'pr') return { action: 'done', reason: 'pr-finished' };
@@ -441,27 +458,28 @@ function lockTtlMs() {
   return Number.isFinite(value) && value > 0 ? value : 6 * 60 * 60 * 1000;
 }
 
-// The live lock held by the other door, or null. A lock is per door: the same door re-enters.
-// A lock with a pid lives while that pid does; a lock without one (the session door, whose CLI
-// calls are short-lived processes) lives until `end` releases it or the TTL passes.
-export function liveLock(root, id, door) {
+// The live lock that keeps this caller out, or null. A lock is per door: the same door re-enters,
+// except that a second long-lived process of the same door (two watchers) is refused while the
+// holder's pid lives. A re-entry without a pid (the skill's CLI calls inside the holder's harness)
+// is always the holder's. A lock with a pid lives while that pid does; a lock without one (the
+// session door, whose CLI calls are short-lived processes) lives until `end` releases it or the TTL passes.
+export function liveLock(root, id, door, pid = null) {
   const lock = readLock(root, id);
   if (!lock) return null;
-  if (lock.door === door) return null;
-  const stale = Number.isInteger(lock.pid) && lock.pid > 0
-    ? !pidAlive(lock.pid)
-    : Date.now() - Date.parse(lock.startedAt || 0) > lockTtlMs();
+  const hasPid = Number.isInteger(lock.pid) && lock.pid > 0;
+  const stale = hasPid ? !pidAlive(lock.pid) : Date.now() - Date.parse(lock.startedAt || 0) > lockTtlMs();
   if (stale) {
     fs.rmSync(lockPath(root, id), { force: true });
     return null;
   }
+  if (lock.door === door && (!hasPid || pid === null || pid === lock.pid)) return null;
   return lock;
 }
 
 // Takes the ticket's lock for this door; a stale lock is removed first. `pid` is the long-lived
 // process that owns the run (the watcher), or null for the session door.
 export function acquireLock(root, id, door, pid = process.pid) {
-  const other = liveLock(root, id, door);
+  const other = liveLock(root, id, door, pid);
   if (other) return { ok: false, pid: other.pid ?? null, door: other.door };
   const file = lockPath(root, id);
   fs.mkdirSync(path.dirname(file), { recursive: true });

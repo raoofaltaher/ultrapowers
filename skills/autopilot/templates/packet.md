@@ -1,5 +1,5 @@
 Autopilot packet for {{ID}} — gate {{GATE}} — mode {{MODE}}
-Docs branch {{DOCS_BRANCH}} at {{DOCS_TIP}}
+Docs branch {{DOCS_BRANCH}} at {{DOCS_TIP}}{{BASE_NOTE}}
   brief   {{BRIEF_URL}}
   spec    {{SPEC_URL}}   changed since last packet: {{DIFF_URL}}
   plan    {{PLAN_URL}}

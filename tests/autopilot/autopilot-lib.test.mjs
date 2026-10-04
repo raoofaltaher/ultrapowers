@@ -340,3 +340,54 @@ test('verifyChain on an absent or empty log is ok; a tampered line is named', ()
   fs.writeFileSync(logPath(root, 'GH-16'), raw);
   assert.deepEqual(verifyChain(root, 'GH-16'), { ok: false, at: 2 });
 });
+
+// ---- Final review fix pass (2026-10-04) ----
+
+test('nextStage: a consumed approval survives a crash, and a missing QA verdict stops', () => {
+  const gate = finished('gate', { packet: PACKET, approval: { actor: 'alice', eventId: 'e1', at: AFTER, docsTip: 'd1', tips: {} } });
+  assert.deepEqual(nextStage(gate, FACTS), { action: 'run', stage: 'execute', reason: 'approved' }, 'the label is gone, the state remembers');
+  assert.deepEqual(nextStage(gate, { ...FACTS, labels: ['up:hold'] }), { action: 'wait', reason: 'held' });
+  assert.deepEqual(nextStage(finished('qa'), { ...FACTS, qaConfigured: true }), { action: 'stop', reason: 'qa-missing' });
+  assert.deepEqual(nextStage(finished('qa', { qa: { verdict: '' } }), { ...FACTS, qaConfigured: true }), { action: 'stop', reason: 'qa-missing' });
+  assert.deepEqual(nextStage(finished('qa'), FACTS), { action: 'run', stage: 'pr', reason: 'qa-finished' }, 'without a qa block the stage was skipped');
+});
+
+test('verifyApproval compares instants, not strings: the packet second is before the packet', async () => {
+  const base = { approveLabel: 'up:approve', approvers: [], packet: { ...PACKET, postedAt: '2026-10-04T09:00:00.500Z' }, tips: TIPS_SAME, permissionOf: async () => 'write' };
+  assert.equal((await verifyApproval({ ...base, events: [EV('alice', '2026-10-04T09:00:00Z')] })).reason, 'before-packet');
+  assert.equal((await verifyApproval({ ...base, events: [EV('alice', '2026-10-04T09:00:01Z')] })).ok, true);
+  assert.equal((await verifyApproval({ ...base, events: [EV('alice', 'not a date')] })).reason, 'before-packet', 'an unparsable time fails closed');
+});
+
+test('locks: a second watcher is refused while the first lives', () => {
+  const root = tmpTicket('GH-16');
+  assert.deepEqual(acquireLock(root, 'GH-16', 'watch', process.pid), { ok: true });
+  assert.deepEqual(acquireLock(root, 'GH-16', 'watch', 999999), { ok: false, pid: process.pid, door: 'watch' });
+  assert.deepEqual(acquireLock(root, 'GH-16', 'watch', null), { ok: true }, 'the skill inside the holder re-enters without a pid');
+  assert.deepEqual(acquireLock(root, 'GH-16', 'watch', process.pid), { ok: true }, 'the holder re-enters');
+  assert.equal(readLock(root, 'GH-16').pid, process.pid);
+  releaseLock(root, 'GH-16');
+});
+
+test('freezeScope accepts the documents root beside code repositories', () => {
+  const S = stateWith();
+  assert.deepEqual(freezeScope(S, { specRepos: ['.', 'backend'], planRepos: [], knownRepos: ['.', 'backend'] }).scope, { proposed: ['.', 'backend'], frozen: ['.', 'backend'] });
+  assert.deepEqual(freezeScope(S, { specRepos: ['backend'], planRepos: ['backend'], knownRepos: ['.', 'backend'] }).scope.frozen, ['backend']);
+  assert.throws(() => freezeScope(S, { specRepos: [], planRepos: [], knownRepos: ['.', 'backend'] }), { code: 'no-scope' }, 'nested: the spec must name its repositories');
+});
+
+test('pushAllowed takes the validated ticket id, not the state file', () => {
+  const S = stateWith({ scope: { proposed: ['.'], frozen: ['.'] } });
+  assert.equal(pushAllowed({ ...S, ticket: 'main' }, 'docs', 'main-x', 'GH-16'), false, 'a tampered state cannot rename the ticket');
+  assert.equal(pushAllowed({ ...S, ticket: 'GH-99' }, 'docs', 'GH-16-x', 'GH-16'), true);
+  assert.equal(pushAllowed(S, 'docs', 'GH-16-x'), true, 'the state id is the default');
+});
+
+test('renderPacket names the base commits that are not on origin', () => {
+  const S = stateWith({ docs: { branch: 'GH-16-x', base: 'dev', tip: 'd1' }, scope: { proposed: ['.'], frozen: false }, repos: [] });
+  const args = { events: DEFAULTS.events, links: { brief: 'B', spec: 'S', plan: 'P', diff: null }, assumptions: [] };
+  const text = renderPacket(TEMPLATE, { state: S, ...args, baseAhead: ['abc1234', 'def5678'] });
+  assert.match(text.split('\n')[1], /^Docs branch GH-16-x at d1; base dev is 2 commits ahead of origin\/dev: abc1234, def5678$/);
+  assert.doesNotMatch(renderPacket(TEMPLATE, { state: S, ...args }), /ahead of origin/);
+  assert.doesNotMatch(renderPacket(TEMPLATE, { state: S, ...args, baseAhead: [] }), /ahead of origin/);
+});
