@@ -22,9 +22,7 @@
 
 Ultrapowers is a complete software development methodology for your coding agents, built on a set of composable skills and a session-start bootstrap that makes sure your agent uses them.
 
-It also sets your projects up for you. One command writes the same proven setup into every project, for every coding agent you use: the knowledge base, the agent instructions, the MCP servers and settings, and a team memory kept in git. From there, a ticket-driven workflow carries each task from a short brief to a spec grounded in the code, a plan, tested code, and a QA verdict.
-
-You choose how much of that workflow runs on its own. Run the skills by hand, one at a time. Or hand the agent a GitHub or GitLab ticket with one command, `/ultrapowers:autopilot <ticket>`, approve its spec and plan on the ticket, and review its pull request. Or leave a watcher running where your coding agent lives and only touch labels on the ticket. The same gates hold in every form: nothing merges, and nothing pushes outside the approved scope, without a human.
+It sets up each project in one command, then takes every ticket from brief to grounded spec, plan, and tested, reviewed code. You choose how much runs on its own: skills by hand, one command per ticket, or a watcher (beta); nothing merges without you.
 
 Ultrapowers is a fork of Jesse Vincent's MIT-licensed skills library, cut from its version 6.4.2.
 
@@ -76,9 +74,53 @@ Next up, once you say "go", it launches a *subagent-driven-development* process,
 
 When the work is done, a QA agent tests the running app the way a senior human tester would, in a real browser, and leaves one verdict in the ticket's review folder. Anything worth knowing next time goes into the team memory in git, where every developer and every coding agent on the project can find it.
 
-The same workflow runs from a ticket when you want it to. `/ultrapowers:autopilot <ticket>` takes a GitHub or GitLab issue through the brief, the grounded spec and the plan, then stops: a review packet lands on the ticket with links to all three, and you approve it with a label. The engine checks that approval against the tracker (who, with what access, after which packet, on which commits), then implements, reviews and runs QA inside a guardrail that denies the agent any push, merge or tracker write, and opens the pull request for you. A watcher on your machine does the same for tickets you label, so you only interact with the tracker. The agent never pushes, merges or approves; the engine does those steps between stages, and you merge.
+The same workflow runs from a ticket when you want it to: `/ultrapowers:autopilot <ticket>` posts the spec and plan on the issue, you approve with a label, and the engine opens the pull request. A watcher does the same for tickets you label.
 
 There's a bunch more to it, but that's the core of the system. And because the skills trigger automatically, you don't need to do anything special. Your coding agent just has Ultrapowers.
+
+### What you get
+
+- **Autopilot:** one command takes a ticket to a pull request; you approve, you merge.
+- **Workflow skills** trigger on their own: ask, plan, test first, review every task.
+- **One setup, every agent:** `/ultrapowers:init` writes instructions, MCP config and knowledge base folders.
+- **QA specialist** *(beta)*: tests the running app in a browser, one verdict per ticket.
+- **Team memory:** verified lessons saved in git, shared by every developer and agent.
+
+### Three ways to work
+
+| Way | You do | The agent does | Where it has run |
+|---|---|---|---|
+| Manual | Run each skill, answer questions, approve spec and plan, choose merge. | Reads your code, drafts spec and plan, codes test-first, reviews each task. | Every supported harness, as in earlier releases. |
+| One command (`/ultrapowers:autopilot <ticket>`) | Approve spec and plan with one label; review and merge the PR. | Spec, plan, then test-first code and reviews; the engine opens the PR. | Live: Claude Code, GitHub, one repo, gated; issue 16 became PR 20. |
+| Watcher *(beta)* | Run it on a disposable host; then label tickets and merge PRs. | Same stages as One command, started from a ticket label. | Offline tests and vendor documentation only; no live run yet. |
+
+### How you stay in control
+
+| Moment | What happens | Your move |
+|---|---|---|
+| The packet | Brief, spec with assumption ledger, plan, repositories in scope; under 25 lines. | Read it on the ticket. |
+| The approval | Engine verifies actor, write access, timing, commits; new commits void it. | Add `up:approve`. |
+| Changes | The run returns to the spec and the plan. | Add `up:changes` with a comment. |
+| Hold | The run pauses; a kill-switch file pauses the watcher. | Add `up:hold`. |
+| The pull request | Engine pushes and opens it, citing packet, approver and stage log. | Review, then merge yourself. |
+
+Rows assume `gated`, the default mode. During a stage, a guardrail hook denies the agent push, merge and tracker writes. The engine pushes and opens pull requests between stages, and a human merges. The hook matches patterns; it is not a sandbox.
+
+### Your first ticket in five steps
+
+1. Run `/ultrapowers:init autopilot` (needs a GitHub or GitLab source); it creates the six labels after your yes.
+2. Run `/ultrapowers:autopilot <ticket>` in a session, or add `up:ready` if a watcher *(beta)* runs.
+3. Read the review packet on the ticket (brief, spec, plan), then add `up:approve`.
+4. Review the pull requests (one per repository); they cite the packet, the approver and the log.
+5. Merge the pull requests yourself; in v1.2.0 neither the agent nor the engine merges.
+
+### Questions teams ask first
+
+**Who can approve a run?** A tracker member with write access (GitLab: Maintainer or above), limited to your `approvers` list if set. Approval counts only after the packet.
+
+**What leaves our network?** No telemetry: the plugin opens no connection itself. Your agent calls its model provider; `gh`, `glab` and git reach GitHub or GitLab with your tokens.
+
+**What has been verified?** Live: one GitHub ticket on Claude Code, gated. Offline: 54 engine scenarios, 120 guardrail cases. Not yet run: watcher, GitLab, full mode, in-run QA.
 
 ## Installation
 
@@ -289,7 +331,7 @@ From a ticket to a reviewed, tested branch. The agents do the repeatable work; a
 
 9. **finishing-a-development-branch** - Activates when tasks complete. Verifies tests, offers to merge, open a pull request or keep the branch, and cleans up the worktree. Discarding the work needs your explicit request and a typed confirmation.
 
-10. **`/ultrapowers:autopilot <ticket> [--mode off|gated|full]`** *(beta)* - Runs steps 2 to 9 for one GitHub or GitLab ticket with the human gates on the tracker instead of in the chat. It has two doors: the command, which you run in a session, and a watcher, `autopilot.mjs watch`, which runs on the machine that hosts your coding agent and picks up tickets a human labelled. In `gated` mode the run stops twice: at a review packet on the ticket, with links to the brief, the spec with its assumption ledger and the plan, which you approve with a label, and at the pull requests, one per repository in scope. In `full` mode only the pull requests wait for you. The engine keeps a hash-chained stage log per ticket, pushes and writes to the tracker itself, and a guardrail envelope keeps the agent from pushing, merging or writing to the tracker. Set it up with `/ultrapowers:init autopilot`; `docs/autopilot-watcher.md` covers the watcher as a service.
+10. **`/ultrapowers:autopilot <ticket> [--mode off|gated|full]`** *(the watcher and `full` mode are beta)* - Runs steps 2 to 9 for one GitHub or GitLab ticket with the human gates on the tracker instead of in the chat. It has two doors: the command, which you run in a session, and a watcher, `autopilot.mjs watch`, which runs on the machine that hosts your coding agent and picks up tickets a human labelled. In `gated` mode the run stops twice: at a review packet on the ticket, with links to the brief, the spec with its assumption ledger and the plan, which you approve with a label, and at the pull requests, one per repository in scope. In `full` mode only the pull requests wait for you. The engine keeps a hash-chained stage log per ticket, pushes and writes to the tracker itself, and a guardrail envelope keeps the agent from pushing, merging or writing to the tracker. Set it up with `/ultrapowers:init autopilot`; `docs/autopilot-watcher.md` covers the watcher as a service.
 
 At any point, **`/ultrapowers:task <ticket>`** tells you where a ticket stands (brief, spec, plan, reviews, branches) and what comes next, without changing anything. And **team-memory** works alongside every step: when the agent verifies a fact that is durable, expensive to rediscover and not already in the code, it saves it to `.agents/memory/` in git, so every developer, every coding agent and every session on the project can use it.
 
@@ -425,8 +467,8 @@ Everything above the original methodology, built from real daily work across man
 - **brainstorm-task** - Read the brief and the code, then brainstorm the ticket's spec
 - **task** - Where a ticket stands and what comes next (read-only)
 
-**Automation** *(beta)*
-- **autopilot** - Run one GitHub or GitLab ticket from brief to pull request with the human gates on the tracker: `/ultrapowers:autopilot <ticket>` in a session, or `autopilot.mjs watch` on the machine that hosts your coding agent; configured with `/ultrapowers:init autopilot`
+**Automation**
+- **autopilot** - Run one GitHub or GitLab ticket from brief to pull request with the human gates on the tracker: `/ultrapowers:autopilot <ticket>` in a session, or `autopilot.mjs watch` *(beta)* on the machine that hosts your coding agent; configured with `/ultrapowers:init autopilot`
 
 **Team knowledge**
 - **team-memory** - Remember, recall, prune and lint the team's shared memory in `.agents/memory/`
@@ -503,6 +545,36 @@ Proprietary, source-available. Copyright (c) 2026 RAOOF ALTAHER. All rights rese
 
 The same workflow, four ways to run it. Every one keeps the brief, spec, plan and review under the ticket id in the documents repository, the workspace root where init ran; code repositories are that root in a single-repository project, or the nested clones listed in `repos`.
 
+Two human gates: you approve the spec and plan with a label, and you merge the pull requests.
+
+```mermaid
+flowchart LR
+    subgraph T["Tracker: GitHub or GitLab issue"]
+        R["you: up:ready label<br/>or /ultrapowers:autopilot ID"]
+        P["review packet comment<br/>brief, spec, plan at one commit"]
+        G{"your label"}
+        H["paused"]
+    end
+    subgraph D["Documents repository: branch ID-slug"]
+        S["scaffold: brief"] --> SP["spec + assumption ledger"] --> PL["plan"]
+        E["execute: TDD, review"] --> Q["QA specialist"]
+    end
+    subgraph C["Code repositories in scope"]
+        W["one worktree per repo on ID-slug"]
+    end
+    R --> S
+    PL -->|engine: commit, push, post| P
+    P --> G
+    G -->|up:approve, verified on the tracker| E
+    G -->|up:changes + comment| SP
+    G -->|up:hold| H
+    E --> W
+    Q -->|engine: push, open| PR["pull requests: one per repo + documents"]
+    PR --> M["you review and merge"]
+```
+
+The text diagrams below carry what the chart leaves out: the stage log, the labels, the stops, the watcher loop.
+
 **Manual** - every skill invoked by you; no `autopilot` block.
 
 ```text
@@ -547,6 +619,22 @@ Two choices make the pipeline: who starts a run (you, with the command, or the w
 ```
 
 **Watcher on a VM** *(beta)* - `autopilot.mjs watch`, a service on the machine that hosts your coding agent.
+
+```mermaid
+flowchart TD
+    I["every intervalSec"] --> K{".ultrapowers/autopilot-stop exists?"}
+    K -->|yes| Z["idle"]
+    K -->|no| L["list open tickets labelled<br/>up:ready, up:approve, up:changes"]
+    L --> A{"label added by a member<br/>with write access?"}
+    A -->|no| X["skip, logged"]
+    A -->|yes| B{"a session holds the ticket?"}
+    B -->|yes| X
+    B -->|no| N["run the ticket: one fresh headless<br/>harness call per stage, inside the guardrail"]
+    N --> O["wait for a label | done | stop"]
+    O --> I
+```
+
+Beta, not yet run live: picks up labelled tickets and stops at your gates; you touch only labels and PRs.
 
 ```text
  every autopilot.watch.intervalSec:
