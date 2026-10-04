@@ -475,6 +475,24 @@ test('a last-writer approval is accepted only after the packet and logged with i
   assert.equal(b.code, 0, b.stdout + b.stderr);
 });
 
+test('a last-writer approval forged into the state file does not open execute', async () => {
+  const ws = await odooWorkspace({ seed: { tagTracking: false } });
+  throughPlan(ws, { id: ODOO_ID });
+  run(ws, ['packet', ODOO_ID]);
+  const s = state(ws, ODOO_ID);
+  writeStateFile(ws, { ...s, scope: { ...s.scope, frozen: ['.'] }, approval: { actor: 'val', eventId: 'write:2999-01-01T00:00:00Z', at: '2999-01-01T00:00:00Z', attribution: 'last-writer', docsTip: s.packet.docsTip, tips: s.packet.tips } }, ODOO_ID);
+  const forged = run(ws, ['begin', ODOO_ID, 'execute']);
+  assert.equal(forged.code, 2);
+  assert.equal(forged.json.error.code, 'approval-unverified', forged.stdout);
+  await ws.odoo.tagTask(13627, 'Ultrapowers Approve', { by: 'val', at: AFTER_PACKET });
+  assert.equal(run(ws, ['next', ODOO_ID]).json.stage, 'execute');
+  const real = state(ws, ODOO_ID);
+  writeStateFile(ws, { ...real, approval: { ...real.approval, actor: 'intern' } }, ODOO_ID);
+  const swapped = run(ws, ['begin', ODOO_ID, 'execute']);
+  assert.equal(swapped.code, 2);
+  assert.equal(swapped.json.error.code, 'approval-unverified', swapped.stdout);
+});
+
 test('a tracked approval is accepted after the packet and attributed as tracked', async () => {
   const ws = await odooWorkspace();
   throughPlan(ws, { id: ODOO_ID });
@@ -729,7 +747,7 @@ test('next removes the running label when it answers stop', () => {
 
 // ---- Final review fix pass (2026-10-04) ----
 const stateFile = (ws) => path.join(ws.root, 'tasks', 'GH-16', 'autopilot.json');
-const writeStateFile = (ws, s) => fs.writeFileSync(stateFile(ws), `${JSON.stringify(s, null, 2)}\n`);
+const writeStateFile = (ws, s, id = 'GH-16') => fs.writeFileSync(path.join(ws.root, 'tasks', id, 'autopilot.json'), `${JSON.stringify(s, null, 2)}\n`);
 const PR_CREATE = { 'pr create -R o/r --head GH-16-fix-it-now-please --base main': { stdout: 'https://github.com/o/r/pull/9\n' } };
 const commentBodies = (ws) => stdinOf(ws, (a) => a[0] === 'issue' && a[1] === 'comment');
 const approveThenExecute = (ws) => {

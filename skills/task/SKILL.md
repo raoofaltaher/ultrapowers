@@ -13,7 +13,7 @@ Load every markdown document a ticket has and report where it stands. This is a 
 
 ## Arguments
 
-`ticket` (required). Your argument, as the harness passed it: `$ARGUMENTS`. A single word there is the ticket. Only when those backticks are empty, or still hold the unreplaced placeholder (a dollar sign followed by the word ARGUMENTS), did the harness not pass it: then read it from the trailing `ARGUMENTS:` line of the message that invoked this skill.
+`ticket` (required): a ticket id, or the task URL of an Odoo source. Your argument, as the harness passed it: `$ARGUMENTS`. A single word there is the ticket. A task URL is resolved first: `node "<NEW_TASK_DIR>/scripts/fetch-ticket.mjs" resolve "<URL>"` (the `new-task` skill directory beside this one) prints the `id` to use for every step below. Only when those backticks are empty, or still hold the unreplaced placeholder (a dollar sign followed by the word ARGUMENTS), did the harness not pass it: then read it from the trailing `ARGUMENTS:` line of the message that invoked this skill.
 
 With no ticket, stop and print `usage: /ultrapowers:task <ticket>`.
 

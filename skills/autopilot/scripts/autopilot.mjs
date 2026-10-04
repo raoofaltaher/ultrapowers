@@ -223,9 +223,15 @@ async function recheckApproval(ctx, state) {
   }
   if (a.mode === 'full') return;
   // A last-writer approval (Odoo without tag tracking, spec D3) has no timeline event to find again:
-  // the engine's own tag removal at the gate made it the task's last writer. The packet check above
-  // and the changed-plan check are what remain; the log carries the attribution.
-  if (a.attribution === 'last-writer') return;
+  // the engine's own tag removal at the gate made it the task's last writer. What can be checked is
+  // the hash-chained log: intact, and holding the `approved` line this record claims.
+  if (a.attribution === 'last-writer') {
+    const chain = verifyChain(ctx.root, state.ticket);
+    if (!chain.ok) throw new AutopilotError('approval-unverified', `${state.ticket}: the stage log chain is broken at line ${chain.at}; the recorded approval cannot be trusted`);
+    const line = readLog(ctx.root, state.ticket).find((l) => l.event === 'approved' && l.actor === a.actor && l.sha === a.docsTip && l.attribution === 'last-writer');
+    if (!line) throw new AutopilotError('approval-unverified', `${state.ticket}: the stage log holds no approved line by ${a.actor} for ${a.docsTip}`);
+    return;
+  }
   const events = await ctx.tracker.labelEvents(ctx.source.number);
   const found = events.some((e) => String(e.id) === String(a.eventId) && e.actor === a.actor && e.action === 'labeled' && e.label === ctx.settings.events.approve);
   if (!found) throw new AutopilotError('approval-unverified', `${state.ticket}: the approval event ${a.eventId} by ${a.actor} is not on the tracker's timeline`);
