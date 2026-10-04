@@ -281,12 +281,14 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa' }) {
           }
           if (GIT_READ_ONLY.has(sub) || GIT_AUTOPILOT_ALLOWED.has(sub)) return;
           if (sub === 'fetch') {
-            if (subArgs.some((x) => x === '-u' || x.startsWith('--upload-pack') || x.startsWith('ext::') || x.includes('://') && !/^https?:\/\//.test(x) || /^[a-z]:[\\/]|^\/|^\.\.?\//i.test(x))) {
-              return deny('git fetch with --upload-pack, an ext:: or local remote runs a program or reads outside origin; an autopilot stage fetches origin only');
-            }
+            // Positive form only: `git fetch origin [refspec...]` with a few plain options.
+            const options = /^(--prune|-p|--tags|--no-tags|--quiet|-q|--depth=\d+|--all)$/;
+            const refspec = /^[A-Za-z0-9][A-Za-z0-9._\/+-]*(:[A-Za-z0-9][A-Za-z0-9._\/+-]*)?$/;
+            const positional = subArgs.filter((x) => !options.test(x));
+            const ok = positional.length >= 1 && positional[0] === 'origin' && positional.slice(1).every((x) => refspec.test(x) && !x.startsWith('-'));
+            if (!ok) return deny('an autopilot stage fetches only `git fetch origin [refspec]`; other remotes, --upload-pack and local paths run programs or read outside origin');
             return;
           }
-          if (sub === 'commit' && subArgs.some((x) => x === '--no-verify' || x === '-n')) return;
           if (sub === 'branch') {
             if (subArgs.some((x) => ['-D', '-d', '--delete', '-M', '-m', '--move', '-f', '--force'].includes(x))) return deny('git branch -D, -m and -f change or delete branches; an autopilot stage only creates and lists them');
             return;
