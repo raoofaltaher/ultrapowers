@@ -49,6 +49,7 @@
     "exclude": [
       "LICENSE",
       "RELEASE-NOTES.md",
+      ".ultrapowers",
       "node_modules",
       "INSTALL.md",
       "docs",
