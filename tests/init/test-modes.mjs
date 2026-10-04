@@ -409,6 +409,116 @@ test('an invalid tickets block is bad-tickets and writes nothing', () => {
   assert.deepEqual(changedFiles(before, snapshot(root)), []);
 });
 
+// autopilot mode (spec docs/ultrapowers/specs/2026-10-04-autopilot-design.md, sections 4 and 9).
+const TRACKER_STUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'autopilot', 'fixtures', 'tracker-stub.mjs');
+const EVENT_LABELS = ['up:ready', 'up:approve', 'up:changes', 'up:hold', 'up:running', 'up:blocked'];
+
+function autopilotExample() {
+  return { mode: 'gated', baseBranch: 'dev', approvers: ['alice'], execution: 'inline' };
+}
+
+function answersFile(block) {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ultrapowers-autopilot-')), 'answers.json');
+  fs.writeFileSync(file, JSON.stringify(block));
+  return file;
+}
+
+// A stub gh/glab that accepts every label create call and logs it.
+function labelStubEnv() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ultrapowers-label-stub-'));
+  fs.writeFileSync(path.join(dir, 'map.json'), JSON.stringify({ 'label create': { stdout: '' } }));
+  const log = path.join(dir, 'calls.log');
+  const calls = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l).args) : []);
+  return { env: { ULTRAPOWERS_GH: TRACKER_STUB, ULTRAPOWERS_GLAB: TRACKER_STUB, STUB_DIR: dir, STUB_LOG: log }, calls };
+}
+
+test('autopilot --dry-run reports the block and the labels and writes nothing', () => {
+  const root = scaffolded();
+  run(['tickets', '--root', root, '--sources', sourcesFile(ticketsExample())]);
+  const before = snapshot(root);
+  const report = run(['autopilot', '--root', root, '--answers', answersFile(autopilotExample()), '--dry-run']);
+  assert.equal(report.marker.before, null);
+  assert.deepEqual(report.marker.after, autopilotExample());
+  const gl = report.labels.filter((l) => l.source === 'GL');
+  assert.equal(gl.length, 6);
+  assert.deepEqual(gl.map((l) => l.name), EVENT_LABELS);
+  assert.ok(gl.every((l) => l.path === 'acme/platform/tracker' && l.action === 'would-create'));
+  const gh = report.labels.filter((l) => l.source === 'GH');
+  assert.equal(gh.length, 6);
+  assert.ok(gh.every((l) => l.action === 'skipped' && /defaultProject/.test(l.message)), 'a source without a default project names no repository');
+  assert.equal(report.labels.filter((l) => l.source === 'ODOO').length, 0);
+  assert.ok(report.nextSteps.some((s) => /\/ultrapowers:autopilot <ID>/.test(s)));
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
+});
+
+test('autopilot writes the block, keeps every other key byte-identical and creates the labels', () => {
+  const root = scaffolded();
+  run(['tickets', '--root', root, '--sources', sourcesFile(ticketsExample())]);
+  const markerBefore = marker(root);
+  const stub = labelStubEnv();
+  const report = run(['autopilot', '--root', root, '--answers', answersFile(autopilotExample())], { env: stub.env });
+  const after = marker(root);
+  assert.deepEqual(after.autopilot, autopilotExample());
+  const { autopilot, ...rest } = after;
+  assert.deepEqual(rest, markerBefore);
+  assert.equal(report.labels.filter((l) => l.action === 'created').length, 6);
+  const created = stub.calls().filter((a) => a[0] === 'label' && a[1] === 'create');
+  assert.equal(created.length, 6);
+  assert.ok(created.every((a) => a.includes('acme/platform/tracker')));
+  assert.deepEqual(report.written, ['.agents/ultrapowers.json']);
+});
+
+test('autopilot label failures are reported and do not stop the marker write', () => {
+  const root = scaffolded();
+  run(['tickets', '--root', root, '--sources', sourcesFile(ticketsExample())]);
+  const stub = labelStubEnv();
+  const report = run(['autopilot', '--root', root, '--answers', answersFile(autopilotExample())], { env: { ...stub.env, STUB_EXIT: '1' } });
+  assert.deepEqual(marker(root).autopilot, autopilotExample());
+  assert.equal(report.labels.filter((l) => l.action === 'failed').length, 6);
+  assert.ok(report.nextSteps.some((s) => /label/i.test(s) && /by hand|create/i.test(s)));
+});
+
+test('autopilot with mode off removes the block', () => {
+  const root = scaffolded();
+  run(['tickets', '--root', root, '--sources', sourcesFile(ticketsExample())]);
+  run(['autopilot', '--root', root, '--answers', answersFile(autopilotExample())], { env: labelStubEnv().env });
+  assert.equal(marker(root).autopilot.mode, 'gated');
+  const report = run(['autopilot', '--root', root, '--answers', answersFile({ mode: 'off' })]);
+  assert.equal('autopilot' in marker(root), false);
+  assert.deepEqual(report.labels, []);
+});
+
+test('an invalid autopilot block is bad-autopilot and writes nothing', () => {
+  const root = scaffolded();
+  const before = snapshot(root);
+  const report = run(['autopilot', '--root', root, '--answers', answersFile({ mode: 'turbo', approvers: 'alice' })], { expectExit: 2 });
+  assert.equal(report.error.code, 'bad-autopilot');
+  assert.match(report.error.message, /autopilot\.mode/);
+  assert.match(report.error.message, /autopilot\.approvers/);
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
+  assert.equal(run(['autopilot', '--root', root], { expectExit: 2 }).error.code, 'bad-args');
+});
+
+test('autopilot needs a GitHub or GitLab source', () => {
+  const root = scaffolded();
+  const report = run(['autopilot', '--root', root, '--answers', answersFile(autopilotExample())], { expectExit: 2 });
+  assert.equal(report.error.code, 'no-source');
+});
+
+test('detect reports whether autopilot is configured', () => {
+  const root = scaffolded();
+  assert.equal(run(['detect', '--root', root]).autopilotConfigured, false);
+  run(['tickets', '--root', root, '--sources', sourcesFile(ticketsExample())]);
+  run(['autopilot', '--root', root, '--answers', answersFile(autopilotExample())], { env: labelStubEnv().env });
+  assert.equal(run(['detect', '--root', root]).autopilotConfigured, true);
+});
+
+test('scaffold --autopilot writes the block with the sources in one run', () => {
+  const root = scaffolded('ws', ['--sources', sourcesFile(ticketsExample()), '--autopilot', answersFile(autopilotExample())]);
+  assert.deepEqual(marker(root).autopilot, autopilotExample());
+  assert.deepEqual(marker(root).tickets, ticketsExample());
+});
+
 test('detect reports whether ticket sources are configured', () => {
   const root = scaffolded();
   assert.equal(run(['detect', '--root', root]).ticketsConfigured, false);

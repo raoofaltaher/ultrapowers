@@ -4,7 +4,9 @@ import path from 'node:path';
 import process from 'node:process';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { effectiveTransport, serverId as ticketServerId, validateTickets } from '../../new-task/scripts/ticket-sources.mjs';
+import { effectiveTransport, serverId as ticketServerId, validateTickets, resolveTicket } from '../../new-task/scripts/ticket-sources.mjs';
+import { validateAutopilot, DEFAULTS as AUTOPILOT_DEFAULTS } from '../../autopilot/scripts/autopilot-lib.mjs';
+import { trackerFor } from '../../autopilot/scripts/tracker.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const PLUGIN_ROOT = path.resolve(SCRIPT_DIR, '..', '..', '..');
@@ -18,7 +20,7 @@ export const BLOCK_START = '# >>> ultrapowers';
 export const BLOCK_END = '# <<< ultrapowers';
 const SPECIAL_DIRS = new Set(['_blocks', '_nested']);
 const NON_TEMPLATE_FILES = new Set(['.mcp.json', 'CHANGES.json']);
-const MODES = ['scaffold', 'join', 'upgrade', 'detect', 'tickets'];
+const MODES = ['scaffold', 'join', 'upgrade', 'detect', 'tickets', 'autopilot'];
 const SECRETS_EXAMPLE = '.agents/mcp-secrets.env.example';
 
 export const ALL_HARNESSES = [
@@ -284,6 +286,9 @@ export function parseArgs(argv) {
     platform: process.platform,
     sources: null,
     tickets: null,
+    answers: null,
+    autopilotFile: null,
+    autopilot: null,
   };
   if (!MODES.includes(opts.mode)) {
     throw new InitError('bad-args', `mode must be one of ${MODES.join(', ')}`);
@@ -306,6 +311,8 @@ export function parseArgs(argv) {
       case '--date': opts.date = value(); break;
       case '--platform': opts.platform = value(); break;
       case '--sources': opts.sources = path.resolve(value()); break;
+      case '--answers': opts.answers = path.resolve(value()); break;
+      case '--autopilot': opts.autopilotFile = path.resolve(value()); break;
       default: throw new InitError('bad-args', `unknown argument ${arg}`);
     }
   }
@@ -710,7 +717,7 @@ export function writeMarker(root, opts, repos, harnesses, written, dryRun, repor
     report.skipped.push(MARKER_PATH);
     return;
   }
-  writeFile(root, MARKER_PATH, withTickets(renderMarker(buildVars(opts, repos, harnesses, written)), opts.tickets), false, dryRun, 'wx');
+  writeFile(root, MARKER_PATH, withBlock(withTickets(renderMarker(buildVars(opts, repos, harnesses, written)), opts.tickets), 'autopilot', opts.autopilot), false, dryRun, 'wx');
   report.written.push(MARKER_PATH);
 }
 
@@ -735,6 +742,29 @@ function withTickets(content, tickets) {
   const next = content.replace(/\n\}\s*$/, `,\n  "tickets": ${member}\n}\n`);
   JSON.parse(next);
   return next;
+}
+
+// Any other top-level block goes in the same way, after the tickets key.
+function withBlock(content, key, block) {
+  if (!block) return content;
+  const member = JSON.stringify(block, null, 2).replace(/\n/g, '\n  ');
+  const next = content.replace(/\n\}\s*$/, `,\n  "${key}": ${member}\n}\n`);
+  JSON.parse(next);
+  return next;
+}
+
+// The --answers file holds the autopilot block. { "mode": "off" } means no block.
+export function loadAutopilot(file) {
+  let block;
+  try {
+    block = readJson(file);
+  } catch (err) {
+    throw new InitError('bad-args', `--answers ${file} is not readable JSON: ${err.message}`);
+  }
+  const errors = validateAutopilot(block);
+  if (errors.length) throw new InitError('bad-autopilot', errors.join('; '), { errors });
+  if (block.mode === 'off') return null;
+  return block;
 }
 
 // The --sources file holds the tickets object. No sources means local only.
@@ -829,6 +859,7 @@ export function runScaffold(opts) {
   const repos = detectRepos(opts.root);
   report.repos = repos;
   if (opts.sources) opts.tickets = loadTickets(opts.sources);
+  if (opts.autopilotFile) opts.autopilot = loadAutopilot(opts.autopilotFile);
   const plan = planPayload(opts, repos, harnesses);
   applyPlan(opts.root, plan, report, opts.dryRun);
   writeMarker(opts.root, opts, repos, harnesses, report.written, opts.dryRun, report);
@@ -867,6 +898,7 @@ export function runDetect(opts) {
     workspaceRoot: findMarkerAbove(opts.root),
     nodeVersion: process.version,
     ticketsConfigured: Boolean(marker && typeof marker === 'object' && marker.tickets),
+    autopilotConfigured: Boolean(marker && typeof marker === 'object' && marker.autopilot && marker.autopilot.mode && marker.autopilot.mode !== 'off'),
   };
 }
 
@@ -1149,11 +1181,77 @@ export function runTickets(opts) {
   return report;
 }
 
-export function main(argv) {
+const LABEL_STYLE = {
+  ready: ['0e8a16', 'autopilot: take this ticket'],
+  approve: ['1d76db', 'autopilot: the packet is approved'],
+  changes: ['fbca04', 'autopilot: revise; the reason is in a comment'],
+  hold: ['d93f0b', 'autopilot: stop here'],
+  running: ['5319e7', 'autopilot: a stage is running'],
+  blocked: ['b60205', 'autopilot: stopped; the reason is in a comment'],
+};
+
+// Configure autopilot in a scaffolded project: the marker's autopilot key, and the six
+// labels on every GitHub or GitLab source that names a default project.
+export async function runAutopilot(opts) {
+  const report = { ...emptyReport('autopilot', opts), marker: null, labels: [] };
+  const marker = requireMarker(opts);
+  if (!opts.answers) throw new InitError('bad-args', 'autopilot needs --answers <file>');
+  const block = loadAutopilot(opts.answers);
+  report.marker = { before: marker.autopilot ?? null, after: block };
+  const sources = (marker.tickets?.sources ?? []).filter((s) => s && ['github', 'gitlab'].includes(s.provider));
+  if (block && sources.length === 0) {
+    throw new InitError('no-source', 'autopilot needs a GitHub or GitLab ticket source; run init tickets first');
+  }
+  const events = { ...AUTOPILOT_DEFAULTS.events, ...(block?.events ?? {}) };
+  const failed = [];
+  if (block) {
+    for (const source of sources) {
+      let resolution = null;
+      try {
+        resolution = source.defaultProject ? resolveTicket(marker, `${source.prefix}-1`) : null;
+      } catch {
+        resolution = null;
+      }
+      for (const [event, name] of Object.entries(events)) {
+        if (!resolution || resolution.provider === 'local') {
+          report.labels.push({ source: source.prefix, path: null, name, action: 'skipped', message: `${source.prefix} has no defaultProject; create the label in each repository by hand` });
+          continue;
+        }
+        const entry = { source: source.prefix, path: resolution.path, name, action: 'would-create' };
+        if (!opts.dryRun) {
+          try {
+            const [color, description] = LABEL_STYLE[event] ?? ['ededed', 'autopilot'];
+            await trackerFor(resolution, process.env).ensureLabel(name, color, description);
+            entry.action = 'created';
+          } catch (err) {
+            entry.action = 'failed';
+            entry.message = err.message;
+            failed.push(`${resolution.path}: ${name}`);
+          }
+        }
+        report.labels.push(entry);
+      }
+    }
+  }
+  guardTarget(opts.root, MARKER_PATH);
+  if (block) marker.autopilot = block;
+  else delete marker.autopilot;
+  saveMarker(opts.root, marker, opts.dryRun);
+  report.written.push(MARKER_PATH);
+  report.nextSteps = block ? [
+    'GitHub: a watcher or a session that writes back needs a fine-grained token with Issues, Contents and Pull requests read and write on the listed repositories, never workflow, in GH_TOKEN.',
+    'GitLab: a project token with the api scope per repository, in GITLAB_TOKEN.',
+    `Start a ticket with /ultrapowers:autopilot <ID>; mode ${block.mode} stops at ${block.mode === 'full' ? 'the pull requests' : 'the review packet and the pull requests'}.`,
+    ...(failed.length ? [`Create these labels by hand, the engine could not: ${failed.join(', ')}`] : []),
+  ] : ['autopilot is off; every skill behaves as before.'];
+  return report;
+}
+
+export async function main(argv) {
   try {
     const opts = parseArgs(argv);
-    const runners = { scaffold: runScaffold, detect: runDetect, join: runJoin, upgrade: runUpgrade, tickets: runTickets };
-    const report = runners[opts.mode](opts);
+    const runners = { scaffold: runScaffold, detect: runDetect, join: runJoin, upgrade: runUpgrade, tickets: runTickets, autopilot: runAutopilot };
+    const report = await runners[opts.mode](opts);
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     return 0;
   } catch (err) {
@@ -1205,5 +1303,5 @@ function invokedDirectly() {
 }
 
 if (invokedDirectly()) {
-  process.exitCode = main(process.argv.slice(2));
+  process.exitCode = await main(process.argv.slice(2));
 }
