@@ -60,6 +60,49 @@ for (const [id, want] of cases) {
   });
 }
 
+// Odoo as an autopilot tracker (spec 2026-10-05 §4): login, db, attachmentMaxBytes, task URLs.
+const ODOO_SOURCE = { prefix: 'ODOO', provider: 'odoo', url: 'https://erp.example.com', mcpUrl: 'https://erp.example.com/mcp', login: 'bot', db: 'erp', defaultProject: '12' };
+const MARKER_ODOO = marker({ sources: [ODOO_SOURCE] });
+const MARKER_ODOO_NO_DEFAULT = marker({ sources: [{ ...ODOO_SOURCE, defaultProject: undefined }] });
+
+test('an odoo source carries login, db and attachmentMaxBytes through validation', () => {
+  assert.deepEqual(validateTickets({ attachmentMaxBytes: 1024, sources: [ODOO_SOURCE] }), []);
+  assert.match(validateTickets({ attachmentMaxBytes: -1, sources: [] })[0], /attachmentMaxBytes/);
+  assert.match(validateTickets({ sources: [{ ...ODOO_SOURCE, login: 3 }] })[0], /login/);
+  assert.match(validateTickets({ sources: [{ ...ODOO_SOURCE, db: '' }] })[0], /\.db/);
+});
+
+test('resolveTicket on an odoo id carries url, db, login and the canonical id', () => {
+  const r = resolveTicket(MARKER_ODOO, 'ODOO-34-13627');
+  assert.equal(r.url, 'https://erp.example.com');
+  assert.equal(r.db, 'erp');
+  assert.equal(r.login, 'bot');
+  assert.equal(r.id, 'ODOO-34-13627');
+  assert.equal(resolveTicket(marker(), 'GH-web-7').id, 'GH-web-7');
+  assert.equal(resolveTicket(marker(), 'ODOO-12-1203').db, null);
+});
+
+test('an Odoo task URL resolves against the source whose url matches', () => {
+  const r = resolveTicket(MARKER_ODOO, 'https://erp.example.com/odoo/action-577/34/tasks/13627');
+  assert.equal(r.provider, 'odoo');
+  assert.equal(r.path, '34');
+  assert.equal(r.number, 13627);
+  assert.equal(r.id, 'ODOO-34-13627');
+  const d = resolveTicket(MARKER_ODOO, 'https://erp.example.com/odoo/project.task/13627');
+  assert.equal(d.path, '12');
+  assert.equal(d.id, 'ODOO-12-13627');
+  assert.equal(resolveTicket(MARKER_ODOO, 'https://erp.example.com/web#model=project.task&id=13627').id, 'ODOO-12-13627');
+});
+
+test('a task URL on an unknown host is a local ticket', () => {
+  assert.deepEqual(resolveTicket(MARKER_ODOO, 'https://other.example.com/odoo/project.task/1'), { provider: 'local' });
+  assert.deepEqual(resolveTicket(MARKER_ODOO, 'https://erp.example.com/odoo/action-577/34'), { provider: 'local' });
+});
+
+test('a task URL without a project on a source without defaultProject is bad-ticket', () => {
+  assert.throws(() => resolveTicket(MARKER_ODOO_NO_DEFAULT, 'https://erp.example.com/odoo/project.task/13627'), (e) => e instanceof TicketError && e.code === 'bad-ticket' && /defaultProject/.test(e.message));
+});
+
 test('GitLab host defaults to gitlab.com and the prefix is kept', () => {
   const t = specExample();
   delete t.sources[0].host;

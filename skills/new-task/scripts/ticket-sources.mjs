@@ -6,6 +6,8 @@
 // after the last "-", the project whatever lies between. An id whose prefix
 // matches no source is local, the manual flow.
 
+import { parseOdooTaskUrl } from '../../autopilot/scripts/odoo.mjs';
+
 export class TicketError extends Error {
   constructor(code, message) {
     super(message);
@@ -35,6 +37,9 @@ export function validateTickets(tickets) {
   if ('transport' in tickets && !TRANSPORTS.includes(tickets.transport)) {
     errors.push(`tickets.transport must be one of ${TRANSPORTS.join(', ')}`);
   }
+  if ('attachmentMaxBytes' in tickets && !(Number.isInteger(tickets.attachmentMaxBytes) && tickets.attachmentMaxBytes > 0)) {
+    errors.push('tickets.attachmentMaxBytes must be a positive integer');
+  }
   if (!Array.isArray(tickets.sources)) {
     errors.push('tickets.sources must be a list');
     return errors;
@@ -60,8 +65,8 @@ export function validateTickets(tickets) {
     for (const field of REQUIRED[source.provider]) {
       if (!isText(source[field])) errors.push(`${at}.${field} is required for ${source.provider}`);
     }
-    for (const field of ['host', 'defaultProject', 'url', 'mcpUrl']) {
-      if (field in source && !isText(source[field])) errors.push(`${at}.${field} must be a non-empty string`);
+    for (const field of ['host', 'defaultProject', 'url', 'mcpUrl', 'login', 'db']) {
+      if (field in source && source[field] !== undefined && !isText(source[field])) errors.push(`${at}.${field} must be a non-empty string`);
     }
     for (const field of ['url', 'mcpUrl']) {
       if (isText(source[field]) && !/^https?:\/\/[^/\s]+/.test(source[field])) {
@@ -114,13 +119,60 @@ function repoHintFor(marker, segment, path) {
   return names.has(last) ? last : null;
 }
 
+function originOf(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
+// The resolution of a source and its project segment and number, shared by ids and URLs.
+function resolution(marker, tickets, source, prefix, segment, number) {
+  const path = providerPath(source, segment);
+  const out = {
+    provider: source.provider,
+    prefix,
+    id: `${prefix}-${segment}-${number}`,
+    host: hostOf(source),
+    path,
+    number,
+    repoHint: repoHintFor(marker, segment, path),
+    transport: effectiveTransport(tickets, source),
+    server: serverId(prefix),
+  };
+  if (source.provider === 'odoo') {
+    out.url = source.url.replace(/\/+$/, '');
+    out.db = isText(source.db) ? source.db : null;
+    out.login = isText(source.login) ? source.login : null;
+  }
+  return out;
+}
+
+// An Odoo task URL pasted as the ticket: the source whose url has the same origin; the project
+// from the URL, else the source's defaultProject (spec D10).
+function resolveTaskUrl(marker, tickets, listed, url) {
+  const parsed = parseOdooTaskUrl(url);
+  if (!parsed) return { provider: 'local' };
+  const source = listed.find((s) => s.provider === 'odoo' && isText(s.url) && originOf(s.url) === parsed.origin);
+  if (!source) return { provider: 'local' };
+  const errors = validateTickets(tickets);
+  if (errors.length) throw new TicketError('bad-tickets', `the tickets block in .agents/ultrapowers.json is invalid: ${errors.join('; ')}`);
+  const segment = parsed.project !== null ? String(parsed.project) : (isText(source.defaultProject) ? source.defaultProject : null);
+  if (segment === null) {
+    throw new TicketError('bad-ticket', `${url} names no project and the ${source.prefix} source has no defaultProject; use ${source.prefix}-<project>-${parsed.task} or set defaultProject`);
+  }
+  return resolution(marker, tickets, source, source.prefix, segment, parsed.task);
+}
+
 export function resolveTicket(marker, id) {
   const local = { provider: 'local' };
-  if (id.startsWith('#') || !id.includes('-')) return local;
   const tickets = marker?.tickets;
+  const listed = isObject(tickets) && Array.isArray(tickets.sources) ? tickets.sources.filter(isObject) : [];
+  if (/^https?:\/\//i.test(id)) return tickets === undefined ? local : resolveTaskUrl(marker, tickets, listed, id);
+  if (id.startsWith('#') || !id.includes('-')) return local;
   if (tickets === undefined) return local;
   const prefix = id.slice(0, id.indexOf('-'));
-  const listed = isObject(tickets) && Array.isArray(tickets.sources) ? tickets.sources.filter(isObject) : [];
   const errors = validateTickets(tickets);
   if (errors.length) {
     // A broken block must not swallow its own ids, nor stop local ones.
@@ -154,15 +206,5 @@ export function resolveTicket(marker, id) {
   if (source.provider === 'odoo' && !NUMBER.test(segment)) {
     throw new TicketError('bad-ticket', `${id}: the Odoo project segment must be the numeric project id`);
   }
-  const path = providerPath(source, segment);
-  return {
-    provider: source.provider,
-    prefix,
-    host: hostOf(source),
-    path,
-    number: Number(numberText),
-    repoHint: repoHintFor(marker, segment, path),
-    transport: effectiveTransport(tickets, source),
-    server: serverId(prefix),
-  };
+  return resolution(marker, tickets, source, prefix, segment, Number(numberText));
 }

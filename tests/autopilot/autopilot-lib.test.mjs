@@ -18,6 +18,7 @@ test('validateAutopilot names the field', () => {
   assert.match(validateAutopilot({ mode: 'turbo' })[0], /autopilot\.mode must be one of off, gated, full/);
   assert.match(validateAutopilot({ mode: 'gated', watch: { intervalSec: 0 } })[0], /watch\.intervalSec/);
   assert.match(validateAutopilot({ mode: 'gated', events: { approve: '' } })[0], /events\.approve/);
+  assert.match(validateAutopilot({ mode: 'gated', events: { approve: 'Odd, Name' } }).join(' '), /must not contain a comma/);
   assert.match(validateAutopilot({ mode: 'gated', approvers: 'alice' })[0], /autopilot\.approvers must be a list/);
   assert.match(validateAutopilot({ mode: 'gated', execution: 'parallel' })[0], /autopilot\.execution/);
   assert.match(validateAutopilot({ mode: 'gated', harness: 'vim' })[0], /autopilot\.harness/);

@@ -70,6 +70,7 @@ export function validateAutopilot(block) {
       for (const [k, v] of Object.entries(block.events)) {
         if (!EVENT_NAMES.includes(k)) errors.push(`autopilot.events.${k} is not an event (${EVENT_NAMES.join(', ')})`);
         else if (typeof v !== 'string' || v.trim() === '') errors.push(`autopilot.events.${k} must be a non-empty label name`);
+        else if (v.includes(',')) errors.push(`autopilot.events.${k} must not contain a comma; Odoo joins tag names with ", " in its chatter, so the engine could not tell them apart`);
       }
     }
   }
