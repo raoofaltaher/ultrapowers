@@ -11,6 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { execFile } from 'node:child_process';
 import { resolveTicket, TicketError } from '../../new-task/scripts/ticket-sources.mjs';
 import { fileURLToPath } from 'node:url';
 import {
@@ -26,9 +27,43 @@ import { ensureBranch, ensureWorktree, remoteHead, remotePath, tip, workTip, com
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PACKET_TEMPLATE = path.join(HERE, '..', 'templates', 'packet.md');
 const MARKER = path.join('.agents', 'ultrapowers.json');
-const COMMANDS = ['status', 'next', 'begin', 'end', 'packet', 'approval', 'pr'];
+const COMMANDS = ['status', 'next', 'begin', 'end', 'packet', 'approval', 'pr', 'run'];
 const DOORS = ['command', 'watch'];
 const FLAGS = { '--root': 'root', '--mode': 'mode', '--door': 'door', '--result': 'result', '--pid': 'pid' };
+const SWITCHES = { '--once': 'once' };
+const PROMPTS_DIR = path.join(HERE, '..', 'prompts');
+
+// The headless harnesses the watcher door can spawn, one fresh call per agent stage.
+// An override ending in .mjs/.js/.cjs runs under this node, for the tests.
+export const HARNESSES = {
+  'claude-code': {
+    bin: 'claude',
+    env: 'ULTRAPOWERS_CLAUDE',
+    args: (prompt, turns) => ['-p', prompt, '--permission-mode', 'bypassPermissions', '--max-turns', String(turns), '--output-format', 'json'],
+  },
+  opencode: {
+    bin: 'opencode',
+    env: 'ULTRAPOWERS_OPENCODE',
+    args: (prompt) => ['run', '--format', 'json', prompt],
+  },
+};
+
+function maxTurns() {
+  const v = Number(process.env.ULTRAPOWERS_AUTOPILOT_MAX_TURNS);
+  return Number.isInteger(v) && v > 0 ? v : 200;
+}
+
+function stageTimeoutMs() {
+  const v = Number(process.env.ULTRAPOWERS_AUTOPILOT_STAGE_TIMEOUT_MS);
+  return Number.isFinite(v) && v > 0 ? v : 3_600_000;
+}
+
+// The same text the session door follows: the skill invocation line, then the stage prompt file.
+export function stagePrompt(stage, id) {
+  const file = path.join(PROMPTS_DIR, `${stage}.md`);
+  const body = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+  return `/ultrapowers:autopilot ${id} --stage ${stage} --door watch\n\n${body}`;
+}
 
 function findRoot(start) {
   let dir = path.resolve(start);
@@ -50,7 +85,7 @@ function readMarker(root) {
 
 function parseArgs(argv) {
   const [command, id, ...rest] = argv;
-  const opts = { command, id, stage: null, root: null, mode: null, door: 'command', result: null, pid: null };
+  const opts = { command, id, stage: null, root: null, mode: null, door: 'command', result: null, pid: null, once: false };
   let i = 0;
   if ((command === 'begin' || command === 'end') && rest[0] && !rest[0].startsWith('--')) {
     opts.stage = rest[0];
@@ -59,6 +94,10 @@ function parseArgs(argv) {
   for (; i < rest.length; i += 1) {
     const flag = rest[i];
     const value = rest[i + 1];
+    if (flag in SWITCHES) {
+      opts[SWITCHES[flag]] = true;
+      continue;
+    }
     if (!(flag in FLAGS)) throw new AutopilotError('bad-args', `unknown argument ${flag}`);
     if (value === undefined) throw new AutopilotError('bad-args', `${flag} needs a value`);
     opts[FLAGS[flag]] = value;
@@ -469,12 +508,98 @@ async function runEnd(opts) {
   return { ticket: opts.id, stage: opts.stage, status: state.stageStatus, tip: state.docs.tip, attempt: state.attempt ?? 1 };
 }
 
+// One headless harness call; resolves { code, timedOut, stdout, stderr }.
+function spawnHarness(name, prompt, cwd) {
+  const adapter = HARNESSES[name];
+  if (!adapter) throw new AutopilotError('bad-autopilot', `autopilot.harness ${name} has no headless adapter; ${Object.keys(HARNESSES).join(', ')} do`);
+  const override = process.env[adapter.env];
+  const command = override || adapter.bin;
+  const script = /\.[cm]?js$/i.test(command);
+  const args = adapter.args(prompt, maxTurns());
+  const [file, argv] = script ? [process.execPath, [command, ...args]] : [command, args];
+  return new Promise((resolve) => {
+    execFile(file, argv, { cwd, env: process.env, timeout: stageTimeoutMs(), windowsHide: true, maxBuffer: 64 * 1024 * 1024 }, (error, stdout, stderr) => {
+      if (!error) return resolve({ code: 0, timedOut: false, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') });
+      if (error.code === 'ENOENT') return resolve({ code: 127, timedOut: false, stdout: '', stderr: `${adapter.bin} is not on PATH (${file})` });
+      return resolve({ code: typeof error.code === 'number' ? error.code : 1, timedOut: Boolean(error.killed), stdout: String(stdout ?? ''), stderr: String(stderr ?? error.message) });
+    });
+  });
+}
+
+// The watcher door: one fresh headless harness call per agent stage, the engine steps in
+// process, until the ticket waits, is done or stops. Exit 0 on wait or done, 3 on stop.
+async function runRun(opts) {
+  const base = { ...opts, door: 'watch', pid: process.pid };
+  const ctx = context(base);
+  const stages = [];
+  let final = null;
+  for (;;) {
+    const answer = await runNext(base);
+    if (answer.action !== 'run') {
+      final = { action: answer.action, reason: answer.reason };
+      break;
+    }
+    const lock = acquireLock(ctx.root, opts.id, 'watch', process.pid);
+    if (!lock.ok) {
+      final = { action: 'wait', reason: 'locked' };
+      break;
+    }
+    const stage = answer.stage;
+    if (stage === 'gate') {
+      await runPacket(base);
+      stages.push({ stage, ok: true });
+    } else if (stage === 'pr') {
+      await runPr(base);
+      stages.push({ stage, ok: true });
+    } else {
+      const started = Date.now();
+      const spawned = await spawnHarness(ctx.settings.harness, stagePrompt(stage, opts.id), ctx.dirs.docs);
+      const state = readState(ctx.root, opts.id);
+      const pending = readLock(ctx.root, opts.id)?.pending;
+      const ended = state ? state.stage === stage && state.stageStatus !== 'running' : false;
+      let ok = spawned.code === 0 && ended;
+      let message = null;
+      if (!ended) {
+        message = spawned.timedOut
+          ? `the ${stage} stage timed out after ${stageTimeoutMs()} ms and was killed`
+          : spawned.code !== 0
+            ? `the harness exited ${spawned.code} before ending the ${stage} stage: ${spawned.stderr.trim().split('\n').slice(-3).join(' ') || 'no output'}`
+            : `the harness exited without ending the ${stage} stage`;
+        try {
+          // A harness that died before `begin` left no stage open: open and close it here, so
+          // the ticket still ends blocked with its label and its comment.
+          if (!state && !pending) await runBegin({ ...base, stage });
+          await runEnd({ ...base, stage, result: { ok: false, message, actor: 'engine' } });
+        } catch (err) {
+          message = `${message}; and the stage could not be closed: ${err.message}`;
+          clearActiveMarker(ctx.root);
+        }
+        ok = false;
+      } else if (state.stageStatus === 'blocked') {
+        ok = false;
+        message = `the ${stage} stage ended blocked`;
+      }
+      stages.push({ stage, ok, exitCode: spawned.code, seconds: Math.round((Date.now() - started) / 1000), ...(message ? { message } : {}) });
+    }
+    if (opts.once) {
+      const after = await runNext(base).catch((err) => ({ action: 'stop', reason: err.code ?? 'error' }));
+      final = { action: after.action, reason: after.reason, once: true };
+      break;
+    }
+  }
+  releaseLock(ctx.root, opts.id);
+  const result = { ticket: opts.id, door: 'watch', stages, final };
+  result.exitCode = final.action === 'stop' ? 3 : 0;
+  return result;
+}
+
 export async function main(argv) {
   try {
     const opts = parseArgs(argv);
-    const runners = { status: runStatus, next: runNext, begin: runBegin, end: runEnd, packet: runPacket, approval: runApproval, pr: runPr };
+    const runners = { status: runStatus, next: runNext, begin: runBegin, end: runEnd, packet: runPacket, approval: runApproval, pr: runPr, run: runRun };
     const result = await runners[opts.command](opts);
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    if (opts.command === 'run') return result.exitCode;
     return 0;
   } catch (err) {
     if (err instanceof AutopilotError || err instanceof TicketError) {

@@ -15,7 +15,7 @@ Run one ticket through the workflow with the human gates on the tracker instead 
 
 ## Arguments
 
-`ticket` (required), then `--mode off|gated|full` and `--stage <stage>` (optional, any order). Your arguments, as the harness passed them: `$ARGUMENTS`. Only when those backticks are empty, or still hold the unreplaced placeholder (a dollar sign followed by the word ARGUMENTS), did the harness not pass them: then read them from the trailing `ARGUMENTS:` line of the message that invoked this skill. `--stage` performs exactly one stage and stops; the watcher uses it.
+`ticket` (required), then `--mode off|gated|full`, `--stage <stage>` and `--door command|watch` (optional, any order; the watcher passes `--stage` and `--door watch`, a session passes neither). Your arguments, as the harness passed them: `$ARGUMENTS`. Only when those backticks are empty, or still hold the unreplaced placeholder (a dollar sign followed by the word ARGUMENTS), did the harness not pass them: then read them from the trailing `ARGUMENTS:` line of the message that invoked this skill. `--stage` performs exactly one stage and stops; the watcher uses it.
 
 With no ticket, stop and print `usage: /ultrapowers:autopilot <ticket> [--mode off|gated|full] [--stage <stage>]`.
 
@@ -45,7 +45,7 @@ Add `--mode <m>` only when your human partner passed one. Read `action` and `rea
 node "<SKILL_DIR>/scripts/autopilot.mjs" begin "<ID>" "<stage>" --door command
 ```
 
-The result names the documents branch, the repositories and, at `execute`, one worktree per repository in scope. Work only in those. The engine wrote the run marker, so the guardrail now denies pushes, merges and tracker writes from you: that is correct, the engine does them between stages.
+Pass `--door watch` instead when the arguments carried it: the watcher holds the lock under that door and your `begin` re-enters it. The result names the documents branch, the repositories and, at `execute`, one worktree per repository in scope. Work only in those. The engine wrote the run marker, so the guardrail now denies pushes, merges and tracker writes from you: that is correct, the engine does them between stages.
 
 Engine stages have no `begin`: when `next` says `gate`, run `packet "<ID>"`; when it says `pr`, run `pr "<ID>"`. Then back to Step 1.
 

@@ -464,8 +464,11 @@ export function acquireLock(root, id, door, pid = process.pid) {
   const file = lockPath(root, id);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const existing = readLock(root, id);
-  const startedAt = existing && existing.door === door ? existing.startedAt : new Date().toISOString();
-  fs.writeFileSync(file, JSON.stringify({ ...(existing && existing.door === door ? existing : {}), pid: pid ?? null, door, startedAt }));
+  const same = existing && existing.door === door ? existing : null;
+  const startedAt = same ? same.startedAt : new Date().toISOString();
+  // A re-entry of the same door without a pid (the skill's begin inside a watcher's harness call)
+  // keeps the holder's pid, so the lock still names the long-lived process.
+  fs.writeFileSync(file, JSON.stringify({ ...(same ?? {}), pid: pid ?? same?.pid ?? null, door, startedAt }));
   return { ok: true };
 }
 

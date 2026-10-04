@@ -303,6 +303,12 @@ test('locks: acquire, refuse the other door, remove a stale pid, release', () =>
   fs.writeFileSync(lockPath(root, 'GH-16'), JSON.stringify({ pid: null, door: 'command', startedAt: '2020-01-01T00:00:00Z' }));
   assert.deepEqual(acquireLock(root, 'GH-16', 'watch', null), { ok: true }, 'an expired session lock is removed');
   releaseLock(root, 'GH-16');
+  // The watcher holds the lock with its pid; the skill's begin inside its harness call re-enters
+  // the same door without one and must not erase the pid.
+  assert.deepEqual(acquireLock(root, 'GH-16', 'watch', process.pid), { ok: true });
+  assert.deepEqual(acquireLock(root, 'GH-16', 'watch', null), { ok: true });
+  assert.equal(readLock(root, 'GH-16').pid, process.pid);
+  releaseLock(root, 'GH-16');
 });
 
 test('the active marker holds ticket, branch and scope', () => {

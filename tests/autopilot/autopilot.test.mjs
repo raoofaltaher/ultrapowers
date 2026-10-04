@@ -363,6 +363,79 @@ test('a plan that widens the spec scope blocks the approval with scope-widened',
   assert.equal(state(ws).scope.frozen, false);
 });
 
+// ---- Task 13: headless run ----
+const HARNESS_STUB = path.join(HERE, 'fixtures', 'harness-stub.mjs');
+const headless = (ws, extra = {}) => ({ ULTRAPOWERS_CLAUDE: HARNESS_STUB, ULTRAPOWERS_AUTOPILOT_MAX_TURNS: '7', ...extra });
+const harnessCalls = (ws) => fs.readFileSync(path.join(ws.stubDir, 'calls.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((c) => c.harness === 'stub');
+
+test('run performs scaffold, spec, plan and the gate with the stub and stops at wait', () => {
+  const ws = workspace();
+  const r = run(ws, ['run', 'GH-16'], headless(ws));
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.deepEqual(r.json.stages.map((s) => s.stage), ['scaffold', 'spec', 'plan', 'gate']);
+  assert.deepEqual([r.json.final.action, r.json.final.reason], ['wait', 'awaiting-approval']);
+  const s = state(ws);
+  assert.equal(s.stage, 'gate');
+  assert.equal(s.stageStatus, 'finished');
+  assert.ok(s.packet.commentUrl);
+  const calls = harnessCalls(ws);
+  assert.equal(calls.length, 3, 'one harness call per agent stage');
+  assert.ok(calls[0].args.includes('-p'));
+  assert.ok(calls[0].args.includes('bypassPermissions'));
+  assert.ok(calls[0].args.some((a) => a.startsWith('/ultrapowers:autopilot GH-16 --stage scaffold --door watch')));
+  assert.ok(calls[0].args.includes('7'), 'max turns from the environment');
+  assert.ok(logLines(ws).every((l) => l.trigger === 'watch'));
+  assert.equal(fs.existsSync(lockFile(ws)), false, 'the lock is released at wait');
+});
+
+test('a crashed harness leaves the stage blocked with the blocked label', () => {
+  const ws = workspace();
+  const r = run(ws, ['run', 'GH-16', '--once'], headless(ws, { HARNESS_EXIT: '7' }));
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.equal(r.json.stages[0].stage, 'scaffold');
+  assert.equal(r.json.stages[0].ok, false);
+  assert.ok(ws.calls().some((a) => a.includes('--add-label') && a.includes('up:blocked')));
+  const s = state(ws);
+  assert.equal(s.stageStatus, 'blocked');
+  assert.match(logLines(ws).at(-1).event, /blocked/);
+});
+
+test('a harness that never ends its stage is marked blocked', () => {
+  const ws = workspace();
+  const r = run(ws, ['run', 'GH-16', '--once'], headless(ws, { HARNESS_NO_END: '1' }));
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.equal(state(ws).stageStatus, 'blocked');
+  assert.ok(ws.calls().some((a) => a.includes('--add-label') && a.includes('up:blocked')));
+});
+
+test('a stage past the timeout is killed and logged blocked', () => {
+  const ws = workspace();
+  const r = run(ws, ['run', 'GH-16', '--once'], headless(ws, { HARNESS_SLEEP_MS: '3000', ULTRAPOWERS_AUTOPILOT_STAGE_TIMEOUT_MS: '500' }));
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.equal(r.json.stages[0].ok, false);
+  assert.match(r.json.stages[0].message, /timed out|timeout/i);
+  assert.equal(state(ws).stageStatus, 'blocked');
+});
+
+test('--once performs exactly one stage and run exits 3 on stop', () => {
+  const ws = workspace();
+  const r = run(ws, ['run', 'GH-16', '--once'], headless(ws));
+  assert.equal(r.json.stages.length, 1);
+  assert.equal(state(ws).stage, 'scaffold');
+  const off = run(ws, ['run', 'GH-16', '--once', '--mode', 'off'], headless(ws));
+  assert.equal(off.code, 3);
+  assert.deepEqual([off.json.final.action, off.json.final.reason], ['stop', 'mode-off']);
+});
+
+test('run skips a ticket the session door holds', () => {
+  const ws = workspace();
+  run(ws, ['begin', 'GH-16', 'scaffold', '--door', 'command']);
+  const r = run(ws, ['run', 'GH-16', '--once'], headless(ws));
+  assert.equal(r.code, 0);
+  assert.deepEqual([r.json.final.action, r.json.final.reason], ['wait', 'locked']);
+  assert.equal(harnessCalls(ws).length, 0);
+});
+
 test('next removes the running label when it answers stop', () => {
   const ws = workspace();
   run(ws, ['begin', 'GH-16', 'scaffold']);
