@@ -2,7 +2,7 @@
   "ticket": "GH-16",
   "title": "writing-plans: hand-off lines still announce docs/ultrapowers/plans/ when a ticket routes the plan to plans/<ID>/Plan.md",
   "mode": "gated",
-  "stage": "spec",
+  "stage": "plan",
   "attempt": 1,
   "source": {
     "provider": "github",
@@ -26,7 +26,7 @@
   "pr": {
     "docs": null
   },
-  "stageStatus": "finished",
+  "stageStatus": "running",
   "door": "command",
-  "logHead": "802ee8db2f55e049438262c3f8f745f33f9bc7e1a0ecffde3e8b97125d001c74"
+  "logHead": "e8d09bdd0907494af68e9f5772c35060b7ed50f13b78acbccb71b95c71dcd8ef"
 }
