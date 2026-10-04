@@ -547,33 +547,55 @@ The same workflow, four ways to run it. Every one keeps the brief, spec, plan an
 
 Two human gates: you approve the spec and plan with a label, and you merge the pull requests.
 
+**Chart 1: what happens to a ticket.** Yellow is you, blue is the agent, grey is the engine (plain code that posts, checks and opens things; no AI in it).
+
 ```mermaid
-flowchart LR
-    subgraph T["Tracker: GitHub or GitLab issue"]
-        R["you: up:ready label<br/>or /ultrapowers:autopilot ID"]
-        P["review packet comment<br/>brief, spec, plan at one commit"]
-        G{"your label"}
-        H["paused"]
-    end
-    subgraph D["Documents repository: branch ID-slug"]
-        S["scaffold: brief"] --> SP["spec + assumption ledger"] --> PL["plan"]
-        E["execute: TDD, review"] --> Q["QA specialist"]
-    end
-    subgraph C["Code repositories in scope"]
-        W["one worktree per repo on ID-slug"]
-    end
-    R --> S
-    PL -->|engine: commit, push, post| P
-    P --> G
-    G -->|up:approve, verified on the tracker| E
-    G -->|up:changes + comment| SP
-    G -->|up:hold| H
-    E --> W
-    Q -->|engine: push, open| PR["pull requests: one per repo + documents"]
-    PR --> M["you review and merge"]
+flowchart TD
+    classDef you fill:#FDE68A,stroke:#92400E,color:#111
+    classDef agent fill:#DBEAFE,stroke:#1E40AF,color:#111
+    classDef engine fill:#E5E7EB,stroke:#374151,color:#111
+    classDef done fill:#D1FAE5,stroke:#065F46,color:#111
+
+    A["🎫 You pick a ticket<br/>label it, or run one command"]:::you
+    B["🤖 The agent reads your code,<br/>writes a spec and a plan"]:::agent
+    C["📋 A one-page summary<br/>appears on the ticket"]:::engine
+    D{"👀 You read it.<br/>Happy?"}:::you
+    X["✏️ You say what to change;<br/>the agent redoes spec and plan"]:::you
+    P["⏸️ Paused until you say go"]:::you
+    E["🤖 The agent builds it:<br/>tests first, code, review"]:::agent
+    F["🧪 QA checks the running app"]:::agent
+    G["🔀 A pull request opens for you"]:::engine
+    H["✅ You review and merge"]:::done
+
+    A --> B --> C --> D
+    D -->|"yes: up:approve"| E
+    D -->|"not yet: up:changes"| X --> B
+    D -->|"wait: up:hold"| P
+    E --> F --> G --> H
 ```
 
-The text diagrams below carry what the chart leaves out: the stage log, the labels, the stops, the watcher loop.
+The agent cannot push, merge or write to the ticket while it works; the engine does that between steps, and only you merge.
+
+**Chart 2: three ways to work.** Start on the left. Move right when you trust the results.
+
+```mermaid
+flowchart LR
+    classDef you fill:#FDE68A,stroke:#92400E,color:#111
+    classDef agent fill:#DBEAFE,stroke:#1E40AF,color:#111
+
+    subgraph M["🧑‍💻 Manual"]
+        M1["You run each skill<br/>and answer its questions"]:::you --> M2["The agent works<br/>one step at a time"]:::agent
+    end
+    subgraph O["⌨️ One command"]
+        O1["You type<br/>/ultrapowers:autopilot TICKET"]:::you --> O2["The agent runs the steps;<br/>you approve on the ticket"]:::agent
+    end
+    subgraph W["👁️ Watcher (beta)"]
+        W1["You add a label<br/>to a ticket"]:::you --> W2["A watcher on your machine<br/>runs it; you only touch labels"]:::agent
+    end
+    M --> O --> W
+```
+
+The text diagrams below carry what the charts leave out: branch names, the stage log, the labels, the stops, the repositories.
 
 **Manual** - every skill invoked by you; no `autopilot` block.
 
@@ -620,18 +642,19 @@ Two choices make the pipeline: who starts a run (you, with the command, or the w
 
 **Watcher on a VM** *(beta)* - `autopilot.mjs watch`, a service on the machine that hosts your coding agent.
 
+**Chart 3: the watcher.** Nothing starts without your label, and nothing merges without you.
+
 ```mermaid
-flowchart TD
-    I["every intervalSec"] --> K{".ultrapowers/autopilot-stop exists?"}
-    K -->|yes| Z["idle"]
-    K -->|no| L["list open tickets labelled<br/>up:ready, up:approve, up:changes"]
-    L --> A{"label added by a member<br/>with write access?"}
-    A -->|no| X["skip, logged"]
-    A -->|yes| B{"a session holds the ticket?"}
-    B -->|yes| X
-    B -->|no| N["run the ticket: one fresh headless<br/>harness call per stage, inside the guardrail"]
-    N --> O["wait for a label | done | stop"]
-    O --> I
+flowchart LR
+    classDef you fill:#FDE68A,stroke:#92400E,color:#111
+    classDef agent fill:#DBEAFE,stroke:#1E40AF,color:#111
+    classDef engine fill:#E5E7EB,stroke:#374151,color:#111
+
+    T["🎫 You add up:ready<br/>to a ticket"]:::you --> W["👁️ The watcher checks<br/>every minute and sees it"]:::engine
+    W --> R["🤖 The agent runs the ticket,<br/>step by step, inside the guardrail"]:::agent
+    R --> S["⏸️ It stops at your gates:<br/>the summary, the pull request"]:::engine
+    S --> Y["👀 You act on the ticket<br/>or the pull request"]:::you
+    Y --> W
 ```
 
 Beta, not yet run live: picks up labelled tickets and stops at your gates; you touch only labels and PRs.
