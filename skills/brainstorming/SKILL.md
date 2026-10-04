@@ -55,6 +55,21 @@ to skip the rest of the selected path. Read-only project exploration is
 allowed while those prerequisites remain incomplete.
 </HARD-GATE>
 
+## Autopilot form
+
+When `.ultrapowers/autopilot-active` exists at or above the working directory,
+or the autopilot skill invoked this stage, the human gate is on the ticket
+tracker, not in this chat. Ask no question. For every question the selected
+path would ask, decide it yourself as a senior engineer would from the brief,
+the grounded code and the project's handbooks: the existing pattern, the
+smaller change. Record each decision as one row of a `## Assumption ledger`
+table in the spec, `| # | Question | Chosen answer | Confidence | Reason |`,
+lowest confidence first, and add a `## Repositories in scope` section listing
+the `repos[].name` entries the design touches, or `.` in a single-repository
+project. Everything else holds: the three paths, the design sections, the
+spec self-review. The User Review Gate becomes writing the spec and returning
+to the caller; the review happens on the packet the engine posts.
+
 ## Three Paths
 
 Before your first question, classify the request and say the
@@ -204,6 +219,7 @@ is the whole process.
 - For appropriately-scoped projects, ask questions one at a time to refine the idea
 - Prefer multiple choice questions when possible, but open-ended is fine too
 - Only one question per message - if a topic needs more exploration, break it into multiple questions
+- In the autopilot form, each of these questions becomes a ledger row instead (see Autopilot form)
 - Focus on understanding: purpose, constraints, success criteria
 
 **Exploring approaches:**
@@ -259,7 +275,7 @@ After the spec review loop passes, ask the user to review the written spec befor
 
 > "Spec written and committed to `<path>`. Please review it and let me know if you want to make any changes before we start writing out the implementation plan."
 
-Wait for the user's response. If they request changes, make them and re-run the spec review loop. Only proceed once the user approves.
+Wait for the user's response. If they request changes, make them and re-run the spec review loop. Only proceed once the user approves. In the autopilot form there is no wait: write the spec with its ledger and scope sections and return to the caller, which commits it and posts the packet.
 
 **Implementation:**
 

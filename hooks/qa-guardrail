@@ -1,24 +1,35 @@
 #!/usr/bin/env bash
-# qa-guardrail: PreToolUse guardrail for the ultrapowers QA gatekeeper (spec 3.5).
+# qa-guardrail: PreToolUse guardrail for the ultrapowers QA gatekeeper (spec 3.5) and the
+# autopilot envelope (autopilot spec section 8).
 #
 # stdin  : the harness event JSON (tool_name, tool_input, optional cwd)
-# exit 0 : allow.  exit 2 : deny; stderr carries "QA-GUARDRAIL DENY: <reason>".
+# exit 0 : allow.  exit 2 : deny; stderr carries "QA-GUARDRAIL DENY: <reason>" or
+#          "AUTOPILOT-GUARDRAIL DENY: <reason>".
 #
-# Inert unless the run marker `.ultrapowers/qa-active` exists at or above the working
-# directory. The qa-specialist entry skill writes the marker and the agent removes it at
-# the end of the run, so every other session pays only a directory walk.
+# Inert unless a run marker exists at or above the working directory: `.ultrapowers/qa-active`
+# (the QA profile: read-only, writes under reviews/<id>/ only) or `.ultrapowers/autopilot-active`
+# (the autopilot profile: writes anywhere in the worktree except protected paths; no push, no
+# merge, no tracker write; the engine does those between stages). With both markers the QA
+# profile applies. The skills write the markers and remove them at the end of the run, so every
+# other session pays only a directory walk.
 #
 # `set -uo pipefail` and NOT `-e`: the "grep matches -> deny, else continue" pattern below
 # relies on a non-matching grep returning non-zero without aborting the script.
 set -uo pipefail
 
+GUARD_PREFIX="QA-GUARDRAIL"
+# Every harness blocks on exit 2 with the reason on stderr. Cursor and Copilot CLI also read a
+# JSON verdict on stdout, in their own shapes; the others get no stdout at all (Gemini CLI
+# allows the call when stdout holds anything but JSON).
 deny() {
-  local msg="QA-GUARDRAIL DENY: $1"
+  local msg="$GUARD_PREFIX DENY: $1"
   printf '%s\n' "$msg" >&2
+  local escaped
+  escaped="$(printf '%s' "$msg" | sed 's/["\\]/\\&/g')"
   if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
-    local escaped
-    escaped="$(printf '%s' "$msg" | sed 's/["\\]/\\&/g')"
     printf '{"permission":"deny","agent_message":"%s"}\n' "$escaped"
+  elif [ -n "${COPILOT_CLI:-}" ]; then
+    printf '{"permissionDecision":"deny","permissionDecisionReason":"%s"}\n' "$escaped"
   fi
   exit 2
 }
@@ -47,7 +58,9 @@ norm_path_r() {
 }
 norm_path() { norm_path_r "$1"; printf '%s' "$REPLY"; }
 
-# Walk up from $1 looking for the run marker; REPLY is the directory that holds it.
+# Walk up from $1 looking for a run marker; REPLY is the directory that holds it and
+# PROFILE is `qa` or `autopilot` (qa wins when both markers exist in the same directory).
+PROFILE=""
 find_root_r() {
   local d="$1"
   REPLY=""
@@ -55,6 +68,12 @@ find_root_r() {
   while :; do
     if [ -f "$d/.ultrapowers/qa-active" ]; then
       REPLY="$d"
+      PROFILE="qa"
+      return 0
+    fi
+    if [ -f "$d/.ultrapowers/autopilot-active" ]; then
+      REPLY="$d"
+      PROFILE="autopilot"
       return 0
     fi
     case "$d" in
@@ -90,10 +109,25 @@ else
     fi
   done
 fi
+# A headless watcher stage carries ULTRAPOWERS_AUTOPILOT_INSIDE=1 in its environment: the
+# envelope then holds even when the marker file is gone (the root is the project that holds
+# .agents/ultrapowers.json above the cwd; no project, no verifiable call).
+if [ -z "$root" ] && [ "${ULTRAPOWERS_AUTOPILOT_INSIDE:-}" = "1" ]; then
+  d="$(norm_path "$PWD")"
+  while :; do
+    if [ -f "$d/.agents/ultrapowers.json" ]; then root="$d"; PROFILE="autopilot"; break; fi
+    case "$d" in /|.|"") break ;; esac
+    d="${d%/*}"; [ -n "$d" ] || d="/"
+  done
+  [ -n "$root" ] || deny "an autopilot stage is running (ULTRAPOWERS_AUTOPILOT_INSIDE) outside any ultrapowers project; the call cannot be verified"
+fi
 [ -n "$root" ] || exit 0
+[ "$PROFILE" = "autopilot" ] && GUARD_PREFIX="AUTOPILOT-GUARDRAIL"
+run_kind="a QA run"
+[ "$PROFILE" = "autopilot" ] && run_kind="an autopilot stage"
 
 # --- Active. From here on an uninspectable call is denied, never waved through.
-command -v node >/dev/null 2>&1 || deny "node is required to inspect tool calls during a QA run and is not on PATH"
+command -v node >/dev/null 2>&1 || deny "node is required to inspect tool calls during $run_kind and is not on PATH"
 # The rules below are grep, sed and tr pipelines: a missing tool would make every rule
 # "not match" and allow the call.
 for tool in grep sed tr; do
@@ -150,6 +184,10 @@ for (const value of Object.values(urls)) {
 }
 let ticket = "";
 try { ticket = fs.readFileSync(path.join(root, ".ultrapowers", "qa-active"), "utf8").trim(); } catch (e) { ticket = ""; }
+if (!ticket) {
+  // The autopilot marker is JSON: { ticket, branch, scope }. Its ticket id serves the same role.
+  try { ticket = str(JSON.parse(fs.readFileSync(path.join(root, ".ultrapowers", "autopilot-active"), "utf8")).ticket).trim(); } catch (e) { ticket = ""; }
+}
 // Every path-shaped field any tool carries (a read, a search, an upload), for the
 // key-material check that applies to all tools, not only to file writes.
 const pathFields = [];
@@ -159,17 +197,21 @@ for (const key of ["file_path", "notebook_path", "path", "source", "destination"
 for (const key of ["paths", "files"]) {
   if (Array.isArray(inp[key])) for (const v of inp[key]) if (str(v)) pathFields.push(str(v));
 }
+// A patch tool may carry its patch under another field than command (Codex, Hermes); only a
+// patch tool reads those fields, so free text of another tool is never taken for a command.
+const isPatchTool = /patch/i.test(str(ev.tool_name));
+const command = str(inp.command) || (isPatchTool ? (str(inp.patch) || str(inp.patchText) || str(inp.input) || str(inp.diff)) : "");
 process.stdout.write([
-  "ok", str(ev.tool_name), str(inp.command),
+  "ok", str(ev.tool_name), command,
   str(inp.file_path) || str(inp.notebook_path) || str(inp.path),
   str(inp.url), str(ev.cwd), allowed.join(","), norm(hosts.forbidden).join(","), ticket,
   pathFields.join("\n"),
 ].join("\0") + "\0");
 ' "$root_node")
 case "$parse_status" in
-  badconfig:*) deny "the project config .agents/ultrapowers.json cannot be read (${parse_status#badconfig:}); every call is refused while .ultrapowers/qa-active exists" ;;
+  badconfig:*) deny "the project config .agents/ultrapowers.json cannot be read (${parse_status#badconfig:}); every call is refused while a run marker exists under .ultrapowers/" ;;
 esac
-[ "$parse_status" = "ok" ] || deny "the tool event could not be parsed; an uninspectable call is refused during a QA run"
+[ "$parse_status" = "ok" ] || deny "the tool event could not be parsed; an uninspectable call is refused during $run_kind"
 
 # Prefer the event's real cwd for the root and for resolving relative paths: on Windows the
 # harness spells it `S:\proj` while the process cwd is `/s/proj`; both normalize alike.
@@ -195,28 +237,73 @@ if [ -n "$keypaths" ]; then
     [ -n "$kp" ] || continue
     kl="$(lower "$(norm_path "$kp")")"
     kl="${kl//.env.example/}"
-    printf '%s' "$kl" | grep -Eq "$KEY_RE" && deny "key material ($kp) is never read, searched, uploaded or written during a QA run"
+    printf '%s' "$kl" | grep -Eq "$KEY_RE" && deny "key material ($kp) is never read, searched, uploaded or written during $run_kind"
   done <<< "$keypaths"
 fi
 
-# --- File tools: the only legitimate writes are the report, its artifacts and run-state
-# under reviews/<ticket>/, plus the run's own state under .ultrapowers/. Protected paths are
-# refused wherever they sit (this closes the loop where the agent edits the guardrail, the
-# config, harness settings or key material).
+# --- File tools. QA profile: the only legitimate writes are the report, its artifacts and
+# run-state under reviews/<ticket>/, plus the run's own state under .ultrapowers/. Autopilot
+# profile: anywhere under the workspace root. Protected paths are refused in both (this closes
+# the loop where the agent edits the guardrail, the config, CI, harness settings or key material).
+# Named targets, not folder names: `src/hooks/` of a React app and `appsettings.json` of a .NET
+# app are ordinary implementation files. The ticket's state files are the gate's record.
+PROTECTED_RE='(^|/)\.ssh/|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws/|mcp-secrets\.env|\.local\.(sh|env|json)$|hooks/qa-guardrail|\.agents/ultrapowers\.json|(^|/)\.claude/|(^|/)\.git/|(^|/)\.githooks/|(^|/)\.[a-z0-9_-]+/settings(\.local)?\.json$|(^|/)tasks/[^/]+/(autopilot\.json|stage-log\.jsonl)$|(^|/)\.ultrapowers/(autopilot-active|autopilot-stop)$|(^|/)\.ultrapowers/autopilot(/|$)|(^|/)\.ultrapowers$'
+# The autopilot envelope also keeps the agent out of CI, the plugin hooks, the repository's commit
+# hooks (they run inside the engine's own commit and push) and the env file: a stage that
+# rewrites the workflow or the hooks rewrites its own brakes.
+AUTOPILOT_PROTECTED_RE='(^|/)\.github/|(^|/)\.gitlab-ci\.yml$|(^|/)hooks/(qa-guardrail|session-start|team-memory-[a-z]+|lib/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|/)\.gemini/hooks/|(^|/)\.husky/|(^|/)\.pre-commit-config\.ya?ml$|(^|/)lefthook\.ya?ml$|(^|/)\.env($|\.)'
 is_write_tool=0
 case "$tool" in
-  Write|Edit|MultiEdit|NotebookEdit) is_write_tool=1 ;;
+  Write|Edit|MultiEdit|NotebookEdit|Create|ApplyPatch) is_write_tool=1 ;;
   *)
+    # The other harnesses' spellings: Gemini's write_file and replace, Droid's Create, Antigravity's
+    # write_to_file and replace_file_content, Codex's apply_patch (handled below, it carries a patch).
     case "$tool_lc" in
-      *write*|*edit*|*create_file*|*move_file*|*delete*)
+      *write*|*edit*|*create*|*move_file*|*delete*|replace|*replace_file*|*patch*)
         [ -n "$wpath" ] && is_write_tool=1 ;;
     esac ;;
 esac
 
+# Codex and Droid apply edits through a patch (apply_patch, ApplyPatch): the patch text names the
+# files. Every named file is checked as a write; the patch is not a shell command, so the
+# command rules below do not see it.
+case "$tool_lc" in
+  apply_patch|applypatch)
+    [ -n "$cmd" ] || deny "an empty patch cannot be verified during $run_kind"
+    while IFS= read -r ppath; do
+      [ -n "$ppath" ] || continue
+      pl="$(lower "$(norm_path "$ppath")")"
+      printf '%s' "$pl" | grep -Eq "$PROTECTED_RE" \
+        && deny "the patch writes a protected path ($ppath); never allowed during $run_kind"
+      if [ "$PROFILE" = "autopilot" ]; then
+        printf '%s' "${pl//.env.example/}" | grep -Eq "$AUTOPILOT_PROTECTED_RE" \
+          && deny "the patch writes a protected path ($ppath); CI, hooks, settings and the project config stay as they are"
+      fi
+      case "$pl" in
+        ..|../*|*/../*|*/..) deny "the patch names a path with a parent-directory segment ($ppath)" ;;
+      esac
+      case "$pl" in
+        /*) pabs="$pl" ;;
+        ./*) pabs="$(lower "$base_cwd")/${pl#./}" ;;
+        *) pabs="$(lower "$base_cwd")/$pl" ;;
+      esac
+      if [ "$PROFILE" = "autopilot" ]; then
+        case "$pabs" in "$root_lc/"*) ;; *) deny "the patch writes outside the workspace $root ($ppath)" ;; esac
+      else
+        case "$pabs" in "$root_lc/reviews/"*|"$root_lc/.ultrapowers/"*) ;; *) deny "a patch during a QA run is limited to reviews/ and .ultrapowers/ ($ppath)" ;; esac
+      fi
+    done < <(printf '%s\n' "$cmd" | sed -nE 's/^\*\*\* (Add|Update|Delete) File: *(.+)$/\2/p; s/^\*\*\* Move to: *(.+)$/\1/p')
+    exit 0 ;;
+esac
+
 if [ "$is_write_tool" -eq 1 ]; then
   wl="$(lower "$(norm_path "$wpath")")"
-  printf '%s' "$wl" | grep -Eq '(^|/)\.ssh/|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws/|mcp-secrets\.env|\.local\.|hooks/qa-guardrail|\.agents/ultrapowers\.json|(^|/)\.claude/|(^|/)\.git/|(^|/)\.githooks/|settings(\.local)?\.json$' \
-    && deny "write to a protected path ($wpath) is never allowed during a QA run"
+  printf '%s' "$wl" | grep -Eq "$PROTECTED_RE" \
+    && deny "write to a protected path ($wpath) is never allowed during $run_kind"
+  if [ "$PROFILE" = "autopilot" ]; then
+    printf '%s' "${wl//.env.example/}" | grep -Eq "$AUTOPILOT_PROTECTED_RE" \
+      && deny "write to a protected path ($wpath) is never allowed during an autopilot stage: CI, hooks, settings and the project config stay as they are"
+  fi
   case "$wl" in
     ..|../*|*/../*|*/..) deny "write path with a parent-directory segment ($wpath) cannot be verified" ;;
   esac
@@ -226,6 +313,11 @@ if [ "$is_write_tool" -eq 1 ]; then
     *) abs="$(lower "$base_cwd")/$wl" ;;
   esac
   ok=0
+  if [ "$PROFILE" = "autopilot" ]; then
+    case "$abs" in "$root_lc/"*) ok=1 ;; esac
+    [ "$ok" -eq 1 ] || deny "writes during an autopilot stage stay inside the workspace $root (got: $wpath)"
+    exit 0
+  fi
   if [ -n "$ticket" ]; then
     case "$abs" in "$root_lc/reviews/$(lower "$ticket")/"*) ok=1 ;; esac
   else
@@ -238,8 +330,24 @@ fi
 
 # --- Arbitrary in-page code is an egress and exfiltration bypass; never.
 case "$tool_lc" in
-  *run_code_unsafe*) deny "arbitrary in-page code execution is never allowed during a QA run" ;;
+  *run_code_unsafe*) deny "arbitrary in-page code execution is never allowed during $run_kind" ;;
 esac
+
+# --- MCP tools of a tracker or of git, autopilot profile: reads pass, writes belong to the
+# engine between stages (the approve label among them). A tool name with a read verb is a read.
+if [ "$PROFILE" = "autopilot" ]; then
+  case "$tool_lc" in
+    mcp__*)
+      if printf '%s' "$tool_lc" | grep -Eq 'github|gitlab|glab|jira|linear|odoo|bitbucket|azure_?devops' \
+        && ! printf '%s' "$tool_lc" | grep -Eq '(^|_)(get|list|search|read|view|fetch|show|describe|find|query|resolve)(_|$)' \
+        && printf '%s' "$tool_lc" | grep -Eq '(create|update|edit|add|remove|delete|merge|comment|note|label|close|reopen|post|save|accept|push|fork|assign|transfer|lock|approve|submit|publish|manage|link)'; then
+        deny "tracker writes through MCP tools are never run by an autopilot stage; the engine writes back between stages"
+      fi
+      printf '%s' "$tool_lc" | grep -Eq '^mcp__git__git_(push|reset)' \
+        && deny "git push and git reset through an MCP tool are never run by an autopilot stage"
+      ;;
+  esac
+fi
 
 host_of() {
   printf '%s' "$1" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#^[^/?@]*@##; s#[/?].*$##; s#:[0-9]+$##' | tr '[:upper:]' '[:lower:]'
@@ -270,8 +378,39 @@ lc="$(lower "$cmd")"
 # `$(curl ...)` and `/bin/rm` match like the bare spelling.
 B="(^|[;&|[:space:]\"'(\`/\\\\])"
 
-# Never push. Fail closed on any git command carrying a push token.
-printf '%s' "$lc" | grep -Eq '\bgit\b[^;&|]*\bpush\b' && deny "git push is never allowed during a QA run"
+# Never push. Fail closed on any git command segment carrying a push token, `git stash push`
+# excepted: it stores work locally and is the autopilot stage's way to set work aside.
+while IFS= read -r seg; do
+  printf '%s' "$seg" | grep -Eq '\bgit\b.*\bpush\b' || continue
+  printf '%s' "$seg" | grep -Eq '\bgit\b[^;&|]*\bstash[[:space:]]+push\b' && ! printf '%s' "$seg" | grep -Eq '\bpush\b.*\bpush\b' && continue
+  deny "git push is never allowed during $run_kind; the autopilot engine pushes between stages"
+done < <(printf '%s\n' "$lc" | tr ';&|' '\n')
+
+if [ "$PROFILE" = "autopilot" ]; then
+  # The engine merges nothing and the agent merges nothing: the ticket branch is the only branch.
+  printf '%s' "$lc" | grep -Eq '\bgit\b[^;&|]*\b(merge|rebase|cherry-pick)\b' \
+    && deny "git merge, rebase and cherry-pick are never run by an autopilot stage; the branch is integrated through its pull request"
+  # Tracker writes belong to the engine, after the agent exits: comments, labels, pull requests,
+  # releases, repository changes, and any gh/glab api call that is not a plain GET.
+  # The api forms include the attached spellings (-XPOST, -flabels[]=, -Fbody=) and --input.
+  printf '%s' "$lc" | grep -Eq "${B}gh(\\.exe)?[[:space:]][^;&|]*\\b(issue[[:space:]]+(comment|edit|close|reopen|create|delete|transfer|pin|unpin|lock|unlock|develop)|pr[[:space:]]+(create|merge|close|reopen|edit|ready|review|comment|checkout|lock|unlock)|label[[:space:]]|release[[:space:]]|repo[[:space:]]+(create|delete|edit|fork|archive|rename|sync)|secret[[:space:]]|variable[[:space:]]|workflow[[:space:]]+(run|enable|disable)|api[[:space:]][^;&|]*([[:space:]]-x[[:space:]]|[[:space:]]-x[^[:space:]]|--method)|api[[:space:]][^;&|]*[[:space:]](-f|-F|--field|--raw-field|--input)[[:space:]=]|api[[:space:]][^;&|]*[[:space:]]-f[^[:space:]=])" \
+    && deny "gh writes (comments, labels, pull requests, releases, repository changes, non-GET api calls) are never run by an autopilot stage; the engine writes back between stages"
+  printf '%s' "$lc" | grep -Eq "${B}glab(\\.exe)?[[:space:]][^;&|]*\\b(issue[[:space:]]+(note|update|close|reopen|create|delete|subscribe|unsubscribe)|mr[[:space:]]|label[[:space:]]|release[[:space:]]|repo[[:space:]]+(create|delete|archive|fork|mirror)|variable[[:space:]]|ci[[:space:]]+(run|retry|delete|trigger)|api[[:space:]][^;&|]*([[:space:]]-x[[:space:]]|[[:space:]]-x[^[:space:]]|--method)|api[[:space:]][^;&|]*[[:space:]](-f|-F|--field|--raw-field|--input)[[:space:]=]|api[[:space:]][^;&|]*[[:space:]]-f[^[:space:]=])" \
+    && deny "glab writes (notes, labels, merge requests, releases, repository changes, non-GET api calls) are never run by an autopilot stage; the engine writes back between stages"
+  # The token itself is never read out: it is the only thing that makes a tracker write count.
+  printf '%s' "$lc" | grep -Eq "${B}(gh|glab)(\\.exe)?[[:space:]]+auth[[:space:]]+(token|status[^;&|]*(-t\\b|--show-token))" \
+    && deny "reading the tracker token is never allowed during an autopilot stage"
+  # A program word built at run time (a substitution, a backtick, eval) is the way around every
+  # name rule above; the stage spells its commands out.
+  while IFS= read -r seg; do
+    seg="${seg#"${seg%%[![:space:]]*}"}"
+    while printf '%s' "$seg" | grep -Eq '^[a-z_][a-z0-9_]*=[^[:space:]]*[[:space:]]+'; do seg="${seg#*[[:space:]]}"; seg="${seg#"${seg%%[![:space:]]*}"}"; done
+    case "$seg" in
+      '$('*|'"$('*|"'\$("*|'`'*|'"`'*|nohup\ *\$\(*) deny "a command whose program is built by substitution cannot be verified during an autopilot stage; spell the command out" ;;
+      eval\ *|eval) deny "eval is never run by an autopilot stage; its command cannot be verified" ;;
+    esac
+  done < <(printf '%s\n' "$lc" | tr ';&|' '\n')
+fi
 
 # Forbidden hosts anywhere in the command line.
 IFS=',' read -r -a forbidden_hosts <<< "$forbidden"
@@ -362,8 +501,8 @@ hook_src="${hook_src//\\/$slash}"
 case "$hook_src" in */*) hook_dir="${hook_src%/*}" ;; *) hook_dir="." ;; esac
 writes_js="$hook_dir/lib/qa-shell-writes.mjs"
 if command -v cygpath >/dev/null 2>&1; then writes_js="$(cygpath -m "$writes_js" 2>/dev/null || printf '%s' "$writes_js")"; fi
-wreason="$(printf '%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$cmd" | node "$writes_js" 2>&1)" \
-  || wreason="the command could not be analysed for writes; it is refused during a QA run"
+wreason="$(printf '%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$cmd" | ULTRAPOWERS_GUARD_PROFILE="$PROFILE" node "$writes_js" 2>&1)" \
+  || wreason="the command could not be analysed for writes; it is refused during $run_kind"
 [ -z "$wreason" ] || deny "$wreason"
 
 if [ -n "$allowed" ] && printf '%s' "$lc" | grep -Eq "${B}(curl|wget)(\\.exe)?[[:space:]]|invoke-webrequest|invoke-restmethod|${B}(iwr|irm)[[:space:]]"; then

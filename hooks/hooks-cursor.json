@@ -11,7 +11,8 @@
     ],
     "preToolUse": [
       {
-        "command": "./hooks/run-hook.cmd qa-guardrail"
+        "command": "./hooks/run-hook.cmd qa-guardrail",
+        "failClosed": true
       }
     ]
   }

@@ -24,15 +24,16 @@ Ultrapowers is a skills plugin for coding agents: a `skills/` library, a session
 | `skills/using-ultrapowers/` | The bootstrap skill injected at session start on every harness; `references/<harness>-tools.md` holds per-harness tool mappings. |
 | `skills/init/scripts/init.mjs` | The scaffold engine behind `ultrapowers:init` (scaffold, join, upgrade and repair modes, and `tickets` for ticket sources). It renders `templates/` and never overwrites a file. |
 | `skills/new-task/scripts/` | `scaffold-task.sh` and `ticket-lib.sh` (ticket folders, shared with brainstorm-task and task); `ticket-sources.mjs` and `fetch-ticket.mjs` (ticket ids, and fetching a ticket through `gh`, `glab` or the source's MCP server). |
+| `skills/autopilot/` | The autopilot skill (the session door), `prompts/<stage>.md` (the text both doors follow per stage), `templates/packet.md`, and `scripts/`: `autopilot-lib.mjs` (config, state, hash-chained log, next-stage decision, packet, approval checks, scope), `tracker.mjs` (GitHub through `gh`, GitLab through `glab`), `repos.mjs` (branches, worktrees, commits, the guarded push) and `autopilot.mjs` (the CLI: `next`, `begin`, `end`, `packet`, `pr`, `run`, `watch`). |
 | `templates/` | The project payload init writes: `AGENTS.md` and its importers, the knowledge-base folder READMEs, MCP and harness settings, the repo-hygiene blocks (`_blocks/`), the team-memory store and `qa/known-issues.md`. `CHANGES.json` records the plugin version in which each target last changed, for upgrade mode. |
 | `agents/` | `qa-specialist.md`: the QA gatekeeper's contract, the agent the `qa-specialist` skill forks into (or reads inline). |
 | `output-styles/` | `ste-explanatory.md`: the Claude Code output style init copies into a project. |
-| `hooks/` | `session-start` (bash) emits the bootstrap and the project scaffold nudge as JSON for Claude Code, Cursor, Copilot CLI and Muse; `team-memory-nudge` and `team-memory-postcompact` add the team-memory lines; `qa-guardrail` is the PreToolUse guardrail of a QA run, inert unless `.ultrapowers/qa-active` exists; `lib/` holds their shared code; `run-hook.cmd` is the Windows polyglot wrapper; `hooks.json` and `hooks-cursor.json` register them. `session-start` and the team-memory hooks work with a broken PATH; the guardrail's inert path uses shell builtins only, and an active run without its tools denies. |
+| `hooks/` | `session-start` (bash) emits the bootstrap and the project scaffold nudge as JSON for Claude Code, Cursor, Copilot CLI and Muse; `team-memory-nudge` and `team-memory-postcompact` add the team-memory lines; `qa-guardrail` is the PreToolUse guardrail of a QA run (`.ultrapowers/qa-active`) and of an autopilot stage (`.ultrapowers/autopilot-active`, a second profile), inert unless one of those markers exists; `lib/` holds their shared code, plus `guardrail-bridge.mjs` (runs the guardrail for the in-process harnesses: the OpenCode plugin, the Pi extension) and `guardrail-cli.mjs` (its node entry for Kimi Code, Antigravity, Hermes and the Gemini project hook); `run-hook.cmd` is the Windows polyglot wrapper; `hooks.json` (Claude Code, Copilot CLI, Droid, Qwen Code, Devin), `hooks-cursor.json` and `hooks-codex.json` register them, and the repository-root `hooks.json` is Antigravity's. `session-start` and the team-memory hooks work with a broken PATH; the guardrail's inert path uses shell builtins only, and an active run without its tools denies. |
 | `.claude-plugin/`, `.codex-plugin/`, `.agents/plugins/`, `.cursor-plugin/`, `.devin-plugin/`, `.hermes-plugin/`, `.kimi-plugin/`, `.muse-plugin/`, `gemini-extension.json`, `GEMINI.md`, `package.json`, `index.js` | Per-harness manifests and entry points. `.opencode/plugins/ultrapowers.js` and `.pi/extensions/ultrapowers.ts` are in-process injectors. |
 | `.version-bump.json` | The eleven files whose `version` field `scripts/bump-version.sh` keeps in lockstep, plus the audit exclude list. |
 | `scripts/` | `bump-version.sh` (version sync and audit), `lint-shell.sh` (ShellCheck plus `bash -n`), `rename-fork.sh` (the parameterised rename used to create this fork). |
 | `tests/` | Offline plugin-infrastructure tests, one directory per subject (see below). `tests/claude-code/` also holds model-driven tests that need a Claude Code login. |
-| `docs/` | Harness guides (`README.opencode.md`, `README.kimi.md`), `porting-to-a-new-harness.md`, `testing.md`, `windows/polyglot-hooks.md`, and the specs/plans under `docs/ultrapowers/`. |
+| `docs/` | Harness guides (`README.opencode.md`, `README.kimi.md`), `porting-to-a-new-harness.md`, `testing.md`, `windows/polyglot-hooks.md`, `autopilot-watcher.md` (the watcher as a service), and the specs/plans under `docs/ultrapowers/`. |
 | `assets/` | `ultrapowers-small.svg` (brand logo, also served by the brainstorm companion) and `app-icon.png`. |
 
 ## Rules
@@ -55,6 +56,7 @@ bash tests/hooks/test-session-start.sh
 bash tests/hooks/test-team-memory-hooks.sh
 bash tests/hooks/test-executable-bits.sh
 bash tests/hooks/test-run-hook-cmd-windows.sh     # Windows only; skips elsewhere
+node --test tests/hooks/test-guardrail-bridge.mjs
 bash tests/init/run-tests.sh
 node --test tests/team-memory/memory-lint.test.mjs
 bash tests/team-memory/test-templates.sh
@@ -63,6 +65,8 @@ bash tests/team-memory/test-precommit-lint.sh
 bash tests/task-lifecycle/test-task-lifecycle.sh
 node --test tests/task-lifecycle/ticket-sources.test.mjs
 node --test tests/task-lifecycle/fetch-ticket.test.mjs
+bash tests/autopilot/run-tests.sh
+bash tests/autopilot/test-adapters.sh             # skips a harness CLI that is not installed
 bash tests/qa-gatekeeper/run-tests.sh
 bash tests/skills/test-skill-bodies.sh
 node --test tests/pi/test-pi-extension.mjs

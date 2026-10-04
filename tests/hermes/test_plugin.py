@@ -39,10 +39,10 @@ def _fire_pre_llm(ctx, **kwargs):
 
 
 class TestPluginRegistration:
-    def test_register_attaches_only_pre_llm_call_hook(self, mock_ctx):
+    def test_register_attaches_the_bootstrap_and_guardrail_hooks(self, mock_ctx):
         plugin = _load_plugin()
         plugin.register(mock_ctx)
-        assert list(mock_ctx._hooks.keys()) == ["pre_llm_call"]
+        assert sorted(mock_ctx._hooks.keys()) == ["pre_llm_call", "pre_tool_call"]
 
     def test_register_registers_every_stock_skill_as_path(self, mock_ctx):
         plugin = _load_plugin()

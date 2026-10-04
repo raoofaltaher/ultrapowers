@@ -757,6 +757,48 @@ test_task() {
         fail "an unknown ticket reports four ABSENT folders and suggests new-task"
         echo "    out: $out"
     fi
+
+    # The autopilot stage log: absent for a manual ticket, read first when present.
+    if [[ "$out" == *"=== STAGE LOG"* && "$out" == *"(none)"* ]]; then
+        pass "a ticket without autopilot state prints an empty STAGE LOG section"
+    else
+        fail "a ticket without autopilot state prints an empty STAGE LOG section"
+        echo "    out: $out"
+    fi
+    node --input-type=module -e '
+import { pathToFileURL } from "node:url";
+const [, libPath, root, id] = process.argv;
+const lib = await import(pathToFileURL(libPath).href);
+const s = lib.initialState({ id, mode: "gated", source: { provider: "github", path: "o/r", number: 1234 }, docsBranch: `${id}-x`, docsBase: "dev", title: "x" });
+s.stage = "gate"; s.stageStatus = "finished";
+lib.writeState(root, id, s);
+lib.appendLog(root, id, { stage: "scaffold", event: "started", actor: "engine", trigger: "command", repo: "docs" });
+lib.appendLog(root, id, { stage: "scaffold", event: "finished", actor: "agent", trigger: "command", repo: "docs", sha: "abc1234" });
+lib.appendLog(root, id, { stage: "gate", event: "packet-posted", actor: "engine", trigger: "command", repo: "docs", url: "https://example.test/16#c9" });
+' "$REPO_ROOT/skills/autopilot/scripts/autopilot-lib.mjs" "$proj" 1234
+    out="$(cd "$proj" && bash "$MANIFEST" 1234)"
+    if [[ "$out" == *"stage=gate"* && "$out" == *"status=finished"* && "$out" == *"mode=gated"* && "$out" == *"chain=ok"* ]]; then
+        pass "the STAGE LOG section names the stage, its status, the mode and the chain check"
+    else
+        fail "the STAGE LOG section names the stage, its status, the mode and the chain check"
+        echo "    out: $out"
+    fi
+    if [[ "$out" == *"scaffold  started  engine  docs"* && "$out" == *"gate  packet-posted  engine  docs"* ]]; then
+        pass "the STAGE LOG section lists the log lines as at, stage, event, actor, repo"
+    else
+        fail "the STAGE LOG section lists the log lines as at, stage, event, actor, repo"
+        echo "    out: $out"
+    fi
+    sed -i 's/"sha":"abc1234"/"sha":"abc1235"/' "$proj/tasks/1234/stage-log.jsonl"
+    out="$(cd "$proj" && bash "$MANIFEST" 1234)"
+    # Line 2 was edited, so the link line 3 carries no longer matches: the break is named at 3.
+    if [[ "$out" == *"chain=broken@3"* ]]; then
+        pass "an edited log line is reported as a broken chain at the first link that fails"
+    else
+        fail "an edited log line is reported as a broken chain at the first link that fails"
+        echo "    out: $out"
+    fi
+    rm "$proj/tasks/1234/autopilot.json" "$proj/tasks/1234/stage-log.jsonl"
     rm "$proj/specs/1234/diagram.png" "$proj/plans/1234/Plan.md"
 }
 

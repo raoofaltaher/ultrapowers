@@ -15,6 +15,10 @@ __pycache__/
 
 .playwright/
 
+# This repository is also the plugin root: a tracked .mcp.json here would start its servers
+# in every user's Claude Code. Keep project MCP servers for this repository local.
+/.mcp.json
+
 # >>> ultrapowers
 .ultrapowers/
 .ultrapowers/qa-active

@@ -15,7 +15,7 @@ Set up, join or upgrade an ultrapowers project. A bundled engine renders the tem
 
 ## Arguments
 
-`name` (optional): the project name for scaffold mode. Your argument, as passed: `$ARGUMENTS`; that is the name. Empty, or still the unreplaced placeholder (a dollar sign and the word ARGUMENTS): read the trailing `ARGUMENTS:` line of the invocation. An argument starting with `tickets` is not a name: run Detect, then Ticket sources.
+`name` (optional): the project name for scaffold mode. Your argument, as passed: `$ARGUMENTS`; that is the name. Empty, or still the unreplaced placeholder (a dollar sign and the word ARGUMENTS): read the trailing `ARGUMENTS:` line of the invocation. An argument starting with `tickets` is not a name: run Detect, then Ticket sources. `autopilot`: Detect, then Autopilot.
 
 ## Before running anything
 
@@ -35,7 +35,7 @@ node "<SKILL_DIR>/scripts/init.mjs" detect --root "<ROOT>"
   - `join`: "The scaffold is current, so init runs in join mode: local setup only."
   - `upgrade`: "The scaffold is from <marker.pluginVersion> and the plugin is <pluginVersion>, so init runs in upgrade mode."
   - `repair`: "The project config is unreadable, so init stops at repair."
-- Join or upgrade with `ticketsConfigured` false: after the mode's steps, offer once "Configure ticket sources (GitHub, GitLab or Odoo)?" A no ends it for this session.
+- Join or upgrade with `ticketsConfigured` false: after the mode's steps, offer once "Configure ticket sources (GitHub, GitLab or Odoo)?" A no ends it for this session. Sources configured, `autopilotConfigured` false: offer once "Configure autopilot?"
 
 ## Scaffold mode
 
@@ -44,7 +44,8 @@ node "<SKILL_DIR>/scripts/init.mjs" detect --root "<ROOT>"
    - Harnesses: all of `claude-code, codex, cursor, copilot, gemini, qwen, opencode, factory, kimi, devin, antigravity, hermes, pi, muse`, or a shorter list.
    - Only when `repos` is not empty: a three-line pointer `AGENTS.md` in each listed nested clone? Default no.
    - Ticket sources: `Local only` (default), or GitHub, GitLab, Odoo; then the Ticket sources questions.
-2. Dry run. Add `--harnesses <list>` only for a shorter list, `--nested-pointers` only after a yes to pointers, `--sources <file>` only for ticket sources:
+   - Autopilot, with a GitHub or GitLab source: `off` (default), `gated` or `full`.
+2. Dry run. Add `--harnesses <list>` only for a shorter list, `--nested-pointers` only after a yes to pointers, `--sources <file>` only for ticket sources, `--autopilot <file>` for autopilot:
 
    ```bash
    node "<SKILL_DIR>/scripts/init.mjs" scaffold --root "<ROOT>" --name "<NAME>" --dry-run
@@ -76,6 +77,10 @@ node "<SKILL_DIR>/scripts/init.mjs" detect --root "<ROOT>"
 
 Read `<SKILL_DIR>/ticket-sources.md` and follow it: questions, a sources file, `node "<SKILL_DIR>/scripts/init.mjs" tickets --root "<ROOT>" --sources "<file>" --dry-run`, then an explicit yes. Tokens never pass through you: never repeat or write a pasted one, and tell your human partner it should be revoked.
 
+## Autopilot
+
+Read `<SKILL_DIR>/autopilot.md` and follow it: `node "<SKILL_DIR>/scripts/init.mjs" autopilot --root "<ROOT>" --answers "<file>" --dry-run`, then an explicit yes.
+
 ## Repair
 
 Print `markerError`. Run `git diff -- .agents/ultrapowers.json`; a merge leaves `<<<<<<<` lines. Ask your human partner to fix the file, or to restore it with `git checkout -- .agents/ultrapowers.json` when the working copy is the only damage. Do not rewrite it and do not scaffold over it: a fresh marker loses the project's record. Run Detect again once it parses.
@@ -94,6 +99,8 @@ Print `markerError`. Run `git diff -- .agents/ultrapowers.json`; a merge leaves 
 | `proposal-exists` | an earlier `.ultrapowers-new` file is still there | Merge or delete it with your human partner; run again |
 | `bad-name` | the name is blank or holds `"`, `\` or a control character | Ask for another name |
 | `bad-tickets` | a ticket-sources answer is missing or invalid | Ask for the named field; dry run again |
+| `bad-autopilot` | an invalid autopilot answer | Ask for the field; dry run again |
+| `no-source` | autopilot without a GitHub or GitLab source | Ticket sources first |
 | `unknown-placeholder` | a plugin template is broken | Report a plugin bug; write nothing by hand |
 | `bad-template` | a plugin template renders to invalid JSON | Report a plugin bug; write nothing by hand |
 | `mcp-schema` | the plugin's MCP source is broken | Report a plugin bug; write nothing by hand |
@@ -108,6 +115,7 @@ Print `markerError`. Run `git diff -- .agents/ultrapowers.json`; a merge leaves 
 | Marker older | `upgrade`, then `upgrade --apply <paths>` or `--apply none`, then join |
 | Marker unreadable | Repair; no engine write |
 | Ticket sources | `tickets --sources <file> --dry-run`, then without `--dry-run` after the yes |
+| Autopilot | `autopilot --answers <file> --dry-run`, then without it after the yes |
 
 ## Checklist
 
@@ -119,6 +127,7 @@ Print `markerError`. Run `git diff -- .agents/ultrapowers.json`; a merge leaves 
 6. Upgrade: preview, a yes per path, apply, merge proposals with your human partner, join
 7. Repair: show the error, hand the fix to your human partner, Detect again
 8. Ticket sources: `ticket-sources.md`, dry run, explicit yes
+9. Autopilot: `autopilot.md`, dry run, explicit yes
 
 ## Red Flags
 

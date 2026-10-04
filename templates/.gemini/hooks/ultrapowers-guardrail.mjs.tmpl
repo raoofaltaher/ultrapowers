@@ -1,0 +1,47 @@
+#!/usr/bin/env node
+// Written by ultrapowers init. Gemini CLI runs this as the project's BeforeTool hook
+// (.gemini/settings.json): it hands the tool event to the ultrapowers guardrail of the installed
+// extension, so a QA run or an autopilot stage has the same envelope here as on the other
+// harnesses. Inert without a run marker. Set ULTRAPOWERS_PLUGIN_ROOT when the extension lives
+// somewhere other than ~/.gemini/extensions/ultrapowers.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+
+const roots = [process.env.ULTRAPOWERS_PLUGIN_ROOT, path.join(os.homedir(), '.gemini', 'extensions', 'ultrapowers')].filter(Boolean);
+const cli = roots.map((r) => path.join(r, 'hooks', 'lib', 'guardrail-cli.mjs')).find((f) => fs.existsSync(f));
+
+let input = '';
+try {
+  input = fs.readFileSync(0, 'utf8');
+} catch {
+  input = '';
+}
+
+function runActive(start) {
+  let dir = path.resolve(start || process.cwd());
+  for (;;) {
+    if (fs.existsSync(path.join(dir, '.ultrapowers', 'qa-active')) || fs.existsSync(path.join(dir, '.ultrapowers', 'autopilot-active'))) return true;
+    const parent = path.dirname(dir);
+    if (parent === dir) return false;
+    dir = parent;
+  }
+}
+
+if (!cli) {
+  let cwd = process.cwd();
+  try {
+    cwd = JSON.parse(input).cwd || cwd;
+  } catch {
+    // an unreadable event is judged by the process cwd
+  }
+  if (runActive(cwd)) {
+    process.stderr.write('AUTOPILOT-GUARDRAIL DENY: the ultrapowers extension was not found; a tool call during a run is refused without its guardrail\n');
+    process.exit(2);
+  }
+  process.exit(0);
+}
+
+const res = spawnSync(process.execPath, [cli], { input, encoding: 'utf8', stdio: ['pipe', 'inherit', 'inherit'] });
+process.exit(res.status ?? 2);

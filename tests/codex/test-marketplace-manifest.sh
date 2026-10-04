@@ -66,11 +66,19 @@ hooks_config = repo_root / "hooks" / "hooks.json"
 if not hooks_config.exists():
     raise AssertionError("hooks/hooks.json must exist (Claude Code SessionStart hook)")
 
+# Since the autopilot release the manifest names its own hooks file instead: the guardrail's
+# PreToolUse hook and nothing else, so Codex gets the envelope without the SessionStart
+# double-bootstrap the fallback would cause. Codex sets CLAUDE_PLUGIN_ROOT for plugin hooks.
 assert_equal(
     manifest.get("hooks"),
-    {},
-    "Codex manifest must declare empty hooks {} to suppress hooks/hooks.json auto-discovery",
+    "./hooks/hooks-codex.json",
+    "Codex manifest must name hooks/hooks-codex.json (the guardrail only)",
 )
+codex_hooks = json.loads((repo_root / "hooks" / "hooks-codex.json").read_text(encoding="utf-8"))
+assert_equal(sorted(codex_hooks.get("hooks", {}).keys()), ["PreToolUse"], "the Codex hooks file holds PreToolUse only")
+command = codex_hooks["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+if "${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd" not in command or "qa-guardrail" not in command:
+    raise AssertionError(f"the Codex PreToolUse hook must run the guardrail through run-hook.cmd, got {command!r}")
 
 print("Codex marketplace manifest looks good")
 PY

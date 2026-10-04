@@ -3,7 +3,7 @@
 #
 #   manifest.sh <ID>
 #
-# Sections: ROOT, MARKDOWN TO READ, NON-MARKDOWN, REPO STATE.
+# Sections: ROOT, MARKDOWN TO READ, STAGE LOG, NON-MARKDOWN, REPO STATE.
 # Exit codes: 0 ok; 1 not scaffolded or usage; 2 ticket rejected.
 set -u
 
@@ -48,6 +48,37 @@ done
 printf 'TOTAL: %s markdown files, %s bytes, ~%s tokens\n' "$total" "$bytes" "$((bytes / 4))"
 if [ "$present" -eq 0 ]; then
   printf 'ALL-ABSENT: ticket %s does not exist yet; suggest /ultrapowers:new-task %s\n' "$id" "$id"
+fi
+
+# The autopilot engine's record, when the ticket ran under it: the stage and its status
+# from tasks/<ID>/autopilot.json, the hash-chain check, and the last ten log lines.
+printf '\n=== STAGE LOG (autopilot; the position when present) ===\n'
+state_file="$root/tasks/$id/autopilot.json"
+log_file="$root/tasks/$id/stage-log.jsonl"
+if [ ! -f "$state_file" ] && [ ! -f "$log_file" ]; then
+  printf '(none)\n'
+elif have_node; then
+  node --input-type=module -e '
+import { pathToFileURL } from "node:url";
+const [, lib, root, id] = process.argv;
+const m = await import(pathToFileURL(lib).href);
+const s = m.readState(root, id);
+const chain = m.verifyChain(root, id);
+const chainText = chain.ok ? "ok" : `broken@${chain.at}`;
+console.log(`stage=${s?.stage ?? "?"}  status=${s?.stageStatus ?? "?"}  mode=${s?.mode ?? "?"}  chain=${chainText}  attempt=${s?.attempt ?? "?"}`);
+if (s?.packet?.commentUrl) console.log(`packet=${s.packet.commentUrl}`);
+if (s?.approval?.actor) console.log(`approved-by=${s.approval.actor} at ${s.approval.at}`);
+if (s?.qa?.verdict) console.log(`qa=${s.qa.verdict}`);
+if (s?.pr?.docs) console.log(`pr=${s.pr.docs}`);
+const lines = m.readLog(root, id).slice(-10);
+for (const l of lines) console.log(`${l.at}  ${l.stage}  ${l.event}  ${l.actor}  ${l.repo ?? ""}`);
+' "$here/../../autopilot/scripts/autopilot-lib.mjs" "$root" "$id" 2>/dev/null || printf 'ERROR: the autopilot state or log of %s could not be read\n' "$id"
+else
+  stage=$(sed -n 's/.*"stage": *"\([a-z]*\)".*/\1/p' "$state_file" 2>/dev/null | head -1)
+  status=$(sed -n 's/.*"stageStatus": *"\([a-z]*\)".*/\1/p' "$state_file" 2>/dev/null | head -1)
+  mode=$(sed -n 's/.*"mode": *"\([a-z]*\)".*/\1/p' "$state_file" 2>/dev/null | head -1)
+  printf 'stage=%s  status=%s  mode=%s  chain=unchecked (node is not available)\n' "${stage:-?}" "${status:-?}" "${mode:-?}"
+  [ -f "$log_file" ] && tail -n 10 "$log_file"
 fi
 
 printf '\n=== NON-MARKDOWN (not read; name one by path to have it read) ===\n'
