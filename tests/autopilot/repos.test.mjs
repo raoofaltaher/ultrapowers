@@ -70,6 +70,24 @@ test('ensureBranch creates from origin/dev in place and is idempotent', () => {
   assert.equal(sh(clone, 'branch', '--show-current'), 'GH-16-x');
 });
 
+test('ensureBranch starts from a local base that is ahead of origin, and from origin when the local base is behind', () => {
+  const { clone, base } = fixture();
+  // Local dev gains an unpushed commit: the ticket branch must carry it.
+  sh(clone, 'checkout', '-q', 'dev');
+  fs.writeFileSync(path.join(clone, 'LOCAL.md'), 'unpushed\n');
+  sh(clone, 'add', 'LOCAL.md');
+  sh(clone, 'commit', '-q', '-m', 'local only');
+  ensureBranch(clone, 'GH-16-x', 'dev');
+  assert.ok(fs.existsSync(path.join(clone, 'LOCAL.md')), 'the unpushed local commit is on the ticket branch');
+  // A second clone whose local dev is behind origin: origin wins.
+  const other = path.join(base, 'other');
+  sh(base, 'clone', '-q', path.join(base, 'origin.git'), other);
+  sh(other, 'checkout', '-q', '-b', 'dev', 'origin/dev~0');
+  sh(other, 'reset', '-q', '--hard', 'origin/dev~1');
+  ensureBranch(other, 'GH-17-y', 'dev');
+  assert.ok(fs.existsSync(path.join(other, 'DEV.md')), 'origin/dev, which is ahead, is the start point');
+});
+
 test('ensureWorktree returns .worktrees/<branch> and reuses it', () => {
   const { clone } = fixture();
   const wt = ensureWorktree(clone, 'GH-16-x', 'dev');

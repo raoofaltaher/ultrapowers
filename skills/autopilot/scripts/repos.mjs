@@ -43,13 +43,22 @@ function branchExists(dir, branch) {
   return git(dir, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]).ok;
 }
 
-// The start point for a new ticket branch: origin/<base> after a fetch, else the local base.
+// The start point for a new ticket branch: the newer of the local base and origin/<base> after a
+// fetch. A local base with unpushed commits wins over origin; an origin ahead of a stale local wins
+// over it; when they diverged, the local base is what the developer sees, so it wins.
 function startPoint(dir, base) {
+  const local = git(dir, ['rev-parse', '--verify', '--quiet', `refs/heads/${base}`]).ok;
+  let remote = false;
   if (hasRemote(dir)) {
     const f = git(dir, ['fetch', '--quiet', 'origin', base]);
-    if (f.ok && git(dir, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${base}`]).ok) return `origin/${base}`;
+    remote = f.ok && git(dir, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${base}`]).ok;
   }
-  if (git(dir, ['rev-parse', '--verify', '--quiet', `refs/heads/${base}`]).ok) return base;
+  if (local && remote) {
+    const localContainsRemote = git(dir, ['merge-base', '--is-ancestor', `origin/${base}`, base]).ok;
+    return localContainsRemote ? base : `origin/${base}`;
+  }
+  if (remote) return `origin/${base}`;
+  if (local) return base;
   throw new AutopilotError('no-base', `${dir} has no branch ${base} locally or on origin`);
 }
 
