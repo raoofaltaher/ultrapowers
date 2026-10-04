@@ -206,3 +206,25 @@ test('team memory: ULTRAPOWERS_NUDGE=off leaves the memory lines out', async () 
     delete process.env.ULTRAPOWERS_NUDGE;
   }
 });
+
+test('the extension runs the ultrapowers guardrail before a tool call while a run is active', async () => {
+  const { handlers } = await loadExtension();
+  const toolCall = firstHandler(handlers, 'tool_call');
+  const root = mkdtempSync(join(tmpdir(), 'pi-guardrail-'));
+  mkdirSync(join(root, '.agents'), { recursive: true });
+  mkdirSync(join(root, '.ultrapowers'), { recursive: true });
+  writeFileSync(join(root, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'p', autopilot: { mode: 'gated' } }));
+  writeFileSync(join(root, '.ultrapowers', 'autopilot-active'), JSON.stringify({ ticket: 'GH-16', branch: 'GH-16-x', scope: ['.'], stage: 'execute' }));
+
+  const denied = await toolCall({ type: 'tool_call', toolCallId: '1', toolName: 'bash', input: { command: 'git push origin GH-16-x' } }, { cwd: root });
+  assert.equal(denied?.block, true);
+  assert.match(denied.reason, /git push is never allowed/);
+  const state = await toolCall({ type: 'tool_call', toolCallId: '2', toolName: 'write', input: { path: join(root, 'tasks', 'GH-16', 'autopilot.json'), content: '{}' } }, { cwd: root });
+  assert.equal(state?.block, true, 'Pi spells the file as path; the state file is protected');
+  const allowed = await toolCall({ type: 'tool_call', toolCallId: '3', toolName: 'bash', input: { command: 'git status' } }, { cwd: root });
+  assert.equal(allowed, undefined);
+
+  const idle = mkdtempSync(join(tmpdir(), 'pi-idle-'));
+  const inert = await toolCall({ type: 'tool_call', toolCallId: '4', toolName: 'bash', input: { command: 'git push origin main' } }, { cwd: idle });
+  assert.equal(inert, undefined, 'no run marker: nothing is checked');
+});

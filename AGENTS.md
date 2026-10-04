@@ -56,6 +56,7 @@ bash tests/hooks/test-session-start.sh
 bash tests/hooks/test-team-memory-hooks.sh
 bash tests/hooks/test-executable-bits.sh
 bash tests/hooks/test-run-hook-cmd-windows.sh     # Windows only; skips elsewhere
+node --test tests/hooks/test-guardrail-bridge.mjs
 bash tests/init/run-tests.sh
 node --test tests/team-memory/memory-lint.test.mjs
 bash tests/team-memory/test-templates.sh

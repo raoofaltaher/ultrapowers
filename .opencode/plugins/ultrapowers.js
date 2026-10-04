@@ -18,8 +18,17 @@
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { runGuardrail } from '../../hooks/lib/guardrail-bridge.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// The ultrapowers guardrail (hooks/qa-guardrail) before every tool call. OpenCode has no shell
+// PreToolUse hook, so the plugin runs the same hook through the bridge: inert without a run marker
+// (.ultrapowers/qa-active or autopilot-active), a thrown error with the hook's reason when it denies.
+export const guardTool = (directory) => async (input, output) => {
+  const verdict = runGuardrail({ toolName: input?.tool, input: output?.args, cwd: directory });
+  if (verdict.deny) throw new Error(`ultrapowers guardrail: ${verdict.reason}`);
+};
 
 // Skills directory shared by V1 (config hook) and V2 (setup/ctx.skill.transform)
 const ultrapowersSkillsDir = path.resolve(__dirname, '../../skills');
@@ -377,6 +386,9 @@ export const UltrapowersPlugin = async ({ client, directory }) => {
         config.skills.paths.push(ultrapowersSkillsDir);
       }
     },
+
+    // The QA and autopilot envelopes: the guardrail runs before every tool call of an active run.
+    'tool.execute.before': guardTool(directory),
 
     // Team memory: remember which sessions were just compacted so the next
     // transform appends the post-compaction rescue line exactly once.
