@@ -240,6 +240,16 @@ test('renderPacket is under 25 lines and carries the packet id', () => {
   assert.throws(() => renderPacket(`${TEMPLATE}${'\nx'.repeat(30)}`, { state: S, events: DEFAULTS.events, links: { brief: 'B', spec: 'S', plan: 'P', diff: null }, assumptions: [] }), { code: 'packet-too-long' });
 });
 
+test('renderPacket names the docs branch for the root repository', () => {
+  const S = stateWith({ docs: { branch: 'GH-16-x', base: 'dev', tip: 'd1' }, scope: { proposed: ['.'], frozen: false }, repos: [] });
+  const args = { events: DEFAULTS.events, links: { brief: 'B', spec: 'S', plan: 'P', diff: null }, assumptions: [] };
+  const text = renderPacket(TEMPLATE, { state: S, ...args });
+  assert.match(text, /\.\s+base dev\s+branch GH-16-x at d1/);
+  assert.doesNotMatch(text, /not yet created/);
+  const withPr = renderPacket(TEMPLATE, { state: stateWith({ ...S, stage: 'pr', pr: { docs: 'https://x/pull/1' } }), ...args });
+  assert.match(withPr, /\.\s+base dev\s+PR https:\/\/x\/pull\/1/);
+});
+
 // ---- Task 6: next-stage decision and locks ----
 const FACTS = { mode: 'gated', labels: [], events: DEFAULTS.events, approval: null, qaConfigured: false, locked: null };
 const finished = (stage, extra = {}) => stateWith({ stage, stageStatus: 'finished', ...extra });

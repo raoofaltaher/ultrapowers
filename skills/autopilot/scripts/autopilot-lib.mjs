@@ -264,7 +264,8 @@ export function renderPacket(template, { state, links, assumptions = [], events 
   const repoNames = state.scope.frozen ? state.scope.frozen : state.scope.proposed;
   const byName = Object.fromEntries((state.repos ?? []).map((r) => [r.name, r]));
   const repoLines = (repoNames.length ? repoNames : ['.']).map((name) => {
-    const r = byName[name];
+    // The root repository is the documents repository: its branch, tip and PR are the docs ones.
+    const r = byName[name] ?? (name === '.' ? { base: state.docs.base, branch: state.docs.branch, tip: state.docs.tip, prUrl: state.pr?.docs ?? null } : undefined);
     const base = r?.base ?? state.docs.base ?? '';
     const branchState = r?.prUrl ? `PR ${r.prUrl}` : r?.tip ? `branch ${r.branch} at ${r.tip}` : 'branch not yet created';
     return `  ${name}   base ${base}     ${branchState}`;
