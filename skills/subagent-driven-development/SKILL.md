@@ -484,7 +484,10 @@ delete this plan's workspace (`rm -rf <workspace>`) — the git history is
 the record now. Sibling directories belong to other plans; leave them
 alone.
 
-Use ultrapowers:finishing-a-development-branch.
+Use ultrapowers:finishing-a-development-branch. In the autopilot form
+(`.ultrapowers/autopilot-active` exists, or the autopilot skill invoked
+this stage), return to the autopilot skill instead: it ends the stage, and
+the engine pushes and opens the pull requests. No menu, no push, no merge.
 
 ## Common Rationalizations
 

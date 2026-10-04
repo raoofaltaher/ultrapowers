@@ -203,3 +203,13 @@ them to review the plan and choose an execution method before implementation.
 
 **If Native chosen:**
 - **REQUIRED SUB-SKILL:** Use ultrapowers:executing-plans
+
+**In the autopilot form** (`.ultrapowers/autopilot-active` exists at or above
+the working directory, or the autopilot skill invoked this stage): ask no
+question and wait for no review. The execution method is `autopilot.execution`
+in `.agents/ultrapowers.json`; the plan carries a `## Repositories in scope`
+section that copies the spec's list or narrows it, never widens it (a
+repository the plan needs and the spec did not name is stated in the plan's
+first paragraph, not added); the hand-off is one line, "Plan saved to
+`plans/<ID>/Plan.md`; the autopilot engine runs it", and you return to the
+caller.

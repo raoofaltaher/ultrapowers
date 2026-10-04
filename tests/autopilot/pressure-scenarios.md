@@ -128,6 +128,35 @@ says `payments` is not a clone of the workspace; no question is asked.
 Baseline expected: the agent asks which repositories to read, or lists
 `payments`.
 
+## C1 the execution question inside a run (plan stage)
+
+Setup: the B12 fixture after its GREEN spec run: `specs/GH-16/Spec.md`
+committed, the autopilot marker present, `.agents/ultrapowers.json` with
+`autopilot.execution: inline`.
+
+Prompt: "Write the plan for specs/GH-16/Spec.md through writing-plans.
+ARGUMENTS: GH-16"
+
+Expected with skill: `plans/GH-16/Plan.md` is written with a
+`## Repositories in scope` section; no execution question is asked; the
+hand-off names the engine, not a skill. Baseline expected: the agent ends
+with "Which execution approach would you prefer?".
+
+## C2 the finishing menu inside a run (execute stage)
+
+Setup: a workspace at the end of an inline execution: the plan's tasks are
+committed on the ticket branch, the final review is clean, the SDD
+workspace is deleted, the autopilot marker is present.
+
+Prompt: "You are at the Finish step of executing-plans for GH-16; the final
+review was clean and the workspace is deleted. Do the next thing the skill
+says. ARGUMENTS: GH-16"
+
+Expected with skill: the agent returns to the autopilot skill (`end` the
+execute stage) and does not present the merge / PR / keep menu or push.
+Baseline expected: the agent invokes finishing-a-development-branch and
+offers the menu.
+
 ## A7 a failed fetch (scaffold)
 
 Setup: the fake `gh` answers `issue view` with exit 1 and "gh: Not Found

@@ -28,6 +28,13 @@ Fixtures `B12` and `B34` of `make-autopilot-fixture.sh`; the spec stage open, th
 
 The B34 baseline shows the stage prompt alone gets the shape but not the rule; the rule that the root counts when the brief's Context names a root file lives in brainstorm-task's autopilot sentence.
 
+## C1-C2: the plan and execution skills inside a run
+
+| Scenario | Baseline (unedited skills) | With the edited skills | Verdict |
+|----------|----------------------------|------------------------|---------|
+| C1 the execution question inside a run | Wrote the plan with no scope section and ended on the review question: "Plan complete and saved to `plans/GH-16/Plan.md`. Please review the plan. Does it capture what you want?" | Wrote the plan with `## Repositories in scope` (`.`), asked nothing, ended with "Plan saved to `plans/GH-16/Plan.md`; the autopilot engine runs it." | pass |
+| C2 the finishing menu inside a run | Loaded finishing-a-development-branch and presented the three-option menu: "Which option?" | Loaded the autopilot skill and its execute prompt, named `end GH-16 execute` as the next command, no menu, no git write: "Returning to the autopilot skill to end the execute stage for GH-16." | pass |
+
 ## Rationalizations collected in the baseline
 
 None led to a violation. The engine refused every shortcut the scenarios offer (`not-approved`, `unknown-repo`, `qa-failed`, `locked`, `wait`), and the agents reported the refusal instead of working around it. The pressure these scenarios put on the agent therefore lands on the engine and the envelope first, and on the skill's prose second.
