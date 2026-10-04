@@ -31,6 +31,11 @@ Ultrapowers is a fork of Jesse Vincent's MIT-licensed skills library, cut from i
 - [Ultrapowers](#ultrapowers)
   - [Table of Contents](#table-of-contents)
   - [How it works](#how-it-works)
+    - [What you get](#what-you-get)
+    - [Three ways to work](#three-ways-to-work)
+    - [How you stay in control](#how-you-stay-in-control)
+    - [Your first ticket in five steps](#your-first-ticket-in-five-steps)
+    - [Questions teams ask first](#questions-teams-ask-first)
   - [Installation](#installation)
     - [Claude Code](#claude-code)
     - [Antigravity](#antigravity)
@@ -319,17 +324,17 @@ From a ticket to a reviewed, tested branch. The agents do the repeatable work; a
 
 3. **`/ultrapowers:brainstorm-task <ticket> [focus]`** - Grounds before it asks. Reads the brief, confirms which repositories to read (focus words such as `backend`, `frontend` or a repository name narrow the choice), reads every file the design depends on, strongest match first, with no cap, and prints what it read. Only then does it run **brainstorming**: questions one at a time, alternatives, and the design in sections for your approval. The spec is saved as `specs/<ID>/Spec.md` and committed after your review.
 
-4. **writing-plans** - Activates with the approved spec. Writes `plans/<ID>/Plan.md`: small steps, each one action with a checkable result, with exact file paths, interfaces, test assertions and verification commands. You review the plan before anything runs.
+4. **`/ultrapowers:writing-plans`** - Activates with the approved spec. Writes `plans/<ID>/Plan.md`: small steps, each one action with a checkable result, with exact file paths, interfaces, test assertions and verification commands. You review the plan before anything runs.
 
-5. **subagent-driven-development** or **executing-plans** - Activates with the plan, in an isolated workspace on a new branch (**using-git-worktrees**). Either dispatches a fresh subagent per task with a review after each (most thorough), or implements every task inline in the current session with one fresh review of the whole branch at the end (cheapest).
+5. **`/ultrapowers:subagent-driven-development`** or **`/ultrapowers:executing-plans`** - Activates with the plan, in an isolated workspace on a new branch (**using-git-worktrees**). Either dispatches a fresh subagent per task with a review after each (most thorough), or implements every task inline in the current session with one fresh review of the whole branch at the end (cheapest).
 
-6. **test-driven-development** - Activates during implementation. Enforces RED-GREEN-REFACTOR: write failing test, watch it fail, write minimal code, watch it pass, commit. Deletes code written before tests.
+6. **`/ultrapowers:test-driven-development`** - Activates during implementation. Enforces RED-GREEN-REFACTOR: write failing test, watch it fail, write minimal code, watch it pass, commit. Deletes code written before tests.
 
-7. **requesting-code-review** - The review gate: a review after each task and a review of the whole branch at the end. Reports issues by severity. Critical issues block progress.
+7. **`/ultrapowers:requesting-code-review`** - The review gate: a review after each task and a review of the whole branch at the end. Reports issues by severity. Critical issues block progress.
 
 8. **`/ultrapowers:qa-specialist <ticket> [note]`** *(beta)* - The QA gate, which you run before you finish the branch. It tests the running app in a real browser for every configured role and language, across seven lanes: UI, logs, API, database, observability, test suites and content. A guardrail keeps the run read-only. It writes `reviews/<ID>/QA-REPORT.md` with one verdict: PASS, PASS-WITH-ISSUES, FAIL, INCOMPLETE or PRECONDITION-FAILED. It never starts or stops your stack and never commits.
 
-9. **finishing-a-development-branch** - Activates when tasks complete. Verifies tests, offers to merge, open a pull request or keep the branch, and cleans up the worktree. Discarding the work needs your explicit request and a typed confirmation.
+9. **`/ultrapowers:finishing-a-development-branch`** - Activates when tasks complete. Verifies tests, offers to merge, open a pull request or keep the branch, and cleans up the worktree. Discarding the work needs your explicit request and a typed confirmation.
 
 10. **`/ultrapowers:autopilot <ticket> [--mode off|gated|full]`** *(the watcher and `full` mode are beta)* - Runs steps 2 to 9 for one GitHub or GitLab ticket with the human gates on the tracker instead of in the chat. It has two doors: the command, which you run in a session, and a watcher, `autopilot.mjs watch`, which runs on the machine that hosts your coding agent and picks up tickets a human labelled. In `gated` mode the run stops twice: at a review packet on the ticket, with links to the brief, the spec with its assumption ledger and the plan, which you approve with a label, and at the pull requests, one per repository in scope. In `full` mode only the pull requests wait for you. The engine keeps a hash-chained stage log per ticket, pushes and writes to the tracker itself, and a guardrail envelope keeps the agent from pushing, merging or writing to the tracker. Set it up with `/ultrapowers:init autopilot`; `docs/autopilot-watcher.md` covers the watcher as a service.
 
