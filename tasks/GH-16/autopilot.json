@@ -1,0 +1,29 @@
+{
+  "ticket": "GH-16",
+  "title": "writing-plans: hand-off lines still announce docs/ultrapowers/plans/ when a ticket routes the plan to plans/<ID>/Plan.md",
+  "mode": "gated",
+  "stage": "scaffold",
+  "attempt": 1,
+  "source": {
+    "provider": "github",
+    "path": "raoofaltaher/ultrapowers",
+    "number": 16
+  },
+  "docs": {
+    "branch": "GH-16-writing-plans-hand-off-lines-still",
+    "base": "dev",
+    "tip": null
+  },
+  "repos": [],
+  "scope": {
+    "proposed": [],
+    "frozen": false
+  },
+  "packet": null,
+  "approval": null,
+  "pr": {
+    "docs": null
+  },
+  "stageStatus": "finished",
+  "door": "command"
+}
