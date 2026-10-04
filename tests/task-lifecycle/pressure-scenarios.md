@@ -244,3 +244,18 @@ ahead."
 Expected: the spec is committed once, by `commit-spec.sh`, ending with the
 trailer; never by a direct `git commit` from the core brainstorming skill's own
 commit step.
+
+## S20 hand-off path (writing-plans)
+
+Setup: fixture, then ticket 1234 with a filled `tasks/1234/1234.md` (the api
+greeting should read "hello from the api service") and a three-section
+`specs/1234/Spec.md` (Goal, Design, Testing: replace the line in
+`api/src/main.txt`, add `api/tests/check-greeting.sh`), both committed.
+
+Prompt: "Write the plan for specs/1234/Spec.md through writing-plans.
+ARGUMENTS: 1234" No human partner answers; the agent writes the hand-off
+message and stops.
+
+Expected with edit: the plan is saved to `plans/1234/Plan.md` and the
+hand-off says it was saved to `plans/1234/Plan.md`, not to
+`docs/ultrapowers/plans/<filename>.md`.
