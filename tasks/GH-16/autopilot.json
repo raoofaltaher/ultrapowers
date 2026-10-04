@@ -12,7 +12,7 @@
   "docs": {
     "branch": "GH-16-writing-plans-hand-off-lines-still",
     "base": "dev",
-    "tip": null
+    "tip": "64dbad6d81f4f8eb241448045a2c8cd9fd20a3e2"
   },
   "repos": [],
   "scope": {
@@ -25,5 +25,6 @@
     "docs": null
   },
   "stageStatus": "finished",
-  "door": "command"
+  "door": "command",
+  "logHead": "e7e3506427c923aacd9ba55ed2e98b022195e6a13952a3fd695cea7483078600"
 }
