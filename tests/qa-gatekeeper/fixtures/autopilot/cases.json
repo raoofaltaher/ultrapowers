@@ -59,6 +59,9 @@
   { "name": "deny_key_read", "event": { "tool_name": "Bash", "tool_input": { "command": "cat .env" } } },
   { "name": "deny_docker_down", "event": { "tool_name": "Bash", "tool_input": { "command": "docker compose down" } } },
   { "name": "deny_env_dump", "event": { "tool_name": "Bash", "tool_input": { "command": "env" } } },
-  { "name": "deny_ssh", "event": { "tool_name": "Bash", "tool_input": { "command": "ssh deploy@prod.example.com" } } },
+  { "name": "deny_ssh", "event": { "tool_name": "Bash", "tool_input": { "command": "ssh prod.example.com uptime" } } },
+  { "name": "deny_sed_in_place_marker", "event": { "tool_name": "Bash", "tool_input": { "command": "sed -i 's/gated/full/' .agents/ultrapowers.json" } } },
+  { "name": "deny_sed_in_place_hook_no_dot", "event": { "tool_name": "Bash", "tool_input": { "command": "sed -i -e 's/exit 2/exit 0/' hooks/qa-guardrail" } } },
+  { "name": "deny_truncate_workflow", "event": { "tool_name": "Bash", "tool_input": { "command": "truncate -s 0 .github/workflows/ci.yml" } } },
   { "name": "deny_run_code_unsafe", "event": { "tool_name": "mcp__playwright__browser_run_code_unsafe", "tool_input": { "code": "fetch('x')" } } }
 ]

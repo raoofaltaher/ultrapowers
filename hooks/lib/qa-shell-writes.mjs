@@ -291,7 +291,18 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa' }) {
       if (prog === 'sed' || prog === 'perl' || prog === 'ruby') {
         const inPlace = rest.some((x) => x.v && (x.v === '--in-place' || x.v.startsWith('--in-place=') || /^-[A-Za-z]*i/.test(x.v)));
         if (inPlace && !autopilot) deny(`${prog} -i edits files in place; the code under test is read-only during a QA run`);
-        if (inPlace && autopilot) for (const x of plain) if (x.v && /[/.]/.test(x.v) && !/^s[/|#,]/.test(x.v)) checkTarget(x.w, dir, `${prog} -i target`, container);
+        if (inPlace && autopilot) {
+          // Every operand but the script is a file the edit writes. The script is the operand that
+          // follows -e/--expression/-f/--file, or the first plain operand when none is given.
+          const scripts = new Set();
+          for (let k = 0; k < rest.length; k++) {
+            const v = rest[k].v || '';
+            if (['-e', '--expression', '-f', '--file'].includes(v) && rest[k + 1]) scripts.add(rest[k + 1]);
+            else if (/^-(e|f)./.test(v)) scripts.add(rest[k]);
+          }
+          const files = scripts.size ? plain.filter((x) => !scripts.has(x)) : plain.slice(1);
+          for (const x of files) checkTarget(x.w, dir, `${prog} -i target`, container);
+        }
         return;
       }
       if (prog === 'truncate') {
