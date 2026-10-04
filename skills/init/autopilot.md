@@ -11,7 +11,7 @@ One question per message; use multiple choice where the harness has it.
 3. Approvers: tracker logins allowed to approve a packet. Empty means any member with write access.
 4. Execution: `subagent` (default; a fresh subagent per task) or `inline`.
 5. Harness for the watcher's headless stages: `claude-code` (default), `codex`, `copilot`, `cursor`, `gemini`, `qwen`, `opencode`, `pi`, `droid`, `kimi`, `hermes` or `antigravity`. `devin` runs tickets from a session only.
-6. Only when a watcher will run: may the watcher take an approval from the account it runs as? Default no (`watchSelfApproval` false). Yes is for a solo developer whose own account runs the watcher, together with the read-only stage tokens the next steps name.
+6. Only when a watcher will run: may the watcher take an approval from the account it runs as? Default no (`watchSelfApproval` false). Yes is for a solo developer whose own account runs the watcher; it counts only with the read-only stage tokens the next steps name. And: will the watcher's stages hold their own read-only tokens (the default, the watcher refuses to start without them) or the engine's credentials (`watch.sharedCredentials` true, said in writing)?
 7. Label names, only when the team already uses labels with these names: defaults `up:ready`, `up:approve`, `up:changes`, `up:hold`, `up:running`, `up:blocked`.
 
 ## The answers file

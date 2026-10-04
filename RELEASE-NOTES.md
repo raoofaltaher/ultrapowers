@@ -2,30 +2,63 @@
 
 ## v1.2.0 (2026-10-04)
 
-Autopilot: the same workflow with the human gates on the tracker.
+Autopilot: hand the agent a ticket, approve its plan on the ticket, review its pull request.
 
-**Heads up:** existing projects keep working unchanged; without an `autopilot` block every skill behaves as before. Set it up with `/ultrapowers:init autopilot` (join and upgrade offer it once when a GitHub or GitLab source exists). Upgrade finds one changed template, `.claude/settings.json`, which now allows `Skill(ultrapowers:autopilot)`; apply it to get a `.ultrapowers-new` proposal beside your file, or answer `--apply none` and add the one line by hand.
+The request we hear most from engineering teams is the same one: "give the agent a task and wait for the pull request, without lowering the bar". Ultrapowers already carried the bar: a short brief, a spec grounded in the code, a plan, test-driven implementation, a review of every task, a QA specialist, a clean finish. This release runs that same workflow from a ticket, with the human decisions on the ticket, and leaves every form of working in place.
 
-### Autopilot
+**Heads up:** existing projects keep working unchanged; without an `autopilot` block every skill behaves as before. Set it up with `/ultrapowers:init autopilot` (join and upgrade offer it once when a GitHub or GitLab source exists). Upgrade finds two changed templates: `.claude/settings.json`, which now allows `Skill(ultrapowers:autopilot)`, and, for projects that chose Gemini CLI, the new `.gemini/hooks/ultrapowers-guardrail.mjs`; apply them to get `.ultrapowers-new` proposals beside your files, or answer `--apply none`.
 
-- **One engine, two doors.** `/ultrapowers:autopilot <ID>` runs a GitHub or GitLab ticket through brief, spec, plan, review packet, implementation, QA and pull requests in a session; `autopilot.mjs watch` is the same engine as a service on the machine that hosts your coding agent, picking up tickets a human labelled `up:ready`. One fresh headless harness call per stage (`claude-code` or `opencode`); resume re-reads files, never chat.
-- **Gated by default.** `gated` stops at a review packet on the ticket (brief, spec with its assumption ledger, plan, repositories in scope, under 25 lines) and at the pull requests; `full` stops at the pull requests only. Approval is a label by a member with write access, verified against the tracker's event timeline and bound to the commits the packet named; any new commit voids it. `up:changes` sends the run back with a comment; `up:hold` pauses it. A partial approval is a change request.
-- **One trail per ticket.** `tasks/<ID>/autopilot.json` and a hash-chained `tasks/<ID>/stage-log.jsonl` on the ticket branch; `/ultrapowers:task` reads them first. The documents repository, where init ran, is the ticket's home; code repositories get one branch each, in a worktree, only those the approved plan names, and one pull request each.
-- **The envelope.** The QA guardrail gained an autopilot profile: writes anywhere in the workspace except the configuration, hooks, CI and settings; git limited to an allow-list; no push, merge, rebase or tracker write; the engine does those between stages. A pre-push check in the engine refuses any branch outside the frozen scope.
-- **Autopilot form of the skills.** brainstorming, brainstorm-task, writing-plans, executing-plans and subagent-driven-development ask nothing when the run marker exists: each question becomes an assumption-ledger row, the plan copies or narrows the spec's repositories, and the finish step returns to the engine. Pressure scenarios A1 to A7, B1 to B4 and C1 to C2 are recorded under `tests/autopilot/`.
-- **Init.** `/ultrapowers:init autopilot` asks the mode, base branch, approvers, execution, harness, whether the watcher may take your own account's approval, and label names, shows a dry run, and creates the six labels on the source's default project after your yes.
-- **Who approves.** Your own account approves your own tickets in a session (spec D11). The watcher takes an approval from the account it runs as only when `autopilot.watchSelfApproval` is true (D12). Pressure scenario A8 checks that the agent never adds the label for you.
-- **What a headless stage holds.** With `ULTRAPOWERS_STAGE_GH_TOKEN` or `ULTRAPOWERS_STAGE_GITLAB_TOKEN` set (read-only tokens), a watcher stage runs with that token and nothing else: the engine's tokens are removed, `gh` and `glab` see an empty configuration, git never prompts, and only the project's own MCP servers load. The watcher makes the tracker writes around the stage (D13).
-- **The envelope on every harness.** The guardrail now runs before every tool call of a stage on Claude Code, Codex, GitHub Copilot CLI, Cursor, Muse, Gemini CLI, Qwen Code, Factory Droid, Kimi Code, OpenCode, Pi, Hermes Agent and Antigravity: plugin hooks where the harness has them, in-process hooks through `hooks/lib/guardrail-bridge.mjs` for OpenCode, Pi and Hermes, and a project `BeforeTool` hook that init writes for Gemini CLI. Codex's `apply_patch` edits are checked file by file. Devin's plugin hooks are documented as fail-open, so the watcher refuses `devin`. The watcher has one headless adapter per harness (`skills/autopilot/scripts/harnesses.mjs`), and `tests/autopilot/test-adapters.sh` checks each against the CLIs on a machine (D15). The README's "Where the envelope runs" table names the one-time steps: Codex trusts the plugin hooks once, Hermes enables the plugin.
-- **The gate's record is not the gate.** `begin execute` and `pr` require the recorded approval and check it again on the tracker; the engine refuses `packet`, `approval`, `pr` and any other stage while a stage is open; the ticket's state files are protected in the envelope; a spec or plan changed after the approval blocks; `full` mode records its approval at the packet; the `changes` label is taken when its stage begins; a run stops when a stage repeats; QA without a committed verdict fails closed; a failed packet or pull request blocks its stage and releases the lock; the packet and the pull request name base commits that are not on origin (D14).
+### Who it is for
 
-### Documentation
+Professional development teams and the enterprises they work in: teams that already review specs and pull requests and want the agent to do the work between those two decisions, on their own machines, with tokens they issue.
 
-- The Basic Workflow has step 10, the project configuration documents the `autopilot` block, Philosophy gains "Autonomous between your gates", and a new last section, Pipelines, draws the manual workflow, gated and full autopilot, and the watcher. `docs/autopilot-watcher.md` covers the watcher as a service, its tokens and the host it belongs on.
+### Three ways to run the same workflow
+
+Pick the rung that fits, and move up when the record says so. The artifacts are the same at every rung: the brief, the spec with its assumption ledger, the plan, the stage log, the pull request.
+
+1. **Manual.** The skills by hand, as before. Nothing changes without an `autopilot` block.
+2. **One command.** `/ultrapowers:autopilot <ticket>` in your session takes a GitHub or GitLab issue through the brief, the spec and the plan, posts a review packet on the ticket, and stops. You add the `up:approve` label. The run implements, reviews, runs QA when the project has a QA block, and opens the pull request. Verified live on Claude Code with GitHub: issue 16 of this repository became pull request 20 (`tests/autopilot/acceptance-2026-10.md`).
+3. **A watcher** *(beta)*. `autopilot.mjs watch`, a service on the machine that hosts your coding agent, picks up every ticket a member with write access labelled `up:ready` and runs it the same way, so you only touch the tracker. Beta until a public run from label to pull request is recorded.
+
+`gated` is the default and the mode we recommend: two gates, the packet and the pull request. `full` *(beta)* posts the packet for the record and stops at the pull request only.
+
+### How you stay in control
+
+- **One packet, one label.** The packet is under 25 lines: the brief, the spec with its assumption ledger (every question the agent answered for itself, lowest confidence first), the plan, the repositories in scope, all linked at one commit. Your approval is a label on the ticket, and the engine checks it on the tracker's own timeline: who added it, with write access (on GitLab, Maintainer or above) and in `approvers` when you set that list, after the packet, and on the same commits. A new commit voids it. The check runs again before implementation starts and before the pull request opens.
+- **Your own account approves your own tickets** in a session. A watcher takes an approval from the account it runs as only when you set `watchSelfApproval` and give its stages their own read-only token.
+- **Changes and holds.** `up:changes` with a comment sends the run back to the spec and the plan; `up:hold` pauses it; a kill switch file pauses the watcher.
+- **During a stage, a guardrail hook denies the agent push, merge and tracker writes.** The engine pushes and opens pull requests between stages, and a human merges. The hook matches patterns; it is not a sandbox. It also denies edits to the project's configuration, CI, commit hooks, settings, the ticket's state files and its own run marker, and a stage that loses its marker is blocked for review.
+- **What a watcher stage holds.** With read-only stage tokens (`ULTRAPOWERS_STAGE_GH_TOKEN`, `ULTRAPOWERS_STAGE_GITLAB_TOKEN`), the engine's tokens and the ssh agent are removed from the stage's environment; on Claude Code, only the project's MCP servers load. A watcher refuses to start without stage tokens unless the project says `watch.sharedCredentials: true` in writing. `docs/autopilot-watcher.md` has the checklist a team runs before the first ticket.
+- **One record per ticket.** `tasks/<ID>/autopilot.json` and a hash-chained `tasks/<ID>/stage-log.jsonl` on the ticket branch, read by `/ultrapowers:task` first; the pull request cites the packet, the approver and the log head.
+- **Runs on your machine with tokens you issue; the plugin's own code sends nothing anywhere.** The agent talks to its model provider as it always did.
+
+### Where it runs
+
+The engine, the skill and the tracker write-back through `gh` and `glab` are the same on every harness. The guardrail reaches each harness its own way: plugin hooks on Claude Code, Codex, GitHub Copilot CLI, Cursor, Muse, Qwen Code, Factory Droid, Kimi Code and Antigravity; in-process hooks in the OpenCode plugin, the Pi extension and the Hermes plugin; a project `BeforeTool` hook that init writes for Gemini CLI. Devin's plugin hooks are documented as fail-open, so the watcher refuses `devin` and a Devin session has no reliable envelope. Codex asks you to trust the plugin's hooks once; Hermes loads the plugin only when it is in `plugins.enabled`. The README's table "Where the envelope runs" names each harness's hook, its one-time step and its limits; Claude Code, Gemini CLI, Qwen Code, Droid and Kimi Code let a hook that crashes or times out through, so the deny path, exit 2, is what the tests exercise.
+
+### What was verified, and how
+
+| | Verified |
+|---|---|
+| Live, on this repository | The session door on Claude Code with GitHub: one repository, gated mode, inline execution, no QA stage; the early-label negative check; pressure scenario A8 (the agent does not add the approve label for you) |
+| Offline suites, every commit | The engine against a fake tracker and a fake harness (54 scenarios: gates, approvals, drift, loops, locks, the watcher cycle, stage credentials); the guardrail's autopilot profile (120 cases); the bridge and the node entry; the OpenCode plugin, the Pi extension and the Hermes plugin hooks; the adapters' command lines; init's autopilot mode |
+| Against the installed CLIs | `tests/autopilot/test-adapters.sh` ran the Claude Code and Codex adapters live on the release machine; OpenCode and Pi accepted their flags and answered a provider or login error; the rest were not installed |
+| Vendor documentation only | The hook contracts and crash behaviour of Codex, Copilot CLI, Cursor, Gemini CLI, Qwen Code, Droid, Kimi Code, Antigravity, Hermes and Devin |
+| Not yet run | The watcher on any harness, GitLab, a nested workspace, full mode, the changes loop, the QA stage inside a run, subagent execution inside a run |
+
+### The engineering detail
+
+- **One engine, two doors.** The command and the watcher share one state file and one log per ticket; one fresh headless harness call per agent stage in the watcher (`skills/autopilot/scripts/harnesses.mjs`, one adapter per harness); resume re-reads files, never chat.
+- **The documents repository** where init ran is the ticket's home; code repositories get one branch each, in a worktree, only those the approved plan names, and one pull request each. Scope: a hint in the brief, binding in the spec, narrowable by the plan, frozen at approval, enforced at push. A base branch ahead of origin is named in the packet and the pull request.
+- **The gate's record is not the gate.** Execute and the pull request require the recorded approval and check it again; the gate commands and other stages are refused while a stage is open; a spec or plan changed after approval blocks; full mode records its approval at the packet; the changes label is taken when its stage begins; a run stops when a stage repeats; a QA verdict of FAIL, PRECONDITION-FAILED or INCOMPLETE stops the run and a missing one blocks; a failed packet or pull request blocks its stage and releases the lock. A mode label and the watcher's start label count only from a member with write access. The watch door's self check fails closed.
+- **Autopilot form of the skills.** brainstorming, brainstorm-task, writing-plans, executing-plans and subagent-driven-development ask nothing when the run marker exists: each question becomes an assumption-ledger row, the plan copies or narrows the spec's repositories, and the finish step returns to the engine. Pressure scenarios A1 to A8, B1 to B4 and C1 to C2 are recorded under `tests/autopilot/`.
+- **Init.** `/ultrapowers:init autopilot` asks the mode, base branch, approvers, execution, harness, the two watcher questions (own-account approval, shared credentials) and the label names, shows a dry run, and creates the six labels on the source's default project after your yes.
+- **Documentation.** The Basic Workflow has step 10, the project configuration documents the `autopilot` block and the harness table, Philosophy gains "Autonomous between your gates", and the last section, Pipelines, draws the manual workflow, gated and full autopilot, and the watcher. The spec's decisions D11 to D16 record what changed during the live run and the executive review (`docs/executive/2026-10-04-v1-2-0-autopilot-release-notes-and-readme-review.md`).
 
 ### Not in this release
 
-- Odoo write-back (Odoo tickets are still read as in 1.1.0), a CI door, and per-ticket lanes. The README's roadmap line names them.
+- A second gate on the pull request with the engine merging on your label, the QA report posted on the ticket, and the QA fix loop: the next spec, agreed with the Owner.
+- Odoo write-back (Odoo tickets are still read as in 1.1.0), a CI door, per-ticket lanes, and a public watcher run. The README's roadmap line names them.
 
 ## v1.1.0 (2026-10-02)
 

@@ -24,6 +24,8 @@ Ultrapowers is a complete software development methodology for your coding agent
 
 It also sets your projects up for you. One command writes the same proven setup into every project, for every coding agent you use: the knowledge base, the agent instructions, the MCP servers and settings, and a team memory kept in git. From there, a ticket-driven workflow carries each task from a short brief to a spec grounded in the code, a plan, tested code, and a QA verdict.
 
+You choose how much of that workflow runs on its own. Run the skills by hand, one at a time. Or hand the agent a GitHub or GitLab ticket with one command, `/ultrapowers:autopilot <ticket>`, approve its spec and plan on the ticket, and review its pull request. Or leave a watcher running where your coding agent lives and only touch labels on the ticket. The same gates hold in every form: nothing merges, and nothing pushes outside the approved scope, without a human.
+
 Ultrapowers is a fork of Jesse Vincent's MIT-licensed skills library, cut from its version 6.4.2.
 
 ## Table of Contents
@@ -73,6 +75,8 @@ After you've signed off on the design, your agent puts together an implementatio
 Next up, once you say "go", it launches a *subagent-driven-development* process, having agents work through each engineering task, inspecting and reviewing their work, and continuing forward. It's not uncommon for your agent to work autonomously for a couple hours at a time without deviating from the plan you put together.
 
 When the work is done, a QA agent tests the running app the way a senior human tester would, in a real browser, and leaves one verdict in the ticket's review folder. Anything worth knowing next time goes into the team memory in git, where every developer and every coding agent on the project can find it.
+
+The same workflow runs from a ticket when you want it to. `/ultrapowers:autopilot <ticket>` takes a GitHub or GitLab issue through the brief, the grounded spec and the plan, then stops: a review packet lands on the ticket with links to all three, and you approve it with a label. The engine checks that approval against the tracker (who, with what access, after which packet, on which commits), then implements, reviews and runs QA inside a guardrail that denies the agent any push, merge or tracker write, and opens the pull request for you. A watcher on your machine does the same for tickets you label, so you only interact with the tracker. The agent never pushes, merges or approves; the engine does those steps between stages, and you merge.
 
 There's a bunch more to it, but that's the core of the system. And because the skills trigger automatically, you don't need to do anything special. Your coding agent just has Ultrapowers.
 
@@ -365,7 +369,8 @@ The `autopilot` block (every field but `mode` is optional):
 | `approvers` | Tracker logins allowed to approve a packet; empty means any member with write access, including the account the engine runs as, so you approve your own tickets. If the engine runs as a bot, list your human approvers here to keep the bot out |
 | `execution` | `subagent` (a fresh subagent per plan task, the default) or `inline` |
 | `harness` | The headless harness the watcher spawns for each stage: `claude-code` (default), `codex`, `copilot`, `cursor`, `gemini`, `qwen`, `opencode`, `pi`, `droid`, `kimi`, `hermes` or `antigravity`. `devin` is accepted for a session and refused by the watcher, because its plugin hooks fail open. See "Where the envelope runs" below |
-| `watchSelfApproval` | `false` by default: the watcher does not take an approval from the account it runs as. `true` lets a solo developer approve their own tickets from a watcher that runs under their account; set it together with the read-only stage tokens in `docs/autopilot-watcher.md` |
+| `watchSelfApproval` | `false` by default: the watcher does not take an approval from the account it runs as. `true` lets a solo developer approve their own tickets from a watcher that runs under their account; it counts only when the read-only stage tokens in `docs/autopilot-watcher.md` are set |
+| `watch.sharedCredentials` | `false` by default: a watcher starts only with read-only stage tokens in its environment. `true` lets its stages run with the engine's own credentials, which a team says in writing here |
 | `events` | The six label names, defaults `up:ready`, `up:approve`, `up:changes`, `up:hold`, `up:running`, `up:blocked` |
 | `watch` | `intervalSec` (default 60) and `maxConcurrent` (default 1) for the watcher |
 
@@ -375,7 +380,7 @@ Autopilot needs a GitHub or GitLab source in `tickets`. The engine writes `tasks
 
 | Harness | The guardrail during a session stage | A watcher stage (`autopilot.harness`) | Notes |
 |---|---|---|---|
-| Claude Code | plugin hook `hooks/hooks.json` (PreToolUse) | yes | Only the project's `.mcp.json` servers load into a headless stage |
+| Claude Code | plugin hook `hooks/hooks.json` (PreToolUse) | yes | Verified live (the session door, GitHub). Only the project's `.mcp.json` servers load into a headless stage. A hook that crashes or exceeds its timeout is non-blocking in Claude Code; the deny path is exit 2 |
 | Codex | plugin hook `hooks/hooks-codex.json` | yes | Trust the plugin's hooks once with `/hooks`; the watcher passes `--dangerously-bypass-hook-trust`. Edits through `apply_patch` are checked file by file |
 | GitHub Copilot CLI | plugin hook `hooks/hooks.json` | yes | A failing hook denies the call |
 | Cursor | plugin hook `hooks/hooks-cursor.json`, `failClosed` | yes (`agent -p`) | |
@@ -383,14 +388,15 @@ Autopilot needs a GitHub or GitLab source in `tickets`. The engine writes `tasks
 | Qwen Code | the extension's `hooks/hooks.json` (PreToolUse) | yes | |
 | Gemini CLI | the project `BeforeTool` hook init writes to `.gemini/settings.json`, which runs the extension's guardrail | yes | Set `ULTRAPOWERS_PLUGIN_ROOT` when the extension is not under `~/.gemini/extensions/ultrapowers`. A hook that writes anything but JSON to stdout is ignored by Gemini |
 | Factory Droid | plugin hook `hooks/hooks.json` | yes | |
-| Kimi Code | plugin hook in `.kimi-plugin/plugin.json`, through `hooks/lib/guardrail-cli.mjs` | yes | Kimi lets a crashed or timed-out hook through; the deny path itself is exit 2 |
+| Kimi Code | plugin hook in `.kimi-plugin/plugin.json`, through `hooks/lib/guardrail-cli.mjs` | yes | Like Gemini CLI, Qwen Code and Droid, Kimi lets a crashed or timed-out hook through; the deny path itself is exit 2 |
+| Grok Build CLI | not verified: install it through the Claude Code marketplace path and check that `hooks/hooks.json` fires | no adapter | Run its tickets from a session once the hook is confirmed |
 | OpenCode | in process, `tool.execute.before` in the plugin | yes | Never run it with `--pure`, which drops the plugin |
 | Pi | in process, the extension's `tool_call` handler | yes | The watcher loads this extension and no other |
 | Hermes Agent | in process, the plugin's `pre_tool_call` (fails closed) | yes | The plugin must be in `plugins.enabled`; the watcher passes `--accept-hooks` |
-| Antigravity | plugin hook `hooks.json` at the plugin root, through `guardrail-cli.mjs --antigravity` | yes (`agy -p`) | Antigravity runs plugin hooks in its CLI; the IDE surface is not confirmed |
-| Devin | `hooks/hooks.json`, which Devin documents as best effort and fail open | refused | Run Devin tickets from a session, with the project's own `permissions.deny` rules as the brake |
+| Antigravity | plugin hook `hooks.json` at the plugin root, through `guardrail-cli.mjs --antigravity` | yes (`agy -p`) | From its documentation only: Antigravity runs plugin hooks in its CLI, the IDE surface and its crash behaviour are not confirmed |
+| Devin | `hooks/hooks.json`, which Devin documents as best effort and fail open | refused | A Devin session has no reliable envelope; use the project's own `permissions.deny` rules as the brake |
 
-On every harness the deny is the same exit code 2 with the reason on stderr, which each of them turns into a blocked call the agent can read.
+On every harness the deny is the same exit code 2 with the reason on stderr, which each of them turns into a blocked call the agent can read. Only Claude Code's session door has been run live; the other rows rest on this repository's offline tests and on each vendor's documentation, and `tests/autopilot/test-adapters.sh` checks the headless flags against the CLIs installed on a machine. The hook matches patterns; it is not a sandbox. A build script a stage runs can execute anything the hook never sees, so the credentials a stage holds and the host it runs on are the boundary that counts: see `docs/autopilot-watcher.md`. On GitLab, "write access" means Maintainer or above.
 
 ## When Something Goes Wrong
 
@@ -506,6 +512,8 @@ The same workflow, four ways to run it. Every one keeps the brief, spec, plan an
    finishing-a-development-branch                             ◄ you pick merge, PR or keep
 ```
 
+Two choices make the pipeline: who starts a run (you, with the command, or the watcher, from a label) and how many gates it has (`gated`, two; `full`, one). Start manual, move to the command, then to the watcher; keep `gated` until a team has a track record. The session door on Claude Code with GitHub has run live (`tests/autopilot/acceptance-2026-10.md`); the watcher and `full` mode are **beta** until their own live runs are recorded.
+
 **Gated autopilot** - `autopilot.mode: gated`; two human gates, both on the tracker and the pull requests.
 
 ```text
@@ -526,7 +534,7 @@ The same workflow, four ways to run it. Every one keeps the brief, spec, plan an
  GATE 2 ── you review and merge the pull requests
 ```
 
-**Full autopilot** - `autopilot.mode: full`; the packet is posted for the record and the run continues.
+**Full autopilot** *(beta)* - `autopilot.mode: full`; the packet is posted for the record and the run continues.
 
 ```text
  TRACKER ── up:ready ──► scaffold ─► spec ─► plan ─► packet posted (no wait) ─► execute ─► qa ─► PRs
@@ -535,7 +543,7 @@ The same workflow, four ways to run it. Every one keeps the brief, spec, plan an
  GATE ── you review and merge the pull requests; the packet and the stage log are the record
 ```
 
-**Watcher on a VM** - `autopilot.mjs watch`, a service on the machine that hosts your coding agent.
+**Watcher on a VM** *(beta)* - `autopilot.mjs watch`, a service on the machine that hosts your coding agent.
 
 ```text
  every autopilot.watch.intervalSec:
@@ -548,4 +556,4 @@ The same workflow, four ways to run it. Every one keeps the brief, spec, plan an
    tracker error? sleep doubles, up to 10 minutes
 ```
 
-The watcher runs the agent with permission prompts bypassed inside the guardrail's autopilot envelope: no push, no merge, no tracker write, no edit to the configuration, hooks, CI or settings. With a read-only stage token set, the stage also holds no credential that could write, and only the project's MCP servers load. Run it on a disposable host that holds nothing else; see `docs/autopilot-watcher.md`.
+The watcher runs the agent with permission prompts bypassed inside the guardrail's autopilot envelope: no push, no merge, no tracker write, no edit to the configuration, hooks, CI or settings. It starts only with read-only stage tokens in its environment, unless the project says `watch.sharedCredentials: true`; with them, the engine's tokens and the ssh agent are removed from the stage, and on Claude Code only the project's MCP servers load. The hook matches patterns; it is not a sandbox. Run the watcher on a disposable host that holds nothing else, with HTTPS remotes and branch protection on every base branch; `docs/autopilot-watcher.md` has the checklist.
