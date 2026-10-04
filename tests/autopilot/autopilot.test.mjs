@@ -294,6 +294,9 @@ test('pr refuses before approval, then opens the docs PR and posts the closing c
   const r = run(ws, ['pr', 'GH-16']);
   assert.equal(r.code, 0, r.stdout + r.stderr);
   assert.equal(r.json.prs.docs, 'https://github.com/o/r/pull/9');
+  const events = logLines(ws).map((l) => `${l.stage} ${l.event}`);
+  assert.ok(events.indexOf('qa skipped') >= 0 && events.indexOf('qa skipped') < events.indexOf('pr started'), `spec §6: QA skipped with a log line, before pr: ${events.join(', ')}`);
+  assert.equal(events.filter((e) => e === 'qa skipped').length, 1);
   const prCalls = ws.calls().filter((a) => a[0] === 'pr' && a[1] === 'create');
   assert.equal(prCalls.length, 1, 'root topology: one PR, the docs repository is the code repository');
   const prBody = stdinOf(ws, (a) => a[0] === 'pr' && a[1] === 'create')[0];

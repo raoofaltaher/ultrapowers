@@ -338,6 +338,11 @@ async function runPr(opts) {
   }
   const lock = acquireLock(ctx.root, opts.id, opts.door, opts.pid);
   if (!lock.ok) throw new AutopilotError('locked', `${opts.id} is being run by the ${lock.door} door`);
+  // Spec §6: without a qa block the QA stage is skipped with a log line (and a note in the PR body).
+  if (!state.qa && !qaConfigured(ctx.marker) && !readLog(ctx.root, opts.id).some((l) => l.stage === 'qa' && l.event === 'skipped')) {
+    appendLog(ctx.root, opts.id, { stage: 'qa', event: 'skipped', actor: 'engine', trigger: opts.door, repo: 'docs', reason: 'no qa block in .agents/ultrapowers.json' });
+    state.logHead = readState(ctx.root, opts.id).logHead;
+  }
   state.stage = 'pr';
   state.stageStatus = 'running';
   state.attempt = 1;
