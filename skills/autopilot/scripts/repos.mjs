@@ -1,0 +1,114 @@
+// Git operations of the autopilot engine: branches, worktrees, commits and the guarded push.
+// Node built-ins only; git runs through execFileSync with an argument array, never a shell.
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { AutopilotError, pushAllowed } from './autopilot-lib.mjs';
+
+const WORKTREES = '.worktrees';
+
+function gitBinary() {
+  return process.env.ULTRAPOWERS_GIT || 'git';
+}
+
+// Runs git in `dir`. Never throws: { ok, stdout, stderr }.
+export function git(dir, args) {
+  try {
+    const stdout = execFileSync(gitBinary(), args, { cwd: dir, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    return { ok: true, stdout, stderr: '' };
+  } catch (err) {
+    return { ok: false, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? err.message) };
+  }
+}
+
+function must(dir, args, what) {
+  const r = git(dir, args);
+  if (!r.ok) throw new AutopilotError('git-failed', `${what}: git ${args.join(' ')} in ${dir}: ${r.stderr.trim()}`);
+  return r.stdout;
+}
+
+// The remote's default branch, or `main` when origin/HEAD is not set.
+export function remoteHead(dir) {
+  const r = git(dir, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']);
+  if (!r.ok) return 'main';
+  return r.stdout.trim().replace(/^origin\//, '') || 'main';
+}
+
+function hasRemote(dir) {
+  return git(dir, ['remote', 'get-url', 'origin']).ok;
+}
+
+function branchExists(dir, branch) {
+  return git(dir, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]).ok;
+}
+
+// The start point for a new ticket branch: origin/<base> after a fetch, else the local base.
+function startPoint(dir, base) {
+  if (hasRemote(dir)) {
+    const f = git(dir, ['fetch', '--quiet', 'origin', base]);
+    if (f.ok && git(dir, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${base}`]).ok) return `origin/${base}`;
+  }
+  if (git(dir, ['rev-parse', '--verify', '--quiet', `refs/heads/${base}`]).ok) return base;
+  throw new AutopilotError('no-base', `${dir} has no branch ${base} locally or on origin`);
+}
+
+// Creates `branch` from the base when missing and checks it out in `dir`.
+export function ensureBranch(dir, branch, base) {
+  const current = git(dir, ['branch', '--show-current']).stdout.trim();
+  if (branchExists(dir, branch)) {
+    if (current !== branch) must(dir, ['checkout', '--quiet', branch], 'checkout');
+    return { created: false };
+  }
+  const start = startPoint(dir, base);
+  must(dir, ['checkout', '--quiet', '-b', branch, start], 'create branch');
+  return { created: true };
+}
+
+// A worktree for `branch` under <clone>/.worktrees/<branch>, created from the base when the branch is new.
+export function ensureWorktree(cloneDir, branch, base) {
+  const target = path.join(cloneDir, WORKTREES, branch);
+  if (fs.existsSync(path.join(target, '.git'))) return target;
+  fs.mkdirSync(path.join(cloneDir, WORKTREES), { recursive: true });
+  const ignore = path.join(cloneDir, WORKTREES, '.gitignore');
+  if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, '*\n');
+  if (branchExists(cloneDir, branch)) {
+    must(cloneDir, ['worktree', 'add', '--quiet', target, branch], 'add worktree');
+  } else {
+    const start = startPoint(cloneDir, base);
+    must(cloneDir, ['worktree', 'add', '--quiet', '-b', branch, target, start], 'add worktree');
+  }
+  return target;
+}
+
+// The sha of a ref, or null when it does not resolve.
+export function tip(dir, ref = 'HEAD') {
+  const r = git(dir, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+  return r.ok ? r.stdout.trim() : null;
+}
+
+// Stages `paths`, commits with the message and the optional trailer; null when nothing changed.
+export function commitPaths(dir, paths, message, trailer = '') {
+  must(dir, ['add', '-A', '--', ...paths], 'stage');
+  const staged = git(dir, ['diff', '--cached', '--quiet', '--', ...paths]);
+  if (staged.ok) return null;
+  const messages = ['-m', message];
+  if (trailer && trailer.trim()) messages.push('-m', trailer.trim());
+  must(dir, ['commit', '--quiet', ...messages, '--', ...paths], 'commit');
+  return tip(dir);
+}
+
+// Pushes `branch` to origin, only when the state allows it for this repository.
+export function push(dir, branch, { state, repoName }) {
+  if (!pushAllowed(state, repoName, branch)) {
+    throw new AutopilotError('scope-violation', `push of ${branch} in ${repoName} is outside the ticket's frozen scope`);
+  }
+  must(dir, ['push', '--quiet', '-u', 'origin', branch], 'push');
+}
+
+// Absolute directories of the documents repository and every code repository of the marker.
+export function repoDirs(root, marker) {
+  const repos = Array.isArray(marker?.repos) ? marker.repos : [];
+  if (marker?.topology !== 'nested' || repos.length === 0) return { docs: root, repos: { '.': root } };
+  return { docs: root, repos: Object.fromEntries(repos.map((r) => [r.name, path.resolve(root, r.path ?? r.name)])) };
+}
