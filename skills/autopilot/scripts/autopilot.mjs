@@ -19,7 +19,7 @@ import {
   readState, writeState, appendLog, readLog, verifyChain,
   nextStage, acquireLock, releaseLock, liveLock, readLock, lockPath,
   writeActiveMarker, clearActiveMarker, readActiveMarker, verifyApproval,
-  renderPacket, assumptionsFrom, scopeFrom, freezeScope, pushAllowed, loadSecretsFile,
+  renderPacket, assumptionsFrom, scopeFrom, freezeScope, pushAllowed, loadSecretsFile, packetId,
 } from './autopilot-lib.mjs';
 import { trackerFor } from './tracker.mjs';
 import { HARNESSES, GUARDED_HARNESSES, PLUGIN_ROOT } from './harnesses.mjs';
@@ -27,6 +27,7 @@ import { ensureBranch, ensureOnTicketBranch, ensureWorktree, remoteHead, forgeFo
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PACKET_TEMPLATE = path.join(HERE, '..', 'templates', 'packet.md');
+const REPORT_TEMPLATE = path.join(HERE, '..', 'templates', 'report.md');
 const MARKER = path.join('.agents', 'ultrapowers.json');
 const COMMANDS = ['status', 'next', 'begin', 'end', 'packet', 'approval', 'pr', 'run', 'watch'];
 const BACKOFF_CAP_MS = 600_000;
@@ -483,6 +484,38 @@ function forgeOf(ctx, name, dir) {
   return { ...ctx.resolution, path: name === 'docs' && ctx.resolution.path ? ctx.resolution.path : `${base}/${name}` };
 }
 
+// After the pull requests open, the QA report goes on the ticket and on every pull request, each
+// headed by the packet id, the approver and the log head (spec 2026-10-05 §8). Every post is saved
+// as it lands, so a stage blocked halfway resumes with the missing ones only.
+async function postReport(ctx, opts, state, prs, qaOn) {
+  state.report = state.report ?? { ticketCommentUrl: null, prComments: {} };
+  const logHead = readState(ctx.root, opts.id).logHead ?? '';
+  let body;
+  if (state.qa?.report) body = readText(path.join(ctx.root, state.qa.report)) || `QA verdict ${state.qa.verdict}; the report at ${state.qa.report} is empty`;
+  else body = qaOn ? 'QA: skipped' : 'QA: not configured for this project';
+  const text = readText(REPORT_TEMPLATE)
+    .replace('{{ID}}', opts.id)
+    .replace('{{PACKET_ID}}', packetId(state.packet?.docsTip, state.packet?.tips))
+    .replace('{{APPROVER}}', state.approval?.mode === 'full' ? 'nobody (mode full: the packet is the record)' : state.approval?.actor ?? 'n/a')
+    .replace('{{LOG_HEAD}}', logHead)
+    .replace('{{PR_LINES}}', Object.entries(prs).map(([n, u]) => `- ${n}: ${u}`).join('\n'))
+    .replace('{{BODY}}', body.replace(/\n+$/, ''));
+  if (!state.report.ticketCommentUrl) {
+    state.report.ticketCommentUrl = await ctx.tracker.comment(ctx.source.number, text);
+    writeState(ctx.root, opts.id, state);
+  }
+  for (const [name, prUrl] of Object.entries(prs)) {
+    if (state.report.prComments[name] || !prUrl) continue;
+    const dir = name === 'docs' ? ctx.dirs.docs : ctx.dirs.repos[name];
+    state.report.prComments[name] = await trackerFor(forgeOf(ctx, name, dir), process.env).prComment(prUrl, text);
+    writeState(ctx.root, opts.id, state);
+  }
+  if (!readLog(ctx.root, opts.id).some((l) => l.stage === 'pr' && l.event === 'report posted')) {
+    appendLog(ctx.root, opts.id, { stage: 'pr', event: 'report posted', actor: 'engine', trigger: opts.door, repo: 'docs', url: state.report.ticketCommentUrl });
+    state.logHead = readState(ctx.root, opts.id).logHead;
+  }
+}
+
 // The last stage: push every branch in scope, one PR per repository plus the documents PR.
 async function runPr(opts) {
   const ctx = context(opts);
@@ -562,6 +595,8 @@ async function openPullRequests(ctx, opts, state, { resuming, qaOn }) {
     state.pr.docs = await trackerFor(forgeOf(ctx, 'docs', ctx.dirs.docs), process.env).createPr({ head: state.docs.branch, base: state.docs.base, title, body: docsBody });
   }
   prs.docs = state.pr.docs;
+  writeState(ctx.root, opts.id, state);
+  await postReport(ctx, opts, state, prs, qaOn);
   state.stageStatus = 'finished';
   writeState(ctx.root, opts.id, state);
   appendLog(ctx.root, opts.id, { stage: 'pr', event: 'finished', actor: 'engine', trigger: opts.door, repo: 'docs', sha: tip(ctx.dirs.docs, state.docs.branch), url: state.pr.docs });

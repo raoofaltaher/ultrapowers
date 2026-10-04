@@ -399,6 +399,99 @@ test('pr opens the code repository MR on the forge its remote names, with GITLAB
 
 const callRecords = (ws) => fs.readFileSync(path.join(ws.stubDir, 'calls.log'), 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
 
+// ---- The QA report on the ticket and the pull requests (spec 2026-10-05 §8) ----
+const PR_COMMENTS = {
+  'pr comment https://github.com/o/r/pull/9 --body-file -': { stdout: 'https://github.com/o/r/pull/9#issuecomment-21\n' },
+  'pr comment https://github.com/o/backend/pull/3 --body-file -': { stdout: 'https://github.com/o/backend/pull/3#issuecomment-22\n' },
+};
+const prComments = (ws) => callRecords(ws).filter((c) => c.args[0] === 'pr' && c.args[1] === 'comment');
+
+function nestedThroughQa(ws, verdict = 'PASS') {
+  throughPlan(ws, { scope: ['backend'] });
+  run(ws, ['packet', 'GH-16']);
+  ws.setMap({
+    ...approvedBy('alice'),
+    'pr create -R o/r --head GH-16-fix-it-now-please --base main': { stdout: 'https://github.com/o/r/pull/9\n' },
+    'pr create -R o/backend --head GH-16-fix-it-now-please --base main': { stdout: 'https://github.com/o/backend/pull/3\n' },
+    ...PR_COMMENTS,
+  });
+  run(ws, ['next', 'GH-16']);
+  const b = run(ws, ['begin', 'GH-16', 'execute']);
+  assert.equal(b.code, 0, b.stdout + b.stderr);
+  const wt = b.json.worktrees.backend;
+  fs.writeFileSync(path.join(wt, 'feature.js'), 'ok\n');
+  git(wt, 'add', '-A');
+  git(wt, 'commit', '-q', '-m', 'feat: backend work');
+  run(ws, ['end', 'GH-16', 'execute', '--result', JSON.stringify({ ok: true })]);
+  if (verdict) {
+    assert.equal(run(ws, ['next', 'GH-16']).json.stage, 'qa');
+    run(ws, ['begin', 'GH-16', 'qa']);
+    fs.mkdirSync(path.join(ws.root, 'reviews', 'GH-16'), { recursive: true });
+    fs.writeFileSync(path.join(ws.root, 'reviews', 'GH-16', 'QA-REPORT.md'), `# QA report\n\n## Verdict\n\nVerdict: ${verdict}\n\n## Lanes\n- UI: fine\n`);
+    git(ws.root, 'add', '-A');
+    git(ws.root, 'commit', '-q', '-m', 'qa(GH-16): report');
+    run(ws, ['end', 'GH-16', 'qa', '--result', JSON.stringify({ ok: true, verdict, report: 'reviews/GH-16/QA-REPORT.md' })]);
+  }
+}
+
+test('pr posts the QA report on the ticket and on every pull request', () => {
+  const ws = workspace({ nested: true, qa: true });
+  nestedThroughQa(ws);
+  const r = run(ws, ['pr', 'GH-16']);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const s = state(ws);
+  assert.match(s.report.ticketCommentUrl, /issuecomment/);
+  assert.deepEqual(Object.keys(s.report.prComments).sort(), ['backend', 'docs']);
+  const posted = prComments(ws);
+  assert.equal(posted.length, 2);
+  assert.match(posted[0].stdin, /Packet id [0-9a-f]{12}[\s\S]*approved by alice[\s\S]*## Verdict\n\nVerdict: PASS/);
+  const onTicket = commentBodies(ws).find((b) => /## Verdict/.test(b));
+  assert.ok(onTicket, 'the report is on the ticket');
+  assert.match(onTicket, /Stage log head [0-9a-f]+/);
+  assert.ok(logLines(ws).some((l) => l.event === 'report posted'));
+});
+
+test('without a QA stage the report is one line', () => {
+  const ws = workspace();
+  throughPlan(ws);
+  approveThenExecute(ws);
+  run(ws, ['end', 'GH-16', 'execute', '--result', JSON.stringify({ ok: true })]);
+  ws.setMap({ ...approvedBy('alice'), ...PR_CREATE, ...PR_COMMENTS });
+  const r = run(ws, ['pr', 'GH-16']);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const posted = prComments(ws);
+  assert.equal(posted.length, 1);
+  assert.match(posted[0].stdin, /QA: not configured for this project/);
+  assert.deepEqual(Object.keys(state(ws).report.prComments), ['docs']);
+});
+
+test('a failed pull request comment blocks pr and a resumed pr posts only the missing one', () => {
+  const ws = workspace({ nested: true, qa: true });
+  nestedThroughQa(ws);
+  ws.setMap({
+    ...approvedBy('alice'),
+    'pr create -R o/r --head GH-16-fix-it-now-please --base main': { stdout: 'https://github.com/o/r/pull/9\n' },
+    'pr create -R o/backend --head GH-16-fix-it-now-please --base main': { stdout: 'https://github.com/o/backend/pull/3\n' },
+    ...PR_COMMENTS,
+    'pr comment https://github.com/o/r/pull/9 --body-file -': { exit: 1, stderr: 'rate limited' },
+  });
+  const first = run(ws, ['pr', 'GH-16']);
+  assert.equal(first.code, 2, first.stdout);
+  assert.equal(state(ws).stageStatus, 'blocked');
+  assert.deepEqual(Object.keys(state(ws).report.prComments), ['backend']);
+  ws.setMap({
+    ...approvedBy('alice'),
+    'pr create -R o/r --head GH-16-fix-it-now-please --base main': { stdout: 'https://github.com/o/r/pull/9\n' },
+    'pr create -R o/backend --head GH-16-fix-it-now-please --base main': { stdout: 'https://github.com/o/backend/pull/3\n' },
+    ...PR_COMMENTS,
+  });
+  const second = run(ws, ['pr', 'GH-16']);
+  assert.equal(second.code, 0, second.stdout + second.stderr);
+  assert.deepEqual(Object.keys(state(ws).report.prComments).sort(), ['backend', 'docs']);
+  assert.equal(prComments(ws).filter((c) => c.args[2].includes('pull/3')).length, 1, 'the backend comment was posted once');
+  assert.equal(prComments(ws).filter((c) => c.args[2].includes('pull/9')).length, 2, 'the docs comment failed once and then posted');
+});
+
 // ---- Odoo tickets (spec 2026-10-05): a fake Odoo in its own process is the tracker. The engine runs
 // through spawnSync, which blocks this process's event loop, so the fake cannot live here. ----
 const ODOO_FAKE = path.join(HERE, 'fixtures', 'odoo-fake.mjs');
