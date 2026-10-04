@@ -425,6 +425,9 @@ Everything above the original methodology, built from real daily work across man
 - **brainstorm-task** - Read the brief and the code, then brainstorm the ticket's spec
 - **task** - Where a ticket stands and what comes next (read-only)
 
+**Automation** *(beta)*
+- **autopilot** - Run one GitHub or GitLab ticket from brief to pull request with the human gates on the tracker: `/ultrapowers:autopilot <ticket>` in a session, or `autopilot.mjs watch` on the machine that hosts your coding agent; configured with `/ultrapowers:init autopilot`
+
 **Team knowledge**
 - **team-memory** - Remember, recall, prune and lint the team's shared memory in `.agents/memory/`
 
