@@ -19,7 +19,7 @@ import {
   readState, writeState, appendLog, readLog, verifyChain,
   nextStage, acquireLock, releaseLock, liveLock, readLock, lockPath,
   writeActiveMarker, clearActiveMarker, readActiveMarker, verifyApproval,
-  renderPacket, assumptionsFrom, scopeFrom, freezeScope, pushAllowed,
+  renderPacket, assumptionsFrom, scopeFrom, freezeScope, pushAllowed, loadSecretsFile,
 } from './autopilot-lib.mjs';
 import { trackerFor } from './tracker.mjs';
 import { HARNESSES, GUARDED_HARNESSES, PLUGIN_ROOT } from './harnesses.mjs';
@@ -124,18 +124,26 @@ function parseArgs(argv) {
 
 // Everything a command needs about the ticket: root, marker, settings, source, tracker.
 function context(opts) {
-  if (/[/\\]|\.\./.test(opts.id)) throw new AutopilotError('bad-ticket', `${opts.id} names a path; a ticket id holds no "/", "\\" or ".."`);
+  const isUrl = /^https?:\/\//i.test(opts.id);
+  if (!isUrl && /[/\\]|\.\./.test(opts.id)) throw new AutopilotError('bad-ticket', `${opts.id} names a path; a ticket id holds no "/", "\\" or ".."`);
   const root = opts.root ? path.resolve(opts.root) : findRoot(process.cwd());
   if (!fs.existsSync(path.join(root, MARKER))) throw new AutopilotError('no-marker', `no ${MARKER.replace(/\\/g, '/')} in ${root}`);
   const marker = readMarker(root);
   const settings = effectiveAutopilot(marker);
+  loadSecretsFile(root, process.env);
   const resolution = resolveTicket(marker, opts.id);
   if (resolution.provider === 'local') {
-    throw new AutopilotError('local-ticket', `${opts.id} is a local ticket; autopilot runs tickets from a configured GitHub or GitLab source. Use /ultrapowers:new-task ${opts.id} for the manual flow`);
+    throw new AutopilotError('local-ticket', `${opts.id} is a local ticket; autopilot runs tickets from a configured GitHub, GitLab or Odoo source. Use /ultrapowers:new-task ${opts.id} for the manual flow`);
   }
-  if (!['github', 'gitlab'].includes(resolution.provider)) {
-    throw new AutopilotError('no-writeback', `${resolution.provider} tickets have no write-back in this version; GitHub and GitLab do`);
+  if (!['github', 'gitlab', 'odoo'].includes(resolution.provider)) {
+    throw new AutopilotError('no-writeback', `${resolution.provider} tickets have no write-back in this version; GitHub, GitLab and Odoo do`);
   }
+  if (resolution.provider === 'odoo') {
+    if (!resolution.login) throw new AutopilotError('no-credentials', `tickets.sources[].login is required for ${resolution.prefix}: the engine signs in to Odoo as a technical user`);
+    if (!process.env.ODOO_API_KEY) throw new AutopilotError('no-credentials', `ODOO_API_KEY is not set; the engine reaches ${resolution.url} with the technical user's API key. Set it in the environment or in .agents/mcp-secrets.env`);
+  }
+  // A task URL resolves to the ticket's id; every state path uses that id.
+  if (resolution.id && resolution.id !== opts.id) opts.id = resolution.id;
   const tracker = trackerFor(resolution, process.env);
   const source = { provider: resolution.provider, path: resolution.path, number: resolution.number };
   const dirs = repoDirs(root, marker);
@@ -214,6 +222,10 @@ async function recheckApproval(ctx, state) {
     throw new AutopilotError('approval-unverified', `${state.ticket}: the recorded approval does not belong to the current packet`);
   }
   if (a.mode === 'full') return;
+  // A last-writer approval (Odoo without tag tracking, spec D3) has no timeline event to find again:
+  // the engine's own tag removal at the gate made it the task's last writer. The packet check above
+  // and the changed-plan check are what remain; the log carries the attribution.
+  if (a.attribution === 'last-writer') return;
   const events = await ctx.tracker.labelEvents(ctx.source.number);
   const found = events.some((e) => String(e.id) === String(a.eventId) && e.actor === a.actor && e.action === 'labeled' && e.label === ctx.settings.events.approve);
   if (!found) throw new AutopilotError('approval-unverified', `${state.ticket}: the approval event ${a.eventId} by ${a.actor} is not on the tracker's timeline`);
@@ -310,10 +322,11 @@ async function consumeApproval(ctx, state, approval, door) {
   const specRepos = scopeFrom(readText(path.join(ctx.root, 'specs', state.ticket, 'Spec.md')));
   const planRepos = scopeFrom(readText(path.join(ctx.root, 'plans', state.ticket, 'Plan.md')));
   const frozen = freezeScope(state, { specRepos, planRepos, knownRepos: knownRepos(ctx) });
-  frozen.approval = { actor: approval.actor, eventId: approval.eventId, at: approval.at, docsTip: state.packet.docsTip, tips: state.packet.tips };
+  const attribution = approval.attribution ?? 'tracked';
+  frozen.approval = { actor: approval.actor, eventId: approval.eventId, at: approval.at, attribution, docsTip: state.packet.docsTip, tips: state.packet.tips };
   writeState(ctx.root, state.ticket, frozen);
   await ctx.tracker.removeLabel(ctx.source.number, ctx.settings.events.approve);
-  appendLog(ctx.root, state.ticket, { stage: 'gate', event: 'approved', actor: approval.actor, trigger: door, repo: 'docs', sha: state.packet.docsTip, url: state.packet.commentUrl });
+  appendLog(ctx.root, state.ticket, { stage: 'gate', event: 'approved', actor: approval.actor, attribution, trigger: door, repo: 'docs', sha: state.packet.docsTip, url: state.packet.commentUrl });
   commitState(ctx, state.ticket, `chore(${state.ticket}): autopilot approved by ${approval.actor}`);
 }
 
@@ -329,19 +342,33 @@ async function voidApproval(ctx, state, approval, door) {
   commitState(ctx, state.ticket, `chore(${state.ticket}): autopilot approval voided`);
 }
 
+// The forge that shows the documents repository: its origin remote, else the ticket's own forge
+// for a GitHub or GitLab ticket, else none (an Odoo ticket whose documents live off any forge).
+function docsForge(ctx) {
+  const fromRemote = forgeFor(ctx.dirs.docs);
+  if (fromRemote) return fromRemote;
+  if (['github', 'gitlab'].includes(ctx.resolution.provider)) return { provider: ctx.resolution.provider, host: ctx.resolution.host, path: ctx.source.path };
+  return null;
+}
+
 function webBase(ctx) {
-  const { provider, host } = ctx.resolution;
-  return provider === 'gitlab' ? `https://${host}/${ctx.source.path}` : `https://github.com/${ctx.source.path}`;
+  const forge = docsForge(ctx);
+  if (!forge) return null;
+  return forge.provider === 'gitlab' ? `https://${forge.host}/${forge.path}` : `https://github.com/${forge.path}`;
 }
 
 function blobUrl(ctx, sha, file) {
-  const sep = ctx.resolution.provider === 'gitlab' ? '/-/blob/' : '/blob/';
-  return `${webBase(ctx)}${sep}${sha}/${file}`;
+  const base = webBase(ctx);
+  if (!base) return `${file} at ${String(sha).slice(0, 7)}`;
+  const sep = docsForge(ctx).provider === 'gitlab' ? '/-/blob/' : '/blob/';
+  return `${base}${sep}${sha}/${file}`;
 }
 
 function compareUrl(ctx, from, to) {
-  const sep = ctx.resolution.provider === 'gitlab' ? '/-/compare/' : '/compare/';
-  return `${webBase(ctx)}${sep}${from}...${to}`;
+  const base = webBase(ctx);
+  if (!base) return `${String(from).slice(0, 7)}...${String(to).slice(0, 7)}`;
+  const sep = docsForge(ctx).provider === 'gitlab' ? '/-/compare/' : '/compare/';
+  return `${base}${sep}${from}...${to}`;
 }
 
 // The gate stage: push the documents branch, post the packet, record it, wait.
@@ -572,8 +599,10 @@ async function pendingApproval(ctx, state, events, door = 'command') {
   return verdict;
 }
 
+const STAGE_TOKEN_VARS = ['ULTRAPOWERS_STAGE_GH_TOKEN', 'ULTRAPOWERS_STAGE_GITLAB_TOKEN', 'ULTRAPOWERS_STAGE_ODOO_API_KEY'];
+
 function stageTokensConfigured() {
-  return Boolean(process.env.ULTRAPOWERS_STAGE_GH_TOKEN || process.env.ULTRAPOWERS_STAGE_GITLAB_TOKEN);
+  return STAGE_TOKEN_VARS.some((k) => Boolean(process.env[k]));
 }
 
 // A control label counts only when a member with write access (and, when the list is set, an
@@ -780,14 +809,17 @@ function stageEnvironment(root) {
   const noAuth = path.join(root, '.ultrapowers', 'autopilot', 'no-auth');
   const stageGh = process.env.ULTRAPOWERS_STAGE_GH_TOKEN;
   const stageGl = process.env.ULTRAPOWERS_STAGE_GITLAB_TOKEN;
-  if (stageGh || stageGl) {
+  const stageOdoo = process.env.ULTRAPOWERS_STAGE_ODOO_API_KEY;
+  if (stageGh || stageGl || stageOdoo) {
     // The engine's tokens, and the ssh agent: a push over ssh would not need a token at all.
-    for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GLAB_TOKEN', 'OAUTH_TOKEN', 'SSH_AUTH_SOCK', 'GIT_SSH_COMMAND', 'GIT_SSH']) delete env[k];
+    for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GLAB_TOKEN', 'OAUTH_TOKEN', 'ODOO_API_KEY', 'SSH_AUTH_SOCK', 'GIT_SSH_COMMAND', 'GIT_SSH']) delete env[k];
     for (const d of ['gh', 'glab']) fs.mkdirSync(path.join(noAuth, d), { recursive: true });
     env.GH_CONFIG_DIR = path.join(noAuth, 'gh');
     env.GLAB_CONFIG_DIR = path.join(noAuth, 'glab');
     if (stageGh) env.GH_TOKEN = stageGh;
     if (stageGl) env.GITLAB_TOKEN = stageGl;
+    // The project's Odoo MCP server reads ${ODOO_API_KEY}: inside a stage that is the read-only key.
+    if (stageOdoo) env.ODOO_API_KEY = stageOdoo;
     const n = Number.parseInt(env.GIT_CONFIG_COUNT ?? '0', 10) || 0;
     env[`GIT_CONFIG_KEY_${n}`] = 'credential.helper';
     env[`GIT_CONFIG_VALUE_${n}`] = '';
@@ -841,7 +873,7 @@ function assertGuardedHarness(settings) {
 // engine's write token, so the watcher refuses to start unless the project says so in writing.
 function assertStageCredentials(settings) {
   if (stageTokensConfigured() || settings.watch?.sharedCredentials) return;
-  throw new AutopilotError('stage-credentials-missing', 'the watcher starts only with read-only stage tokens in its environment (ULTRAPOWERS_STAGE_GH_TOKEN or ULTRAPOWERS_STAGE_GITLAB_TOKEN); to run its stages with the engine\'s own credentials, set autopilot.watch.sharedCredentials to true');
+  throw new AutopilotError('stage-credentials-missing', `the watcher starts only with read-only stage tokens in its environment (${STAGE_TOKEN_VARS.join(', ')}); to run its stages with the engine's own credentials, set autopilot.watch.sharedCredentials to true`);
 }
 
 async function runRun(opts) {
@@ -957,7 +989,7 @@ async function watchCycle(root, marker, settings, opts, previousSleepMs) {
     events.push({ event: 'idle', reason: 'autopilot-stop' });
     return { events, nextSleepMs: baseSleep };
   }
-  const sources = (marker.tickets?.sources ?? []).filter((s) => s && ['github', 'gitlab'].includes(s.provider));
+  const sources = (marker.tickets?.sources ?? []).filter((s) => s && ['github', 'gitlab', 'odoo'].includes(s.provider));
   const queue = [];
   let failed = false;
   for (const source of sources) {
@@ -1024,6 +1056,7 @@ async function runWatch(opts) {
   if (!fs.existsSync(path.join(root, MARKER))) throw new AutopilotError('no-marker', `no ${MARKER.replace(/\\/g, '/')} in ${root}`);
   const marker = readMarker(root);
   const settings = effectiveAutopilot(marker);
+  loadSecretsFile(root, process.env);
   if (settings.mode !== 'off') {
     assertGuardedHarness(settings);
     assertStageCredentials(settings);

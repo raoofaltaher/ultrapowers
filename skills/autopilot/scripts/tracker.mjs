@@ -460,9 +460,13 @@ class OdooTracker {
     await this.call('project.task', 'write', [[Number(number)], { tag_ids: [[4, id]] }]);
   }
 
+  // A tag the task does not carry is not written: a write would make the engine the task's last
+  // writer, which is the approver's evidence on an instance without tag tracking (spec D3).
   async removeLabel(number, name) {
     const id = await this.tagId(name);
     if (id === null) return;
+    const task = await this.task(number);
+    if (!(task.tag_ids ?? []).includes(id)) return;
     await this.call('project.task', 'write', [[Number(number)], { tag_ids: [[3, id]] }]);
   }
 

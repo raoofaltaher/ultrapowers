@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { makeWorkspace as workspace, git } from './fixtures/make-workspace.mjs';
@@ -16,23 +16,24 @@ const SPEC = (scope) => `# Spec\n\n## Repositories in scope\n\n${scope.map((s) =
 const PLAN = (scope) => `# Plan\n\n## Repositories in scope\n\n${scope.map((s) => `- ${s}`).join('\n')}\n\n### Task 1\n`;
 
 // Runs scaffold, spec and plan as the agent would, up to the gate.
-function throughPlan(ws, { scope = ['.'], planScope = scope } = {}) {
-  run(ws, ['begin', 'GH-16', 'scaffold']);
-  fs.mkdirSync(path.join(ws.root, 'tasks', 'GH-16'), { recursive: true });
-  fs.writeFileSync(path.join(ws.root, 'tasks', 'GH-16', 'GH-16.md'), '# GH-16 - Fix it now please\n');
-  run(ws, ['end', 'GH-16', 'scaffold', '--result', JSON.stringify({ ok: true })]);
-  run(ws, ['begin', 'GH-16', 'spec']);
-  fs.mkdirSync(path.join(ws.root, 'specs', 'GH-16'), { recursive: true });
-  fs.writeFileSync(path.join(ws.root, 'specs', 'GH-16', 'Spec.md'), SPEC(scope));
+function throughPlan(ws, { scope = ['.'], planScope = scope, id = 'GH-16' } = {}) {
+  const b = run(ws, ['begin', id, 'scaffold']);
+  assert.equal(b.code, 0, b.stdout + b.stderr);
+  fs.mkdirSync(path.join(ws.root, 'tasks', id), { recursive: true });
+  fs.writeFileSync(path.join(ws.root, 'tasks', id, `${id}.md`), `# ${id} - Fix it now please\n`);
+  run(ws, ['end', id, 'scaffold', '--result', JSON.stringify({ ok: true })]);
+  run(ws, ['begin', id, 'spec']);
+  fs.mkdirSync(path.join(ws.root, 'specs', id), { recursive: true });
+  fs.writeFileSync(path.join(ws.root, 'specs', id, 'Spec.md'), SPEC(scope));
   git(ws.root, 'add', '-A');
-  git(ws.root, 'commit', '-q', '-m', 'spec(GH-16): spec');
-  run(ws, ['end', 'GH-16', 'spec', '--result', JSON.stringify({ ok: true })]);
-  run(ws, ['begin', 'GH-16', 'plan']);
-  fs.mkdirSync(path.join(ws.root, 'plans', 'GH-16'), { recursive: true });
-  fs.writeFileSync(path.join(ws.root, 'plans', 'GH-16', 'Plan.md'), PLAN(planScope));
+  git(ws.root, 'commit', '-q', '-m', `spec(${id}): spec`);
+  run(ws, ['end', id, 'spec', '--result', JSON.stringify({ ok: true })]);
+  run(ws, ['begin', id, 'plan']);
+  fs.mkdirSync(path.join(ws.root, 'plans', id), { recursive: true });
+  fs.writeFileSync(path.join(ws.root, 'plans', id, 'Plan.md'), PLAN(planScope));
   git(ws.root, 'add', '-A');
-  git(ws.root, 'commit', '-q', '-m', 'plan(GH-16): plan');
-  run(ws, ['end', 'GH-16', 'plan', '--result', JSON.stringify({ ok: true })]);
+  git(ws.root, 'commit', '-q', '-m', `plan(${id}): plan`);
+  run(ws, ['end', id, 'plan', '--result', JSON.stringify({ ok: true })]);
 }
 
 const APPROVE_AT = '2999-01-01T00:00:00Z';
@@ -53,8 +54,8 @@ export function run(ws, args, extraEnv = {}) {
   return { code: result.status, json, stdout: result.stdout, stderr: result.stderr };
 }
 
-const state = (ws) => JSON.parse(fs.readFileSync(path.join(ws.root, 'tasks', 'GH-16', 'autopilot.json'), 'utf8'));
-const logLines = (ws) => fs.readFileSync(path.join(ws.root, 'tasks', 'GH-16', 'stage-log.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+const state = (ws, id = 'GH-16') => JSON.parse(fs.readFileSync(path.join(ws.root, 'tasks', id, 'autopilot.json'), 'utf8'));
+const logLines = (ws, id = 'GH-16') => fs.readFileSync(path.join(ws.root, 'tasks', id, 'stage-log.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
 const lockFile = (ws) => path.join(ws.root, '.ultrapowers', 'autopilot', 'GH-16.lock');
 const marker = (ws) => path.join(ws.root, '.ultrapowers', 'autopilot-active');
 
@@ -397,6 +398,152 @@ test('pr opens the code repository MR on the forge its remote names, with GITLAB
 });
 
 const callRecords = (ws) => fs.readFileSync(path.join(ws.stubDir, 'calls.log'), 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+
+// ---- Odoo tickets (spec 2026-10-05): a fake Odoo in its own process is the tracker. The engine runs
+// through spawnSync, which blocks this process's event loop, so the fake cannot live here. ----
+const ODOO_FAKE = path.join(HERE, 'fixtures', 'odoo-fake.mjs');
+const ODOO_ID = 'ODOO-13627';
+const AFTER_PACKET = '2999-01-01 00:00:00';
+const odooChildren = [];
+test.after(() => { for (const c of odooChildren) c.kill(); });
+
+function startOdooProcess(spec) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [ODOO_FAKE, 'serve', '--seed', JSON.stringify(spec)], { stdio: ['ignore', 'pipe', 'pipe'] });
+    odooChildren.push(child);
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (d) => {
+      out += d;
+      const line = out.split('\n').find((l) => l.startsWith('{'));
+      if (line) resolve({ child, url: JSON.parse(line).url });
+    });
+    child.stderr.on('data', (d) => { err += d; });
+    child.on('exit', (code) => reject(new Error(`the fake Odoo exited with ${code}: ${err}`)));
+  });
+}
+
+async function odooWorkspace({ seed = {}, ...wsOptions } = {}) {
+  const { child, url } = await startOdooProcess(seed);
+  const ws = workspace({ odoo: url, ...wsOptions });
+  const post = async (route, body) => {
+    const res = await fetch(`${url}${route}`, { method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } });
+    return res.json();
+  };
+  ws.odoo = {
+    url,
+    child,
+    state: async () => (await fetch(`${url}/__fake/state`)).json(),
+    tagTask: (taskId, name, opts) => post('/__fake/tagTask', { taskId, name, ...opts }),
+  };
+  return ws;
+}
+const taskWrites = async (ws) => (await ws.odoo.state()).writes.filter((w) => w.method === 'write').length;
+const READY_BY_VAL = { setup: { initialTags: { 13627: [1, 2] }, tagTasks: [{ taskId: 13627, name: 'Ultrapowers Ready', by: 'val', at: '2026-10-05 08:30:00' }] } };
+
+test('an Odoo ticket runs to the gate and posts the packet as a log note', async () => {
+  const ws = await odooWorkspace();
+  throughPlan(ws, { id: ODOO_ID });
+  const p = run(ws, ['packet', ODOO_ID]);
+  assert.equal(p.code, 0, p.stdout + p.stderr);
+  assert.match(p.json.packet.commentUrl, /web#model=project\.task&id=13627&message=\d+$/);
+  const post = (await ws.odoo.state()).writes.filter((w) => w.method === 'message_post').at(-1);
+  assert.equal(post.kwargs.subtype_xmlid, 'mail.mt_note');
+  assert.match(post.kwargs.body, /Autopilot packet for ODOO-13627/);
+  const n = run(ws, ['next', ODOO_ID]);
+  assert.deepEqual([n.json.action, n.json.reason], ['wait', 'awaiting-approval']);
+  assert.equal(n.json.approval.reason, 'before-packet');
+});
+
+test('a last-writer approval is accepted only after the packet and logged with its attribution', async () => {
+  const ws = await odooWorkspace({ seed: { tagTracking: false } });
+  throughPlan(ws, { id: ODOO_ID });
+  run(ws, ['packet', ODOO_ID]);
+  assert.equal(run(ws, ['next', ODOO_ID]).json.action, 'wait');
+  const before = await taskWrites(ws);
+  assert.equal(run(ws, ['next', ODOO_ID]).json.action, 'wait');
+  assert.equal(run(ws, ['next', ODOO_ID]).json.action, 'wait');
+  assert.equal(await taskWrites(ws), before, 'no task write while awaiting approval');
+  await ws.odoo.tagTask(13627, 'Ultrapowers Approve', { by: 'val', at: AFTER_PACKET });
+  const n = run(ws, ['next', ODOO_ID]);
+  assert.deepEqual([n.json.action, n.json.stage], ['run', 'execute'], n.stdout);
+  assert.equal(state(ws, ODOO_ID).approval.attribution, 'last-writer');
+  assert.equal(logLines(ws, ODOO_ID).find((l) => l.event === 'approved').attribution, 'last-writer');
+  const b = run(ws, ['begin', ODOO_ID, 'execute']);
+  assert.equal(b.code, 0, b.stdout + b.stderr);
+});
+
+test('a tracked approval is accepted after the packet and attributed as tracked', async () => {
+  const ws = await odooWorkspace();
+  throughPlan(ws, { id: ODOO_ID });
+  run(ws, ['packet', ODOO_ID]);
+  await ws.odoo.tagTask(13627, 'Ultrapowers Approve', { by: 'val', at: AFTER_PACKET });
+  const n = run(ws, ['next', ODOO_ID]);
+  assert.deepEqual([n.json.action, n.json.stage], ['run', 'execute'], n.stdout);
+  assert.equal(state(ws, ODOO_ID).approval.attribution, 'tracked');
+  assert.equal(state(ws, ODOO_ID).approval.actor, 'val');
+});
+
+test('an approve tag by an internal user outside the Project User group does not count', async () => {
+  const ws = await odooWorkspace();
+  throughPlan(ws, { id: ODOO_ID });
+  run(ws, ['packet', ODOO_ID]);
+  await ws.odoo.tagTask(13627, 'Ultrapowers Approve', { by: 'intern', at: AFTER_PACKET });
+  const n = run(ws, ['next', ODOO_ID]);
+  assert.deepEqual([n.json.action, n.json.approval.reason], ['wait', 'not-permitted']);
+});
+
+test('a task URL is accepted as the ticket and its state lives under the short id', async () => {
+  const ws = await odooWorkspace();
+  const url = `${ws.odoo.url}/odoo/action-577/34/tasks/13627`;
+  const b = run(ws, ['begin', url, 'scaffold']);
+  assert.equal(b.code, 0, b.stdout + b.stderr);
+  assert.ok(fs.existsSync(path.join(ws.root, '.ultrapowers', 'autopilot', `${ODOO_ID}.lock`)), 'the lock is under the short id');
+  fs.mkdirSync(path.join(ws.root, 'tasks', ODOO_ID), { recursive: true });
+  fs.writeFileSync(path.join(ws.root, 'tasks', ODOO_ID, `${ODOO_ID}.md`), '# brief\n');
+  const e = run(ws, ['end', url, 'scaffold', '--result', JSON.stringify({ ok: true })]);
+  assert.equal(e.code, 0, e.stdout + e.stderr);
+  assert.ok(fs.existsSync(path.join(ws.root, 'tasks', ODOO_ID, 'autopilot.json')));
+});
+
+test('without ODOO_API_KEY an Odoo ticket is no-credentials, and the secrets file supplies it', async () => {
+  const ws = await odooWorkspace({ odooKey: null });
+  const r = run(ws, ['next', ODOO_ID]);
+  assert.equal(r.json.error?.code, 'no-credentials', r.stdout + r.stderr);
+  fs.writeFileSync(path.join(ws.root, '.agents', 'mcp-secrets.env'), '# local secrets\nexport ODOO_API_KEY=k1\n');
+  const ok = run(ws, ['next', ODOO_ID]);
+  assert.equal(ok.code, 0, ok.stdout + ok.stderr);
+  assert.deepEqual([ok.json.action, ok.json.stage], ['run', 'scaffold']);
+});
+
+test('the watcher polls an Odoo source and starts a tagged task', async () => {
+  const ws = await odooWorkspace({ seed: READY_BY_VAL });
+  const r = run(ws, ['watch', '--once'], headless(ws));
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const ran = r.json.events.find((e) => e.event === 'ran');
+  assert.ok(ran, JSON.stringify(r.json.events));
+  assert.equal(ran.ticket, ODOO_ID);
+  assert.deepEqual([ran.final.action, ran.final.reason], ['wait', 'awaiting-approval']);
+  const s = await ws.odoo.state();
+  const ready = s.tags.find((t) => t.name === 'Ultrapowers Ready').id;
+  assert.ok(!s.tasks[0].tag_ids.includes(ready), 'the ready tag is consumed');
+});
+
+test('the watcher refuses to start on an Odoo source without the stage key', async () => {
+  const ws = await odooWorkspace({ autopilot: { mode: 'gated', baseBranch: 'main', watch: { sharedCredentials: false } } });
+  const r = run(ws, ['watch', '--once'], headless(ws));
+  assert.equal(r.json.error?.code, 'stage-credentials-missing', r.stdout);
+  assert.match(r.json.error.message, /ULTRAPOWERS_STAGE_ODOO_API_KEY/);
+});
+
+test('a watcher stage holds the Odoo stage key, not the engine key', async () => {
+  const ws = await odooWorkspace({ seed: { ...READY_BY_VAL, extraKeys: ['k1-stage'] }, autopilot: { mode: 'gated', baseBranch: 'main', watch: { sharedCredentials: false } } });
+  const r = run(ws, ['watch', '--once'], headless(ws, { ULTRAPOWERS_STAGE_ODOO_API_KEY: 'k1-stage' }));
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const call = harnessCalls(ws)[0];
+  assert.ok(call, 'a stage ran');
+  assert.equal(call.env.ODOO_API_KEY, 'k1-stage');
+});
 
 // ---- Task 13: headless run ----
 const HARNESS_STUB = path.join(HERE, 'fixtures', 'harness-stub.mjs');

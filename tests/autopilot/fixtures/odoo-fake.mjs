@@ -193,6 +193,16 @@ function readBody(req) {
   });
 }
 
+// Plain-data setup for a seed built in another process: initial tags per task, then tag changes.
+export function applySetup(s, setup = {}) {
+  for (const [taskId, tagIds] of Object.entries(setup.initialTags ?? {})) {
+    const task = s.tasks.find((t) => t.id === Number(taskId));
+    if (task) task.tag_ids = [...tagIds];
+  }
+  for (const change of setup.tagTasks ?? []) s.tagTask(change.taskId, change.name, change);
+  return s;
+}
+
 export async function startOdooFake(s = seed()) {
   const calls = [];
   const requests = [];
@@ -205,6 +215,19 @@ export async function startOdooFake(s = seed()) {
       if (s.delayMs) setTimeout(send, s.delayMs); else send();
     };
     const url = new URL(req.url, 'http://x');
+    // The test's control surface when the fake runs as its own process (the engine tests spawn
+    // the engine synchronously, which would starve a server in the test process).
+    if (url.pathname === '/__fake/state') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ writes: s.writes, messages: s.messages, tasks: s.tasks, tags: s.tags, calls }));
+      return;
+    }
+    if (url.pathname === '/__fake/tagTask') {
+      s.tagTask(body.taskId, body.name, body);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+      return;
+    }
     if (url.pathname === '/web/database/list') {
       if (s.listDisabled) { res.writeHead(403); res.end('{"error":"disabled"}'); return; }
       return answer({ result: s.databases });
@@ -213,13 +236,14 @@ export async function startOdooFake(s = seed()) {
     if (s.redirectTo) { res.writeHead(307, { location: s.redirectTo }); res.end(); return; }
     requests.push(body);
     const { service, method, args = [] } = body.params ?? {};
+    const keyOk = (key) => key === s.apiKey || (s.extraKeys ?? []).includes(key);
     if (service === 'common' && method === 'authenticate') {
       const [, login, key] = args;
-      return answer({ result: login === s.login && key === s.apiKey ? s.uid : false });
+      return answer({ result: login === s.login && keyOk(key) ? s.uid : false });
     }
     if (service === 'object' && method === 'execute_kw') {
       const [, uid, key, model, m, margs = [], kwargs = {}] = args;
-      if (uid !== s.uid || key !== s.apiKey) return answer({ error: rpcError('Access Denied') });
+      if (uid !== s.uid || !keyOk(key)) return answer({ error: rpcError('Access Denied') });
       calls.push({ model, method: m, args: margs, kwargs });
       const fn = s.models[model]?.[m];
       if (!fn) return answer({ error: rpcError(`the fake has no ${model}.${m}`) });
@@ -240,4 +264,15 @@ export async function startOdooFake(s = seed()) {
     seed: s,
     close: () => new Promise((resolve) => server.close(resolve)),
   };
+}
+
+// `node odoo-fake.mjs serve --seed '<json>'`: a seeded fake in its own process. The JSON holds the
+// seed overrides plus `setup` (see applySetup). Prints one line, {"url":...}, when it listens.
+if (process.argv[1] && /odoo-fake\.mjs$/.test(process.argv[1].replace(/\\/g, '/')) && process.argv[2] === 'serve') {
+  const at = process.argv.indexOf('--seed');
+  const spec = at > -1 ? JSON.parse(process.argv[at + 1]) : {};
+  const { setup, ...overrides } = spec;
+  const s = applySetup(odooSeedWithTask(overrides), setup);
+  const fake = await startOdooFake(s);
+  process.stdout.write(`${JSON.stringify({ url: fake.url })}\n`);
 }

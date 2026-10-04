@@ -90,8 +90,9 @@ test('an Odoo task URL resolves against the source whose url matches', () => {
   assert.equal(r.id, 'ODOO-34-13627');
   const d = resolveTicket(MARKER_ODOO, 'https://erp.example.com/odoo/project.task/13627');
   assert.equal(d.path, '12');
-  assert.equal(d.id, 'ODOO-12-13627');
-  assert.equal(resolveTicket(MARKER_ODOO, 'https://erp.example.com/web#model=project.task&id=13627').id, 'ODOO-12-13627');
+  assert.equal(d.id, 'ODOO-13627', 'the default project gives the short id, the one the watcher uses');
+  assert.equal(resolveTicket(MARKER_ODOO, 'https://erp.example.com/web#model=project.task&id=13627').id, 'ODOO-13627');
+  assert.equal(resolveTicket(MARKER_ODOO, 'https://erp.example.com/odoo/action-1/12/tasks/13627').id, 'ODOO-13627');
 });
 
 test('a task URL on an unknown host is a local ticket', () => {

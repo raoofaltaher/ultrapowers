@@ -52,7 +52,11 @@ function withOrigin(base, name, dir) {
   return origin;
 }
 
-export function makeWorkspace({ dir = null, autopilot = { mode: 'gated', baseBranch: 'main' }, map = {}, qa = false, nested = false, backendRemote = null } = {}) {
+const ODOO_EVENTS = { ready: 'Ultrapowers Ready', approve: 'Ultrapowers Approve', changes: 'Ultrapowers Changes', hold: 'Ultrapowers Hold', running: 'Ultrapowers Running', blocked: 'Ultrapowers Blocked' };
+
+// `odoo`: the URL of a fake Odoo; the workspace then has one Odoo source (project 34, login bot,
+// db erp), the Odoo tag names as its events, and ODOO_API_KEY (`odooKey`) in its environment.
+export function makeWorkspace({ dir = null, autopilot = { mode: 'gated', baseBranch: 'main' }, map = {}, qa = false, nested = false, backendRemote = null, odoo = null, odooKey = 'k1' } = {}) {
   const base = dir ? path.resolve(dir) : fs.mkdtempSync(path.join(os.tmpdir(), 'autopilot-cli-'));
   fs.mkdirSync(base, { recursive: true });
   const root = path.join(base, 'ws');
@@ -64,6 +68,10 @@ export function makeWorkspace({ dir = null, autopilot = { mode: 'gated', baseBra
   // The tests run watcher stages without stage tokens unless a test sets them: say so in the block,
   // as a real project without stage tokens must (autopilot.watch.sharedCredentials).
   if (autopilot) marker.autopilot = { ...autopilot, watch: { sharedCredentials: true, ...(autopilot.watch ?? {}) } };
+  if (odoo) {
+    marker.tickets = { sources: [{ prefix: 'ODOO', provider: 'odoo', url: odoo, mcpUrl: `${odoo}/mcp`, login: 'bot', db: 'erp', defaultProject: '34' }] };
+    if (marker.autopilot) marker.autopilot.events = { ...ODOO_EVENTS, ...(autopilot?.events ?? {}) };
+  }
   // `qa: true` means a configured QA gate: at least one url, which is what the engine checks.
   if (!qa) delete marker.qa;
   else marker.qa = { ...(marker.qa ?? {}), urls: { ...(marker.qa?.urls ?? {}), frontend: 'http://localhost:3000' } };
@@ -98,6 +106,9 @@ export function makeWorkspace({ dir = null, autopilot = { mode: 'gated', baseBra
   fs.writeFileSync(path.join(stubDir, 'map.json'), JSON.stringify({ ...BASE_MAP, ...map }));
   const log = path.join(stubDir, 'calls.log');
   const env = { ...process.env, ...GIT_ENV, ULTRAPOWERS_GH: STUB, ULTRAPOWERS_GLAB: STUB, STUB_DIR: stubDir, STUB_LOG: log };
+  delete env.ODOO_API_KEY;
+  delete env.ULTRAPOWERS_STAGE_ODOO_API_KEY;
+  if (odoo && odooKey) env.ODOO_API_KEY = odooKey;
   const calls = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l).args) : []);
   const setMap = (extra) => fs.writeFileSync(path.join(stubDir, 'map.json'), JSON.stringify({ ...BASE_MAP, ...map, ...extra }));
   return { base, root, env, calls, setMap, stubDir, origin, backendOrigin };

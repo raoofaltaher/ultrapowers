@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import {
   AutopilotError, STAGES, DEFAULTS, validateAutopilot, effectiveAutopilot, slugFor, branchName, modeFor,
   initialState, statePath, logPath, readState, writeState, hashLine, appendLog, readLog, verifyChain,
-  packetId, renderPacket, verifyApproval, assumptionsFrom, scopeFrom, freezeScope, pushAllowed,
+  packetId, renderPacket, verifyApproval, assumptionsFrom, scopeFrom, freezeScope, pushAllowed, loadSecretsFile,
   nextStage, acquireLock, releaseLock, readLock, lockPath, activeMarkerPath, writeActiveMarker, clearActiveMarker,
 } from '../../skills/autopilot/scripts/autopilot-lib.mjs';
 
@@ -160,10 +160,33 @@ test('packetId is stable across repo order and 12 hex', () => {
   assert.notEqual(packetId('d', { a: '1' }), packetId('d', { a: '2' }));
 });
 
+test('verifyApproval carries the event attribution, tracked by default', async () => {
+  const packet = { postedAt: '2026-10-05T08:00:00Z', docsTip: 'x', tips: {} };
+  const tips = { docs: 'x', repos: {} };
+  const lw = await verifyApproval({ events: [{ id: 'write:t', action: 'labeled', label: 'A', actor: 'val', at: '2026-10-05T09:00:00Z', attribution: 'last-writer' }], approveLabel: 'A', packet, permissionOf: async () => 'write', tips });
+  assert.equal(lw.ok, true);
+  assert.equal(lw.attribution, 'last-writer');
+  const tracked = await verifyApproval({ events: [{ id: '5', action: 'labeled', label: 'A', actor: 'val', at: '2026-10-05T09:00:00Z' }], approveLabel: 'A', packet, permissionOf: async () => 'write', tips });
+  assert.equal(tracked.attribution, 'tracked');
+});
+
+test('loadSecretsFile fills only the variables the environment lacks', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'secrets-'));
+  fs.mkdirSync(path.join(dir, '.agents'));
+  fs.writeFileSync(path.join(dir, '.agents', 'mcp-secrets.env'), '# comment\nexport ODOO_API_KEY=file-key\nGH_TOKEN="quoted"\nEMPTY=\nbad line\n');
+  const env = { GH_TOKEN: 'env-wins' };
+  const loaded = loadSecretsFile(dir, env);
+  assert.deepEqual(loaded.sort(), ['ODOO_API_KEY']);
+  assert.equal(env.ODOO_API_KEY, 'file-key');
+  assert.equal(env.GH_TOKEN, 'env-wins');
+  assert.equal(env.EMPTY, undefined);
+  assert.deepEqual(loadSecretsFile(path.join(dir, 'nowhere'), env), []);
+});
+
 test('verifyApproval: the four checks', async () => {
   const base = { approveLabel: 'up:approve', approvers: [], packet: PACKET, tips: TIPS_SAME };
   const ok = await verifyApproval({ ...base, events: [EV('alice', AFTER)], permissionOf: async () => 'write' });
-  assert.deepEqual(ok, { ok: true, actor: 'alice', eventId: 'e1', at: AFTER });
+  assert.deepEqual(ok, { ok: true, actor: 'alice', eventId: 'e1', at: AFTER, attribution: 'tracked' });
   assert.equal((await verifyApproval({ ...base, events: [], permissionOf: async () => 'admin' })).reason, 'no-event');
   assert.equal((await verifyApproval({ ...base, events: [EV('alice', AFTER, { label: 'up:ready' })], permissionOf: async () => 'admin' })).reason, 'no-event');
   assert.equal((await verifyApproval({ ...base, events: [EV('alice', AFTER), EV('alice', '2026-10-04T11:00:00Z', { id: 'e2', action: 'unlabeled' })], permissionOf: async () => 'admin' })).reason, 'no-event');

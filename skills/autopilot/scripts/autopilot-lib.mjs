@@ -334,7 +334,37 @@ export async function verifyApproval({ events, approveLabel, packet, permissionO
     if ((tips?.repos?.[name] ?? null) !== sha) drift.push(`${name} ${sha} -> ${tips?.repos?.[name] ?? 'none'}`);
   }
   if (drift.length) return { ok: false, reason: 'drift', detail: drift.join(', ') };
-  return { ok: true, actor: last.actor, eventId: String(last.id), at: last.at };
+  return { ok: true, actor: last.actor, eventId: String(last.id), at: last.at, attribution: last.attribution ?? 'tracked' };
+}
+
+// The Odoo tag names init proposes when a project's autopilot source is Odoo (spec D9).
+export const ODOO_EVENTS = Object.freeze({
+  ready: 'Ultrapowers Ready', approve: 'Ultrapowers Approve', changes: 'Ultrapowers Changes',
+  hold: 'Ultrapowers Hold', running: 'Ultrapowers Running', blocked: 'Ultrapowers Blocked',
+});
+
+// `.agents/mcp-secrets.env` (KEY=VALUE lines, `export` allowed, quotes stripped) fills the variables
+// the environment lacks, so a key kept there is read like the provider CLIs' tokens. The environment
+// wins over the file. Returns the names it set.
+export function loadSecretsFile(root, env = process.env) {
+  const file = path.join(root, '.agents', 'mcp-secrets.env');
+  if (!fs.existsSync(file)) return [];
+  const loaded = [];
+  for (const raw of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const m = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
+    if (!m) continue;
+    let value = m[2].trim();
+    const quoted = /^(["'])(.*)\1$/.exec(value);
+    if (quoted) value = quoted[2];
+    if (!value) continue;
+    if (env[m[1]] === undefined || env[m[1]] === '') {
+      env[m[1]] = value;
+      loaded.push(m[1]);
+    }
+  }
+  return loaded;
 }
 
 function section(markdown, heading) {

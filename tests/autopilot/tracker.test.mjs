@@ -231,6 +231,9 @@ test('odoo addLabel creates a missing tag then writes it; removeLabel removes it
   assert.deepEqual(f.seed.writes.at(-1).vals.tag_ids, [[4, id]]);
   await t.removeLabel(13627, 'Ultrapowers Running');
   assert.deepEqual(f.seed.writes.at(-1).vals.tag_ids, [[3, id]]);
+  const n = f.seed.writes.length;
+  await t.removeLabel(13627, 'Ultrapowers Running');
+  assert.equal(f.seed.writes.length, n, 'removing a tag the task does not carry writes nothing');
 });
 
 test('odoo ensureLabel creates with an Odoo colour and leaves an existing tag alone', async () => {

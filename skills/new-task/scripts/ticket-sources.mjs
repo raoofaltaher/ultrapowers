@@ -128,12 +128,12 @@ function originOf(url) {
 }
 
 // The resolution of a source and its project segment and number, shared by ids and URLs.
-function resolution(marker, tickets, source, prefix, segment, number) {
+function resolution(marker, tickets, source, prefix, segment, number, id = null) {
   const path = providerPath(source, segment);
   const out = {
     provider: source.provider,
     prefix,
-    id: `${prefix}-${segment}-${number}`,
+    id: id ?? (segment === source.defaultProject ? `${prefix}-${number}` : `${prefix}-${segment}-${number}`),
     host: hostOf(source),
     path,
     number,
@@ -206,5 +206,5 @@ export function resolveTicket(marker, id) {
   if (source.provider === 'odoo' && !NUMBER.test(segment)) {
     throw new TicketError('bad-ticket', `${id}: the Odoo project segment must be the numeric project id`);
   }
-  return resolution(marker, tickets, source, prefix, segment, Number(numberText));
+  return resolution(marker, tickets, source, prefix, segment, Number(numberText), id);
 }
