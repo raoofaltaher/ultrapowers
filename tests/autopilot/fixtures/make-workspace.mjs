@@ -61,7 +61,9 @@ export function makeWorkspace({ dir = null, autopilot = { mode: 'gated', baseBra
   const markerPath = path.join(root, '.agents', 'ultrapowers.json');
   const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
   marker.tickets = { transport: 'cli', sources: [{ prefix: 'GH', provider: 'github', owner: 'o', defaultProject: 'r' }] };
-  if (autopilot) marker.autopilot = autopilot;
+  // The tests run watcher stages without stage tokens unless a test sets them: say so in the block,
+  // as a real project without stage tokens must (autopilot.watch.sharedCredentials).
+  if (autopilot) marker.autopilot = { ...autopilot, watch: { sharedCredentials: true, ...(autopilot.watch ?? {}) } };
   // `qa: true` means a configured QA gate: at least one url, which is what the engine checks.
   if (!qa) delete marker.qa;
   else marker.qa = { ...(marker.qa ?? {}), urls: { ...(marker.qa?.urls ?? {}), frontend: 'http://localhost:3000' } };

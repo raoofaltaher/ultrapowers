@@ -70,7 +70,12 @@ test('next on a fresh ticket prints run scaffold with the mode', () => {
 });
 
 test('next honours --mode and a mode label; off stops', () => {
-  const ws = workspace({ map: { 'issue view 16 -R o/r --json labels': { stdout: { labels: [{ name: 'up:mode:full' }] } } } });
+  // A mode label counts when a member with write access added it (the actor check of the review fixes).
+  const ws = workspace({ map: {
+    'issue view 16 -R o/r --json labels': { stdout: { labels: [{ name: 'up:mode:full' }] } },
+    'api repos/o/r/issues/16/timeline': { stdout: [[{ id: 'm1', event: 'labeled', label: { name: 'up:mode:full' }, actor: { login: 'alice' }, created_at: '2026-10-04T08:00:00Z' }]] },
+    'api repos/o/r/collaborators/alice/permission': { stdout: { permission: 'write' } },
+  } });
   assert.equal(run(ws, ['next', 'GH-16']).json.mode, 'full');
   assert.equal(run(ws, ['next', 'GH-16', '--mode', 'gated']).json.mode, 'gated');
   const off = run(ws, ['next', 'GH-16', '--mode', 'off']);
@@ -452,7 +457,9 @@ const forNumber = (n) => ({
   [`issue edit ${n} -R o/r --remove-label up:running`]: { stdout: '' },
   [`issue edit ${n} -R o/r --remove-label up:ready`]: { stdout: '' },
   [`issue comment ${n} -R o/r --body-file -`]: { stdout: `https://github.com/o/r/issues/${n}#issuecomment-1\n` },
-  [`api repos/o/r/issues/${n}/timeline`]: { stdout: [[]] },
+  // The ready label was added by the owner, a member with write access: the watcher's start check.
+  [`api repos/o/r/issues/${n}/timeline`]: { stdout: [[{ id: `ready-${n}`, event: 'labeled', label: { name: 'up:ready' }, actor: { login: 'owner' }, created_at: '2026-10-04T08:00:00Z' }]] },
+  'api repos/o/r/collaborators/owner/permission': { stdout: { permission: 'admin' } },
 });
 const events = (r) => r.json.events.map((e) => e.event);
 
@@ -772,12 +779,23 @@ test('the watch door does not take an approval from the account it runs as unles
   assert.equal(s.json.reason, 'approved', 'the session door is the developer at the keyboard');
 });
 
-test('watchSelfApproval lets the watch door take the engine account approval', () => {
+test('watchSelfApproval lets the watch door take the engine account approval, with stage tokens', () => {
   const ws = workspace({ autopilot: { mode: 'gated', baseBranch: 'main', watchSelfApproval: true } });
   throughPlan(ws);
   run(ws, ['packet', 'GH-16']);
   ws.setMap({ ...approvedBy('engine-bot') });
-  assert.equal(run(ws, ['next', 'GH-16', '--door', 'watch']).json.reason, 'approved');
+  assert.equal(run(ws, ['next', 'GH-16', '--door', 'watch'], { ULTRAPOWERS_STAGE_GH_TOKEN: 'ghs_ro' }).json.reason, 'approved');
+});
+
+test('the watcher starts only with stage tokens, or with sharedCredentials said in writing', () => {
+  const ws = workspace({ autopilot: { mode: 'gated', baseBranch: 'main', watch: { sharedCredentials: false } } });
+  const refused = run(ws, ['run', 'GH-16', '--once'], headless(ws, { ULTRAPOWERS_STAGE_GH_TOKEN: '', ULTRAPOWERS_STAGE_GITLAB_TOKEN: '' }));
+  assert.equal(refused.code, 2, refused.stdout);
+  assert.equal(refused.json.error.code, 'stage-credentials-missing');
+  const watch = run(ws, ['watch', '--once'], headless(ws, { ULTRAPOWERS_STAGE_GH_TOKEN: '', ULTRAPOWERS_STAGE_GITLAB_TOKEN: '' }));
+  assert.equal(watch.json.error.code, 'stage-credentials-missing');
+  const ok = run(ws, ['run', 'GH-16', '--once'], headless(ws, { ULTRAPOWERS_STAGE_GH_TOKEN: 'ghs_ro' }));
+  assert.equal(ok.code, 0, ok.stdout + ok.stderr);
 });
 
 test('with stage credentials a headless stage holds only those, and loads only the project MCP servers', () => {
@@ -808,4 +826,64 @@ test('without stage credentials a headless stage shares the engine credentials, 
   assert.equal(call.env.GIT_TERMINAL_PROMPT, '0');
   const i = call.args.indexOf('--mcp-config');
   assert.ok(call.args.includes('--strict-mcp-config') && i > 0 && /mcp-none\.json$/.test(call.args[i + 1]), 'no project .mcp.json: no server loads');
+});
+
+// ---- Executive review fixes (2026-10-04): the marker, the mode label, the self check ----
+
+test('a stage that removed its run marker ends blocked', () => {
+  const ws = workspace();
+  throughPlan(ws);
+  run(ws, ['begin', 'GH-16', 'changes']);
+  fs.rmSync(marker(ws), { force: true });
+  const e = run(ws, ['end', 'GH-16', 'changes', '--result', JSON.stringify({ ok: true })]);
+  assert.equal(e.json.status, 'blocked', e.stdout);
+  assert.match(commentBodies(ws).at(-1), /run marker/);
+});
+
+const modeLabelBy = (login, permission) => ({
+  'issue view 16 -R o/r --json labels': { stdout: { labels: [{ name: 'up:mode:full' }] } },
+  'api repos/o/r/issues/16/timeline': { stdout: [[{ id: 'm1', event: 'labeled', label: { name: 'up:mode:full' }, actor: { login }, created_at: '2026-10-04T08:00:00Z' }]] },
+  [`api repos/o/r/collaborators/${login}/permission`]: { stdout: { permission } },
+});
+
+test('a mode label counts only when a member with write access added it', () => {
+  const ws = workspace({ map: modeLabelBy('bob', 'read') });
+  assert.equal(run(ws, ['next', 'GH-16']).json.mode, 'gated', 'a read-only account cannot switch a ticket to full');
+  ws.setMap(modeLabelBy('alice', 'write'));
+  assert.equal(run(ws, ['next', 'GH-16']).json.mode, 'full');
+  const b = run(ws, ['begin', 'GH-16', 'scaffold']);
+  assert.equal(b.json.mode, 'full');
+});
+
+test('the watcher starts a ready ticket only when a member with write access labelled it', () => {
+  const readyBy = (login, permission) => ({
+    ...READY([17]), ...forNumber(17),
+    'api repos/o/r/issues/17/timeline': { stdout: [[{ id: 'r1', event: 'labeled', label: { name: 'up:ready' }, actor: { login }, created_at: '2026-10-04T08:00:00Z' }]] },
+    [`api repos/o/r/collaborators/${login}/permission`]: { stdout: { permission } },
+  });
+  const ws = workspace({ map: readyBy('stranger', 'read') });
+  const r = run(ws, ['watch', '--once'], headless(ws));
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.ok(r.json.events.some((e) => e.event === 'skip' && e.ticket === 'GH-17' && /ready/.test(e.reason)), JSON.stringify(r.json.events));
+  assert.equal(harnessCalls(ws).length, 0);
+});
+
+test('the watch door self check fails closed when the engine account cannot be read', () => {
+  const ws = workspace();
+  throughPlan(ws);
+  run(ws, ['packet', 'GH-16']);
+  ws.setMap({ ...approvedBy('alice'), 'api user': { exit: 1, stderr: 'gh: not logged in' } });
+  const w = run(ws, ['next', 'GH-16', '--door', 'watch']);
+  assert.deepEqual([w.json.action, w.json.approval.reason], ['wait', 'self-watch-unverified'], w.stdout);
+});
+
+test('watchSelfApproval counts only when the stages hold their own read-only token', () => {
+  const ws = workspace({ autopilot: { mode: 'gated', baseBranch: 'main', watchSelfApproval: true } });
+  throughPlan(ws);
+  run(ws, ['packet', 'GH-16']);
+  ws.setMap({ ...approvedBy('engine-bot') });
+  const without = run(ws, ['next', 'GH-16', '--door', 'watch'], { ULTRAPOWERS_STAGE_GH_TOKEN: '', ULTRAPOWERS_STAGE_GITLAB_TOKEN: '' });
+  assert.equal(without.json.approval.reason, 'self-watch-no-stage-tokens', without.stdout);
+  const withToken = run(ws, ['next', 'GH-16', '--door', 'watch'], { ULTRAPOWERS_STAGE_GH_TOKEN: 'ghs_ro' });
+  assert.equal(withToken.json.reason, 'approved', withToken.stdout);
 });

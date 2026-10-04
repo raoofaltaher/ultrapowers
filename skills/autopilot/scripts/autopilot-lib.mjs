@@ -25,7 +25,8 @@ export const DEFAULTS = Object.freeze({
     ready: 'up:ready', approve: 'up:approve', changes: 'up:changes',
     hold: 'up:hold', running: 'up:running', blocked: 'up:blocked',
   }),
-  watch: Object.freeze({ intervalSec: 60, maxConcurrent: 1 }),
+  // sharedCredentials: false means a watcher starts only with read-only stage tokens in its environment.
+  watch: Object.freeze({ intervalSec: 60, maxConcurrent: 1, sharedCredentials: false }),
   execution: 'subagent',
   harness: 'claude-code',
 });
@@ -77,6 +78,7 @@ export function validateAutopilot(block) {
     else {
       if (block.watch.intervalSec !== undefined && !isPositiveInt(block.watch.intervalSec)) errors.push('autopilot.watch.intervalSec must be a positive integer');
       if (block.watch.maxConcurrent !== undefined && !isPositiveInt(block.watch.maxConcurrent)) errors.push('autopilot.watch.maxConcurrent must be a positive integer');
+      if (block.watch.sharedCredentials !== undefined && typeof block.watch.sharedCredentials !== 'boolean') errors.push('autopilot.watch.sharedCredentials must be true or false');
     }
   }
   return errors;
@@ -391,7 +393,9 @@ export function pushAllowed(state, repoName, branch, ticket = state.ticket) {
 // ---- Next stage, locks and the active marker (spec §6, §8) ----
 
 const MAX_ATTEMPTS = 3;
-const QA_STOPS = ['FAIL', 'PRECONDITION-FAILED'];
+// A verdict that stops the run: a failure, a precondition that was not met, and a report that did
+// not finish (INCOMPLETE), which proves nothing either way. PASS-WITH-ISSUES goes on to the pull request.
+export const QA_STOPS = ['FAIL', 'PRECONDITION-FAILED', 'INCOMPLETE'];
 const AFTER = { scaffold: 'spec', spec: 'plan', plan: 'gate', changes: 'gate' };
 
 // The engine's one decision: what to do next for this ticket.

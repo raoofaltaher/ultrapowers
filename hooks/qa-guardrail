@@ -109,6 +109,18 @@ else
     fi
   done
 fi
+# A headless watcher stage carries ULTRAPOWERS_AUTOPILOT_INSIDE=1 in its environment: the
+# envelope then holds even when the marker file is gone (the root is the project that holds
+# .agents/ultrapowers.json above the cwd; no project, no verifiable call).
+if [ -z "$root" ] && [ "${ULTRAPOWERS_AUTOPILOT_INSIDE:-}" = "1" ]; then
+  d="$(norm_path "$PWD")"
+  while :; do
+    if [ -f "$d/.agents/ultrapowers.json" ]; then root="$d"; PROFILE="autopilot"; break; fi
+    case "$d" in /|.|"") break ;; esac
+    d="${d%/*}"; [ -n "$d" ] || d="/"
+  done
+  [ -n "$root" ] || deny "an autopilot stage is running (ULTRAPOWERS_AUTOPILOT_INSIDE) outside any ultrapowers project; the call cannot be verified"
+fi
 [ -n "$root" ] || exit 0
 [ "$PROFILE" = "autopilot" ] && GUARD_PREFIX="AUTOPILOT-GUARDRAIL"
 run_kind="a QA run"
@@ -231,11 +243,11 @@ fi
 # the loop where the agent edits the guardrail, the config, CI, harness settings or key material).
 # Named targets, not folder names: `src/hooks/` of a React app and `appsettings.json` of a .NET
 # app are ordinary implementation files. The ticket's state files are the gate's record.
-PROTECTED_RE='(^|/)\.ssh/|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws/|mcp-secrets\.env|\.local\.(sh|env|json)$|hooks/qa-guardrail|\.agents/ultrapowers\.json|(^|/)\.claude/|(^|/)\.git/|(^|/)\.githooks/|(^|/)\.[a-z0-9_-]+/settings(\.local)?\.json$|(^|/)tasks/[^/]+/(autopilot\.json|stage-log\.jsonl)$'
+PROTECTED_RE='(^|/)\.ssh/|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws/|mcp-secrets\.env|\.local\.(sh|env|json)$|hooks/qa-guardrail|\.agents/ultrapowers\.json|(^|/)\.claude/|(^|/)\.git/|(^|/)\.githooks/|(^|/)\.[a-z0-9_-]+/settings(\.local)?\.json$|(^|/)tasks/[^/]+/(autopilot\.json|stage-log\.jsonl)$|(^|/)\.ultrapowers/(autopilot-active|autopilot-stop)$|(^|/)\.ultrapowers/autopilot(/|$)|(^|/)\.ultrapowers$'
 # The autopilot envelope also keeps the agent out of CI, the plugin hooks, the repository's commit
 # hooks (they run inside the engine's own commit and push) and the env file: a stage that
 # rewrites the workflow or the hooks rewrites its own brakes.
-AUTOPILOT_PROTECTED_RE='(^|/)\.github/|(^|/)\.gitlab-ci\.yml$|(^|/)hooks/(qa-guardrail|session-start|team-memory-[a-z]+|lib/|hooks(-cursor)?\.json|run-hook\.cmd)|(^|/)\.husky/|(^|/)\.pre-commit-config\.ya?ml$|(^|/)lefthook\.ya?ml$|(^|/)\.env($|\.)'
+AUTOPILOT_PROTECTED_RE='(^|/)\.github/|(^|/)\.gitlab-ci\.yml$|(^|/)hooks/(qa-guardrail|session-start|team-memory-[a-z]+|lib/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|/)\.gemini/hooks/|(^|/)\.husky/|(^|/)\.pre-commit-config\.ya?ml$|(^|/)lefthook\.ya?ml$|(^|/)\.env($|\.)'
 is_write_tool=0
 case "$tool" in
   Write|Edit|MultiEdit|NotebookEdit|Create|ApplyPatch) is_write_tool=1 ;;

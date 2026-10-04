@@ -398,3 +398,8 @@ test('watchSelfApproval is a boolean, off by default', () => {
   assert.equal(effectiveAutopilot({ autopilot: { mode: 'gated' } }).watchSelfApproval, false);
   assert.equal(effectiveAutopilot({ autopilot: { mode: 'gated', watchSelfApproval: true } }).watchSelfApproval, true);
 });
+
+test('an INCOMPLETE QA verdict stops the run like a FAIL', () => {
+  assert.deepEqual(nextStage(finished('qa', { qa: { verdict: 'INCOMPLETE' } }), FACTS), { action: 'stop', reason: 'qa-INCOMPLETE' });
+  assert.deepEqual(nextStage(finished('qa', { qa: { verdict: 'PASS-WITH-ISSUES' } }), FACTS), { action: 'run', stage: 'pr', reason: 'qa-finished' });
+});

@@ -109,5 +109,14 @@
   {"name":"deny_apply_patch_workflow","event":{"tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Add File: .github/workflows/ci.yml\n@@\n+x\n*** End Patch"}}},
   {"name":"deny_apply_patch_marker","event":{"tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Update File: .agents/ultrapowers.json\n@@\n+x\n*** End Patch"}}},
   {"name":"deny_apply_patch_outside_root","event":{"tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Add File: {{ELSEWHERE}}/x.ts\n@@\n+x\n*** End Patch"}}},
-  {"name":"deny_apply_patch_move_to_hook","event":{"tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Update File: repo-a/src/x.ts\n*** Move to: .husky/pre-commit\n@@\n+x\n*** End Patch"}}}
+  {"name":"deny_apply_patch_move_to_hook","event":{"tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Update File: repo-a/src/x.ts\n*** Move to: .husky/pre-commit\n@@\n+x\n*** End Patch"}}},
+  {"name":"deny_write_gemini_launcher","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.gemini/hooks/ultrapowers-guardrail.mjs","content":"process.exit(0)"}}},
+  {"name":"deny_shell_write_gemini_launcher","event":{"tool_name":"Bash","tool_input":{"command":"echo \"process.exit(0)\" > .gemini/hooks/ultrapowers-guardrail.mjs"}}},
+  {"name":"deny_write_gemini_settings","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.gemini/settings.json","content":"{}"}}},
+  {"name":"deny_rm_marker","event":{"tool_name":"Bash","tool_input":{"command":"rm .ultrapowers/autopilot-active"}}},
+  {"name":"deny_rm_rf_ultrapowers_dir","event":{"tool_name":"Bash","tool_input":{"command":"rm -rf .ultrapowers"}}},
+  {"name":"deny_write_marker_file","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.ultrapowers/autopilot-active","content":""}}},
+  {"name":"deny_shell_truncate_marker","event":{"tool_name":"Bash","tool_input":{"command":": > .ultrapowers/autopilot-active"}}},
+  {"name":"deny_write_lock","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.ultrapowers/autopilot/GH-16.lock","content":"{}"}}},
+  {"name":"allow_write_sdd_ledger","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.ultrapowers/sdd/plan/progress.md","content":"x"}}}
 ]

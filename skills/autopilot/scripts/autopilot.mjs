@@ -15,7 +15,7 @@ import { execFile } from 'node:child_process';
 import { resolveTicket, TicketError } from '../../new-task/scripts/ticket-sources.mjs';
 import { fileURLToPath } from 'node:url';
 import {
-  AutopilotError, STAGES, effectiveAutopilot, modeFor, branchName, initialState,
+  AutopilotError, STAGES, QA_STOPS, effectiveAutopilot, modeFor, branchName, initialState,
   readState, writeState, appendLog, readLog, verifyChain,
   nextStage, acquireLock, releaseLock, liveLock, readLock, lockPath,
   writeActiveMarker, clearActiveMarker, readActiveMarker, verifyApproval,
@@ -257,7 +257,7 @@ async function runStatus(opts) {
 async function runNext(opts) {
   const ctx = context(opts);
   const state = readState(ctx.root, opts.id);
-  const labels = await labelsOf(ctx);
+  const labels = await permittedLabels(ctx);
   const block = ctx.marker.autopilot ?? { mode: 'off' };
   const mode = modeFor(block, { arg: opts.mode, labels });
   const events = ctx.settings.events ?? effectiveAutopilot({ autopilot: { mode: 'gated' } }).events;
@@ -456,7 +456,7 @@ async function runPr(opts) {
   if (!resuming && (!['execute', 'qa'].includes(state.stage) || state.stageStatus !== 'finished')) {
     throw new AutopilotError('wrong-stage', `${opts.id} is at ${state.stage} (${state.stageStatus}); pr follows a finished execute or qa stage`);
   }
-  if (state.qa && ['FAIL', 'PRECONDITION-FAILED'].includes(state.qa.verdict)) {
+  if (state.qa && QA_STOPS.includes(state.qa.verdict)) {
     throw new AutopilotError('qa-failed', `${opts.id} has QA verdict ${state.qa.verdict} (${state.qa.report}); no pull request opens on a failed gate`);
   }
   const qaOn = qaConfigured(ctx.marker);
@@ -551,13 +551,50 @@ async function pendingApproval(ctx, state, events, door = 'command') {
     events: eventsList, approveLabel: events.approve, packet: state.packet,
     permissionOf: (login) => ctx.tracker.permission(login), approvers: ctx.settings.approvers ?? [], tips,
   });
-  if (verdict.ok && door === 'watch' && !ctx.settings.watchSelfApproval) {
-    const me = await ctx.tracker.me().catch(() => '');
-    if (me && verdict.actor === me) {
-      return { ok: false, reason: 'self-watch', detail: `${me} is the account the watcher runs as; approve from another account, or set autopilot.watchSelfApproval to true` };
+  if (verdict.ok && door === 'watch') {
+    // The self check fails closed: an engine account that cannot be read is treated as the actor.
+    const me = await ctx.tracker.me().catch(() => null);
+    if (me === null) return { ok: false, reason: 'self-watch-unverified', detail: 'the account the watcher runs as could not be read from the tracker, so the approval cannot be told apart from the engine\'s own' };
+    if (verdict.actor === me) {
+      if (!ctx.settings.watchSelfApproval) {
+        return { ok: false, reason: 'self-watch', detail: `${me} is the account the watcher runs as; approve from another account, or set autopilot.watchSelfApproval to true` };
+      }
+      if (!stageTokensConfigured()) {
+        return { ok: false, reason: 'self-watch-no-stage-tokens', detail: `${me} is the account the watcher runs as; watchSelfApproval counts only when the stages hold their own read-only token (ULTRAPOWERS_STAGE_GH_TOKEN or ULTRAPOWERS_STAGE_GITLAB_TOKEN)` };
+      }
     }
   }
   return verdict;
+}
+
+function stageTokensConfigured() {
+  return Boolean(process.env.ULTRAPOWERS_STAGE_GH_TOKEN || process.env.ULTRAPOWERS_STAGE_GITLAB_TOKEN);
+}
+
+// A control label counts only when a member with write access (and, when the list is set, an
+// approver) added it last: the mode labels and the watcher's start label, like the approval.
+async function labelAddedByPermitted(tracker, number, label, settings) {
+  const events = await tracker.labelEvents(number);
+  const last = events.filter((e) => e.label === label).sort((a, b) => String(a.at).localeCompare(String(b.at))).at(-1);
+  if (!last || last.action !== 'labeled' || !last.actor) return false;
+  const permission = await tracker.permission(last.actor);
+  if (!['write', 'maintain', 'admin'].includes(permission)) return false;
+  const approvers = settings.approvers ?? [];
+  return approvers.length === 0 || approvers.includes(last.actor);
+}
+
+// The ticket's labels with the mode labels that an unpermitted account added removed.
+async function permittedLabels(ctx) {
+  const labels = await labelsOf(ctx);
+  const out = [];
+  for (const label of labels) {
+    if (!/^up:mode:/.test(label)) {
+      out.push(label);
+      continue;
+    }
+    if (await labelAddedByPermitted(ctx.tracker, ctx.source.number, label, ctx.settings)) out.push(label);
+  }
+  return out;
 }
 
 async function runBegin(opts) {
@@ -576,7 +613,7 @@ async function runBegin(opts) {
       throw new AutopilotError('no-state', `${opts.id} has no autopilot state; the first stage is scaffold`);
     }
     const title = await ctx.tracker.title(ctx.source.number);
-    const labels = await ctx.tracker.labels(ctx.source.number);
+    const labels = await permittedLabels(ctx);
     const mode = modeFor(ctx.marker.autopilot, { arg: opts.mode, labels });
     const base = ctx.settings.baseBranch ?? remoteHead(ctx.dirs.docs);
     const branch = branchName(opts.id, title);
@@ -676,6 +713,12 @@ async function runEnd(opts) {
     ok = false;
     message = `plan-changed: specs/${opts.id} or plans/${opts.id} changed after the approval at ${state.approval.docsTip}; the gate must approve them again`;
   }
+  // The run marker is the envelope's switch. A stage that ends without it had no guardrail for
+  // part of its run, whatever removed the file; the stage is blocked and the reason is on the ticket.
+  if (ok && !readActiveMarker(ctx.root)) {
+    ok = false;
+    message = `the run marker .ultrapowers/autopilot-active was removed during the ${opts.stage} stage; the guardrail was off for part of it, so the stage is blocked for review`;
+  }
   state.stageStatus = ok ? 'finished' : 'blocked';
   if (firstWrite) {
     writeState(ctx.root, opts.id, state);
@@ -733,7 +776,8 @@ function stageEnvironment(root) {
   const stageGh = process.env.ULTRAPOWERS_STAGE_GH_TOKEN;
   const stageGl = process.env.ULTRAPOWERS_STAGE_GITLAB_TOKEN;
   if (stageGh || stageGl) {
-    for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GLAB_TOKEN', 'OAUTH_TOKEN']) delete env[k];
+    // The engine's tokens, and the ssh agent: a push over ssh would not need a token at all.
+    for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GLAB_TOKEN', 'OAUTH_TOKEN', 'SSH_AUTH_SOCK', 'GIT_SSH_COMMAND', 'GIT_SSH']) delete env[k];
     for (const d of ['gh', 'glab']) fs.mkdirSync(path.join(noAuth, d), { recursive: true });
     env.GH_CONFIG_DIR = path.join(noAuth, 'gh');
     env.GLAB_CONFIG_DIR = path.join(noAuth, 'glab');
@@ -788,10 +832,18 @@ function assertGuardedHarness(settings) {
   throw new AutopilotError('harness-unguarded', `autopilot.harness ${settings.harness} has no guardrail in the watcher door yet; run its tickets from a session with /ultrapowers:autopilot <ID>, or set harness to ${GUARDED_HARNESSES.join(' or ')}`);
 }
 
+// A watcher's stages hold their own read-only tokens (D13). Without them a stage holds the
+// engine's write token, so the watcher refuses to start unless the project says so in writing.
+function assertStageCredentials(settings) {
+  if (stageTokensConfigured() || settings.watch?.sharedCredentials) return;
+  throw new AutopilotError('stage-credentials-missing', 'the watcher starts only with read-only stage tokens in its environment (ULTRAPOWERS_STAGE_GH_TOKEN or ULTRAPOWERS_STAGE_GITLAB_TOKEN); to run its stages with the engine\'s own credentials, set autopilot.watch.sharedCredentials to true');
+}
+
 async function runRun(opts) {
   const base = { ...opts, door: 'watch', pid: process.pid };
   const ctx = context(base);
   assertGuardedHarness(ctx.settings);
+  assertStageCredentials(ctx.settings);
   const stages = [];
   const seen = {};
   let final = null;
@@ -923,6 +975,11 @@ async function watchCycle(root, marker, settings, opts, previousSleepMs) {
         for (const item of await tracker.listTickets(label)) {
           const id = `${source.prefix}-${item.number}`;
           if (label !== settings.events.ready && !readState(root, id)) continue;
+          // The start label counts like the approval: a member with write access added it.
+          if (label === settings.events.ready && !readState(root, id) && !(await labelAddedByPermitted(tracker, item.number, label, settings))) {
+            events.push({ event: 'skip', ticket: id, reason: 'ready-label-not-from-a-member-with-write-access' });
+            continue;
+          }
           if (!queue.some((q) => q.id === id)) queue.push({ id, number: item.number, tracker });
         }
       }
@@ -962,7 +1019,10 @@ async function runWatch(opts) {
   if (!fs.existsSync(path.join(root, MARKER))) throw new AutopilotError('no-marker', `no ${MARKER.replace(/\\/g, '/')} in ${root}`);
   const marker = readMarker(root);
   const settings = effectiveAutopilot(marker);
-  if (settings.mode !== 'off') assertGuardedHarness(settings);
+  if (settings.mode !== 'off') {
+    assertGuardedHarness(settings);
+    assertStageCredentials(settings);
+  }
   if (settings.mode === 'off') {
     const events = [{ event: 'idle', reason: 'mode-off' }];
     if (opts.once) return { root, events, nextSleepMs: 0 };

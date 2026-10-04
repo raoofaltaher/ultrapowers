@@ -132,6 +132,32 @@ while IFS=$'\t' read -r name event; do
 done < <(case_lines)
 [[ "$silent" -eq 0 ]] && pass "every case exits 0 and prints nothing without a marker"
 
+echo "autopilot profile: no marker, but inside a watcher stage (ULTRAPOWERS_AUTOPILOT_INSIDE=1)"
+run_inside() {
+  local event="$1" out code
+  out="$(cd "$ROOT" && printf '%s' "$event" | ULTRAPOWERS_AUTOPILOT_INSIDE=1 bash "$HOOK" 2>"$TEST_ROOT/stderr.txt")"
+  code=$?
+  printf '%s|%s' "$code" "$(cat "$TEST_ROOT/stderr.txt")"
+}
+result="$(run_inside '{"tool_name":"Bash","tool_input":{"command":"git push origin GH-16-x"}}')"
+if [[ "${result%%|*}" -eq 2 ]] && printf '%s' "${result#*|}" | grep -q '^AUTOPILOT-GUARDRAIL DENY: '; then
+  pass "a push is denied inside a stage whose marker is gone"
+else
+  fail "a push is denied inside a stage whose marker is gone (got $result)"
+fi
+result="$(run_inside '{"tool_name":"Bash","tool_input":{"command":"gh issue edit 16 --add-label up:approve"}}')"
+if [[ "${result%%|*}" -eq 2 ]]; then
+  pass "a label write is denied inside a stage whose marker is gone"
+else
+  fail "a label write is denied inside a stage whose marker is gone (got $result)"
+fi
+result="$(run_inside "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$ROOT/repo-a/src/x.ts\",\"content\":\"x\"}}")"
+if [[ "${result%%|*}" -eq 0 ]]; then
+  pass "a source write still passes inside a stage whose marker is gone"
+else
+  fail "a source write still passes inside a stage whose marker is gone (got $result)"
+fi
+
 echo
 if [[ "$FAILURES" -gt 0 ]]; then
   echo "STATUS: FAILED ($FAILURES)"

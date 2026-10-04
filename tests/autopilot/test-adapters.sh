@@ -11,6 +11,7 @@ pass() { echo "  [PASS] $1"; }
 fail() { echo "  [FAIL] $1"; FAILURES=$((FAILURES + 1)); }
 skip() { echo "  [SKIP] $1"; }
 
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PROMPT='Reply with exactly the two letters OK and nothing else.'
 echo "autopilot headless adapters"
 
@@ -46,10 +47,10 @@ contract claude-code claude -p PROMPT --permission-mode bypassPermissions --max-
 contract codex codex exec --json --dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust --skip-git-repo-check --ignore-user-config PROMPT
 contract copilot copilot -p PROMPT --allow-all-tools --no-ask-user --output-format json -s --disable-builtin-mcps
 contract cursor agent -p --force --trust --output-format json PROMPT
-contract gemini gemini -p PROMPT --approval-mode=yolo --output-format json --skip-trust
-contract qwen qwen -p PROMPT --yolo --output-format json
+contract gemini gemini -p PROMPT --approval-mode=yolo --output-format json --skip-trust -e ultrapowers
+contract qwen qwen -p PROMPT --yolo --output-format json -e ultrapowers
 contract opencode opencode run --format json --dangerously-skip-permissions PROMPT
-contract pi pi -p --mode json --no-session --approve --no-extensions PROMPT
+contract pi pi -p --mode json --no-session --approve --no-extensions -e "$REPO_ROOT/.pi/extensions/ultrapowers.ts" PROMPT
 contract droid droid exec --skip-permissions-unsafe --output-format json PROMPT
 contract kimi kimi -p PROMPT --output-format stream-json
 contract hermes hermes chat --oneshot -q PROMPT --format stream-json --yolo --accept-hooks
