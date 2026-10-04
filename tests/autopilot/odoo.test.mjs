@@ -24,8 +24,8 @@ test('authenticate returns the uid and call sends execute_kw with db, uid and ke
 });
 
 test('a missing key is no-credentials before any request', () => {
-  assert.throws(() => createOdooClient({ url: 'http://x', db: 'erp', login: 'bot', apiKey: undefined }), (e) => e.code === 'no-credentials');
-  assert.throws(() => createOdooClient({ url: 'http://x', db: 'erp', login: undefined, apiKey: 'k' }), (e) => e.code === 'no-credentials');
+  assert.throws(() => createOdooClient({ url: 'https://x', db: 'erp', login: 'bot', apiKey: undefined }), (e) => e.code === 'no-credentials');
+  assert.throws(() => createOdooClient({ url: 'https://x', db: 'erp', login: undefined, apiKey: 'k' }), (e) => e.code === 'no-credentials');
 });
 
 test('an Odoo error becomes tracker-failed with Odoo\'s message', async () => {
@@ -112,4 +112,17 @@ test('odooIso converts an Odoo UTC datetime and leaves ISO alone', () => {
   assert.equal(odooIso('2026-10-05 08:00:00'), '2026-10-05T08:00:00Z');
   assert.equal(odooIso('2026-10-05T08:00:00Z'), '2026-10-05T08:00:00Z');
   assert.equal(odooIso(false), '');
+});
+
+test('the client refuses a plain-http URL that is not loopback', () => {
+  assert.throws(() => createOdooClient({ url: 'http://erp.example.com', db: 'erp', login: 'bot', apiKey: 'k1' }), (e) => e.code === 'bad-tickets' && /https/.test(e.message));
+  assert.ok(createOdooClient({ url: 'http://127.0.0.1:1', db: 'erp', login: 'bot', apiKey: 'k1' }));
+  assert.ok(createOdooClient({ url: 'https://erp.example.com', db: 'erp', login: 'bot', apiKey: 'k1' }));
+});
+
+test('the client does not follow a redirect, so the key never travels to another host', async () => {
+  const elsewhere = await fake(seed());
+  const f = await fake(seed({ redirectTo: `${elsewhere.url}/jsonrpc` }));
+  await assert.rejects(createOdooClient({ url: f.url, db: 'erp', login: 'bot', apiKey: 'k1' }).authenticate(), (e) => e.code === 'tracker-failed' && /redirect/.test(e.message));
+  assert.equal(elsewhere.requests.length, 0);
 });

@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import { execFile } from 'node:child_process';
 import { AutopilotError } from './autopilot-lib.mjs';
+import { createOdooClient, htmlToText, textToNoteHtml, tagEventsFromTracking, lastWriterEvents, odooColorIndex, odooIso } from './odoo.mjs';
 
 const CLI = {
   github: { name: 'gh', env: 'ULTRAPOWERS_GH' },
@@ -158,6 +159,11 @@ class GitHubTracker {
     const out = await run(this.r, this.env, ['pr', 'create', '-R', this.path, '--head', head, '--base', base, '--title', title, '--body-file', '-'], body);
     return lastUrl(out.stdout);
   }
+
+  async prComment(url, body) {
+    const out = await run(this.r, this.env, ['pr', 'comment', url, '--body-file', '-'], body);
+    return lastUrl(out.stdout);
+  }
 }
 
 class GitLabTracker {
@@ -274,11 +280,209 @@ class GitLabTracker {
     const out = await run(this.r, this.env, ['mr', 'create', '-R', this.path, '--source-branch', head, '--target-branch', base, '--title', title, '--description', body, '--yes']);
     return lastUrl(out.stdout);
   }
+
+  async prComment(url, body) {
+    const m = /^https?:\/\/[^/]+\/(.+?)\/-\/merge_requests\/(\d+)/.exec(String(url ?? ''));
+    if (!m) throw new AutopilotError('tracker-failed', `${url} is not a GitLab merge request URL`);
+    const out = await run(this.r, this.env, ['mr', 'note', m[2], '-R', m[1], '-m', body]);
+    return lastUrl(out.stdout);
+  }
 }
 
-// The tracker for a resolved source: { provider: 'github'|'gitlab', host, path, number }.
+// Odoo tasks (spec 2026-10-05 §5): JSON-RPC with the technical user's key in ODOO_API_KEY. Tag events
+// come from the chatter's tracking values when the tags field is tracked, else from the last writer.
+const TASK_FIELDS = ['name', 'tag_ids', 'write_uid', 'write_date'];
+
+function odooDate(iso) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? String(iso) : d.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, '');
+}
+
+class OdooTracker {
+  constructor(resolution, env) {
+    this.r = resolution;
+    this.env = env;
+    this.path = resolution.path;
+    this.project = Number(resolution.path);
+    this.c = null;
+    this.cache = { partners: new Map(), users: new Map(), groups: null, tracked: undefined };
+  }
+
+  client() {
+    if (!this.c) this.c = createOdooClient({ url: this.r.url, db: this.r.db, login: this.r.login, apiKey: this.env.ODOO_API_KEY, env: this.env });
+    return this.c;
+  }
+
+  call(model, method, args, kwargs) {
+    return this.client().call(model, method, args, kwargs);
+  }
+
+  async cliReady() {
+    try {
+      await this.client().authenticate();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async me() {
+    return this.r.login;
+  }
+
+  async listTickets(label) {
+    const rows = await this.call('project.task', 'search_read', [[['project_id', '=', this.project], ['tag_ids.name', '=', label], ['is_closed', '=', false]]], { fields: ['id', 'name', 'write_date'] });
+    return rows.map((r) => ({ number: r.id, title: r.name ?? '', updatedAt: odooIso(r.write_date) }));
+  }
+
+  async task(number) {
+    const [task] = await this.call('project.task', 'read', [[Number(number)]], { fields: TASK_FIELDS });
+    if (!task) throw new AutopilotError('tracker-failed', `Odoo task ${number} was not found`);
+    return task;
+  }
+
+  async tagNames(ids) {
+    if (!ids?.length) return [];
+    return (await this.call('project.tags', 'read', [ids], { fields: ['name'] })).map((t) => t.name);
+  }
+
+  async title(number) {
+    return (await this.task(number)).name ?? '';
+  }
+
+  async labels(number) {
+    return this.tagNames((await this.task(number)).tag_ids ?? []);
+  }
+
+  async tagsTracked() {
+    if (this.cache.tracked === undefined) {
+      const rows = await this.call('ir.model.fields', 'search_read', [[['model', '=', 'project.task'], ['name', '=', 'tag_ids']]], { fields: ['tracking'] });
+      this.cache.tracked = Boolean(rows[0]?.tracking);
+    }
+    return this.cache.tracked;
+  }
+
+  async loginOfPartner(partnerId) {
+    if (!partnerId) return '';
+    if (!this.cache.partners.has(partnerId)) {
+      const rows = await this.call('res.users', 'search_read', [[['partner_id', '=', partnerId]]], { fields: ['login'] });
+      this.cache.partners.set(partnerId, rows[0]?.login ?? '');
+    }
+    return this.cache.partners.get(partnerId);
+  }
+
+  async loginOfUser(uid) {
+    if (!uid) return '';
+    if (!this.cache.users.has(uid)) {
+      const rows = await this.call('res.users', 'read', [[uid]], { fields: ['login'] });
+      this.cache.users.set(uid, rows[0]?.login ?? '');
+    }
+    return this.cache.users.get(uid);
+  }
+
+  async labelEvents(number) {
+    const task = await this.task(number);
+    if (!(await this.tagsTracked())) {
+      const names = await this.tagNames(task.tag_ids ?? []);
+      const login = await this.loginOfUser(task.write_uid?.[0]);
+      return lastWriterEvents(task, names, () => login);
+    }
+    const messages = await this.call('mail.message', 'search_read', [[['model', '=', 'project.task'], ['res_id', '=', Number(number)], ['tracking_value_ids', '!=', false]]], { fields: ['id', 'date', 'author_id', 'tracking_value_ids'] });
+    if (!messages.length) return [];
+    const rows = await this.call('mail.tracking.value', 'search_read', [[['mail_message_id', 'in', messages.map((m) => m.id)], ['field_id.name', '=', 'tag_ids'], ['field_id.model', '=', 'project.task']]], { fields: ['mail_message_id', 'field_id', 'old_value_char', 'new_value_char'] });
+    const known = (await this.call('project.tags', 'search_read', [[]], { fields: ['name'] })).map((t) => t.name);
+    const logins = new Map();
+    for (const m of messages) {
+      const pid = m.author_id?.[0];
+      if (pid && !logins.has(pid)) logins.set(pid, await this.loginOfPartner(pid));
+    }
+    return tagEventsFromTracking(messages, rows, known, (author) => logins.get(author?.[0]) ?? '');
+  }
+
+  async comments(number, sinceIso) {
+    const domain = [['model', '=', 'project.task'], ['res_id', '=', Number(number)], ['message_type', '=', 'comment']];
+    if (sinceIso) domain.push(['date', '>', odooDate(sinceIso)]);
+    const rows = await this.call('mail.message', 'search_read', [domain], { fields: ['id', 'date', 'author_id', 'body'], order: 'date asc' });
+    const out = [];
+    for (const m of rows) {
+      out.push({ id: String(m.id), author: await this.loginOfPartner(m.author_id?.[0]), at: odooIso(m.date), body: htmlToText(m.body), url: '' });
+    }
+    return out;
+  }
+
+  async projectGroups() {
+    if (!this.cache.groups) {
+      const ids = [];
+      for (const xmlid of ['group_project_user', 'group_project_manager']) {
+        try {
+          const ref = await this.call('ir.model.data', 'check_object_reference', ['project', xmlid]);
+          if (Array.isArray(ref)) ids.push(Number(ref[1]));
+        } catch (err) {
+          if (err.code !== 'tracker-failed') throw err;
+        }
+      }
+      this.cache.groups = ids;
+    }
+    return this.cache.groups;
+  }
+
+  async permission(login) {
+    const rows = await this.call('res.users', 'search_read', [[['login', '=', login]]], { fields: ['id', 'share', 'groups_id'] });
+    const user = rows[0];
+    if (!user || user.share) return 'none';
+    const groups = await this.projectGroups();
+    return (user.groups_id ?? []).some((g) => groups.includes(g)) ? 'write' : 'read';
+  }
+
+  async comment(number, body) {
+    const id = await this.call('project.task', 'message_post', [[Number(number)]], { body: textToNoteHtml(body), message_type: 'comment', subtype_xmlid: 'mail.mt_note' });
+    return `${this.r.url.replace(/\/+$/, '')}/web#model=project.task&id=${number}&message=${id}`;
+  }
+
+  async commentTime(url) {
+    const id = /[?&#]message=(\d+)/.exec(String(url ?? ''))?.[1];
+    if (!id) return null;
+    const rows = await this.call('mail.message', 'read', [[Number(id)]], { fields: ['date'] });
+    const at = odooIso(rows[0]?.date);
+    return at || null;
+  }
+
+  async tagId(name, { create = false, color = 1 } = {}) {
+    const rows = await this.call('project.tags', 'search_read', [[['name', '=', name]]], { fields: ['id'] });
+    if (rows[0]) return rows[0].id;
+    if (!create) return null;
+    const created = await this.call('project.tags', 'create', [[{ name, color }]]);
+    return Array.isArray(created) ? created[0] : created;
+  }
+
+  async addLabel(number, name) {
+    const id = await this.tagId(name, { create: true });
+    await this.call('project.task', 'write', [[Number(number)], { tag_ids: [[4, id]] }]);
+  }
+
+  async removeLabel(number, name) {
+    const id = await this.tagId(name);
+    if (id === null) return;
+    await this.call('project.task', 'write', [[Number(number)], { tag_ids: [[3, id]] }]);
+  }
+
+  async ensureLabel(name, color) {
+    await this.tagId(name, { create: true, color: odooColorIndex(color) });
+  }
+
+  async createPr() {
+    throw new AutopilotError('no-forge', 'an Odoo ticket opens pull requests on the forge of each repository, never on Odoo');
+  }
+
+  async prComment() {
+    throw new AutopilotError('no-forge', 'an Odoo task is not a forge; pull request comments go to the repository\'s forge');
+  }
+}
+
+// The tracker for a resolved source: { provider: 'github'|'gitlab'|'odoo', host, path, number, ... }.
 export function trackerFor(resolution, env = process.env) {
   if (resolution.provider === 'github') return new GitHubTracker(resolution, env);
   if (resolution.provider === 'gitlab') return new GitLabTracker(resolution, env);
-  throw new AutopilotError('no-writeback', `${resolution.provider} has no write-back in this version; GitHub and GitLab do`);
+  if (resolution.provider === 'odoo') return new OdooTracker(resolution, env);
+  throw new AutopilotError('no-writeback', `${resolution.provider} has no write-back in this version; GitHub, GitLab and Odoo do`);
 }

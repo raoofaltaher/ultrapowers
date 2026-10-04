@@ -17,7 +17,11 @@ async function postJson(url, payload, env, what) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
       signal: controller.signal,
+      redirect: 'manual',
     });
+    if (res.status >= 300 && res.status < 400) {
+      throw new AutopilotError('tracker-failed', `${what} answered a redirect to ${res.headers.get('location') ?? 'another address'}; the engine does not follow redirects, so the key stays with the configured host`);
+    }
     const text = await res.text();
     let json = null;
     try { json = JSON.parse(text); } catch { json = null; }
@@ -31,8 +35,19 @@ async function postJson(url, payload, env, what) {
 }
 
 // The client for one Odoo source. `authenticate` runs once and is cached; `call` is execute_kw.
+const LOOPBACK = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/i;
+
 export function createOdooClient({ url, db, login, apiKey, env = process.env }) {
   const base = String(url ?? '').replace(/\/+$/, '');
+  let parsed;
+  try {
+    parsed = new URL(base);
+  } catch {
+    throw new AutopilotError('bad-tickets', `tickets.sources[].url ${base} is not a URL`);
+  }
+  if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && LOOPBACK.test(parsed.hostname))) {
+    throw new AutopilotError('bad-tickets', `tickets.sources[].url must use https (${base}); the API key travels in every call`);
+  }
   if (!apiKey) throw new AutopilotError('no-credentials', `ODOO_API_KEY is not set; the engine reaches ${base} with a technical user's API key`);
   if (!login) throw new AutopilotError('no-credentials', `tickets.sources[].login is not set for ${base}; the engine signs in as a technical user`);
   let id = 0;

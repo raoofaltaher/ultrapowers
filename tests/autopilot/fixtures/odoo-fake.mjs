@@ -11,6 +11,176 @@ export function seed(overrides = {}) {
   return s;
 }
 
+// A small Odoo domain matcher for the fake's search_read: =, !=, in, >, >=, <, and dotted paths
+// such as tag_ids.name through the seed's related records.
+function matches(record, domain, s) {
+  return (domain ?? []).every(([field, op, value]) => {
+    const actual = valueOf(record, field, s);
+    const list = Array.isArray(actual) ? actual : [actual];
+    switch (op) {
+      case '=': return list.some((a) => a === value) || (value === false && (actual === false || actual == null || (Array.isArray(actual) && actual.length === 0)));
+      case '!=': return value === false ? (Array.isArray(actual) ? actual.length > 0 : Boolean(actual)) : !list.some((a) => a === value);
+      case 'in': return list.some((a) => value.includes(a));
+      case '>': return actual > value;
+      case '>=': return actual >= value;
+      case '<': return actual < value;
+      default: throw new Error(`the fake does not know the operator ${op}`);
+    }
+  });
+}
+
+function valueOf(record, field, s) {
+  const [head, ...rest] = field.split('.');
+  let v = record[head];
+  if (Array.isArray(v) && v.length === 2 && typeof v[1] === 'string' && typeof v[0] === 'number' && rest.length) v = [v[0]];
+  if (!rest.length) return Array.isArray(v) && v.length === 2 && typeof v[1] === 'string' ? v[0] : v;
+  const related = s.relations?.[`${s.currentModel}.${head}`];
+  if (!related) throw new Error(`the fake has no relation for ${s.currentModel}.${head}`);
+  const ids = Array.isArray(v) ? v : [v];
+  return ids.map((id) => related.find((r) => r.id === id)).filter(Boolean).map((r) => valueOf(r, rest.join('.'), { ...s, currentModel: related.model })).flat();
+}
+
+function pick(record, fields) {
+  if (!fields || fields.length === 0) return { ...record };
+  return Object.fromEntries(['id', ...fields].map((f) => [f, record[f] ?? false]));
+}
+
+function searchRead(table, model) {
+  return (args, kwargs, s) => {
+    const domain = args[0] ?? kwargs.domain ?? [];
+    const fields = kwargs.fields ?? args[1] ?? [];
+    let rows = table(s).filter((r) => matches(r, domain, { ...s, currentModel: model }));
+    if (kwargs.order && /desc/i.test(kwargs.order)) rows = rows.reverse();
+    if (kwargs.limit) rows = rows.slice(0, kwargs.limit);
+    return rows.map((r) => pick(r, fields));
+  };
+}
+
+function read(table) {
+  return (args, kwargs, s) => {
+    const ids = args[0];
+    const fields = args[1] ?? kwargs.fields ?? [];
+    return table(s).filter((r) => ids.includes(r.id)).map((r) => pick(r, fields));
+  };
+}
+
+function base64Of(size) {
+  return Buffer.alloc(size, 7).toString('base64');
+}
+
+// A seed with one project, two tasks, tags, users, chatter and attachments: what the tracker,
+// the fetch step and the engine tests need. `tagTracking: false` turns tag tracking off.
+export function odooSeedWithTask(overrides = {}) {
+  const s = seed({ tagTracking: true, ...overrides });
+  s.groups = { 'project.group_project_user': 100, 'project.group_project_manager': 101 };
+  s.users = [
+    { id: 7, login: 'bot', partner_id: [17, 'Bot'], share: false, groups_id: [100] },
+    { id: 9, login: 'val', partner_id: [19, 'Val'], share: false, groups_id: [100] },
+    { id: 10, login: 'guest', partner_id: [20, 'Guest'], share: true, groups_id: [] },
+    { id: 11, login: 'intern', partner_id: [21, 'Intern'], share: false, groups_id: [] },
+  ];
+  s.tags = [{ id: 1, name: 'AI', color: 5 }, { id: 2, name: 'Backend', color: 6 }, { id: 3, name: 'Ultrapowers Ready', color: 10 }, { id: 4, name: 'Ultrapowers Approve', color: 4 }];
+  s.tasks = [
+    {
+      id: 13627, name: 'Integration', project_id: [34, 'Platform'], tag_ids: [1, 2, 3], write_uid: [9, 'Val'], write_date: '2026-10-05 08:00:00',
+      create_date: '2026-09-29 10:00:00', is_closed: false, stage_id: [5, 'In Progress'], state: '01_in_progress', user_ids: [9],
+      description: '<p>Upgrade the integration.</p><p>Mock-up: <a href="https://design.example.com/mockup/1">https://design.example.com/mockup/1</a></p>',
+    },
+    { id: 13628, name: 'Closed one', project_id: [34, 'Platform'], tag_ids: [3], write_uid: [9, 'Val'], write_date: '2026-10-01 08:00:00', create_date: '2026-09-01 10:00:00', is_closed: true, stage_id: [6, 'Done'], state: '1_done', user_ids: [], description: '' },
+  ];
+  s.messages = [
+    { id: 50, model: 'project.task', res_id: 13627, message_type: 'comment', date: '2026-10-02 18:39:00', dateIso: '2026-10-02T18:39:00Z', author_id: [19, 'Val'], body: '<p>will have kick off today, got access from clients</p>', tracking_value_ids: [] },
+    { id: 51, model: 'project.task', res_id: 13627, message_type: 'notification', date: '2026-10-02 19:50:00', dateIso: '2026-10-02T19:50:00Z', author_id: [19, 'Val'], body: '', tracking_value_ids: [1] },
+  ];
+  s.tracking = [{ id: 1, mail_message_id: [51, 'm'], field_id: [301, 'Tags'], old_value_char: 'AI, Backend', new_value_char: 'AI, Backend, Ultrapowers Approve' }];
+  s.fields = [{ id: 301, model: 'project.task', name: 'tag_ids', tracking: s.tagTracking ? 100 : false }];
+  s.attachments = [
+    { id: 5, name: 'mockup.png', mimetype: 'image/png', file_size: 800, res_model: 'project.task', res_id: 13627, datas: base64Of(800) },
+    { id: 6, name: 'big.pdf', mimetype: 'application/pdf', file_size: 2 * 1024 * 1024, res_model: 'project.task', res_id: 13627, datas: base64Of(16) },
+  ];
+  s.relations = {
+    'project.task.tag_ids': Object.assign(s.tags, { model: 'project.tags' }),
+    'mail.tracking.value.field_id': Object.assign(s.fields, { model: 'ir.model.fields' }),
+  };
+  s.tagId = (name) => s.tags.find((t) => t.name === name)?.id ?? null;
+  s.nextId = 1000;
+  s.tagTask = (taskId, name, { by = 'val', at = '2026-10-05 09:00:00', tracked = s.tagTracking } = {}) => {
+    const task = s.tasks.find((t) => t.id === taskId);
+    let tag = s.tags.find((t) => t.name === name);
+    if (!tag) { tag = { id: s.nextId++, name, color: 1 }; s.tags.push(tag); }
+    const user = s.users.find((u) => u.login === by);
+    const before = task.tag_ids.map((id) => s.tags.find((t) => t.id === id).name).join(', ');
+    if (!task.tag_ids.includes(tag.id)) task.tag_ids.push(tag.id);
+    task.write_uid = [user.id, by];
+    task.write_date = at;
+    if (tracked) {
+      const mid = s.nextId++;
+      s.messages.push({ id: mid, model: 'project.task', res_id: taskId, message_type: 'notification', date: at, dateIso: at.replace(' ', 'T') + 'Z', author_id: user.partner_id, body: '', tracking_value_ids: [s.nextId] });
+      s.tracking.push({ id: s.nextId++, mail_message_id: [mid, 'm'], field_id: [301, 'Tags'], old_value_char: before, new_value_char: task.tag_ids.map((id) => s.tags.find((t) => t.id === id).name).join(', ') });
+    }
+  };
+  s.models = {
+    'project.task': {
+      search_read: searchRead((x) => x.tasks, 'project.task'),
+      read: read((x) => x.tasks),
+      write: (args, kwargs, x) => {
+        const [ids, vals] = args;
+        for (const task of x.tasks.filter((t) => ids.includes(t.id))) {
+          for (const cmd of vals.tag_ids ?? []) {
+            if (cmd[0] === 4 && !task.tag_ids.includes(cmd[1])) task.tag_ids.push(cmd[1]);
+            if (cmd[0] === 3) task.tag_ids = task.tag_ids.filter((id) => id !== cmd[1]);
+            if (cmd[0] === 6) task.tag_ids = [...cmd[2]];
+          }
+          task.write_uid = [x.uid, 'Bot'];
+          task.write_date = x.now ?? '2026-10-05 09:30:00';
+        }
+        x.writes.push({ model: 'project.task', method: 'write', ids, vals });
+        return true;
+      },
+      message_post: (args, kwargs, x) => {
+        const id = x.nextId++;
+        const dateIso = x.nowIso ?? new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+        x.messages.push({ id, model: 'project.task', res_id: args[0][0], message_type: kwargs.message_type ?? 'comment', date: dateIso.replace('T', ' ').replace('Z', ''), dateIso, author_id: [17, 'Bot'], body: kwargs.body ?? '', tracking_value_ids: [] });
+        x.writes.push({ model: 'project.task', method: 'message_post', ids: args[0], kwargs });
+        return id;
+      },
+    },
+    'project.tags': {
+      search_read: searchRead((x) => x.tags, 'project.tags'),
+      read: read((x) => x.tags),
+      create: (args, kwargs, x) => {
+        const vals = Array.isArray(args[0]) ? args[0][0] : args[0];
+        const tag = { id: x.nextId++, name: vals.name, color: vals.color ?? 1 };
+        x.tags.push(tag);
+        x.writes.push({ model: 'project.tags', method: 'create', vals });
+        return Array.isArray(args[0]) ? [tag.id] : tag.id;
+      },
+    },
+    'mail.message': {
+      search_read: searchRead((x) => x.messages, 'mail.message'),
+      read: read((x) => x.messages),
+    },
+    'mail.tracking.value': { search_read: searchRead((x) => x.tracking, 'mail.tracking.value') },
+    'ir.model.fields': { search_read: searchRead((x) => x.fields, 'ir.model.fields') },
+    'res.users': {
+      search_read: searchRead((x) => x.users, 'res.users'),
+      read: read((x) => x.users),
+    },
+    'ir.model.data': {
+      check_object_reference: (args, kwargs, x) => {
+        const key = `${args[0]}.${args[1]}`;
+        if (!(key in x.groups)) throw new Error(`External ID not found: ${key}`);
+        return ['res.groups', x.groups[key]];
+      },
+    },
+    'ir.attachment': {
+      search_read: searchRead((x) => x.attachments, 'ir.attachment'),
+      read: read((x) => x.attachments),
+    },
+  };
+  return s;
+}
+
 function rpcError(message) {
   return { code: 200, message: 'Odoo Server Error', data: { name: 'odoo.exceptions.AccessError', message } };
 }
@@ -40,6 +210,7 @@ export async function startOdooFake(s = seed()) {
       return answer({ result: s.databases });
     }
     if (url.pathname !== '/jsonrpc') { res.writeHead(404); res.end(); return; }
+    if (s.redirectTo) { res.writeHead(307, { location: s.redirectTo }); res.end(); return; }
     requests.push(body);
     const { service, method, args = [] } = body.params ?? {};
     if (service === 'common' && method === 'authenticate') {

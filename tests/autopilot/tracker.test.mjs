@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { trackerFor } from '../../skills/autopilot/scripts/tracker.mjs';
+import { startOdooFake, odooSeedWithTask } from './fixtures/odoo-fake.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const STUB = path.join(HERE, 'fixtures', 'tracker-stub.mjs');
@@ -152,4 +153,114 @@ test('missing cli -> no-cli; a failing call -> tracker-failed with stderr; a han
   await assert.rejects(trackerFor(GH, e).me(), (err) => err.code === 'tracker-failed' && /boom/.test(err.message));
   const slow = env({}, { STUB_SLEEP_MS: '2000', ULTRAPOWERS_FETCH_TIMEOUT_MS: '200' });
   await assert.rejects(trackerFor(GH, slow).me(), { code: 'timeout' });
+});
+
+// --- Odoo (spec 2026-10-05 §5), against the fake server in fixtures/odoo-fake.mjs.
+const E_ODOO = { ...process.env, ODOO_API_KEY: 'k1' };
+const ODOO = (f) => ({ provider: 'odoo', url: f.url, db: 'erp', login: 'bot', path: '34', number: 13627, host: new URL(f.url).host });
+const odooFakes = [];
+async function odooFake(s = odooSeedWithTask()) {
+  const f = await startOdooFake(s);
+  odooFakes.push(f);
+  return f;
+}
+test.after(async () => { for (const f of odooFakes) await f.close(); });
+
+test('odoo listTickets lists open tasks of the project carrying the tag', async () => {
+  const f = await odooFake();
+  const ev = await trackerFor(ODOO(f), E_ODOO).listTickets('Ultrapowers Ready');
+  assert.deepEqual(ev, [{ number: 13627, title: 'Integration', updatedAt: '2026-10-05T08:00:00Z' }]);
+});
+
+test('odoo me, title and labels', async () => {
+  const f = await odooFake();
+  const t = trackerFor(ODOO(f), E_ODOO);
+  assert.equal(await t.me(), 'bot');
+  assert.equal(await t.title(13627), 'Integration');
+  assert.deepEqual(await t.labels(13627), ['AI', 'Backend', 'Ultrapowers Ready']);
+});
+
+test('odoo labelEvents come from tracking values when the field is tracked', async () => {
+  const f = await odooFake();
+  const ev = await trackerFor(ODOO(f), E_ODOO).labelEvents(13627);
+  assert.deepEqual(ev.at(-1), { id: '51', action: 'labeled', label: 'Ultrapowers Approve', actor: 'val', at: '2026-10-02T19:50:00Z' });
+});
+
+test('odoo labelEvents fall back to the last writer when the field is not tracked', async () => {
+  const f = await odooFake(odooSeedWithTask({ tagTracking: false }));
+  const ev = await trackerFor(ODOO(f), E_ODOO).labelEvents(13627);
+  assert.equal(ev.length, 3);
+  assert.equal(ev[0].attribution, 'last-writer');
+  assert.equal(ev[0].actor, 'val');
+  assert.equal(ev[0].at, '2026-10-05T08:00:00Z');
+});
+
+test('odoo permission: portal none, internal without group read, project user write', async () => {
+  const f = await odooFake();
+  const t = trackerFor(ODOO(f), E_ODOO);
+  assert.equal(await t.permission('guest'), 'none');
+  assert.equal(await t.permission('intern'), 'read');
+  assert.equal(await t.permission('val'), 'write');
+  assert.equal(await t.permission('nobody'), 'none');
+});
+
+test('odoo comments are the human messages after since, as text', async () => {
+  const f = await odooFake();
+  const c = await trackerFor(ODOO(f), E_ODOO).comments(13627, '2026-10-01T00:00:00Z');
+  assert.deepEqual(c, [{ id: '50', author: 'val', at: '2026-10-02T18:39:00Z', body: 'will have kick off today, got access from clients', url: '' }]);
+});
+
+test('odoo comment posts an internal note and commentTime reads it back', async () => {
+  const f = await odooFake();
+  const t = trackerFor(ODOO(f), E_ODOO);
+  const url = await t.comment(13627, 'Packet\n  brief https://d/x');
+  assert.match(url, /web#model=project\.task&id=13627&message=\d+$/);
+  const post = f.seed.writes.at(-1);
+  assert.equal(post.method, 'message_post');
+  assert.equal(post.kwargs.subtype_xmlid, 'mail.mt_note');
+  assert.match(post.kwargs.body, /<pre[^>]*>Packet\n  brief <a href="https:\/\/d\/x">/);
+  assert.equal(await t.commentTime(url), f.seed.messages.at(-1).dateIso);
+});
+
+test('odoo addLabel creates a missing tag then writes it; removeLabel removes it', async () => {
+  const f = await odooFake();
+  const t = trackerFor(ODOO(f), E_ODOO);
+  await t.addLabel(13627, 'Ultrapowers Running');
+  const id = f.seed.tagId('Ultrapowers Running');
+  assert.ok(id, 'the tag was created');
+  assert.deepEqual(f.seed.writes.at(-1).vals.tag_ids, [[4, id]]);
+  await t.removeLabel(13627, 'Ultrapowers Running');
+  assert.deepEqual(f.seed.writes.at(-1).vals.tag_ids, [[3, id]]);
+});
+
+test('odoo ensureLabel creates with an Odoo colour and leaves an existing tag alone', async () => {
+  const f = await odooFake();
+  const t = trackerFor(ODOO(f), E_ODOO);
+  await t.ensureLabel('Ultrapowers Hold', 'd93f0b', 'autopilot: stop here');
+  const created = f.seed.writes.at(-1);
+  assert.equal(created.method, 'create');
+  assert.ok(created.vals.color >= 1 && created.vals.color <= 11);
+  const n = f.seed.writes.length;
+  await t.ensureLabel('AI', '0e8a16', 'x');
+  assert.equal(f.seed.writes.length, n);
+});
+
+test('odoo createPr is no-forge', async () => {
+  const f = await odooFake();
+  await assert.rejects(trackerFor(ODOO(f), E_ODOO).createPr({ head: 'x', base: 'main', title: 't', body: 'b' }), (e) => e.code === 'no-forge');
+});
+
+test('odoo without ODOO_API_KEY is no-credentials', async () => {
+  const f = await odooFake();
+  const bare = { ...process.env };
+  delete bare.ODOO_API_KEY;
+  await assert.rejects(trackerFor(ODOO(f), bare).title(13627), (e) => e.code === 'no-credentials');
+});
+
+test('github and gitlab prComment post on the pull request', async () => {
+  const e = env({ 'pr comment https://github.com/o/r/pull/20 --body-file -': { stdout: 'https://github.com/o/r/pull/20#issuecomment-5\n' } });
+  assert.equal(await trackerFor(GH, e).prComment('https://github.com/o/r/pull/20', 'report'), 'https://github.com/o/r/pull/20#issuecomment-5');
+  assert.equal(e.calls()[0].stdin, 'report');
+  const g = env({ 'mr note 4 -R acme/platform/web -m report': { stdout: 'https://gitlab.example.com/acme/platform/web/-/merge_requests/4#note_8\n' } });
+  assert.equal(await trackerFor(GL, g).prComment('https://gitlab.example.com/acme/platform/web/-/merge_requests/4', 'report'), 'https://gitlab.example.com/acme/platform/web/-/merge_requests/4#note_8');
 });
