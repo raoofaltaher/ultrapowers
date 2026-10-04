@@ -34,9 +34,10 @@ cat > "$ROOT/.agents/ultrapowers.json" <<'JSON'
   "topology": "nested",
   "repos": [ { "name": "repo-a", "path": "repo-a", "defaultBranch": "main" } ],
   "autopilot": { "mode": "gated" },
+  "tickets": { "sources": [ { "prefix": "ODOO", "provider": "odoo", "url": "https://erp.example.com", "login": "bot@example.com" } ] },
   "qa": {
     "urls": { "frontend": "http://localhost:3000", "backendHealth": "http://localhost:8080/health", "idp": "", "observability": "" },
-    "hosts": { "allowed": ["localhost", "127.0.0.1"], "forbidden": ["prod.example.com"] }
+    "hosts": { "allowed": ["localhost", "127.0.0.1", "erp.example.com"], "forbidden": ["prod.example.com"] }
   }
 }
 JSON

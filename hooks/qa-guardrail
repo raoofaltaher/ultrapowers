@@ -141,7 +141,7 @@ if command -v cygpath >/dev/null 2>&1; then
   root_node="$(cygpath -m "$root" 2>/dev/null)" || root_node="$root"
 fi
 
-parse_status=""; tool=""; cmd=""; wpath=""; url=""; event_cwd=""; allowed=""; forbidden=""; ticket=""; keypaths=""
+parse_status=""; tool=""; cmd=""; wpath=""; url=""; event_cwd=""; allowed=""; forbidden=""; ticket=""; keypaths=""; tracker_hosts=""
 {
   IFS= read -r -d '' parse_status || true
   IFS= read -r -d '' tool || true
@@ -153,6 +153,7 @@ parse_status=""; tool=""; cmd=""; wpath=""; url=""; event_cwd=""; allowed=""; fo
   IFS= read -r -d '' forbidden || true
   IFS= read -r -d '' ticket || true
   IFS= read -r -d '' keypaths || true
+  IFS= read -r -d '' tracker_hosts || true
 } < <(printf '%s' "$event" | node -e '
 const fs = require("node:fs");
 const path = require("node:path");
@@ -166,11 +167,14 @@ const root = process.argv[1];
 const inp = ev.tool_input && typeof ev.tool_input === "object" ? ev.tool_input : {};
 const str = (v) => (typeof v === "string" ? v : "");
 let qa = {};
+let sources = [];
 try {
   // A byte order mark is valid for the preflight, so it is valid here; any other read or
   // parse failure is reported, never taken as an empty config with no host lists.
   const raw = fs.readFileSync(path.join(root, ".agents", "ultrapowers.json"), "utf8").replace(/^\uFEFF/, "");
-  qa = JSON.parse(raw).qa || {};
+  const cfg = JSON.parse(raw) || {};
+  qa = cfg.qa || {};
+  sources = cfg.tickets && Array.isArray(cfg.tickets.sources) ? cfg.tickets.sources : [];
 } catch (e) {
   process.stdout.write(["badconfig:" + String(e.message).split("\n")[0], "", "", "", "", "", "", "", ""].join("\0") + "\0");
   process.exit(0);
@@ -181,6 +185,15 @@ const allowed = norm(hosts.allowed);
 const urls = qa.urls && typeof qa.urls === "object" ? qa.urls : {};
 for (const value of Object.values(urls)) {
   try { if (str(value)) allowed.push(new URL(value).hostname.toLowerCase()); } catch (e) { /* not a URL */ }
+}
+// The hosts of the ticket trackers (an Odoo source names its server by URL): a stage never
+// calls the tracker from the shell, whatever the egress allow-list says.
+const trackerHosts = [];
+for (const source of sources) {
+  if (!source || typeof source !== "object") continue;
+  for (const key of ["url", "mcpUrl"]) {
+    try { if (str(source[key])) trackerHosts.push(new URL(source[key]).hostname.toLowerCase()); } catch (e) { /* not a URL */ }
+  }
 }
 let ticket = "";
 try { ticket = fs.readFileSync(path.join(root, ".ultrapowers", "qa-active"), "utf8").trim(); } catch (e) { ticket = ""; }
@@ -205,7 +218,7 @@ process.stdout.write([
   "ok", str(ev.tool_name), command,
   str(inp.file_path) || str(inp.notebook_path) || str(inp.path),
   str(inp.url), str(ev.cwd), allowed.join(","), norm(hosts.forbidden).join(","), ticket,
-  pathFields.join("\n"),
+  pathFields.join("\n"), trackerHosts.join(","),
 ].join("\0") + "\0");
 ' "$root_node")
 case "$parse_status" in
@@ -340,7 +353,7 @@ if [ "$PROFILE" = "autopilot" ]; then
     mcp__*)
       if printf '%s' "$tool_lc" | grep -Eq 'github|gitlab|glab|jira|linear|odoo|bitbucket|azure_?devops' \
         && ! printf '%s' "$tool_lc" | grep -Eq '(^|_)(get|list|search|read|view|fetch|show|describe|find|query|resolve)(_|$)' \
-        && printf '%s' "$tool_lc" | grep -Eq '(create|update|edit|add|remove|delete|merge|comment|note|label|close|reopen|post|save|accept|push|fork|assign|transfer|lock|approve|submit|publish|manage|link)'; then
+        && printf '%s' "$tool_lc" | grep -Eq '(create|update|edit|add|remove|delete|merge|comment|note|label|close|reopen|post|save|accept|push|fork|assign|transfer|lock|approve|submit|publish|manage|link|call|execute|write|unlink|method)'; then
         deny "tracker writes through MCP tools are never run by an autopilot stage; the engine writes back between stages"
       fi
       printf '%s' "$tool_lc" | grep -Eq '^mcp__git__git_(push|reset)' \
@@ -504,6 +517,19 @@ if command -v cygpath >/dev/null 2>&1; then writes_js="$(cygpath -m "$writes_js"
 wreason="$(printf '%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$cmd" | ULTRAPOWERS_GUARD_PROFILE="$PROFILE" node "$writes_js" 2>&1)" \
   || wreason="the command could not be analysed for writes; it is refused during $run_kind"
 [ -z "$wreason" ] || deny "$wreason"
+
+# The ticket tracker's hosts (tickets.sources[].url, .mcpUrl), autopilot profile: a shell call
+# to the tracker is an engine step (a label, a note, a packet), never a stage's. This holds
+# whether or not qa.hosts.allowed lists the host.
+if [ "$PROFILE" = "autopilot" ] && [ -n "$tracker_hosts" ] \
+  && printf '%s' "$lc" | grep -Eq "${B}(curl|wget)(\\.exe)?[[:space:]]|invoke-webrequest|invoke-restmethod|${B}(iwr|irm)[[:space:]]"; then
+  turls="$(printf '%s' "$cmd" | grep -Eoi 'https?://[^/"'"'"'[:space:];&|()<>]+' || true)"
+  while IFS= read -r u; do
+    [ -n "$u" ] || continue
+    h="$(host_of "$u")"
+    on_list "$tracker_hosts" "$h" && deny "calls to the ticket tracker ($h) are engine steps; a stage reads the ticket through its tracker tools and never writes it from the shell"
+  done <<< "$turls"
+fi
 
 if [ -n "$allowed" ] && printf '%s' "$lc" | grep -Eq "${B}(curl|wget)(\\.exe)?[[:space:]]|invoke-webrequest|invoke-restmethod|${B}(iwr|irm)[[:space:]]"; then
   urls="$(printf '%s' "$cmd" | grep -Eoi 'https?://[^/"'"'"'[:space:];&|()<>]+' || true)"

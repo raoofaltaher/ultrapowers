@@ -122,5 +122,14 @@
   {"name":"deny_patch_tool_protected_path","event":{"tool_name":"patch","tool_input":{"path":"{{ROOT}}/tasks/GH-16/autopilot.json","old_string":"a","new_string":"b"}}},
   {"name":"allow_patch_tool_src","event":{"tool_name":"patch","tool_input":{"path":"{{ROOT}}/repo-a/src/x.ts","old_string":"a","new_string":"b"}}},
   {"name":"deny_apply_patch_body_field","event":{"tool_name":"apply_patch","tool_input":{"patch":"*** Begin Patch\n*** Update File: .github/workflows/ci.yml\n@@\n+x\n*** End Patch"}}},
-  {"name":"deny_apply_patch_input_field","event":{"tool_name":"ApplyPatch","tool_input":{"input":"*** Begin Patch\n*** Add File: .husky/pre-commit\n@@\n+x\n*** End Patch"}}}
+  {"name":"deny_apply_patch_input_field","event":{"tool_name":"ApplyPatch","tool_input":{"input":"*** Begin Patch\n*** Add File: .husky/pre-commit\n@@\n+x\n*** End Patch"}}},
+  {"name":"deny_odoo_mcp_update","event":{"tool_name":"mcp__tickets-odoo__update_record","tool_input":{"model":"project.task","record_id":1,"values":{}}}},
+  {"name":"deny_odoo_mcp_call_method","event":{"tool_name":"mcp__tickets-odoo__call_model_method","tool_input":{"model":"project.task","method":"write"}}},
+  {"name":"deny_odoo_mcp_execute_kw","event":{"tool_name":"mcp__odoo__execute_kw","tool_input":{"model":"project.task","method":"message_post"}}},
+  {"name":"deny_odoo_mcp_post_message","event":{"tool_name":"mcp__tickets-odoo__post_message","tool_input":{"model":"project.task","record_id":1,"body":"x"}}},
+  {"name":"allow_odoo_mcp_search","event":{"tool_name":"mcp__tickets-odoo__search_records","tool_input":{"model":"project.task"}}},
+  {"name":"allow_odoo_mcp_get_fields","event":{"tool_name":"mcp__tickets-odoo__get_fields","tool_input":{"model":"project.task"}}},
+  {"name":"deny_curl_tracker_host","event":{"tool_name":"Bash","tool_input":{"command":"curl -X POST https://erp.example.com/jsonrpc -d '{}'"}}},
+  {"name":"deny_iwr_tracker_host","event":{"tool_name":"Bash","tool_input":{"command":"iwr https://erp.example.com/web/dataset/call_kw"}}},
+  {"name":"deny_wget_tracker_host","event":{"tool_name":"Bash","tool_input":{"command":"wget -q -O - https://erp.example.com/jsonrpc"}}}
 ]
