@@ -160,13 +160,12 @@ test('packetId is stable across repo order and 12 hex', () => {
 });
 
 test('verifyApproval: the four checks', async () => {
-  const base = { approveLabel: 'up:approve', approvers: [], botLogin: 'engine-bot', packet: PACKET, tips: TIPS_SAME };
+  const base = { approveLabel: 'up:approve', approvers: [], packet: PACKET, tips: TIPS_SAME };
   const ok = await verifyApproval({ ...base, events: [EV('alice', AFTER)], permissionOf: async () => 'write' });
   assert.deepEqual(ok, { ok: true, actor: 'alice', eventId: 'e1', at: AFTER });
   assert.equal((await verifyApproval({ ...base, events: [], permissionOf: async () => 'admin' })).reason, 'no-event');
   assert.equal((await verifyApproval({ ...base, events: [EV('alice', AFTER, { label: 'up:ready' })], permissionOf: async () => 'admin' })).reason, 'no-event');
   assert.equal((await verifyApproval({ ...base, events: [EV('alice', AFTER), EV('alice', '2026-10-04T11:00:00Z', { id: 'e2', action: 'unlabeled' })], permissionOf: async () => 'admin' })).reason, 'no-event');
-  assert.equal((await verifyApproval({ ...base, events: [EV('engine-bot', AFTER)], permissionOf: async () => 'admin' })).reason, 'self');
   assert.equal((await verifyApproval({ ...base, events: [EV('alice', BEFORE)], permissionOf: async () => 'write' })).reason, 'before-packet');
   assert.equal((await verifyApproval({ ...base, events: [EV('alice', AFTER)], permissionOf: async () => 'read' })).reason, 'not-permitted');
   assert.equal((await verifyApproval({ ...base, approvers: ['bob'], events: [EV('alice', AFTER)], permissionOf: async () => 'admin' })).reason, 'not-approver');

@@ -389,7 +389,6 @@ async function runPr(opts) {
 async function pendingApproval(ctx, state, events) {
   if (!state.packet) return { ok: false, reason: 'no-packet', detail: 'no packet has been posted' };
   const eventsList = await ctx.tracker.labelEvents(ctx.source.number);
-  const botLogin = await ctx.tracker.me().catch(() => '');
   const tips = { docs: workTip(ctx.dirs.docs, state.ticket, state.docs.branch), repos: {} };
   for (const r of state.repos ?? []) {
     const dir = r.worktree && fs.existsSync(r.worktree) ? r.worktree : ctx.dirs.repos[r.name];
@@ -397,7 +396,7 @@ async function pendingApproval(ctx, state, events) {
   }
   return verifyApproval({
     events: eventsList, approveLabel: events.approve, packet: state.packet,
-    permissionOf: (login) => ctx.tracker.permission(login), approvers: ctx.settings.approvers ?? [], botLogin, tips,
+    permissionOf: (login) => ctx.tracker.permission(login), approvers: ctx.settings.approvers ?? [], tips,
   });
 }
 

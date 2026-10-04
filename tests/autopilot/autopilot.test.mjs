@@ -230,6 +230,16 @@ test('an approval by a permitted account removes the label, freezes scope and le
   assert.deepEqual([run(ws, ['next', 'GH-16']).json.action, run(ws, ['next', 'GH-16']).json.stage], ['run', 'execute'], 'idempotent');
 });
 
+test('the developer approves with the same account the engine runs as', () => {
+  const ws = workspace();
+  throughPlan(ws);
+  run(ws, ['packet', 'GH-16']);
+  ws.setMap({ ...approvedBy('dev-owner'), 'api user': { stdout: { login: 'dev-owner' } } });
+  const n = run(ws, ['next', 'GH-16']);
+  assert.deepEqual([n.json.action, n.json.stage, n.json.reason], ['run', 'execute', 'approved'], n.stdout);
+  assert.equal(state(ws).approval.actor, 'dev-owner');
+});
+
 test('an approval by a read-only account or before the packet does not count', () => {
   const ws = workspace();
   throughPlan(ws);

@@ -41,6 +41,7 @@ Not in scope:
 | D8 | Branch name `<ID>-<slug>` in every repository in scope. | Matches the existing ticket branch matcher in the helpers and the QA preflight. |
 | D9 | One hash-chained log per ticket serves hand-offs, KPIs and audit. | One file instead of a stage log plus an audit log. |
 | D10 | The new skill and every changed skill go through `ultrapowers:writing-skills`, with the structure and voice of the skills under `skills/` (overview, announce line, arguments, numbered steps, checklist, Red Flags table). | Rule 2 and rule 3 of `AGENTS.md`. |
+| D11 | Amended 2026-10-04 after the live run on issue 16. The account the engine runs as may approve. The developer who runs the engine with their own tracker login approves their own tickets; a bot is kept out by the `approvers` allow-list. The agent still never adds a control label: the envelope denies it during stages and the skill forbids it at the gate. | The original rule, "the engine's own account never counts", left a solo developer no way to pass the gate. |
 
 ## 4. Configuration
 
@@ -63,7 +64,7 @@ The marker `.agents/ultrapowers.json` gains one optional block. Absent means `of
 |---|---|
 | `mode` | `off`, `gated` or `full`. `off`: every skill behaves as today. `gated`: run to the packet, stop, resume on approval, run to the pull requests, stop. `full`: the packet is posted for the record and the run continues to the pull requests. A QA FAIL, a push outside the frozen scope or a changed plan after approval stops a run in both modes. |
 | `baseBranch` | Base of the ticket branch in the documents repository. Default: its remote HEAD. Code repositories use their own `repos[].defaultBranch`. |
-| `approvers` | Tracker logins. Empty means any member with write access. The engine's own account never counts. |
+| `approvers` | Tracker logins. Empty means any member with write access, the engine's own account included (D11). A team that runs the engine as a bot lists its human approvers here to keep the bot out. |
 | `execution` | `subagent` (subagent-driven-development) or `inline` (executing-plans). |
 | `harness` | The headless adapter the watcher uses: `claude-code` or `opencode`. |
 | `events` | The six label names. Configurable because teams own their label vocabularies. |
@@ -143,7 +144,7 @@ The packet, one comment under 25 lines, from a template beside the skill: title 
 Verification of an approval, all four required:
 
 1. The label event comes from the tracker's event timeline with its actor and time.
-2. The actor has write access: GitHub collaborator permission `write`, `maintain` or `admin` on the documents repository; GitLab access level 40 or higher. When `approvers` is not empty, the actor is in it. The engine's own account never counts.
+2. The actor has write access: GitHub collaborator permission `write`, `maintain` or `admin` on the documents repository; GitLab access level 40 or higher. When `approvers` is not empty, the actor is in it. The engine's own account counts like any other (D11).
 3. The event time is after the packet time.
 4. The documents tip and every code tip in scope equal the packet's.
 

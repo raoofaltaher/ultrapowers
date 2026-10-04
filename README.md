@@ -362,7 +362,7 @@ The `autopilot` block (every field but `mode` is optional):
 |---|---|
 | `mode` | `off` (the manual workflow), `gated` (stops at the review packet and at the pull requests) or `full` (stops at the pull requests only). A ticket overrides it with `--mode` on the command or a label `up:mode:<mode>` |
 | `baseBranch` | The base of the ticket branch in the documents repository, this workspace root; default the remote HEAD. Code repositories use their own `defaultBranch` from `repos` |
-| `approvers` | Tracker logins allowed to approve a packet; empty means any member with write access. The engine's own account never counts |
+| `approvers` | Tracker logins allowed to approve a packet; empty means any member with write access, including the account the engine runs as, so you approve your own tickets. If the engine runs as a bot, list your human approvers here to keep the bot out |
 | `execution` | `subagent` (a fresh subagent per plan task, the default) or `inline` |
 | `harness` | The headless harness the watcher spawns: `claude-code` (default) or `opencode` |
 | `events` | The six label names, defaults `up:ready`, `up:approve`, `up:changes`, `up:hold`, `up:running`, `up:blocked` |

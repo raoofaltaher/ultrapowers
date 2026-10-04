@@ -296,11 +296,12 @@ export function renderPacket(template, { state, links, assumptions = [], events 
 }
 
 // The four checks of spec §7 against the tracker's label events.
-export async function verifyApproval({ events, approveLabel, packet, permissionOf, approvers = [], botLogin, tips }) {
+// The engine's own account counts like any other: the developer who runs the engine approves their own tickets.
+// A team that runs the engine as a bot keeps the bot out by listing human logins in autopilot.approvers.
+export async function verifyApproval({ events, approveLabel, packet, permissionOf, approvers = [], tips }) {
   const relevant = (events ?? []).filter((e) => e.label === approveLabel).sort((a, b) => String(a.at).localeCompare(String(b.at)));
   const last = relevant[relevant.length - 1];
   if (!last || last.action !== 'labeled') return { ok: false, reason: 'no-event', detail: `no ${approveLabel} label event` };
-  if (botLogin && last.actor === botLogin) return { ok: false, reason: 'self', detail: `${last.actor} is the engine's own account` };
   if (!packet || !packet.postedAt || String(last.at) <= String(packet.postedAt)) {
     return { ok: false, reason: 'before-packet', detail: `the label at ${last.at} precedes the packet at ${packet?.postedAt ?? 'none'}` };
   }
