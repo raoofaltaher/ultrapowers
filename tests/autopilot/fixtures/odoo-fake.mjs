@@ -2,6 +2,7 @@
 // `object.execute_kw`) and `/web/database/list`, on a node http server. `seed.models[model][method]`
 // answers each call; every call, request body and write is recorded for the assertions.
 import http from 'node:http';
+import fs from 'node:fs';
 
 export function seed(overrides = {}) {
   const s = {
@@ -200,6 +201,7 @@ export function applySetup(s, setup = {}) {
     if (task) task.tag_ids = [...tagIds];
   }
   for (const change of setup.tagTasks ?? []) s.tagTask(change.taskId, change.name, change);
+  if (typeof setup.taskDescription === 'string') s.tasks[0].description = setup.taskDescription;
   return s;
 }
 
@@ -270,7 +272,8 @@ export async function startOdooFake(s = seed()) {
 // seed overrides plus `setup` (see applySetup). Prints one line, {"url":...}, when it listens.
 if (process.argv[1] && /odoo-fake\.mjs$/.test(process.argv[1].replace(/\\/g, '/')) && process.argv[2] === 'serve') {
   const at = process.argv.indexOf('--seed');
-  const spec = at > -1 ? JSON.parse(process.argv[at + 1]) : {};
+  const file = process.argv.indexOf('--seed-file');
+  const spec = file > -1 ? JSON.parse(fs.readFileSync(process.argv[file + 1], 'utf8')) : at > -1 ? JSON.parse(process.argv[at + 1]) : {};
   const { setup, ...overrides } = spec;
   const s = applySetup(odooSeedWithTask(overrides), setup);
   const fake = await startOdooFake(s);

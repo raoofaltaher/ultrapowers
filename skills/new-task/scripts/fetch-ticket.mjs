@@ -16,6 +16,8 @@ import path from 'node:path';
 import process from 'node:process';
 import { execFile } from 'node:child_process';
 import { resolveTicket, TicketError } from './ticket-sources.mjs';
+import { createOdooClient, discoverDb, htmlToText, odooIso } from '../../autopilot/scripts/odoo.mjs';
+import { loadSecretsFile, AutopilotError } from '../../autopilot/scripts/autopilot-lib.mjs';
 
 const MARKER = path.join('.agents', 'ultrapowers.json');
 const CLI = {
@@ -119,9 +121,131 @@ function mcpAnswer(resolution) {
   return { via: 'mcp', provider, server, path: p, number };
 }
 
+// Every URL in the ticket's text and messages, once each, in order; trailing punctuation dropped.
+export function collectLinks(texts) {
+  const out = [];
+  for (const text of texts) {
+    for (const m of String(text ?? '').matchAll(/https?:\/\/[^\s<>"'\])]+/g)) {
+      const url = m[0].replace(/[.,;:!?]+$/, '');
+      if (!out.includes(url)) out.push(url);
+    }
+  }
+  return out;
+}
+
+const FILE_LINK = /\.(png|jpe?g|gif|webp|svg|pdf|docx?|xlsx?|pptx?|csv|zip|txt|md|json|mp4|mov)(\?[^/]*)?$/i;
+const ATTACHMENT_HOST = /github\.com\/user-attachments\/|githubusercontent\.com\/|\/uploads\/|\/-\/project\/\d+\/uploads\//i;
+
+// Links that are files (by extension or by a forge's upload host) are the issue's attachments.
+export function attachmentsFromLinks(links) {
+  return links
+    .filter((url) => FILE_LINK.test(url) || ATTACHMENT_HOST.test(url))
+    .map((url) => ({ name: decodeURIComponent(new URL(url).pathname.split('/').pop() || 'attachment'), url, size: null, mimetype: null }));
+}
+
+export function formatSize(bytes) {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n < 0) return 'size unknown';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function safeName(name) {
+  return String(name ?? 'attachment').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/^\.+/, '_').slice(0, 120) || 'attachment';
+}
+
+function withReads(ticket, messages) {
+  ticket.messages = messages;
+  ticket.links = collectLinks([ticket.body, ...messages.map((m) => m.body)]);
+  ticket.attachments = ticket.attachments ?? attachmentsFromLinks(ticket.links);
+  return ticket;
+}
+
+// The issue's comments through the CLI; a system note on GitLab is not a message.
+async function commentsFor(resolution) {
+  const cli = CLI[resolution.provider];
+  const args = resolution.provider === 'github'
+    ? ['api', `repos/${resolution.path}/issues/${resolution.number}/comments`, '--paginate', '--slurp']
+    : ['api', `projects/${encodeURIComponent(resolution.path)}/issues/${resolution.number}/notes?per_page=100&sort=asc&order_by=created_at`];
+  const out = await runCli(resolution, args);
+  if (out.timedOut) throw new FetchError('timeout', `${cli.name} did not answer within ${timeoutMs()} ms while reading the comments`);
+  if (!out.ok) throw new FetchError('cli-failed', `${cli.name}: the comments could not be read: ${firstLine(out.stderr ?? '')}`);
+  let data;
+  try {
+    data = JSON.parse(out.stdout);
+  } catch (err) {
+    throw new FetchError('cli-failed', `${cli.name} printed comments that are not JSON: ${err.message}`);
+  }
+  const items = Array.isArray(data) && data.every(Array.isArray) ? data.flat() : data;
+  if (!Array.isArray(items)) return [];
+  if (resolution.provider === 'github') return items.map((c) => ({ author: c.user?.login ?? '', at: c.created_at ?? '', body: c.body ?? '' }));
+  return items.filter((n) => !n.system).map((n) => ({ author: n.author?.username ?? '', at: n.created_at ?? '', body: n.body ?? '' }));
+}
+
+function odooState(value) {
+  return String(value ?? '').replace(/^\d+_/, '').replace(/_/g, ' ');
+}
+
+function fetchErrorFrom(err) {
+  if (err instanceof AutopilotError) return new FetchError(err.code === 'timeout' ? 'timeout' : 'cli-failed', `Odoo: ${err.message}`);
+  return err;
+}
+
+// An Odoo task over JSON-RPC with the technical user's key (spec 2026-10-05 §7); the project of
+// the id must be the task's.
+async function odooClientFor(resolution) {
+  const db = resolution.db ?? await discoverDb(resolution.url);
+  return createOdooClient({ url: resolution.url, db, login: resolution.login, apiKey: process.env.ODOO_API_KEY });
+}
+
+async function fetchOdoo(resolution) {
+  try {
+    const c = await odooClientFor(resolution);
+    const n = Number(resolution.number);
+    const [task] = await c.call('project.task', 'read', [[n]], { fields: ['name', 'description', 'tag_ids', 'stage_id', 'state', 'user_ids', 'project_id', 'create_uid'] });
+    if (!task) throw new FetchError('not-found', `Odoo task ${n} was not found`);
+    const projectId = Array.isArray(task.project_id) ? task.project_id[0] : task.project_id;
+    if (String(projectId) !== String(resolution.path)) {
+      throw new FetchError('bad-ticket', `${resolution.id}: task ${n} belongs to project ${projectId}, not ${resolution.path}`);
+    }
+    const tags = task.tag_ids?.length ? (await c.call('project.tags', 'read', [task.tag_ids], { fields: ['name'] })).map((t) => t.name) : [];
+    const logins = new Map();
+    const loginOf = async (partnerId) => {
+      if (!partnerId) return '';
+      if (!logins.has(partnerId)) {
+        const rows = await c.call('res.users', 'search_read', [[['partner_id', '=', partnerId]]], { fields: ['login'] });
+        logins.set(partnerId, rows[0]?.login ?? '');
+      }
+      return logins.get(partnerId);
+    };
+    const rows = await c.call('mail.message', 'search_read', [[['model', '=', 'project.task'], ['res_id', '=', n], ['message_type', '=', 'comment']]], { fields: ['id', 'date', 'author_id', 'body'], order: 'date asc' });
+    const messages = [];
+    for (const m of rows) messages.push({ author: await loginOf(m.author_id?.[0]), at: odooIso(m.date), body: htmlToText(m.body) });
+    const files = await c.call('ir.attachment', 'search_read', [[['res_model', '=', 'project.task'], ['res_id', '=', n]]], { fields: ['id', 'name', 'mimetype', 'file_size'] });
+    const author = task.create_uid?.[0] ? (await c.call('res.users', 'read', [[task.create_uid[0]]], { fields: ['login'] }))[0]?.login ?? null : null;
+    const ticket = {
+      title: task.name ?? '',
+      body: htmlToText(task.description),
+      url: `${resolution.url}/web#model=project.task&id=${n}`,
+      state: odooState(task.state) || String(task.stage_id?.[1] ?? '').toLowerCase(),
+      labels: tags,
+      author,
+      via: 'rpc',
+      attachments: files.map((f) => ({ id: f.id, name: f.name, mimetype: f.mimetype ?? null, size: f.file_size ?? null, url: `${resolution.url}/web/content/${f.id}?download=true` })),
+    };
+    return withReads(ticket, messages);
+  } catch (err) {
+    throw fetchErrorFrom(err);
+  }
+}
+
 async function fetchTicket(resolution) {
   if (resolution.provider === 'local') return resolution;
-  if (resolution.provider === 'odoo' || resolution.transport === 'mcp') return mcpAnswer(resolution);
+  if (resolution.provider === 'odoo') {
+    return process.env.ODOO_API_KEY && resolution.login ? fetchOdoo(resolution) : mcpAnswer(resolution);
+  }
+  if (resolution.transport === 'mcp') return mcpAnswer(resolution);
   const cli = CLI[resolution.provider];
   if (!(await cliReady(resolution))) {
     if (resolution.transport === 'cli') {
@@ -146,7 +270,63 @@ async function fetchTicket(resolution) {
   if (resolution.provider === 'github' && /\/pull\/\d+/.test(ticket.url)) {
     throw new FetchError('not-found', `${resolution.path}#${resolution.number} is a pull request, not an issue`);
   }
-  return ticket;
+  return withReads(ticket, await commentsFor(resolution));
+}
+
+// Downloads the ticket's attachments under the cap into tasks/<ID>/attachments/ and records, in the
+// ticket JSON itself, the file of each one or why it was left as a link (spec D8).
+async function downloadAttachments(root, resolution, id, opts) {
+  if (resolution.provider === 'local') throw new FetchError('bad-ticket', `${id} is a local ticket; attachments needs a ticket from a configured source`);
+  const dir = path.join(root, 'tasks', id);
+  if (!fs.existsSync(dir)) throw new FetchError('no-task', `tasks/${id}/ does not exist; scaffold the ticket first`);
+  let ticket;
+  try {
+    ticket = JSON.parse(fs.readFileSync(opts.from, 'utf8'));
+  } catch (err) {
+    throw new FetchError('bad-input', `${opts.from} is not readable JSON: ${err.message}`);
+  }
+  const marker = readMarker(root);
+  const cap = opts.max !== null ? Number(opts.max) : Number(marker.tickets?.attachmentMaxBytes ?? 10 * 1024 * 1024);
+  if (!Number.isInteger(cap) || cap <= 0) throw new FetchError('bad-args', '--max must be a positive number of bytes');
+  const list = Array.isArray(ticket.attachments) ? ticket.attachments : [];
+  const downloaded = [];
+  const skipped = [];
+  let client = null;
+  for (const a of list) {
+    const skip = (reason) => {
+      a.reason = reason;
+      skipped.push({ name: a.name, url: a.url ?? '', reason });
+    };
+    if (resolution.provider !== 'odoo' || !Number.isInteger(a.id)) {
+      skip('url only');
+      continue;
+    }
+    if (Number(a.size) > cap) {
+      skip(`larger than ${cap} bytes`);
+      continue;
+    }
+    try {
+      client = client ?? await odooClientFor(resolution);
+      const [row] = await client.call('ir.attachment', 'read', [[a.id]], { fields: ['datas'] });
+      if (!row || typeof row.datas !== 'string') throw new FetchError('cli-failed', 'no content');
+      const bytes = Buffer.from(row.datas, 'base64');
+      if (bytes.length > cap) {
+        skip(`larger than ${cap} bytes`);
+        continue;
+      }
+      fs.mkdirSync(path.join(dir, 'attachments'), { recursive: true });
+      const file = `${a.id}-${safeName(a.name)}`;
+      fs.writeFileSync(path.join(dir, 'attachments', file), bytes);
+      a.file = `tasks/${id}/attachments/${file}`;
+      a.size = a.size ?? bytes.length;
+      downloaded.push({ id: a.id, name: a.name, file: a.file, size: bytes.length });
+    } catch (err) {
+      const wrapped = fetchErrorFrom(err);
+      skip(`download failed: ${wrapped.message}`);
+    }
+  }
+  fs.writeFileSync(opts.from, JSON.stringify(ticket, null, 2));
+  return { downloaded, skipped };
 }
 
 const BEGIN = '<!-- ultrapowers:ticket-begin -->';
@@ -191,7 +371,28 @@ function writeSource(root, resolution, id, opts) {
   const body = capBytes(escapeMarkers(lf(ticket.body).replace(/\n+$/, '')), BODY_LIMIT);
   const labels = Array.isArray(ticket.labels) && ticket.labels.length ? ticket.labels.map(oneLine).join(', ') : 'none';
   const fetched = opts.fetched ?? new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
-  const via = opts.via ?? (ticket.via === 'cli' ? 'cli' : 'mcp');
+  const via = opts.via ?? (['cli', 'rpc'].includes(ticket.via) ? ticket.via : 'mcp');
+  const messages = Array.isArray(ticket.messages) ? ticket.messages : [];
+  const attachments = Array.isArray(ticket.attachments) ? ticket.attachments : [];
+  const links = Array.isArray(ticket.links) ? ticket.links : [];
+  const messageLines = [];
+  for (const m of messages) {
+    messageLines.push(`- ${oneLine(m.author) || 'unknown'} ${oneLine(m.at)}:`);
+    for (const l of escapeMarkers(lf(String(m.body ?? ''))).replace(/\n+$/, '').split('\n')) messageLines.push(`  ${l}`);
+  }
+  const messagesBlock = capBytes(messageLines.join('\n'), BODY_LIMIT);
+  const sections = [];
+  if (messages.length) sections.push('## Messages', '', messagesBlock.text, ...(messagesBlock.truncated ? ['[messages truncated at 64 KB]'] : []), '');
+  if (attachments.length) {
+    sections.push('## Attachments', '');
+    for (const a of attachments) {
+      const size = formatSize(a.size);
+      if (a.file) sections.push(`- ${oneLine(a.name)} (${size}) → ${a.file}`);
+      else sections.push(`- ${oneLine(a.name)} (${size}) ${oneLine(a.url)}, not downloaded: ${oneLine(a.reason) || 'not downloaded'}; read in the session only`);
+    }
+    sections.push('');
+  }
+  if (links.length) sections.push('## Links', '', ...links.map((l) => `- ${oneLine(l)}`), '');
   const lines = [
     `# Source: ${id}`,
     '',
@@ -210,6 +411,7 @@ function writeSource(root, resolution, id, opts) {
     ...(body.truncated ? ['[truncated at 64 KB]'] : []),
     END,
     '',
+    ...sections,
   ];
   try {
     fs.writeFileSync(path.join(dir, 'source.md'), lines.join('\n'), { flag: 'wx' });
@@ -220,11 +422,11 @@ function writeSource(root, resolution, id, opts) {
   return { written: `tasks/${id}/source.md`, truncated: body.truncated };
 }
 
-const FLAGS = { '--root': 'root', '--from': 'from', '--fetched': 'fetched', '--via': 'via' };
+const FLAGS = { '--root': 'root', '--from': 'from', '--fetched': 'fetched', '--via': 'via', '--max': 'max' };
 
 function parseArgs(argv) {
   const [command, id, ...rest] = argv;
-  const opts = { command, id, root: null, from: null, fetched: null, via: null };
+  const opts = { command, id, root: null, from: null, fetched: null, via: null, max: null };
   for (let i = 0; i < rest.length; i += 1) {
     const flag = rest[i];
     const value = rest[i + 1];
@@ -233,33 +435,38 @@ function parseArgs(argv) {
     opts[FLAGS[flag]] = value;
     i += 1;
   }
-  if (!['resolve', 'fetch', 'write-source'].includes(command) || !id) {
-    throw new FetchError('bad-args', 'usage: fetch-ticket.mjs resolve|fetch <ID> [--root <dir>] | write-source <ID> --from <json> [--root <dir>] [--fetched <ISO>] [--via cli|mcp]');
+  if (!['resolve', 'fetch', 'write-source', 'attachments'].includes(command) || !id) {
+    throw new FetchError('bad-args', 'usage: fetch-ticket.mjs resolve|fetch <ID> [--root <dir>] | attachments <ID> --from <json> [--max <bytes>] [--root <dir>] | write-source <ID> --from <json> [--root <dir>] [--fetched <ISO>] [--via cli|mcp|rpc]');
   }
-  if (command === 'write-source' && !opts.from) throw new FetchError('bad-args', 'write-source needs --from <json file>');
-  if (opts.via !== null && !['cli', 'mcp'].includes(opts.via)) throw new FetchError('bad-args', '--via must be cli or mcp');
-  if (command !== 'write-source' && (opts.from || opts.fetched || opts.via)) {
-    throw new FetchError('bad-args', '--from, --fetched and --via belong to write-source');
-  }
+  if (['write-source', 'attachments'].includes(command) && !opts.from) throw new FetchError('bad-args', `${command} needs --from <json file>`);
+  if (opts.via !== null && !['cli', 'mcp', 'rpc'].includes(opts.via)) throw new FetchError('bad-args', '--via must be cli, mcp or rpc');
+  if (command !== 'write-source' && (opts.fetched || opts.via)) throw new FetchError('bad-args', '--fetched and --via belong to write-source');
+  if (!['write-source', 'attachments'].includes(command) && opts.from) throw new FetchError('bad-args', '--from belongs to write-source and attachments');
+  if (command !== 'attachments' && opts.max !== null) throw new FetchError('bad-args', '--max belongs to attachments');
   return opts;
 }
 
 export async function main(argv) {
   try {
     const opts = parseArgs(argv);
-    // Whatever the project's ticketPattern allows, an id never names another path.
-    if (/[/\\]|\.\./.test(opts.id)) {
+    // Whatever the project's ticketPattern allows, an id never names another path; a task URL is resolved.
+    const isUrl = /^https?:\/\//i.test(opts.id);
+    if (!isUrl && /[/\\]|\.\./.test(opts.id)) {
       throw new FetchError('bad-ticket', `${opts.id} names a path; a ticket id holds no "/", "\\" or ".."`);
     }
     const root = opts.root ? path.resolve(opts.root) : findRoot(process.cwd());
     if (opts.root && !fs.existsSync(path.join(root, MARKER))) {
       throw new FetchError('no-marker', `no ${MARKER.replace(/\\/g, '/')} in ${root}`);
     }
+    loadSecretsFile(root, process.env);
     const resolution = resolveTicket(readMarker(root), opts.id);
+    const id = resolution.id ?? opts.id;
+    if (isUrl && resolution.provider === 'local') throw new FetchError('bad-ticket', `${opts.id} matches no configured ticket source`);
     let result;
     if (opts.command === 'resolve') result = resolution;
     else if (opts.command === 'fetch') result = await fetchTicket(resolution);
-    else result = writeSource(root, resolution, opts.id, { ...opts, from: path.resolve(opts.from) });
+    else if (opts.command === 'attachments') result = await downloadAttachments(root, resolution, id, { ...opts, from: path.resolve(opts.from) });
+    else result = writeSource(root, resolution, id, { ...opts, from: path.resolve(opts.from) });
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return 0;
   } catch (err) {

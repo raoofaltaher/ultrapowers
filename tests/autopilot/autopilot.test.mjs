@@ -409,7 +409,9 @@ test.after(() => { for (const c of odooChildren) c.kill(); });
 
 function startOdooProcess(spec) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [ODOO_FAKE, 'serve', '--seed', JSON.stringify(spec)], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const seedFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'odoo-seed-')), 'seed.json');
+    fs.writeFileSync(seedFile, JSON.stringify(spec));
+    const child = spawn(process.execPath, [ODOO_FAKE, 'serve', '--seed-file', seedFile], { stdio: ['ignore', 'pipe', 'pipe'] });
     odooChildren.push(child);
     let out = '';
     let err = '';

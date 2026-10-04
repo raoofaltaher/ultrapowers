@@ -345,7 +345,10 @@ export const ODOO_EVENTS = Object.freeze({
 
 // `.agents/mcp-secrets.env` (KEY=VALUE lines, `export` allowed, quotes stripped) fills the variables
 // the environment lacks, so a key kept there is read like the provider CLIs' tokens. The environment
-// wins over the file. Returns the names it set.
+// wins over the file, and only credential-shaped names are taken: a planted file must not be able
+// to set PATH, NODE_OPTIONS or a git command. Returns the names it set.
+const SECRET_NAME = /(_TOKEN|_API_KEY|_KEY|_SECRET|_PASSWORD|_PAT)$/;
+
 export function loadSecretsFile(root, env = process.env) {
   const file = path.join(root, '.agents', 'mcp-secrets.env');
   if (!fs.existsSync(file)) return [];
@@ -354,7 +357,7 @@ export function loadSecretsFile(root, env = process.env) {
     const line = raw.trim();
     if (!line || line.startsWith('#')) continue;
     const m = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
-    if (!m) continue;
+    if (!m || !SECRET_NAME.test(m[1])) continue;
     let value = m[2].trim();
     const quoted = /^(["'])(.*)\1$/.exec(value);
     if (quoted) value = quoted[2];

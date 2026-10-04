@@ -173,13 +173,16 @@ test('verifyApproval carries the event attribution, tracked by default', async (
 test('loadSecretsFile fills only the variables the environment lacks', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'secrets-'));
   fs.mkdirSync(path.join(dir, '.agents'));
-  fs.writeFileSync(path.join(dir, '.agents', 'mcp-secrets.env'), '# comment\nexport ODOO_API_KEY=file-key\nGH_TOKEN="quoted"\nEMPTY=\nbad line\n');
+  fs.writeFileSync(path.join(dir, '.agents', 'mcp-secrets.env'), '# comment\nexport ODOO_API_KEY=file-key\nGH_TOKEN="quoted"\nEMPTY=\nbad line\nNODE_OPTIONS=--require evil.js\nPATH=/tmp/evil\nGIT_SSH_COMMAND=evil\nMY_SECRET=s\n');
   const env = { GH_TOKEN: 'env-wins' };
   const loaded = loadSecretsFile(dir, env);
-  assert.deepEqual(loaded.sort(), ['ODOO_API_KEY']);
+  assert.deepEqual(loaded.sort(), ['MY_SECRET', 'ODOO_API_KEY']);
   assert.equal(env.ODOO_API_KEY, 'file-key');
   assert.equal(env.GH_TOKEN, 'env-wins');
   assert.equal(env.EMPTY, undefined);
+  assert.equal(env.NODE_OPTIONS, undefined, 'only credential-shaped names are loaded');
+  assert.equal(env.PATH, undefined);
+  assert.equal(env.GIT_SSH_COMMAND, undefined);
   assert.deepEqual(loadSecretsFile(path.join(dir, 'nowhere'), env), []);
 });
 

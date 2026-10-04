@@ -14,6 +14,12 @@ if (process.env.STUB_ENV_LOG) fs.appendFileSync(process.env.STUB_ENV_LOG, `${pro
 
 if (args[0] === 'auth') process.exit(Number(process.env.STUB_AUTH_EXIT ?? 0));
 
+// `api …/comments` (gh) and `api …/notes` (glab): the issue's comments, STUB_COMMENTS_JSON or none.
+if (args[0] === 'api') {
+  process.stdout.write(process.env.STUB_COMMENTS_JSON ?? (args[1].includes('--slurp') || args.includes('--slurp') ? '[[]]' : '[]'));
+  process.exit(0);
+}
+
 if (args[0] === 'issue' && args[1] === 'view') {
   const answer = () => {
     const code = Number(process.env.STUB_VIEW_EXIT ?? 0);

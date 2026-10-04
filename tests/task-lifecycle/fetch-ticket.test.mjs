@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -24,7 +24,7 @@ function tickets(overrides = {}) {
         ...(overrides.GL ?? {}),
       },
       { prefix: 'GH', provider: 'github', owner: 'acme', defaultProject: 'web' },
-      { prefix: 'ODOO', provider: 'odoo', url: 'https://erp.example.com', mcpUrl: 'https://erp.example.com/mcp', defaultProject: '12' },
+      { prefix: 'ODOO', provider: 'odoo', url: 'https://erp.example.com', mcpUrl: 'https://erp.example.com/mcp', defaultProject: '12', ...(overrides.ODOO ?? {}) },
     ],
   };
 }
@@ -67,7 +67,7 @@ test('fetch GH-web-7 through gh returns the normalized ticket', () => {
   assert.equal(r.code, 0, r.stdout + r.stderr);
   assert.deepEqual(r.json, {
     title: 'T', body: 'B', url: 'https://github.com/acme/web/issues/7',
-    state: 'open', labels: ['bug'], author: 'ana', via: 'cli',
+    state: 'open', labels: ['bug'], author: 'ana', via: 'cli', messages: [], attachments: [], links: [],
   });
   assert.deepEqual(r.calls.find((c) => c[0] === 'issue'),
     ['issue', 'view', '7', '-R', 'acme/web', '--json', 'number,title,body,state,labels,author,url']);
@@ -79,7 +79,7 @@ test('fetch GL-billing-api-42 through glab returns the normalized ticket', () =>
   assert.equal(r.code, 0, r.stdout + r.stderr);
   assert.deepEqual(r.json, {
     title: 'T', body: 'D', url: 'https://gitlab.com/acme/platform/billing-api/-/issues/42',
-    state: 'opened', labels: ['backend'], author: 'bo', via: 'cli',
+    state: 'opened', labels: ['backend'], author: 'bo', via: 'cli', messages: [], attachments: [], links: [],
   });
   const view = r.calls.find((c) => c[0] === 'issue');
   assert.deepEqual(view, ['issue', 'view', '42', '-R', 'acme/platform/billing-api', '-F', 'json']);
@@ -92,7 +92,7 @@ test('a self-hosted GitLab source points glab at its own host (final review)', (
   assert.equal(r.code, 0, r.stdout + r.stderr);
   assert.deepEqual(r.calls.find((c) => c[0] === 'auth'), ['auth', 'status', '--hostname', 'git.example.com']);
   const hosts = fs.readFileSync(envLog, 'utf8').trim().split('\n');
-  assert.deepEqual(hosts, ['git.example.com', 'git.example.com'], 'GITLAB_HOST for the sign-in check and the fetch');
+  assert.deepEqual(hosts, ['git.example.com', 'git.example.com', 'git.example.com'], 'GITLAB_HOST for the sign-in check, the fetch and the comments');
 });
 
 test('a GitHub pull-request number is not a ticket (final review)', () => {
@@ -292,6 +292,112 @@ test('an existing source.md is never overwritten', () => {
   assert.equal(r.code, 2);
   assert.equal(r.json.error.code, 'source-exists');
   assert.equal(fs.readFileSync(file, 'utf8'), 'keep me\n');
+});
+
+// ---- Odoo over RPC, messages, attachments and links (spec 2026-10-05 §7). The fake Odoo runs as
+// its own process because fetch-ticket runs through spawnSync. ----
+const ODOO_FAKE = path.resolve(HERE, '..', 'autopilot', 'fixtures', 'odoo-fake.mjs');
+const odooChildren = [];
+test.after(() => { for (const c of odooChildren) c.kill(); });
+
+function startOdoo(spec = {}) {
+  return new Promise((resolve, reject) => {
+    const seedFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'odoo-seed-')), 'seed.json');
+    fs.writeFileSync(seedFile, JSON.stringify(spec));
+    const child = spawn(process.execPath, [ODOO_FAKE, 'serve', '--seed-file', seedFile], { stdio: ['ignore', 'pipe', 'pipe'] });
+    odooChildren.push(child);
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (d) => {
+      out += d;
+      const line = out.split('\n').find((l) => l.startsWith('{'));
+      if (line) resolve({ child, url: JSON.parse(line).url });
+    });
+    child.stderr.on('data', (d) => { err += d; });
+    child.on('exit', (code) => reject(new Error(`the fake Odoo exited with ${code}: ${err}`)));
+  });
+}
+
+function odooProject(url) {
+  const root = project(tickets({ ODOO: { url, mcpUrl: `${url}/mcp`, login: 'bot', db: 'erp' } }));
+  fs.mkdirSync(path.join(root, 'tasks', 'ODOO-34-13627'), { recursive: true });
+  return root;
+}
+
+test('fetch reads an Odoo task over RPC when the key and login are set', async () => {
+  const { url } = await startOdoo();
+  const r = run(odooProject(url), ['fetch', 'ODOO-34-13627'], { ODOO_API_KEY: 'k1' });
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.equal(r.json.via, 'rpc');
+  assert.equal(r.json.title, 'Integration');
+  assert.match(r.json.body, /Upgrade the integration/);
+  assert.equal(r.json.state, 'in progress');
+  assert.deepEqual(r.json.labels, ['AI', 'Backend', 'Ultrapowers Ready']);
+  assert.deepEqual(r.json.messages.map((m) => m.author), ['val']);
+  assert.deepEqual(r.json.links, ['https://design.example.com/mockup/1']);
+  assert.equal(r.json.attachments[0].name, 'mockup.png');
+  assert.equal(r.json.attachments[0].size, 800);
+  assert.match(r.json.url, /web#model=project\.task&id=13627$/);
+});
+
+test('fetch of an Odoo task that belongs to another project is bad-ticket', async () => {
+  const { url } = await startOdoo();
+  const r = run(odooProject(url), ['fetch', 'ODOO-12-13627'], { ODOO_API_KEY: 'k1' });
+  assert.equal(r.code, 2);
+  assert.equal(r.json.error.code, 'bad-ticket');
+  assert.match(r.json.error.message, /project 34/);
+});
+
+test('fetch without the key answers via mcp for Odoo, as before', () => {
+  const r = run(project(), ['fetch', 'ODOO-12-1203']);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.deepEqual(r.json, { via: 'mcp', provider: 'odoo', server: 'tickets-odoo', path: '12', number: 1203 });
+});
+
+test('attachments downloads under the cap, lists the rest, and write-source renders the sections', async () => {
+  const { url } = await startOdoo();
+  const root = odooProject(url);
+  const f = run(root, ['fetch', 'ODOO-34-13627'], { ODOO_API_KEY: 'k1' });
+  const from = path.join(root, 'ticket.json');
+  fs.writeFileSync(from, JSON.stringify(f.json));
+  const r = run(root, ['attachments', 'ODOO-34-13627', '--from', from, '--max', '1000'], { ODOO_API_KEY: 'k1' });
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.deepEqual(r.json.downloaded.map((d) => d.file), ['tasks/ODOO-34-13627/attachments/5-mockup.png']);
+  assert.equal(r.json.skipped[0].name, 'big.pdf');
+  assert.equal(r.json.skipped[0].reason, 'larger than 1000 bytes');
+  assert.equal(fs.statSync(path.join(root, 'tasks', 'ODOO-34-13627', 'attachments', '5-mockup.png')).size, 800);
+  const updated = JSON.parse(fs.readFileSync(from, 'utf8'));
+  assert.equal(updated.attachments[0].file, 'tasks/ODOO-34-13627/attachments/5-mockup.png');
+  assert.equal(updated.attachments[1].reason, 'larger than 1000 bytes');
+  const w = run(root, ['write-source', 'ODOO-34-13627', '--from', from]);
+  assert.equal(w.code, 0, w.stdout + w.stderr);
+  const src = fs.readFileSync(path.join(root, 'tasks', 'ODOO-34-13627', 'source.md'), 'utf8');
+  assert.match(src, /- Fetched: \S+ via rpc/);
+  assert.match(src, /## Messages\n\n- val 2026-10-02T18:39:00Z:\n {2}will have kick off today, got access from clients/);
+  assert.match(src, /## Attachments\n\n- mockup\.png \(800 B\) → tasks\/ODOO-34-13627\/attachments\/5-mockup\.png\n- big\.pdf \(2\.0 MB\) http[^\n]*, not downloaded: larger than 1000 bytes; read in the session only/);
+  assert.match(src, /## Links\n\n- https:\/\/design\.example\.com\/mockup\/1/);
+});
+
+test('write-source caps a long Odoo description', async () => {
+  const { url } = await startOdoo({ setup: { taskDescription: `<p>${'x'.repeat(70 * 1024)}</p>` } });
+  const root = odooProject(url);
+  const f = run(root, ['fetch', 'ODOO-34-13627'], { ODOO_API_KEY: 'k1' });
+  const from = path.join(root, 'ticket.json');
+  fs.writeFileSync(from, JSON.stringify(f.json));
+  const w = run(root, ['write-source', 'ODOO-34-13627', '--from', from]);
+  assert.equal(w.code, 0, w.stdout + w.stderr);
+  assert.equal(w.json.truncated, true);
+  assert.match(fs.readFileSync(path.join(root, 'tasks', 'ODOO-34-13627', 'source.md'), 'utf8'), /\[truncated at 64 KB\]/);
+});
+
+test('github fetch includes the issue comments and their links', () => {
+  const comments = JSON.stringify([[{ id: 1, user: { login: 'ana' }, created_at: '2026-10-01T10:00:00Z', body: 'see https://docs.example.com/spec and https://github.com/user-attachments/assets/mock.png' }]]);
+  const r = run(project(), ['fetch', 'GH-web-7'], { STUB_JSON: GH_JSON, STUB_COMMENTS_JSON: comments });
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.deepEqual(r.json.messages, [{ author: 'ana', at: '2026-10-01T10:00:00Z', body: 'see https://docs.example.com/spec and https://github.com/user-attachments/assets/mock.png' }]);
+  assert.deepEqual(r.json.links, ['https://docs.example.com/spec', 'https://github.com/user-attachments/assets/mock.png']);
+  assert.deepEqual(r.json.attachments, [{ name: 'mock.png', url: 'https://github.com/user-attachments/assets/mock.png', size: null, mimetype: null }]);
+  assert.deepEqual(r.calls.find((c) => c[0] === 'api'), ['api', 'repos/acme/web/issues/7/comments', '--paginate', '--slurp']);
 });
 
 test('write-source without the ticket folder is no-task', () => {
