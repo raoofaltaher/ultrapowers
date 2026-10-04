@@ -103,5 +103,11 @@
   {"name":"deny_mcp_github_label_write","event":{"tool_name":"mcp__github__add_issue_labels","tool_input":{"owner":"o","repo":"r","issue_number":17,"labels":["up:approve"]}}},
   {"name":"deny_mcp_gitlab_note","event":{"tool_name":"mcp__GitLab__save_note","tool_input":{"body":"approved"}}},
   {"name":"deny_mcp_gitlab_accept_mr","event":{"tool_name":"mcp__GitLab__accept_merge_request","tool_input":{"id":1}}},
-  {"name":"deny_mcp_git_push","event":{"tool_name":"mcp__git__git_push","tool_input":{"repo_path":"{{ROOT}}/repo-a"}}}
+  {"name":"deny_mcp_git_push","event":{"tool_name":"mcp__git__git_push","tool_input":{"repo_path":"{{ROOT}}/repo-a"}}},
+  {"name":"allow_apply_patch_src","event":{"tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Update File: repo-a/src/x.ts\n*** Add File: repo-a/src/y.ts\n@@\n+x\n*** End Patch"}}},
+  {"name":"deny_apply_patch_state_file","event":{"tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Update File: tasks/GH-16/autopilot.json\n@@\n+x\n*** End Patch"}}},
+  {"name":"deny_apply_patch_workflow","event":{"tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Add File: .github/workflows/ci.yml\n@@\n+x\n*** End Patch"}}},
+  {"name":"deny_apply_patch_marker","event":{"tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Update File: .agents/ultrapowers.json\n@@\n+x\n*** End Patch"}}},
+  {"name":"deny_apply_patch_outside_root","event":{"tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Add File: {{ELSEWHERE}}/x.ts\n@@\n+x\n*** End Patch"}}},
+  {"name":"deny_apply_patch_move_to_hook","event":{"tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Update File: repo-a/src/x.ts\n*** Move to: .husky/pre-commit\n@@\n+x\n*** End Patch"}}}
 ]

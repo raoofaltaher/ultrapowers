@@ -45,6 +45,7 @@ export const TARGET_HARNESS = {
   '.vscode/mcp.json': 'copilot',
   'GEMINI.md': 'gemini',
   '.gemini/settings.json': 'gemini',
+  '.gemini/hooks/ultrapowers-guardrail.mjs': 'gemini',
   '.qwen/settings.json': 'qwen',
   'opencode.json': 'opencode',
   '.factory/mcp.json': 'factory',
@@ -133,10 +134,22 @@ function standardJson(servers) {
   return toJson({ mcpServers: jsonServers(servers, dollarRef) });
 }
 
+// Gemini CLI reads an extension's hooks from the same hooks/hooks.json Claude Code uses, under
+// another event name; so the guardrail reaches Gemini through a project BeforeTool hook instead,
+// pointing at the launcher init writes beside this file. Qwen Code reads PreToolUse from the
+// extension itself and needs nothing here.
+const GEMINI_GUARDRAIL_HOOK = {
+  BeforeTool: [{
+    matcher: '.*',
+    hooks: [{ name: 'ultrapowers-guardrail', type: 'command', command: 'node "$GEMINI_PROJECT_DIR/.gemini/hooks/ultrapowers-guardrail.mjs"', timeout: 30000 }],
+  }],
+};
+
 function geminiFamilyJson(schema) {
   return (servers) => toJson({
     context: { fileName: CONTEXT_FILES[schema] },
     mcpServers: jsonServers(servers, dollarRef, { stdioType: false, httpKey: 'httpUrl' }),
+    ...(schema === 'gemini' ? { hooks: GEMINI_GUARDRAIL_HOOK } : {}),
   });
 }
 
@@ -1242,6 +1255,7 @@ export async function runAutopilot(opts) {
     'GitHub: a watcher or a session that writes back needs a fine-grained token with Issues, Contents and Pull requests read and write on the listed repositories, never workflow, in GH_TOKEN.',
     'GitLab: a project token with the api scope per repository, in GITLAB_TOKEN.',
     'A watcher: give its stages a read-only token of their own in ULTRAPOWERS_STAGE_GH_TOKEN (Issues, Contents and Metadata read) or ULTRAPOWERS_STAGE_GITLAB_TOKEN (read_api); the stage then holds nothing that can write. See docs/autopilot-watcher.md.',
+    'The guardrail is a plugin hook on every harness but Devin; Codex asks you to trust the plugin hooks once (/hooks), Hermes needs the plugin in plugins.enabled, and Gemini CLI uses the BeforeTool hook this scaffold wrote to .gemini/settings.json. The harness table in README.md names each.',
     `Start a ticket with /ultrapowers:autopilot <ID>; mode ${block.mode} stops at ${block.mode === 'full' ? 'the pull requests' : 'the review packet and the pull requests'}.`,
     ...(failed.length ? [`Create these labels by hand, the engine could not: ${failed.join(', ')}`] : []),
   ] : ['autopilot is off; every skill behaves as before.'];

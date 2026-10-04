@@ -65,3 +65,39 @@ test('a run marker with no usable hook fails closed', () => {
   assert.equal(r.deny, true);
   assert.match(r.reason, /could not run/);
 });
+
+// ---- guardrail-cli: the node entry for Kimi, Antigravity and Hermes ----
+import { spawnSync } from 'node:child_process';
+const CLI = path.resolve(HERE, '..', '..', 'hooks', 'lib', 'guardrail-cli.mjs');
+const runCli = (event, extra = []) => spawnSync(process.execPath, [CLI, ...extra], { input: JSON.stringify(event), encoding: 'utf8', cwd: event.cwd ?? undefined });
+
+test('guardrail-cli answers exit 2 and the reason on stderr for a deny, exit 0 for an allow', () => {
+  const root = project();
+  const deny = runCli({ tool_name: 'Bash', tool_input: { command: 'git push origin GH-16-x' }, cwd: root });
+  assert.equal(deny.status, 2, deny.stderr);
+  assert.match(deny.stderr, /git push is never allowed/);
+  assert.equal(deny.stdout, '');
+  const allow = runCli({ tool_name: 'Bash', tool_input: { command: 'git status' }, cwd: root });
+  assert.equal(allow.status, 0, allow.stderr);
+  const kimi = runCli({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: path.join(root, 'tasks', 'GH-16', 'stage-log.jsonl'), content: 'x' }, cwd: root });
+  assert.equal(kimi.status, 2);
+});
+
+test('guardrail-cli --antigravity reads its payload and answers its JSON', () => {
+  const root = project();
+  const deny = runCli({ toolCall: { name: 'run_command', args: { CommandLine: 'gh issue edit 16 --add-label up:approve', Cwd: root } }, workspacePaths: [root], cwd: root }, ['--antigravity']);
+  assert.equal(deny.status, 0, deny.stderr);
+  const out = JSON.parse(deny.stdout);
+  assert.equal(out.decision, 'deny');
+  assert.match(out.reason, /gh writes/);
+  const write = runCli({ toolCall: { name: 'write_to_file', args: { TargetFile: path.join(root, '.github', 'workflows', 'x.yml'), CodeContent: 'x' } }, workspacePaths: [root], cwd: root }, ['--antigravity']);
+  assert.equal(JSON.parse(write.stdout).decision, 'deny');
+  const allow = runCli({ toolCall: { name: 'view_file', args: { AbsolutePath: path.join(root, 'README.md') } }, workspacePaths: [root], cwd: root }, ['--antigravity']);
+  assert.deepEqual(JSON.parse(allow.stdout), { decision: 'allow' });
+});
+
+test('guardrail-cli outside a run allows everything, whatever the payload', () => {
+  const idle = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-idle-'));
+  assert.equal(runCli({ tool_name: 'Bash', tool_input: { command: 'git push origin main' }, cwd: idle }).status, 0);
+  assert.equal(runCli({ cwd: idle, garbage: true }).status, 0);
+});

@@ -18,13 +18,18 @@
 set -uo pipefail
 
 GUARD_PREFIX="QA-GUARDRAIL"
+# Every harness blocks on exit 2 with the reason on stderr. Cursor and Copilot CLI also read a
+# JSON verdict on stdout, in their own shapes; the others get no stdout at all (Gemini CLI
+# allows the call when stdout holds anything but JSON).
 deny() {
   local msg="$GUARD_PREFIX DENY: $1"
   printf '%s\n' "$msg" >&2
+  local escaped
+  escaped="$(printf '%s' "$msg" | sed 's/["\\]/\\&/g')"
   if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
-    local escaped
-    escaped="$(printf '%s' "$msg" | sed 's/["\\]/\\&/g')"
     printf '{"permission":"deny","agent_message":"%s"}\n' "$escaped"
+  elif [ -n "${COPILOT_CLI:-}" ]; then
+    printf '{"permissionDecision":"deny","permissionDecisionReason":"%s"}\n' "$escaped"
   fi
   exit 2
 }
@@ -224,16 +229,6 @@ fi
 # run-state under reviews/<ticket>/, plus the run's own state under .ultrapowers/. Autopilot
 # profile: anywhere under the workspace root. Protected paths are refused in both (this closes
 # the loop where the agent edits the guardrail, the config, CI, harness settings or key material).
-is_write_tool=0
-case "$tool" in
-  Write|Edit|MultiEdit|NotebookEdit) is_write_tool=1 ;;
-  *)
-    case "$tool_lc" in
-      *write*|*edit*|*create_file*|*move_file*|*delete*)
-        [ -n "$wpath" ] && is_write_tool=1 ;;
-    esac ;;
-esac
-
 # Named targets, not folder names: `src/hooks/` of a React app and `appsettings.json` of a .NET
 # app are ordinary implementation files. The ticket's state files are the gate's record.
 PROTECTED_RE='(^|/)\.ssh/|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws/|mcp-secrets\.env|\.local\.(sh|env|json)$|hooks/qa-guardrail|\.agents/ultrapowers\.json|(^|/)\.claude/|(^|/)\.git/|(^|/)\.githooks/|(^|/)\.[a-z0-9_-]+/settings(\.local)?\.json$|(^|/)tasks/[^/]+/(autopilot\.json|stage-log\.jsonl)$'
@@ -241,6 +236,50 @@ PROTECTED_RE='(^|/)\.ssh/|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws/|mcp-secr
 # hooks (they run inside the engine's own commit and push) and the env file: a stage that
 # rewrites the workflow or the hooks rewrites its own brakes.
 AUTOPILOT_PROTECTED_RE='(^|/)\.github/|(^|/)\.gitlab-ci\.yml$|(^|/)hooks/(qa-guardrail|session-start|team-memory-[a-z]+|lib/|hooks(-cursor)?\.json|run-hook\.cmd)|(^|/)\.husky/|(^|/)\.pre-commit-config\.ya?ml$|(^|/)lefthook\.ya?ml$|(^|/)\.env($|\.)'
+is_write_tool=0
+case "$tool" in
+  Write|Edit|MultiEdit|NotebookEdit|Create|ApplyPatch) is_write_tool=1 ;;
+  *)
+    # The other harnesses' spellings: Gemini's write_file and replace, Droid's Create, Antigravity's
+    # write_to_file and replace_file_content, Codex's apply_patch (handled below, it carries a patch).
+    case "$tool_lc" in
+      *write*|*edit*|*create*|*move_file*|*delete*|replace|*replace_file*|*apply_patch*|applypatch)
+        [ -n "$wpath" ] && is_write_tool=1 ;;
+    esac ;;
+esac
+
+# Codex and Droid apply edits through a patch (apply_patch, ApplyPatch): the patch text names the
+# files. Every named file is checked as a write; the patch is not a shell command, so the
+# command rules below do not see it.
+case "$tool_lc" in
+  apply_patch|applypatch)
+    [ -n "$cmd" ] || deny "an empty patch cannot be verified during $run_kind"
+    while IFS= read -r ppath; do
+      [ -n "$ppath" ] || continue
+      pl="$(lower "$(norm_path "$ppath")")"
+      printf '%s' "$pl" | grep -Eq "$PROTECTED_RE" \
+        && deny "the patch writes a protected path ($ppath); never allowed during $run_kind"
+      if [ "$PROFILE" = "autopilot" ]; then
+        printf '%s' "${pl//.env.example/}" | grep -Eq "$AUTOPILOT_PROTECTED_RE" \
+          && deny "the patch writes a protected path ($ppath); CI, hooks, settings and the project config stay as they are"
+      fi
+      case "$pl" in
+        ..|../*|*/../*|*/..) deny "the patch names a path with a parent-directory segment ($ppath)" ;;
+      esac
+      case "$pl" in
+        /*) pabs="$pl" ;;
+        ./*) pabs="$(lower "$base_cwd")/${pl#./}" ;;
+        *) pabs="$(lower "$base_cwd")/$pl" ;;
+      esac
+      if [ "$PROFILE" = "autopilot" ]; then
+        case "$pabs" in "$root_lc/"*) ;; *) deny "the patch writes outside the workspace $root ($ppath)" ;; esac
+      else
+        case "$pabs" in "$root_lc/reviews/"*|"$root_lc/.ultrapowers/"*) ;; *) deny "a patch during a QA run is limited to reviews/ and .ultrapowers/ ($ppath)" ;; esac
+      fi
+    done < <(printf '%s\n' "$cmd" | sed -nE 's/^\*\*\* (Add|Update|Delete) File: *(.+)$/\2/p; s/^\*\*\* Move to: *(.+)$/\1/p')
+    exit 0 ;;
+esac
+
 if [ "$is_write_tool" -eq 1 ]; then
   wl="$(lower "$(norm_path "$wpath")")"
   printf '%s' "$wl" | grep -Eq "$PROTECTED_RE" \

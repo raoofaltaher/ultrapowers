@@ -1,4 +1,5 @@
 {
+  ".gemini/hooks/ultrapowers-guardrail.mjs": "1.2.0",
   "AGENTS.md": "1.0.0",
   "CLAUDE.md": "1.0.0",
   "GEMINI.md": "1.0.0",

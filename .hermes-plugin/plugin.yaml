@@ -4,3 +4,4 @@ description: Ultrapowers skills and workflow bootstrap for Hermes Agent
 author: raoofaltaher
 provides_hooks:
   - pre_llm_call
+  - pre_tool_call
