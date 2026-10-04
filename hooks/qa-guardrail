@@ -234,10 +234,13 @@ case "$tool" in
     esac ;;
 esac
 
-PROTECTED_RE='(^|/)\.ssh/|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws/|mcp-secrets\.env|\.local\.|hooks/qa-guardrail|\.agents/ultrapowers\.json|(^|/)\.claude/|(^|/)\.git/|(^|/)\.githooks/|settings(\.local)?\.json$'
-# The autopilot envelope also keeps the agent out of CI, the plugin hooks and the env file:
-# a stage that rewrites the workflow or the hooks rewrites its own brakes.
-AUTOPILOT_PROTECTED_RE='(^|/)\.github/|(^|/)\.gitlab-ci\.yml$|(^|/)hooks/|(^|/)\.env($|\.)'
+# Named targets, not folder names: `src/hooks/` of a React app and `appsettings.json` of a .NET
+# app are ordinary implementation files. The ticket's state files are the gate's record.
+PROTECTED_RE='(^|/)\.ssh/|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws/|mcp-secrets\.env|\.local\.(sh|env|json)$|hooks/qa-guardrail|\.agents/ultrapowers\.json|(^|/)\.claude/|(^|/)\.git/|(^|/)\.githooks/|(^|/)\.[a-z0-9_-]+/settings(\.local)?\.json$|(^|/)tasks/[^/]+/(autopilot\.json|stage-log\.jsonl)$'
+# The autopilot envelope also keeps the agent out of CI, the plugin hooks, the repository's commit
+# hooks (they run inside the engine's own commit and push) and the env file: a stage that
+# rewrites the workflow or the hooks rewrites its own brakes.
+AUTOPILOT_PROTECTED_RE='(^|/)\.github/|(^|/)\.gitlab-ci\.yml$|(^|/)hooks/(qa-guardrail|session-start|team-memory-[a-z]+|lib/|hooks(-cursor)?\.json|run-hook\.cmd)|(^|/)\.husky/|(^|/)\.pre-commit-config\.ya?ml$|(^|/)lefthook\.ya?ml$|(^|/)\.env($|\.)'
 if [ "$is_write_tool" -eq 1 ]; then
   wl="$(lower "$(norm_path "$wpath")")"
   printf '%s' "$wl" | grep -Eq "$PROTECTED_RE" \
@@ -275,6 +278,22 @@ case "$tool_lc" in
   *run_code_unsafe*) deny "arbitrary in-page code execution is never allowed during $run_kind" ;;
 esac
 
+# --- MCP tools of a tracker or of git, autopilot profile: reads pass, writes belong to the
+# engine between stages (the approve label among them). A tool name with a read verb is a read.
+if [ "$PROFILE" = "autopilot" ]; then
+  case "$tool_lc" in
+    mcp__*)
+      if printf '%s' "$tool_lc" | grep -Eq 'github|gitlab|glab|jira|linear|odoo|bitbucket|azure_?devops' \
+        && ! printf '%s' "$tool_lc" | grep -Eq '(^|_)(get|list|search|read|view|fetch|show|describe|find|query|resolve)(_|$)' \
+        && printf '%s' "$tool_lc" | grep -Eq '(create|update|edit|add|remove|delete|merge|comment|note|label|close|reopen|post|save|accept|push|fork|assign|transfer|lock|approve|submit|publish|manage|link)'; then
+        deny "tracker writes through MCP tools are never run by an autopilot stage; the engine writes back between stages"
+      fi
+      printf '%s' "$tool_lc" | grep -Eq '^mcp__git__git_(push|reset)' \
+        && deny "git push and git reset through an MCP tool are never run by an autopilot stage"
+      ;;
+  esac
+fi
+
 host_of() {
   printf '%s' "$1" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#^[^/?@]*@##; s#[/?].*$##; s#:[0-9]+$##' | tr '[:upper:]' '[:lower:]'
 }
@@ -310,7 +329,7 @@ while IFS= read -r seg; do
   printf '%s' "$seg" | grep -Eq '\bgit\b.*\bpush\b' || continue
   printf '%s' "$seg" | grep -Eq '\bgit\b[^;&|]*\bstash[[:space:]]+push\b' && ! printf '%s' "$seg" | grep -Eq '\bpush\b.*\bpush\b' && continue
   deny "git push is never allowed during $run_kind; the autopilot engine pushes between stages"
-done < <(printf '%s' "$lc" | tr ';&|' '\n')
+done < <(printf '%s\n' "$lc" | tr ';&|' '\n')
 
 if [ "$PROFILE" = "autopilot" ]; then
   # The engine merges nothing and the agent merges nothing: the ticket branch is the only branch.
@@ -318,10 +337,24 @@ if [ "$PROFILE" = "autopilot" ]; then
     && deny "git merge, rebase and cherry-pick are never run by an autopilot stage; the branch is integrated through its pull request"
   # Tracker writes belong to the engine, after the agent exits: comments, labels, pull requests,
   # releases, repository changes, and any gh/glab api call that is not a plain GET.
-  printf '%s' "$lc" | grep -Eq "${B}gh(\\.exe)?[[:space:]][^;&|]*\\b(issue[[:space:]]+(comment|edit|close|reopen|create|delete|transfer|pin|unpin|lock|unlock|develop)|pr[[:space:]]+(create|merge|close|reopen|edit|ready|review|comment|checkout|lock|unlock)|label[[:space:]]|release[[:space:]]|repo[[:space:]]+(create|delete|edit|fork|archive|rename|sync)|secret[[:space:]]|variable[[:space:]]|workflow[[:space:]]+(run|enable|disable)|api[[:space:]][^;&|]*([[:space:]]-x[[:space:]]|--method)|api[[:space:]][^;&|]*[[:space:]](-f|-F|--field|--raw-field|--input)[[:space:]=])" \
+  # The api forms include the attached spellings (-XPOST, -flabels[]=, -Fbody=) and --input.
+  printf '%s' "$lc" | grep -Eq "${B}gh(\\.exe)?[[:space:]][^;&|]*\\b(issue[[:space:]]+(comment|edit|close|reopen|create|delete|transfer|pin|unpin|lock|unlock|develop)|pr[[:space:]]+(create|merge|close|reopen|edit|ready|review|comment|checkout|lock|unlock)|label[[:space:]]|release[[:space:]]|repo[[:space:]]+(create|delete|edit|fork|archive|rename|sync)|secret[[:space:]]|variable[[:space:]]|workflow[[:space:]]+(run|enable|disable)|api[[:space:]][^;&|]*([[:space:]]-x[[:space:]]|[[:space:]]-x[^[:space:]]|--method)|api[[:space:]][^;&|]*[[:space:]](-f|-F|--field|--raw-field|--input)[[:space:]=]|api[[:space:]][^;&|]*[[:space:]]-f[^[:space:]=])" \
     && deny "gh writes (comments, labels, pull requests, releases, repository changes, non-GET api calls) are never run by an autopilot stage; the engine writes back between stages"
-  printf '%s' "$lc" | grep -Eq "${B}glab(\\.exe)?[[:space:]][^;&|]*\\b(issue[[:space:]]+(note|update|close|reopen|create|delete|subscribe|unsubscribe)|mr[[:space:]]|label[[:space:]]|release[[:space:]]|repo[[:space:]]+(create|delete|archive|fork|mirror)|variable[[:space:]]|ci[[:space:]]+(run|retry|delete|trigger)|api[[:space:]][^;&|]*([[:space:]]-x[[:space:]]|--method)|api[[:space:]][^;&|]*[[:space:]](-f|-F|--field|--raw-field|--input)[[:space:]=])" \
+  printf '%s' "$lc" | grep -Eq "${B}glab(\\.exe)?[[:space:]][^;&|]*\\b(issue[[:space:]]+(note|update|close|reopen|create|delete|subscribe|unsubscribe)|mr[[:space:]]|label[[:space:]]|release[[:space:]]|repo[[:space:]]+(create|delete|archive|fork|mirror)|variable[[:space:]]|ci[[:space:]]+(run|retry|delete|trigger)|api[[:space:]][^;&|]*([[:space:]]-x[[:space:]]|[[:space:]]-x[^[:space:]]|--method)|api[[:space:]][^;&|]*[[:space:]](-f|-F|--field|--raw-field|--input)[[:space:]=]|api[[:space:]][^;&|]*[[:space:]]-f[^[:space:]=])" \
     && deny "glab writes (notes, labels, merge requests, releases, repository changes, non-GET api calls) are never run by an autopilot stage; the engine writes back between stages"
+  # The token itself is never read out: it is the only thing that makes a tracker write count.
+  printf '%s' "$lc" | grep -Eq "${B}(gh|glab)(\\.exe)?[[:space:]]+auth[[:space:]]+(token|status[^;&|]*(-t\\b|--show-token))" \
+    && deny "reading the tracker token is never allowed during an autopilot stage"
+  # A program word built at run time (a substitution, a backtick, eval) is the way around every
+  # name rule above; the stage spells its commands out.
+  while IFS= read -r seg; do
+    seg="${seg#"${seg%%[![:space:]]*}"}"
+    while printf '%s' "$seg" | grep -Eq '^[a-z_][a-z0-9_]*=[^[:space:]]*[[:space:]]+'; do seg="${seg#*[[:space:]]}"; seg="${seg#"${seg%%[![:space:]]*}"}"; done
+    case "$seg" in
+      '$('*|'"$('*|"'\$("*|'`'*|'"`'*|nohup\ *\$\(*|nohup\ *\"\$\(*) deny "a command whose program is built by substitution cannot be verified during an autopilot stage; spell the command out" ;;
+      eval\ *|eval) deny "eval is never run by an autopilot stage; its command cannot be verified" ;;
+    esac
+  done < <(printf '%s\n' "$lc" | tr ';&|' '\n')
 fi
 
 # Forbidden hosts anywhere in the command line.
