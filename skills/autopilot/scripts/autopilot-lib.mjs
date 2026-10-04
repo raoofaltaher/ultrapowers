@@ -500,10 +500,21 @@ export function activeMarkerPath(root) {
   return path.join(root, '.ultrapowers', 'autopilot-active');
 }
 
-export function writeActiveMarker(root, { ticket, branch, scope }) {
+export function writeActiveMarker(root, { ticket, branch, scope, stage = null }) {
   const file = activeMarkerPath(root);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify({ ticket, branch, scope: scope ?? [] }));
+  fs.writeFileSync(file, JSON.stringify({ ticket, branch, scope: scope ?? [], ...(stage ? { stage } : {}) }));
+}
+
+// The marker's content while a stage is open, or null.
+export function readActiveMarker(root) {
+  const file = activeMarkerPath(root);
+  if (!fs.existsSync(file)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return { ticket: null, branch: null, scope: [], stage: null };
+  }
 }
 
 export function clearActiveMarker(root) {

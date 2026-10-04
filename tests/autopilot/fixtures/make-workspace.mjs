@@ -36,7 +36,9 @@ export const BASE_MAP = {
   'issue edit 16 -R o/r --remove-label up:running': { stdout: '' },
   'issue edit 16 -R o/r --add-label up:blocked': { stdout: '' },
   'issue edit 16 -R o/r --remove-label up:approve': { stdout: '' },
+  'issue edit 16 -R o/r --remove-label up:changes': { stdout: '' },
   'issue comment 16 -R o/r --body-file -': { stdout: 'https://github.com/o/r/issues/16#issuecomment-9\n' },
+  'api repos/o/r/issues/comments/9': { stdout: { id: 9, created_at: '2026-10-04T09:00:00Z' } },
   'api repos/o/r/issues/16/timeline': { stdout: [[]] },
   'api repos/o/r/issues/16/comments': { stdout: [[]] },
 };
@@ -60,7 +62,9 @@ export function makeWorkspace({ dir = null, autopilot = { mode: 'gated', baseBra
   const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
   marker.tickets = { transport: 'cli', sources: [{ prefix: 'GH', provider: 'github', owner: 'o', defaultProject: 'r' }] };
   if (autopilot) marker.autopilot = autopilot;
+  // `qa: true` means a configured QA gate: at least one url, which is what the engine checks.
   if (!qa) delete marker.qa;
+  else marker.qa = { ...(marker.qa ?? {}), urls: { ...(marker.qa?.urls ?? {}), frontend: 'http://localhost:3000' } };
   if (nested) {
     marker.topology = 'nested';
     marker.repos = [{ name: 'backend', path: 'backend', defaultBranch: 'main', area: 'backend' }];

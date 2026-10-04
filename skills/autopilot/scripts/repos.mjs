@@ -142,12 +142,30 @@ export function commitPaths(dir, paths, message, trailer = '') {
   return tip(dir);
 }
 
-// Pushes `branch` to origin, only when the state allows it for this repository.
-export function push(dir, branch, { state, repoName }) {
-  if (!pushAllowed(state, repoName, branch)) {
+// Pushes `branch` to origin, only when the state allows it for this repository. `ticket` is the
+// id the command validated; without it the state's copy is used.
+export function push(dir, branch, { state, repoName, ticket = state.ticket }) {
+  if (!pushAllowed(state, repoName, branch, ticket)) {
     throw new AutopilotError('scope-violation', `push of ${branch} in ${repoName} is outside the ticket's frozen scope`);
   }
   must(dir, ['push', '--quiet', '-u', 'origin', branch], 'push');
+}
+
+// Short shas of the commits on the local base that origin/<base> does not have, oldest first;
+// empty without a remote or a local base. These ride into the ticket's pull request.
+export function baseAhead(dir, base) {
+  if (!hasRemote(dir)) return [];
+  const local = git(dir, ['rev-parse', '--verify', '--quiet', `refs/heads/${base}`]).ok;
+  const remote = git(dir, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${base}`]).ok;
+  if (!local || !remote) return [];
+  const r = git(dir, ['log', '--reverse', '--format=%h', `refs/remotes/origin/${base}..refs/heads/${base}`]);
+  return r.ok ? r.stdout.split('\n').map((s) => s.trim()).filter(Boolean) : [];
+}
+
+// True when any of `paths` differs between the two revisions; an unreadable revision counts as changed.
+export function pathsChanged(dir, from, to, paths) {
+  const r = git(dir, ['diff', '--quiet', from, to, '--', ...paths]);
+  return !r.ok;
 }
 
 // The `owner/repo` path of origin, parsed from an https or ssh URL; null for a local or unknown remote.

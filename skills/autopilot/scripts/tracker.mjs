@@ -133,6 +133,15 @@ class GitHubTracker {
     return lastUrl(out.stdout);
   }
 
+  // The tracker's own creation time of a comment, from its URL; null when it cannot be read.
+  async commentTime(url) {
+    const id = /#issuecomment-(\d+)/.exec(String(url ?? ''))?.[1];
+    if (!id) return null;
+    const out = await run(this.r, this.env, ['api', `repos/${this.path}/issues/comments/${id}`]);
+    const at = parseJson(out.stdout, 'gh api comment').created_at;
+    return typeof at === 'string' && at ? at : null;
+  }
+
   async addLabel(number, name) {
     await run(this.r, this.env, ['issue', 'edit', String(number), '-R', this.path, '--add-label', name]);
   }
@@ -233,6 +242,15 @@ class GitLabTracker {
   async comment(number, body) {
     const out = await run(this.r, this.env, ['issue', 'note', String(number), '-R', this.path, '-m', body]);
     return lastUrl(out.stdout);
+  }
+
+  // The tracker's own creation time of a note, from its URL; null when it cannot be read.
+  async commentTime(url) {
+    const m = /issues\/(\d+)#note_(\d+)/.exec(String(url ?? ''));
+    if (!m) return null;
+    const out = await run(this.r, this.env, ['api', `projects/${this.enc}/issues/${m[1]}/notes/${m[2]}`]);
+    const at = parseJson(out.stdout, 'glab api note').created_at;
+    return typeof at === 'string' && at ? at : null;
   }
 
   async addLabel(number, name) {

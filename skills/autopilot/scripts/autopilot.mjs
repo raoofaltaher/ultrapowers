@@ -18,17 +18,18 @@ import {
   AutopilotError, STAGES, effectiveAutopilot, modeFor, branchName, initialState,
   readState, writeState, appendLog, readLog, verifyChain,
   nextStage, acquireLock, releaseLock, liveLock, readLock, lockPath,
-  writeActiveMarker, clearActiveMarker, verifyApproval,
+  writeActiveMarker, clearActiveMarker, readActiveMarker, verifyApproval,
   renderPacket, assumptionsFrom, scopeFrom, freezeScope, pushAllowed,
 } from './autopilot-lib.mjs';
 import { trackerFor } from './tracker.mjs';
-import { ensureBranch, ensureOnTicketBranch, ensureWorktree, remoteHead, remotePath, tip, workTip, commitPaths, push, repoDirs } from './repos.mjs';
+import { ensureBranch, ensureOnTicketBranch, ensureWorktree, remoteHead, remotePath, tip, workTip, commitPaths, push, repoDirs, baseAhead, pathsChanged, git } from './repos.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PACKET_TEMPLATE = path.join(HERE, '..', 'templates', 'packet.md');
 const MARKER = path.join('.agents', 'ultrapowers.json');
 const COMMANDS = ['status', 'next', 'begin', 'end', 'packet', 'approval', 'pr', 'run', 'watch'];
 const BACKOFF_CAP_MS = 600_000;
+const MAX_STAGE_REPEATS = 3;
 const DOORS = ['command', 'watch'];
 const FLAGS = { '--root': 'root', '--mode': 'mode', '--door': 'door', '--result': 'result', '--pid': 'pid' };
 const SWITCHES = { '--once': 'once' };
@@ -171,6 +172,67 @@ async function removeRunning(ctx) {
   await ctx.tracker.removeLabel(ctx.source.number, ctx.settings.events.running);
 }
 
+// The stage the agent is inside, if any. While it is open the engine's gate commands are refused:
+// the agent must not be able to post, verify or open pull requests from within its own stage.
+function openStage(ctx) {
+  return readActiveMarker(ctx.root);
+}
+
+function assertNoOpenStage(ctx, what) {
+  const open = openStage(ctx);
+  if (!open) return;
+  throw new AutopilotError('stage-open', `${what} is refused while the ${open.stage ?? 'current'} stage of ${open.ticket ?? 'a ticket'} is open; end that stage first`);
+}
+
+const SCOPE_CODES = ['scope-widened', 'unknown-repo', 'no-scope'];
+
+// The spec's and the plan's repository lists and the scope they would freeze to; throws a scope code.
+function previewScope(ctx, state) {
+  const specRepos = scopeFrom(readText(path.join(ctx.root, 'specs', state.ticket, 'Spec.md')));
+  const planRepos = scopeFrom(readText(path.join(ctx.root, 'plans', state.ticket, 'Plan.md')));
+  return { specRepos, planRepos, frozen: freezeScope(state, { specRepos, planRepos, knownRepos: knownRepos(ctx) }) };
+}
+
+// Ends an engine stage as blocked: the state, the log, the commit, the label, the comment, and the
+// lock and marker released, so a failed packet or pull request never strands the ticket or the watcher.
+async function blockStage(ctx, id, door, stage, message, { label = true } = {}) {
+  const state = readState(ctx.root, id);
+  if (state) {
+    state.stage = stage;
+    state.stageStatus = 'blocked';
+    writeState(ctx.root, id, state);
+    appendLog(ctx.root, id, { stage, event: 'blocked', actor: 'engine', trigger: door, repo: 'docs', message });
+    commitState(ctx, id, `chore(${id}): autopilot ${stage} blocked`);
+  }
+  clearActiveMarker(ctx.root);
+  releaseLock(ctx.root, id);
+  if (ctx.settings.mode === 'off') return;
+  await removeRunning(ctx).catch(() => {});
+  if (label) await ctx.tracker.addLabel(ctx.source.number, ctx.settings.events.blocked).catch(() => {});
+  await ctx.tracker.comment(ctx.source.number, `Autopilot for ${id} is blocked at stage ${stage} (attempt ${state?.attempt ?? 1}): ${message}`).catch(() => {});
+}
+
+// A recorded approval is checked again before execute and before the pull request: the event
+// is still on the tracker's timeline with its actor, and it belongs to the packet that was approved.
+// A full-mode approval has no event; it belongs to its packet all the same.
+async function recheckApproval(ctx, state) {
+  const a = state.approval;
+  if (!a || !state.packet || a.docsTip !== state.packet.docsTip) {
+    throw new AutopilotError('approval-unverified', `${state.ticket}: the recorded approval does not belong to the current packet`);
+  }
+  if (a.mode === 'full') return;
+  const events = await ctx.tracker.labelEvents(ctx.source.number);
+  const found = events.some((e) => String(e.id) === String(a.eventId) && e.actor === a.actor && e.action === 'labeled' && e.label === ctx.settings.events.approve);
+  if (!found) throw new AutopilotError('approval-unverified', `${state.ticket}: the approval event ${a.eventId} by ${a.actor} is not on the tracker's timeline`);
+}
+
+// Spec §4: a changed spec or plan after the approval stops the run.
+function planChangedSince(ctx, state) {
+  const since = state.approval?.docsTip;
+  if (!since) return false;
+  return pathsChanged(ctx.dirs.docs, since, 'HEAD', [`specs/${state.ticket}`, `plans/${state.ticket}`]);
+}
+
 // ---- commands ----
 
 async function runStatus(opts) {
@@ -189,7 +251,9 @@ async function runNext(opts) {
   const mode = modeFor(block, { arg: opts.mode, labels });
   const events = ctx.settings.events ?? effectiveAutopilot({ autopilot: { mode: 'gated' } }).events;
   let approval = null;
-  if (state && state.stage === 'gate' && (state.stageStatus ?? 'finished') === 'finished' && mode !== 'off' && mode !== 'full') {
+  // No approval is read, let alone consumed, while a stage is open: the agent inside it cannot pass its own gate.
+  const stageOpen = openStage(ctx) !== null;
+  if (state && !stageOpen && !state.approval && state.stage === 'gate' && (state.stageStatus ?? 'finished') === 'finished' && mode !== 'off' && mode !== 'full') {
     approval = await pendingApproval(ctx, state, events);
   }
   const facts = {
@@ -197,9 +261,18 @@ async function runNext(opts) {
     qaConfigured: qaConfigured(ctx.marker),
     locked: liveLock(ctx.root, opts.id, opts.door),
   };
-  const answer = nextStage(state, facts);
+  let answer = nextStage(state, facts);
   // A verified approval is consumed here: the label goes, the scope freezes, the log says who.
-  if (answer.reason === 'approved' && !state.approval) await consumeApproval(ctx, state, approval, opts.door);
+  if (answer.reason === 'approved' && !state.approval) {
+    try {
+      await consumeApproval(ctx, state, approval, opts.door);
+    } catch (err) {
+      if (!SCOPE_CODES.includes(err.code)) throw err;
+      // The spec or the plan no longer freezes (changed since the packet): the label goes and the gate reposts.
+      await voidApproval(ctx, state, { ...approval, detail: err.message }, opts.door);
+      answer = { action: 'run', stage: 'gate', reason: 'drift' };
+    }
+  }
   if (answer.reason === 'drift' && approval && approval.reason === 'drift') await voidApproval(ctx, state, approval, opts.door);
   if (answer.action === 'wait' && answer.reason !== 'locked') await removeRunning(ctx);
   if (answer.action === 'done' || answer.action === 'stop') await removeRunning(ctx);
@@ -215,8 +288,10 @@ function readText(file) {
   return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
 }
 
+// The names a scope may use: the code repositories of the marker and `.`, the documents repository.
 function knownRepos(ctx) {
-  return Object.keys(ctx.dirs.repos);
+  const names = Object.keys(ctx.dirs.repos);
+  return names.includes('.') ? names : ['.', ...names];
 }
 
 // Freezes the scope from the spec and the plan, removes the approve label, records the approval.
@@ -236,8 +311,10 @@ async function voidApproval(ctx, state, approval, door) {
   await ctx.tracker.removeLabel(ctx.source.number, ctx.settings.events.approve);
   await ctx.tracker.comment(ctx.source.number, `Autopilot for ${state.ticket}: the approval is voided because the branch changed after the packet (${approval.detail}). A new packet follows; approve that one.`);
   appendLog(ctx.root, state.ticket, { stage: 'gate', event: 'voided', actor: 'engine', trigger: door, repo: 'docs', sha: state.packet?.docsTip ?? null });
-  state.approval = null;
-  writeState(ctx.root, state.ticket, state);
+  // appendLog moved the log head; write the fresh state, not the copy from before the line.
+  const fresh = readState(ctx.root, state.ticket) ?? state;
+  fresh.approval = null;
+  writeState(ctx.root, state.ticket, fresh);
   commitState(ctx, state.ticket, `chore(${state.ticket}): autopilot approval voided`);
 }
 
@@ -260,22 +337,41 @@ function compareUrl(ctx, from, to) {
 async function runPacket(opts) {
   const ctx = context(opts);
   if (ctx.settings.mode === 'off') throw new AutopilotError('mode-off', 'autopilot.mode is off for this project; nothing runs');
+  assertNoOpenStage(ctx, 'packet');
   const state = readState(ctx.root, opts.id);
   if (!state) throw new AutopilotError('no-state', `${opts.id} has no autopilot state; run the scaffold, spec and plan stages first`);
   const lock = acquireLock(ctx.root, opts.id, opts.door, opts.pid);
   if (!lock.ok) throw new AutopilotError('locked', `${opts.id} is being run by the ${lock.door} door`);
+  try {
+    return await postPacket(ctx, opts, state);
+  } catch (err) {
+    // A packet that fails ends the gate blocked, with the lock and the marker released.
+    const message = SCOPE_CODES.includes(err.code)
+      ? `the scope cannot be frozen (${err.code}): ${err.message}. Fix the spec or the plan on ${state.docs.branch} and run the gate again`
+      : `the packet could not be posted (${err.code ?? 'error'}): ${err.message}`;
+    await blockStage(ctx, opts.id, opts.door, 'gate', message);
+    throw err;
+  }
+}
+
+async function postPacket(ctx, opts, state) {
   const previous = state.packet;
+  const retry = state.stage === 'gate' && state.stageStatus === 'blocked';
   state.stage = 'gate';
   state.stageStatus = 'running';
-  state.attempt = 1;
+  state.attempt = retry ? (state.attempt ?? 1) + 1 : 1;
   const specText = readText(path.join(ctx.root, 'specs', opts.id, 'Spec.md'));
-  const specRepos = scopeFrom(specText);
-  state.scope = { ...state.scope, proposed: specRepos.length ? specRepos : (knownRepos(ctx).length === 1 ? knownRepos(ctx) : []) };
+  // The scope is validated before anything is posted: a plan that widens the spec, or names a
+  // repository this workspace does not have, blocks the gate here instead of at the approval.
+  const preview = previewScope(ctx, state);
+  state.scope = { ...state.scope, proposed: preview.frozen.scope.frozen };
   writeState(ctx.root, opts.id, state);
   appendLog(ctx.root, opts.id, { stage: 'gate', event: 'started', actor: 'engine', trigger: opts.door, repo: 'docs' });
   commitState(ctx, opts.id, `chore(${opts.id}): autopilot gate started`);
-  push(ctx.dirs.docs, state.docs.branch, { state, repoName: 'docs' });
+  push(ctx.dirs.docs, state.docs.branch, { state, repoName: 'docs', ticket: opts.id });
   const docsTip = workTip(ctx.dirs.docs, opts.id, state.docs.branch);
+  const ahead = baseAhead(ctx.dirs.docs, state.docs.base);
+  state.docs.baseAhead = ahead;
   const tips = {};
   for (const r of state.repos ?? []) {
     const dir = ctx.dirs.repos[r.name];
@@ -291,14 +387,25 @@ async function runPacket(opts) {
     plan: blobUrl(ctx, docsTip, `plans/${opts.id}/Plan.md`),
     diff: previous && previous.docsTip && previous.docsTip !== docsTip ? compareUrl(ctx, previous.docsTip, docsTip) : null,
   };
-  const body = renderPacket(readText(PACKET_TEMPLATE), { state, links, assumptions: assumptionsFrom(specText), events: ctx.settings.events });
+  const body = renderPacket(readText(PACKET_TEMPLATE), { state, links, assumptions: assumptionsFrom(specText), events: ctx.settings.events, baseAhead: ahead });
   const commentUrl = await ctx.tracker.comment(ctx.source.number, body);
-  const postedAt = new Date().toISOString();
+  // The packet time is the tracker's clock, the same clock that stamps the label events.
+  const postedAt = (await ctx.tracker.commentTime(commentUrl).catch(() => null)) ?? new Date().toISOString();
   state.packet = { commentUrl, docsTip, tips, postedAt };
   state.approval = null;
   state.stageStatus = 'finished';
   writeState(ctx.root, opts.id, state);
   appendLog(ctx.root, opts.id, { stage: 'gate', event: 'packet-posted', actor: 'engine', trigger: opts.door, repo: 'docs', sha: docsTip, url: commentUrl });
+  if (state.mode === 'full') {
+    // Full mode: the packet is posted for the record and the run continues. The scope freezes
+    // here and the approval is the engine's, so execute and pr find what they require.
+    const frozen = preview.frozen;
+    const full = readState(ctx.root, opts.id);
+    full.scope = frozen.scope;
+    full.approval = { mode: 'full', actor: 'engine', eventId: null, at: postedAt, docsTip, tips };
+    writeState(ctx.root, opts.id, full);
+    appendLog(ctx.root, opts.id, { stage: 'gate', event: 'approved', actor: 'engine', trigger: opts.door, repo: 'docs', sha: docsTip, url: commentUrl, mode: 'full' });
+  }
   commitState(ctx, opts.id, `chore(${opts.id}): autopilot packet posted`);
   await removeRunning(ctx);
   clearActiveMarker(ctx.root);
@@ -309,6 +416,7 @@ async function runPacket(opts) {
 // The explicit form of the approval check; `next` does the same when it finds one.
 async function runApproval(opts) {
   const ctx = context(opts);
+  assertNoOpenStage(ctx, 'approval');
   const state = readState(ctx.root, opts.id);
   if (!state || state.stage !== 'gate') throw new AutopilotError('wrong-stage', `${opts.id} is not at the gate`);
   const approval = await pendingApproval(ctx, state, ctx.settings.events);
@@ -329,44 +437,69 @@ function repoTrackerPath(ctx, name, dir) {
 // The last stage: push every branch in scope, one PR per repository plus the documents PR.
 async function runPr(opts) {
   const ctx = context(opts);
+  assertNoOpenStage(ctx, 'pr');
   const state = readState(ctx.root, opts.id);
   if (!state) throw new AutopilotError('no-state', `${opts.id} has no autopilot state`);
-  if (!Array.isArray(state.scope.frozen)) throw new AutopilotError('not-approved', `${opts.id} has no approved scope; the gate has not been passed`);
-  if (!['execute', 'qa'].includes(state.stage) || state.stageStatus !== 'finished') throw new AutopilotError('wrong-stage', `${opts.id} is at ${state.stage} (${state.stageStatus}); pr follows a finished execute or qa stage`);
+  if (!state.approval || !Array.isArray(state.scope.frozen)) throw new AutopilotError('not-approved', `${opts.id} has no verified approval; the gate has not been passed`);
+  const resuming = state.stage === 'pr' && ['running', 'blocked'].includes(state.stageStatus);
+  if (!resuming && (!['execute', 'qa'].includes(state.stage) || state.stageStatus !== 'finished')) {
+    throw new AutopilotError('wrong-stage', `${opts.id} is at ${state.stage} (${state.stageStatus}); pr follows a finished execute or qa stage`);
+  }
   if (state.qa && ['FAIL', 'PRECONDITION-FAILED'].includes(state.qa.verdict)) {
     throw new AutopilotError('qa-failed', `${opts.id} has QA verdict ${state.qa.verdict} (${state.qa.report}); no pull request opens on a failed gate`);
   }
+  const qaOn = qaConfigured(ctx.marker);
+  if (qaOn && !state.qa) throw new AutopilotError('qa-missing', `${opts.id}: QA is configured for this project and no verdict was recorded; no pull request opens without one`);
+  await recheckApproval(ctx, state);
+  if (planChangedSince(ctx, state)) throw new AutopilotError('plan-changed', `${opts.id}: specs/${opts.id} or plans/${opts.id} changed after the approval at ${state.approval.docsTip}; the gate must approve them again`);
   const lock = acquireLock(ctx.root, opts.id, opts.door, opts.pid);
   if (!lock.ok) throw new AutopilotError('locked', `${opts.id} is being run by the ${lock.door} door`);
+  try {
+    return await openPullRequests(ctx, opts, state, { resuming, qaOn });
+  } catch (err) {
+    // A pull request that fails partway leaves the stage blocked and resumable, never a held lock.
+    await blockStage(ctx, opts.id, opts.door, 'pr', `the pull requests could not be opened (${err.code ?? 'error'}): ${err.message}`);
+    throw err;
+  }
+}
+
+async function openPullRequests(ctx, opts, state, { resuming, qaOn }) {
   // Spec §6: without a qa block the QA stage is skipped with a log line (and a note in the PR body).
-  if (!state.qa && !qaConfigured(ctx.marker) && !readLog(ctx.root, opts.id).some((l) => l.stage === 'qa' && l.event === 'skipped')) {
+  if (!state.qa && !qaOn && !readLog(ctx.root, opts.id).some((l) => l.stage === 'qa' && l.event === 'skipped')) {
     appendLog(ctx.root, opts.id, { stage: 'qa', event: 'skipped', actor: 'engine', trigger: opts.door, repo: 'docs', reason: 'no qa block in .agents/ultrapowers.json' });
     state.logHead = readState(ctx.root, opts.id).logHead;
   }
   state.stage = 'pr';
   state.stageStatus = 'running';
-  state.attempt = 1;
+  state.attempt = resuming ? (state.attempt ?? 1) + 1 : 1;
   writeState(ctx.root, opts.id, state);
   appendLog(ctx.root, opts.id, { stage: 'pr', event: 'started', actor: 'engine', trigger: opts.door, repo: 'docs' });
   commitState(ctx, opts.id, `chore(${opts.id}): autopilot pr started`);
   const logHead = readState(ctx.root, opts.id).logHead ?? '';
+  const ahead = state.docs.baseAhead ?? [];
   const cite = (what) => [
     `Autopilot pull request for ${opts.id}: ${what}.`,
     '',
     `- Packet: ${state.packet?.commentUrl ?? 'none'}`,
     `- Documents tip at approval: ${state.approval?.docsTip ?? state.packet?.docsTip ?? 'none'}`,
-    `- Approved by: ${state.approval?.actor ?? 'n/a'}`,
+    `- Approved by: ${state.approval?.mode === 'full' ? 'nobody (mode full: the packet is the record)' : state.approval?.actor ?? 'n/a'}`,
     `- Stage log head: ${logHead}`,
     state.qa ? `- QA verdict: ${state.qa.verdict} (${state.qa.report})` : '- QA: not configured for this project',
+    ...(ahead.length ? [`- Base ${state.docs.base} commits not on origin/${state.docs.base}: ${ahead.join(', ')} (they are in this diff)`] : []),
   ].join('\n');
   const prs = {};
   const title = `${opts.id}: ${state.title || 'autopilot'}`;
-  // Code repositories first, so the documents PR can list them.
+  // Code repositories first, so the documents PR can list them. A repository that already has its
+  // pull request (a resumed stage) is listed, not opened twice.
   for (const r of state.repos ?? []) {
     if (!state.scope.frozen.includes(r.name) || r.name === '.') continue;
+    if (r.prUrl) {
+      prs[r.name] = r.prUrl;
+      continue;
+    }
     const dir = ctx.dirs.repos[r.name];
     const workDir = r.worktree && fs.existsSync(r.worktree) ? r.worktree : dir;
-    push(workDir, r.branch, { state, repoName: r.name });
+    push(workDir, r.branch, { state, repoName: r.name, ticket: opts.id });
     r.tip = tip(workDir, r.branch);
     const tracker = trackerFor({ ...ctx.resolution, path: repoTrackerPath(ctx, r.name, dir) }, process.env);
     r.prUrl = await tracker.createPr({ head: r.branch, base: r.base, title, body: cite(`the ${r.name} repository`) });
@@ -374,15 +507,17 @@ async function runPr(opts) {
     prs[r.name] = r.prUrl;
     writeState(ctx.root, opts.id, state);
   }
-  push(ctx.dirs.docs, state.docs.branch, { state, repoName: 'docs' });
-  const docsBody = `${cite('the documents repository')}\n${Object.entries(prs).map(([n, u]) => `- ${n}: ${u}`).join('\n')}`;
-  state.pr.docs = await ctx.tracker.createPr({ head: state.docs.branch, base: state.docs.base, title, body: docsBody });
+  push(ctx.dirs.docs, state.docs.branch, { state, repoName: 'docs', ticket: opts.id });
+  if (!state.pr.docs) {
+    const docsBody = `${cite('the documents repository')}\n${Object.entries(prs).map(([n, u]) => `- ${n}: ${u}`).join('\n')}`;
+    state.pr.docs = await ctx.tracker.createPr({ head: state.docs.branch, base: state.docs.base, title, body: docsBody });
+  }
   prs.docs = state.pr.docs;
   state.stageStatus = 'finished';
   writeState(ctx.root, opts.id, state);
   appendLog(ctx.root, opts.id, { stage: 'pr', event: 'finished', actor: 'engine', trigger: opts.door, repo: 'docs', sha: tip(ctx.dirs.docs, state.docs.branch), url: state.pr.docs });
   commitState(ctx, opts.id, `chore(${opts.id}): autopilot pull requests opened`);
-  push(ctx.dirs.docs, state.docs.branch, { state, repoName: 'docs' });
+  push(ctx.dirs.docs, state.docs.branch, { state, repoName: 'docs', ticket: opts.id });
   await ctx.tracker.comment(ctx.source.number, `Autopilot for ${opts.id} opened the pull requests:\n${Object.entries(prs).map(([n, u]) => `- ${n}: ${u}`).join('\n')}`);
   await removeRunning(ctx);
   clearActiveMarker(ctx.root);
@@ -408,6 +543,9 @@ async function pendingApproval(ctx, state, events) {
 async function runBegin(opts) {
   const ctx = context(opts);
   if (ctx.settings.mode === 'off') throw new AutopilotError('mode-off', 'autopilot.mode is off for this project; nothing runs');
+  // An open stage may re-enter itself (a retry inside the same session); no other stage may start.
+  const open = openStage(ctx);
+  if (open && !(open.ticket === opts.id && open.stage === opts.stage)) assertNoOpenStage(ctx, `begin ${opts.stage}`);
   const lock = acquireLock(ctx.root, opts.id, opts.door, opts.pid);
   if (!lock.ok) throw new AutopilotError('locked', `${opts.id} is being run by the ${lock.door} door${lock.pid ? ` (pid ${lock.pid})` : ''}`);
   let state = readState(ctx.root, opts.id);
@@ -437,17 +575,30 @@ async function runBegin(opts) {
     state.stageStatus = 'running';
     state.door = opts.door;
     if (opts.stage === 'execute') {
-      if (!Array.isArray(state.scope.frozen)) {
+      // The state file is not the gate: a frozen scope counts only with the approval that froze
+      // it, and that approval is checked against the tracker again before any work starts.
+      if (!state.approval || !Array.isArray(state.scope.frozen)) {
         releaseLock(ctx.root, opts.id);
-        throw new AutopilotError('not-approved', `${opts.id} has no approved scope; execute follows a verified approval`);
+        throw new AutopilotError('not-approved', `${opts.id} has no verified approval; execute follows one`);
+      }
+      try {
+        await recheckApproval(ctx, state);
+      } catch (err) {
+        releaseLock(ctx.root, opts.id);
+        throw err;
       }
       prepareWorktrees(ctx, state);
     }
     writeState(ctx.root, opts.id, state);
     appendLog(ctx.root, opts.id, { stage: opts.stage, event: 'started', actor: 'engine', trigger: opts.door, repo: 'docs' });
+    if (opts.stage === 'changes') {
+      // The request is taken: the label goes now, so the gate that follows waits for a new one.
+      await ctx.tracker.removeLabel(ctx.source.number, ctx.settings.events.changes);
+      appendLog(ctx.root, opts.id, { stage: 'changes', event: 'changes-taken', actor: 'engine', trigger: opts.door, repo: 'docs' });
+    }
     commitState(ctx, opts.id, `chore(${opts.id}): autopilot ${opts.stage} started`);
   }
-  writeActiveMarker(ctx.root, { ticket: opts.id, branch: state.docs.branch, scope: Array.isArray(state.scope.frozen) ? state.scope.frozen : [] });
+  writeActiveMarker(ctx.root, { ticket: opts.id, branch: state.docs.branch, scope: Array.isArray(state.scope.frozen) ? state.scope.frozen : [], stage: opts.stage });
   const labels = await ctx.tracker.labels(ctx.source.number);
   if (!labels.includes(ctx.settings.events.running)) await ctx.tracker.addLabel(ctx.source.number, ctx.settings.events.running);
   const worktrees = Object.fromEntries((state.repos ?? []).filter((r) => r.worktree).map((r) => [r.name, r.worktree]));
@@ -489,10 +640,27 @@ async function runEnd(opts) {
     firstWrite = true;
   }
   if (state.stage !== opts.stage) throw new AutopilotError('wrong-stage', `${opts.id} is at stage ${state.stage}, not ${opts.stage}`);
-  const ok = result.ok !== false;
+  let ok = result.ok !== false;
+  let message = typeof result.message === 'string' && result.message ? result.message : null;
   if (typeof result.title === 'string' && result.title) state.title = result.title;
   if (Array.isArray(result.scope)) state.scope = { ...state.scope, proposed: result.scope.filter((s) => typeof s === 'string') };
-  if (opts.stage === 'qa' && typeof result.verdict === 'string') state.qa = { verdict: result.verdict, report: result.report ?? `reviews/${opts.id}/QA-REPORT.md` };
+  let verdict = null;
+  if (opts.stage === 'qa') {
+    // The verdict is read from the committed report, not taken from the result: the gate fails
+    // closed when QA is configured and no committed report carries a Verdict line.
+    const report = typeof result.report === 'string' && result.report ? result.report : `reviews/${opts.id}/QA-REPORT.md`;
+    verdict = committedVerdict(ctx, report);
+    if (!verdict && !qaConfigured(ctx.marker) && typeof result.verdict === 'string') verdict = result.verdict;
+    if (verdict) state.qa = { verdict, report };
+    else if (qaConfigured(ctx.marker) && ok) {
+      ok = false;
+      message = `qa-missing: no committed ${report} with a Verdict line; the QA gate fails closed`;
+    }
+  }
+  if (opts.stage === 'execute' && ok && planChangedSince(ctx, state)) {
+    ok = false;
+    message = `plan-changed: specs/${opts.id} or plans/${opts.id} changed after the approval at ${state.approval.docsTip}; the gate must approve them again`;
+  }
   state.stageStatus = ok ? 'finished' : 'blocked';
   if (firstWrite) {
     writeState(ctx.root, opts.id, state);
@@ -516,10 +684,18 @@ async function runEnd(opts) {
   releaseLock(ctx.root, opts.id);
   if (!ok) {
     await ctx.tracker.addLabel(ctx.source.number, ctx.settings.events.blocked);
-    const message = typeof result.message === 'string' && result.message ? result.message : `the ${opts.stage} stage did not finish`;
-    await ctx.tracker.comment(ctx.source.number, `Autopilot for ${opts.id} is blocked at stage ${opts.stage} (attempt ${state.attempt ?? 1}): ${message}`);
+    await ctx.tracker.comment(ctx.source.number, `Autopilot for ${opts.id} is blocked at stage ${opts.stage} (attempt ${state.attempt ?? 1}): ${message ?? `the ${opts.stage} stage did not finish`}`);
   }
-  return { ticket: opts.id, stage: opts.stage, status: state.stageStatus, tip: state.docs.tip, attempt: state.attempt ?? 1 };
+  return { ticket: opts.id, stage: opts.stage, status: state.stageStatus, tip: state.docs.tip, attempt: state.attempt ?? 1, ...(opts.stage === 'qa' ? { verdict } : {}) };
+}
+
+// The Verdict line of a QA report as committed on HEAD of the documents branch; null when the
+// file is not committed or carries no verdict.
+function committedVerdict(ctx, report) {
+  const r = git(ctx.dirs.docs, ['show', `HEAD:${report.replace(/\\/g, '/')}`]);
+  if (!r.ok) return null;
+  const m = /^\s*\**\s*verdict\s*\**\s*:\s*\**\s*([A-Z][A-Z-]+)/im.exec(r.stdout);
+  return m ? m[1].toUpperCase() : null;
 }
 
 // One headless harness call; resolves { code, timedOut, stdout, stderr }.
@@ -542,15 +718,48 @@ function spawnHarness(name, prompt, cwd) {
 
 // The watcher door: one fresh headless harness call per agent stage, the engine steps in
 // process, until the ticket waits, is done or stops. Exit 0 on wait or done, 3 on stop.
+// The harnesses whose stages run inside the guardrail. A harness without the PreToolUse envelope
+// has no brake at all in the watcher, so the watcher refuses it until one is wired.
+const GUARDED_HARNESSES = ['claude-code'];
+
+function assertGuardedHarness(settings) {
+  if (GUARDED_HARNESSES.includes(settings.harness)) return;
+  throw new AutopilotError('harness-unguarded', `autopilot.harness ${settings.harness} has no guardrail in the watcher door yet; run its tickets from a session with /ultrapowers:autopilot <ID>, or set harness to ${GUARDED_HARNESSES.join(' or ')}`);
+}
+
 async function runRun(opts) {
   const base = { ...opts, door: 'watch', pid: process.pid };
   const ctx = context(base);
+  assertGuardedHarness(ctx.settings);
   const stages = [];
+  const seen = {};
+  let final = null;
+  try {
+    final = await runStages(ctx, base, opts, stages, seen);
+  } catch (err) {
+    // Whatever failed, the watcher's lock and the marker never outlive the run.
+    clearActiveMarker(ctx.root);
+    releaseLock(ctx.root, opts.id);
+    throw err;
+  }
+  releaseLock(ctx.root, opts.id);
+  const result = { ticket: opts.id, door: 'watch', stages, final };
+  result.exitCode = final.action === 'stop' ? 3 : 0;
+  return result;
+}
+
+async function runStages(ctx, base, opts, stages, seen) {
   let final = null;
   for (;;) {
     const answer = await runNext(base);
     if (answer.action !== 'run') {
       final = { action: answer.action, reason: answer.reason };
+      break;
+    }
+    // A stage that keeps coming back is a loop, not progress: each pass is a model session.
+    seen[answer.stage] = (seen[answer.stage] ?? 0) + 1;
+    if (seen[answer.stage] > MAX_STAGE_REPEATS) {
+      final = { action: 'stop', reason: 'stage-repeated', stage: answer.stage };
       break;
     }
     const lock = acquireLock(ctx.root, opts.id, 'watch', process.pid);
@@ -559,12 +768,15 @@ async function runRun(opts) {
       break;
     }
     const stage = answer.stage;
-    if (stage === 'gate') {
-      await runPacket(base);
-      stages.push({ stage, ok: true });
-    } else if (stage === 'pr') {
-      await runPr(base);
-      stages.push({ stage, ok: true });
+    if (stage === 'gate' || stage === 'pr') {
+      // An engine stage that fails has already blocked itself; the loop decides what follows.
+      try {
+        await (stage === 'gate' ? runPacket(base) : runPr(base));
+        stages.push({ stage, ok: true });
+      } catch (err) {
+        if (!(err instanceof AutopilotError)) throw err;
+        stages.push({ stage, ok: false, code: err.code, message: err.message });
+      }
     } else {
       const started = Date.now();
       const spawned = await spawnHarness(ctx.settings.harness, stagePrompt(stage, opts.id), ctx.dirs.docs);
@@ -601,10 +813,7 @@ async function runRun(opts) {
       break;
     }
   }
-  releaseLock(ctx.root, opts.id);
-  const result = { ticket: opts.id, door: 'watch', stages, final };
-  result.exitCode = final.action === 'stop' ? 3 : 0;
-  return result;
+  return final;
 }
 
 function sleep(ms) {
@@ -637,9 +846,12 @@ async function watchCycle(root, marker, settings, opts, previousSleepMs) {
     }
     const tracker = trackerFor(resolution, process.env);
     try {
+      // `ready` is the only start signal (spec §7): a ticket that carries approve or changes but
+      // has no state here was never started by this engine, and is left alone.
       for (const label of [settings.events.ready, settings.events.approve, settings.events.changes]) {
         for (const item of await tracker.listTickets(label)) {
           const id = `${source.prefix}-${item.number}`;
+          if (label !== settings.events.ready && !readState(root, id)) continue;
           if (!queue.some((q) => q.id === id)) queue.push({ id, number: item.number, tracker });
         }
       }
@@ -679,6 +891,7 @@ async function runWatch(opts) {
   if (!fs.existsSync(path.join(root, MARKER))) throw new AutopilotError('no-marker', `no ${MARKER.replace(/\\/g, '/')} in ${root}`);
   const marker = readMarker(root);
   const settings = effectiveAutopilot(marker);
+  if (settings.mode !== 'off') assertGuardedHarness(settings);
   if (settings.mode === 'off') {
     const events = [{ event: 'idle', reason: 'mode-off' }];
     if (opts.once) return { root, events, nextSleepMs: 0 };
