@@ -44,7 +44,7 @@ node "<SKILL_DIR>/scripts/init.mjs" detect --root "<ROOT>"
    - Harnesses: all of `claude-code, codex, cursor, copilot, gemini, qwen, opencode, factory, kimi, devin, antigravity, hermes, pi, muse`, or a shorter list.
    - Only when `repos` is not empty: a three-line pointer `AGENTS.md` in each listed nested clone? Default no.
    - Ticket sources: `Local only` (default), or GitHub, GitLab, Odoo; then the Ticket sources questions.
-   - Autopilot, with a GitHub or GitLab source: `off` (default), `gated` or `full`.
+   - Autopilot, with a GitHub, GitLab or Odoo source: `off` (default), `gated` or `full`.
 2. Dry run. Add `--harnesses <list>` only for a shorter list, `--nested-pointers` only after a yes to pointers, `--sources <file>` only for ticket sources, `--autopilot <file>` for autopilot:
 
    ```bash
@@ -100,7 +100,7 @@ Print `markerError`. Run `git diff -- .agents/ultrapowers.json`; a merge leaves 
 | `bad-name` | the name is blank or holds `"`, `\` or a control character | Ask for another name |
 | `bad-tickets` | a ticket-sources answer is missing or invalid | Ask for the named field; dry run again |
 | `bad-autopilot` | an invalid autopilot answer | Ask for the field; dry run again |
-| `no-source` | autopilot without a GitHub or GitLab source | Ticket sources first |
+| `no-source` | autopilot without a GitHub, GitLab or Odoo source | Ticket sources first |
 | `unknown-placeholder` | a plugin template is broken | Report a plugin bug; write nothing by hand |
 | `bad-template` | a plugin template renders to invalid JSON | Report a plugin bug; write nothing by hand |
 | `mcp-schema` | the plugin's MCP source is broken | Report a plugin bug; write nothing by hand |

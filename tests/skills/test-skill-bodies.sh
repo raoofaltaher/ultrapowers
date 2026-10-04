@@ -64,6 +64,14 @@ expect skills/autopilot/prompts/scaffold.md 'attachments' 'the scaffold stage do
 expect skills/task/SKILL.md 'task URL' 'task accepts an Odoo task URL'
 
 echo ""
+echo "=== Test: the documents name Odoo as an autopilot tracker (spec 2026-10-05 D1, §9) ==="
+expect AGENTS.md 'host of a ticket source the user configured' 'AGENTS.md rule 5 allows the engine its calls to a configured ticket source'
+expect README.md 'ULTRAPOWERS_STAGE_ODOO_API_KEY' 'README lists the stage key for Odoo'
+expect README.md 'Ultrapowers Approve' 'README names the Odoo approve tag'
+expect docs/autopilot-watcher.md 'ULTRAPOWERS_STAGE_ODOO_API_KEY' 'the watcher document lists the stage key for Odoo'
+expect docs/autopilot-watcher.md 'Project User' 'the watcher document names the Odoo group that may approve'
+
+echo ""
 if [[ "$FAILURES" -ne 0 ]]; then
     echo "FAILED: $FAILURES assertion(s)."
     exit 1

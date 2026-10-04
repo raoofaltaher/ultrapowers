@@ -113,17 +113,17 @@ Rows assume `gated`, the default mode. During a stage, a guardrail hook denies t
 
 ### Your first ticket in five steps
 
-1. Run `/ultrapowers:init autopilot` (needs a GitHub or GitLab source); it creates the six labels after your yes.
-2. Run `/ultrapowers:autopilot <ticket>` in a session, or add `up:ready` if a watcher *(beta)* runs.
-3. Read the review packet on the ticket (brief, spec, plan), then add `up:approve`.
+1. Run `/ultrapowers:init autopilot` (needs a GitHub, GitLab or Odoo source); it creates the six labels, or on Odoo the six tags, after your yes.
+2. Run `/ultrapowers:autopilot <ticket>` in a session (an Odoo task's URL works as the ticket), or add `up:ready` if a watcher *(beta)* runs.
+3. Read the review packet on the ticket (brief, spec, plan), then add `up:approve`; on Odoo, the tag `Ultrapowers Approve`.
 4. Review the pull requests (one per repository); they cite the packet, the approver and the log.
 5. Merge the pull requests yourself; in this release neither the agent nor the engine merges.
 
 ### Questions teams ask first
 
-**Who can approve a run?** A tracker member with write access (GitLab: Maintainer or above), limited to your `approvers` list if set. Approval counts only after the packet.
+**Who can approve a run?** A tracker member with write access (GitLab: Maintainer or above; Odoo: an internal user in the Project User group, never a portal user), limited to your `approvers` list if set. Approval counts only after the packet.
 
-**What leaves our network?** No telemetry: the plugin opens no connection itself. Your agent calls its model provider; `gh`, `glab` and git reach GitHub or GitLab with your tokens.
+**What leaves our network?** No telemetry: the plugin opens no connection itself. Your agent calls its model provider; `gh`, `glab` and git reach GitHub or GitLab with your tokens; with an Odoo source, the autopilot engine calls your own Odoo server's JSON-RPC API with the key you issued.
 
 **What has been verified?** Live: one GitHub ticket on Claude Code, gated. Offline: 54 engine scenarios, 120 guardrail cases. Not yet run: watcher, GitLab, full mode, in-run QA.
 
@@ -336,13 +336,13 @@ From a ticket to a reviewed, tested branch. The agents do the repeatable work; a
 
 9. **`/ultrapowers:finishing-a-development-branch`** - Activates when tasks complete. Verifies tests, offers to merge, open a pull request or keep the branch, and cleans up the worktree. Discarding the work needs your explicit request and a typed confirmation.
 
-10. **`/ultrapowers:autopilot <ticket> [--mode off|gated|full]`** *(the watcher and `full` mode are beta)* - Runs steps 2 to 9 for one GitHub or GitLab ticket with the human gates on the tracker instead of in the chat. It has two doors: the command, which you run in a session, and a watcher, `autopilot.mjs watch`, which runs on the machine that hosts your coding agent and picks up tickets a human labelled. In `gated` mode the run stops twice: at a review packet on the ticket, with links to the brief, the spec with its assumption ledger and the plan, which you approve with a label, and at the pull requests, one per repository in scope. In `full` mode only the pull requests wait for you. The engine keeps a hash-chained stage log per ticket, pushes and writes to the tracker itself, and a guardrail envelope keeps the agent from pushing, merging or writing to the tracker. Set it up with `/ultrapowers:init autopilot`; `docs/autopilot-watcher.md` covers the watcher as a service.
+10. **`/ultrapowers:autopilot <ticket> [--mode off|gated|full]`** *(the watcher and `full` mode are beta)* - Runs steps 2 to 9 for one GitHub, GitLab or Odoo ticket (an id, or an Odoo task's URL) with the human gates on the tracker instead of in the chat. It has two doors: the command, which you run in a session, and a watcher, `autopilot.mjs watch`, which runs on the machine that hosts your coding agent and picks up tickets a human labelled. In `gated` mode the run stops twice: at a review packet on the ticket, with links to the brief, the spec with its assumption ledger and the plan, which you approve with a label, and at the pull requests, one per repository in scope. In `full` mode only the pull requests wait for you. The engine keeps a hash-chained stage log per ticket, pushes and writes to the tracker itself, and a guardrail envelope keeps the agent from pushing, merging or writing to the tracker. Set it up with `/ultrapowers:init autopilot`; `docs/autopilot-watcher.md` covers the watcher as a service.
 
 At any point, **`/ultrapowers:task <ticket>`** tells you where a ticket stands (brief, spec, plan, reviews, branches) and what comes next, without changing anything. And **team-memory** works alongside every step: when the agent verifies a fact that is durable, expensive to rediscover and not already in the code, it saves it to `.agents/memory/` in git, so every developer, every coding agent and every session on the project can use it.
 
 **The agent checks for relevant skills before any task.** Mandatory workflows, not suggestions.
 
-**Where this is going** *(roadmap, not shipped yet)*: a CI door, where a label on the ticket starts the same engine on a runner your CI provides; Odoo write-back, so an Odoo task gets the packet and the approval the way a GitHub or GitLab issue does; and per-ticket lanes that pick how many gates a ticket needs from its risk.
+**Where this is going** *(roadmap, not shipped yet)*: a CI door, where a label on the ticket starts the same engine on a runner your CI provides; and per-ticket lanes that pick how many gates a ticket needs from its risk.
 
 ## Project configuration
 
@@ -401,11 +401,13 @@ One entry of `tickets.sources` (the id of its tickets is `<prefix>-<project>-<nu
 | `owner` | GitHub | The user or organization |
 | `host`, `namespace` | GitLab | `host` defaults to `gitlab.com`; `namespace` is the group path |
 | `url`, `mcpUrl`, `mcpHeader` | Odoo | The Odoo address, your team's MCP server, and `Authorization: Bearer` or a key header such as `X-Api-Key` (leave it out for browser sign-in) |
+| `login`, `db` | Odoo | The technical user the engine signs in as (an internal user in the Project User group; its key goes in `ODOO_API_KEY`) and, when the server hosts more than one database, the database name. Autopilot needs `login` |
+| `attachmentMaxBytes` | all | Optional; the largest ticket attachment the fetch step downloads, default 10 MB. Larger ones are listed read-only |
 | `projects` | GitHub, GitLab | Optional map from a short project name to its full path |
-| `defaultProject` | all | Optional; lets `GL-42` mean the default project |
+| `defaultProject` | all | Optional; lets `GL-42` mean the default project. On Odoo it is the project id, and the watcher lists that project's tasks |
 | `transport` | all, or the whole block | `auto` (the CLI when signed in, else the MCP server), `cli` or `mcp` |
 
-Tokens never go in this file. Put them in your environment; `.agents/mcp-secrets.env.example` lists their names (`GH_TOKEN`, `GITLAB_TOKEN`, `ODOO_API_KEY`).
+Tokens never go in this file. Put them in your environment or in `.agents/mcp-secrets.env`, which is ignored by git; `.agents/mcp-secrets.env.example` lists their names (`GH_TOKEN`, `GITLAB_TOKEN`, `ODOO_API_KEY`, and for a watcher's stages `ULTRAPOWERS_STAGE_ODOO_API_KEY`, a second key of a read-only Odoo user).
 
 The `autopilot` block (every field but `mode` is optional):
 
@@ -418,12 +420,12 @@ The `autopilot` block (every field but `mode` is optional):
 | `harness` | The headless harness the watcher spawns for each stage: `claude-code` (default), `codex`, `copilot`, `cursor`, `gemini`, `qwen`, `opencode`, `pi`, `droid`, `kimi`, `hermes` or `antigravity`. `devin` is accepted for a session and refused by the watcher, because its plugin hooks fail open. See "Where the envelope runs" below |
 | `watchSelfApproval` | `false` by default: the watcher does not take an approval from the account it runs as. `true` lets a solo developer approve their own tickets from a watcher that runs under their account; it counts only when the read-only stage tokens in `docs/autopilot-watcher.md` are set |
 | `watch.sharedCredentials` | `false` by default: a watcher starts only with read-only stage tokens in its environment. `true` lets its stages run with the engine's own credentials, which a team says in writing here |
-| `events` | The six label names, defaults `up:ready`, `up:approve`, `up:changes`, `up:hold`, `up:running`, `up:blocked` |
+| `events` | The six label names, defaults `up:ready`, `up:approve`, `up:changes`, `up:hold`, `up:running`, `up:blocked`. When every watched source is Odoo, init proposes the tags `Ultrapowers Ready`, `Ultrapowers Approve`, `Ultrapowers Changes`, `Ultrapowers Hold`, `Ultrapowers Running`, `Ultrapowers Blocked`; a name never holds a comma |
 | `watch` | `intervalSec` (default 60) and `maxConcurrent` (default 1) for the watcher |
 
-Autopilot needs a GitHub or GitLab source in `tickets`. The engine writes `tasks/<ID>/autopilot.json` and a hash-chained `tasks/<ID>/stage-log.jsonl` on the ticket branch; `/ultrapowers:task` reads them first.
+Autopilot needs a GitHub, GitLab or Odoo source in `tickets`; an Odoo source needs its `login`. The engine writes `tasks/<ID>/autopilot.json` and a hash-chained `tasks/<ID>/stage-log.jsonl` on the ticket branch; `/ultrapowers:task` reads them first.
 
-**Where the envelope runs.** The engine, the skill, the tracker write-back through `gh` and `glab`, and the watcher are the same on every harness. What differs is how each harness runs the guardrail, the hook that denies a push, a merge or a tracker write to the agent during a stage:
+**Where the envelope runs.** The engine, the skill, the tracker write-back through `gh` and `glab`, and the watcher are the same on every harness. On Odoo the engine writes back itself, over the server's JSON-RPC API with `ODOO_API_KEY`: the packet and the QA report are internal log notes on the task, the approval is a tag, and the pull requests open on the forge each repository's `origin` remote points to. What differs is how each harness runs the guardrail, the hook that denies a push, a merge or a tracker write to the agent during a stage:
 
 | Harness | The guardrail during a session stage | A watcher stage (`autopilot.harness`) | Notes |
 |---|---|---|---|
@@ -473,7 +475,7 @@ Everything above the original methodology, built from real daily work across man
 - **task** - Where a ticket stands and what comes next (read-only)
 
 **Automation**
-- **autopilot** - Run one GitHub or GitLab ticket from brief to pull request with the human gates on the tracker: `/ultrapowers:autopilot <ticket>` in a session, or `autopilot.mjs watch` *(beta)* on the machine that hosts your coding agent; configured with `/ultrapowers:init autopilot`
+- **autopilot** - Run one GitHub, GitLab or Odoo ticket from brief to pull request with the human gates on the tracker: `/ultrapowers:autopilot <ticket>` in a session, or `autopilot.mjs watch` *(beta)* on the machine that hosts your coding agent; configured with `/ultrapowers:init autopilot`
 
 **Team knowledge**
 - **team-memory** - Remember, recall, prune and lint the team's shared memory in `.agents/memory/`
@@ -619,8 +621,8 @@ Two choices make the pipeline: who starts a run (you, with the command, or the w
 **Gated autopilot** - `autopilot.mode: gated`; two human gates, both on the tracker and the pull requests.
 
 ```text
- TRACKER (GitHub or GitLab issue)
-        │ /ultrapowers:autopilot <ID>   (a session)   or   a watcher saw the up:ready label
+ TRACKER (GitHub or GitLab issue, Odoo task)
+        │ /ultrapowers:autopilot <ID>   (a session)   or   a watcher saw the up:ready label (tag, on Odoo)
         ▼
  DOCUMENTS REPOSITORY, branch <ID>-<slug> off autopilot.baseBranch
    scaffold ─► spec (assumption ledger, repositories in scope) ─► plan
@@ -667,8 +669,8 @@ Beta, not yet run live: picks up labelled tickets and stops at your gates; you t
 ```text
  every autopilot.watch.intervalSec:
    .ultrapowers/autopilot-stop exists? ─► idle
-   for each GitHub or GitLab source with a defaultProject:
-     list open tickets labelled up:ready | up:approve | up:changes
+   for each GitHub, GitLab or Odoo source with a defaultProject:
+     list open tickets labelled (tagged, on Odoo) up:ready | up:approve | up:changes
    skip a ticket a session holds (lock) ─► run the rest one at a time:
      next ─► one fresh headless harness call per agent stage (claude-code)
           ─► engine steps for the gate and the pull requests ─► wait | done | stop
