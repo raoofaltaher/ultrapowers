@@ -241,3 +241,129 @@ export function verifyChain(root, id) {
   if (state && state.logHead && state.logHead !== expected) return { ok: false, at: lines.length };
   return { ok: true };
 }
+
+// ---- Packet, approval and scope (spec §7, §5) ----
+
+const PACKET_LINES = 25;
+const PACKET_ASSUMPTIONS = 5;
+const CONFIDENCE_ORDER = { low: 0, medium: 1, high: 2 };
+
+// The first 12 hex of SHA-256 over the docs tip and the repo tips, in repo-name order.
+export function packetId(docsTip, tips) {
+  const parts = [String(docsTip ?? '')];
+  for (const name of Object.keys(tips ?? {}).sort()) parts.push(`${name}=${tips[name] ?? ''}`);
+  return hashLine(parts.join('\n')).slice(0, 12);
+}
+
+function fill(template, values) {
+  return template.replace(/\{\{([A-Z_]+)\}\}/g, (m, key) => (key in values ? String(values[key]) : m));
+}
+
+// Renders the review packet from the template beside the skill; under 25 lines or it throws.
+export function renderPacket(template, { state, links, assumptions = [], events }) {
+  const repoNames = state.scope.frozen ? state.scope.frozen : state.scope.proposed;
+  const byName = Object.fromEntries((state.repos ?? []).map((r) => [r.name, r]));
+  const repoLines = (repoNames.length ? repoNames : ['.']).map((name) => {
+    const r = byName[name];
+    const base = r?.base ?? state.docs.base ?? '';
+    const branchState = r?.prUrl ? `PR ${r.prUrl}` : r?.tip ? `branch ${r.branch} at ${r.tip}` : 'branch not yet created';
+    return `  ${name}   base ${base}     ${branchState}`;
+  });
+  const tips = Object.fromEntries((state.repos ?? []).filter((r) => r.tip).map((r) => [r.name, r.tip]));
+  const assumptionLines = assumptions.slice(0, PACKET_ASSUMPTIONS).map((a, i) => `  ${i + 1}. ${a.question} — chosen: ${a.answer} (${a.confidence})`);
+  const gate = state.stage === 'pr' || state.stage === 'done' ? '2 of 2' : '1 of 2';
+  const text = fill(template, {
+    ID: state.ticket,
+    GATE: gate,
+    MODE: state.mode,
+    DOCS_BRANCH: state.docs.branch,
+    DOCS_TIP: state.docs.tip ?? '',
+    BRIEF_URL: links.brief ?? '',
+    SPEC_URL: links.spec ?? '',
+    PLAN_URL: links.plan ?? '',
+    DIFF_URL: links.diff ?? 'none',
+    REPO_LINES: repoLines.join('\n'),
+    ASSUMPTION_LINES: assumptionLines.length ? assumptionLines.join('\n') : '  none',
+    E_APPROVE: events.approve,
+    E_CHANGES: events.changes,
+    E_HOLD: events.hold,
+    PACKET_ID: packetId(state.docs.tip, tips),
+  }).replace(/\n+$/, '');
+  const count = text.split('\n').length;
+  if (count > PACKET_LINES) throw new AutopilotError('packet-too-long', `the packet has ${count} lines; the limit is ${PACKET_LINES}`);
+  return text;
+}
+
+// The four checks of spec §7 against the tracker's label events.
+export async function verifyApproval({ events, approveLabel, packet, permissionOf, approvers = [], botLogin, tips }) {
+  const relevant = (events ?? []).filter((e) => e.label === approveLabel).sort((a, b) => String(a.at).localeCompare(String(b.at)));
+  const last = relevant[relevant.length - 1];
+  if (!last || last.action !== 'labeled') return { ok: false, reason: 'no-event', detail: `no ${approveLabel} label event` };
+  if (botLogin && last.actor === botLogin) return { ok: false, reason: 'self', detail: `${last.actor} is the engine's own account` };
+  if (!packet || !packet.postedAt || String(last.at) <= String(packet.postedAt)) {
+    return { ok: false, reason: 'before-packet', detail: `the label at ${last.at} precedes the packet at ${packet?.postedAt ?? 'none'}` };
+  }
+  const permission = await permissionOf(last.actor);
+  if (!['write', 'maintain', 'admin'].includes(permission)) return { ok: false, reason: 'not-permitted', detail: `${last.actor} has ${permission} access` };
+  if (approvers.length && !approvers.includes(last.actor)) return { ok: false, reason: 'not-approver', detail: `${last.actor} is not in autopilot.approvers` };
+  const drift = [];
+  if ((tips?.docs ?? null) !== (packet.docsTip ?? null)) drift.push(`docs ${packet.docsTip} -> ${tips?.docs}`);
+  for (const [name, sha] of Object.entries(packet.tips ?? {})) {
+    if ((tips?.repos?.[name] ?? null) !== sha) drift.push(`${name} ${sha} -> ${tips?.repos?.[name] ?? 'none'}`);
+  }
+  if (drift.length) return { ok: false, reason: 'drift', detail: drift.join(', ') };
+  return { ok: true, actor: last.actor, eventId: String(last.id), at: last.at };
+}
+
+function section(markdown, heading) {
+  const lines = String(markdown ?? '').split('\n');
+  const start = lines.findIndex((l) => new RegExp(`^#{1,6}\\s+${heading}\\s*$`, 'i').test(l.trim()));
+  if (start < 0) return [];
+  const out = [];
+  for (const l of lines.slice(start + 1)) {
+    if (/^#{1,6}\s/.test(l)) break;
+    out.push(l);
+  }
+  return out;
+}
+
+// The list under "## Repositories in scope".
+export function scopeFrom(markdown) {
+  return section(markdown, 'Repositories in scope')
+    .map((l) => /^\s*[-*]\s+(.+?)\s*$/.exec(l))
+    .filter(Boolean)
+    .map((m) => m[1].replace(/^`|`$/g, '').trim())
+    .filter(Boolean);
+}
+
+// The rows of the "## Assumption ledger" table, lowest confidence first.
+export function assumptionsFrom(markdown) {
+  const rows = section(markdown, 'Assumption ledger')
+    .filter((l) => /^\s*\|/.test(l))
+    .map((l) => l.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim()));
+  const body = rows.filter((cells) => cells.length >= 5 && !/^#$/.test(cells[0]) && !/^-+$/.test(cells[0]));
+  return body
+    .map((c) => ({ question: c[1], answer: c[2], confidence: c[3].toLowerCase(), reason: c[4] }))
+    .sort((a, b) => (CONFIDENCE_ORDER[a.confidence] ?? 1) - (CONFIDENCE_ORDER[b.confidence] ?? 1));
+}
+
+// Copies the plan's list into scope.frozen: the plan may narrow the spec's list, never widen it.
+export function freezeScope(state, { specRepos = [], planRepos = [], knownRepos = [] }) {
+  const root = knownRepos.length === 1 && knownRepos[0] === '.';
+  const spec = root && specRepos.length === 0 ? ['.'] : [...specRepos];
+  for (const name of [...spec, ...planRepos]) {
+    if (!knownRepos.includes(name)) throw new AutopilotError('unknown-repo', `${name} is not a repository of this workspace (repos[]: ${knownRepos.join(', ')})`);
+  }
+  if (spec.length === 0) throw new AutopilotError('no-scope', 'the spec names no repository under "Repositories in scope"');
+  const widened = planRepos.filter((n) => !spec.includes(n));
+  if (widened.length) throw new AutopilotError('scope-widened', `the plan names ${widened.join(', ')}, which the spec did not`);
+  const frozen = planRepos.length ? [...planRepos] : spec;
+  return { ...state, scope: { proposed: spec, frozen } };
+}
+
+// A push is allowed only to a `<ID>-` branch, to the docs repository or a frozen repository.
+export function pushAllowed(state, repoName, branch) {
+  if (!String(branch).startsWith(`${state.ticket}-`)) return false;
+  if (repoName === 'docs') return true;
+  return Array.isArray(state.scope?.frozen) && state.scope.frozen.includes(repoName);
+}
