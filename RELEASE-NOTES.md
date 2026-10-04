@@ -4,7 +4,7 @@
 
 Autopilot: the same workflow with the human gates on the tracker.
 
-**Heads up:** existing projects keep working unchanged; without an `autopilot` block every skill behaves as before. Set it up with `/ultrapowers:init autopilot` (join and upgrade offer it once when a GitHub or GitLab source exists). Upgrade finds no changed template in this release, so `--apply none` is the answer to its prompt.
+**Heads up:** existing projects keep working unchanged; without an `autopilot` block every skill behaves as before. Set it up with `/ultrapowers:init autopilot` (join and upgrade offer it once when a GitHub or GitLab source exists). Upgrade finds one changed template, `.claude/settings.json`, which now allows `Skill(ultrapowers:autopilot)`; apply it to get a `.ultrapowers-new` proposal beside your file, or answer `--apply none` and add the one line by hand.
 
 ### Autopilot
 
