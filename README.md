@@ -58,6 +58,7 @@ Ultrapowers is a fork of Jesse Vincent's MIT-licensed skills library, cut from i
   - [Community](#community)
   - [Contributing](#contributing)
   - [License](#license)
+  - [Pipelines](#pipelines)
 
 ## How it works
 
@@ -284,11 +285,13 @@ From a ticket to a reviewed, tested branch. The agents do the repeatable work; a
 
 9. **finishing-a-development-branch** - Activates when tasks complete. Verifies tests, offers to merge, open a pull request or keep the branch, and cleans up the worktree. Discarding the work needs your explicit request and a typed confirmation.
 
+10. **`/ultrapowers:autopilot <ticket> [--mode off|gated|full]`** *(beta)* - Runs steps 2 to 9 for one GitHub or GitLab ticket with the human gates on the tracker instead of in the chat. It has two doors: the command, which you run in a session, and a watcher, `autopilot.mjs watch`, which runs on the machine that hosts your coding agent and picks up tickets a human labelled. In `gated` mode the run stops twice: at a review packet on the ticket, with links to the brief, the spec with its assumption ledger and the plan, which you approve with a label, and at the pull requests, one per repository in scope. In `full` mode only the pull requests wait for you. The engine keeps a hash-chained stage log per ticket, pushes and writes to the tracker itself, and a guardrail envelope keeps the agent from pushing, merging or writing to the tracker. Set it up with `/ultrapowers:init autopilot`; `docs/autopilot-watcher.md` covers the watcher as a service.
+
 At any point, **`/ultrapowers:task <ticket>`** tells you where a ticket stands (brief, spec, plan, reviews, branches) and what comes next, without changing anything. And **team-memory** works alongside every step: when the agent verifies a fact that is durable, expensive to rediscover and not already in the code, it saves it to `.agents/memory/` in git, so every developer, every coding agent and every session on the project can use it.
 
 **The agent checks for relevant skills before any task.** Mandatory workflows, not suggestions.
 
-**Where this is going** *(roadmap, not shipped yet)*: the same workflow started by a label on a GitHub, GitLab or Odoo ticket, running headless on a CI runner or a VM, and stopping for your spec and plan approval on the pull request.
+**Where this is going** *(roadmap, not shipped yet)*: a CI door, where a label on the ticket starts the same engine on a runner your CI provides; Odoo write-back, so an Odoo task gets the packet and the approval the way a GitHub or GitLab issue does; and per-ticket lanes that pick how many gates a ticket needs from its risk.
 
 ## Project configuration
 
@@ -317,6 +320,7 @@ At any point, **`/ultrapowers:task <ticket>`** tells you where a ticket stands (
       { "prefix": "ODOO", "provider": "odoo", "url": "https://erp.example.com", "mcpUrl": "https://erp.example.com/mcp", "mcpHeader": "Authorization: Bearer" }
     ]
   },
+  "autopilot": { "mode": "gated", "baseBranch": "dev", "approvers": ["alice"], "execution": "subagent", "harness": "claude-code" },
   "qa": { "urls": { "frontend": "http://localhost:3000" }, "roles": [ { "name": "user", "userEnv": "QA_USER_USER", "passwordEnv": "QA_PW_USER", "required": true } ] },
   "written": [".mcp.json", "AGENTS.md"]
 }
@@ -334,6 +338,7 @@ At any point, **`/ultrapowers:task <ticket>`** tells you where a ticket stands (
 | `kb` | The knowledge base folders | The ten folders init writes |
 | `memory` | Team memory: its folder, the index line budget, the minutes a fact must take to rediscover before it is worth saving, the commit trailer | Raise `indexBudget` for a large team |
 | `tickets` | Where tickets come from; no key means local tickets only | See the next table |
+| `autopilot` | How automated a ticket's run is; no key means the manual workflow | See the second table below; set it with `/ultrapowers:init autopilot` |
 | `qa` | QA gatekeeper settings: `urls`, `hosts`, `auth`, `roles`, `languages`, `containers`, `db`, `suites`, `observability`, `brand`, `regression`, `knownIssues`, `api` | Fill what your app has; the qa-specialist skill lists any missing key before a run |
 
 One entry of `tickets.sources` (the id of its tickets is `<prefix>-<project>-<number>`, for example `GL-billing-api-42`):
@@ -350,6 +355,20 @@ One entry of `tickets.sources` (the id of its tickets is `<prefix>-<project>-<nu
 | `transport` | all, or the whole block | `auto` (the CLI when signed in, else the MCP server), `cli` or `mcp` |
 
 Tokens never go in this file. Put them in your environment; `.agents/mcp-secrets.env.example` lists their names (`GH_TOKEN`, `GITLAB_TOKEN`, `ODOO_API_KEY`).
+
+The `autopilot` block (every field but `mode` is optional):
+
+| Field | Value |
+|---|---|
+| `mode` | `off` (the manual workflow), `gated` (stops at the review packet and at the pull requests) or `full` (stops at the pull requests only). A ticket overrides it with `--mode` on the command or a label `up:mode:<mode>` |
+| `baseBranch` | The base of the ticket branch in the documents repository, this workspace root; default the remote HEAD. Code repositories use their own `defaultBranch` from `repos` |
+| `approvers` | Tracker logins allowed to approve a packet; empty means any member with write access. The engine's own account never counts |
+| `execution` | `subagent` (a fresh subagent per plan task, the default) or `inline` |
+| `harness` | The headless harness the watcher spawns: `claude-code` (default) or `opencode` |
+| `events` | The six label names, defaults `up:ready`, `up:approve`, `up:changes`, `up:hold`, `up:running`, `up:blocked` |
+| `watch` | `intervalSec` (default 60) and `maxConcurrent` (default 1) for the watcher |
+
+Autopilot needs a GitHub or GitLab source in `tickets`. The engine writes `tasks/<ID>/autopilot.json` and a hash-chained `tasks/<ID>/stage-log.jsonl` on the ticket branch; `/ultrapowers:task` reads them first.
 
 ## When Something Goes Wrong
 
@@ -428,6 +447,7 @@ Ultrapowers exists to help developers and teams who work from tickets automate a
 - **One ticket, one trail** - Brief, spec, plan and review share the ticket id
 - **Memory belongs to the team** - What one agent learns, every developer and every agent can reuse, in git
 - **Quality is a gate** - A tester's eye on the running app, and one verdict per ticket
+- **Autonomous between your gates** - Automation runs where your agent already runs, stops at the spec-and-plan packet and at the pull request, and leaves one trail per ticket
 
 ## Community
 
@@ -447,3 +467,63 @@ Pull requests are not accepted. Report bugs and request features through issues,
 ## License
 
 Proprietary, source-available. Copyright (c) 2026 RAOOF ALTAHER. All rights reserved. You may install the plugin in your AI agent or coding tool and use it there; you may not copy, modify, redistribute or sell it. See [LICENSE](./LICENSE). Releases published before this license were under the MIT License and stay under it; section 6 of the license sets the cutoff. The portions that come from the upstream library keep their MIT License; section 7 of the license reproduces its notice.
+
+## Pipelines
+
+The same workflow, four ways to run it. Every one keeps the brief, spec, plan and review under the ticket id in the documents repository, the workspace root where init ran; code repositories are that root in a single-repository project, or the nested clones listed in `repos`.
+
+**Manual** - every skill invoked by you; no `autopilot` block.
+
+```text
+ DEVELOPER in a session
+   /ultrapowers:new-task <ID> ─► tasks/<ID>/<ID>.md          (from GitHub, GitLab, Odoo or typed)
+   /ultrapowers:brainstorm-task ► specs/<ID>/Spec.md           ◄ you answer each question
+   writing-plans              ─► plans/<ID>/Plan.md           ◄ you review the plan
+   executing-plans | subagent-driven-development, TDD, reviews ◄ a branch in each repo you choose
+   /ultrapowers:qa-specialist ─► reviews/<ID>/QA-REPORT.md
+   finishing-a-development-branch                             ◄ you pick merge, PR or keep
+```
+
+**Gated autopilot** - `autopilot.mode: gated`; two human gates, both on the tracker and the pull requests.
+
+```text
+ TRACKER (GitHub or GitLab issue)
+        │ /ultrapowers:autopilot <ID>   (a session)   or   a watcher saw the up:ready label
+        ▼
+ DOCUMENTS REPOSITORY, branch <ID>-<slug> off autopilot.baseBranch
+   scaffold ─► spec (assumption ledger, repositories in scope) ─► plan
+        │ engine: commit, push, review packet posted on the ticket (<25 lines, links at <sha>)
+        ▼
+ GATE 1 ── a member with write access adds up:approve ── up:changes loops back with a comment
+        │ engine: label verified (actor, time, unchanged tips), scope frozen
+        ▼
+ CODE REPOSITORIES, same branch name, a worktree per repo in scope
+   execute (TDD, per-task review) ─► qa (when configured; FAIL stops the run)
+        │ engine: push each branch, one PR/MR per repo + one for the documents, closing comment
+        ▼
+ GATE 2 ── you review and merge the pull requests
+```
+
+**Full autopilot** - `autopilot.mode: full`; the packet is posted for the record and the run continues.
+
+```text
+ TRACKER ── up:ready ──► scaffold ─► spec ─► plan ─► packet posted (no wait) ─► execute ─► qa ─► PRs
+                                                            │                        │
+                                                   up:hold pauses here        FAIL stops here
+ GATE ── you review and merge the pull requests; the packet and the stage log are the record
+```
+
+**Watcher on a VM** - `autopilot.mjs watch`, a service on the machine that hosts your coding agent.
+
+```text
+ every autopilot.watch.intervalSec:
+   .ultrapowers/autopilot-stop exists? ─► idle
+   for each GitHub or GitLab source with a defaultProject:
+     list open tickets labelled up:ready | up:approve | up:changes
+   skip a ticket a session holds (lock) ─► run the rest one at a time:
+     next ─► one fresh headless harness call per agent stage (claude-code or opencode)
+          ─► engine steps for the gate and the pull requests ─► wait | done | stop
+   tracker error? sleep doubles, up to 10 minutes
+```
+
+The watcher runs the agent with permission prompts bypassed inside the guardrail's autopilot envelope: no push, no merge, no tracker write, no edit to the configuration, hooks, CI or settings. Run it on a disposable host that holds nothing else; see `docs/autopilot-watcher.md`.

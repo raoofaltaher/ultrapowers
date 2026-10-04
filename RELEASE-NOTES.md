@@ -1,5 +1,28 @@
 # Ultrapowers Release Notes
 
+## v1.2.0 (2026-10-04)
+
+Autopilot: the same workflow with the human gates on the tracker.
+
+**Heads up:** existing projects keep working unchanged; without an `autopilot` block every skill behaves as before. Set it up with `/ultrapowers:init autopilot` (join and upgrade offer it once when a GitHub or GitLab source exists). Upgrade finds no changed template in this release, so `--apply none` is the answer to its prompt.
+
+### Autopilot
+
+- **One engine, two doors.** `/ultrapowers:autopilot <ID>` runs a GitHub or GitLab ticket through brief, spec, plan, review packet, implementation, QA and pull requests in a session; `autopilot.mjs watch` is the same engine as a service on the machine that hosts your coding agent, picking up tickets a human labelled `up:ready`. One fresh headless harness call per stage (`claude-code` or `opencode`); resume re-reads files, never chat.
+- **Gated by default.** `gated` stops at a review packet on the ticket (brief, spec with its assumption ledger, plan, repositories in scope, under 25 lines) and at the pull requests; `full` stops at the pull requests only. Approval is a label by a member with write access, verified against the tracker's event timeline and bound to the commits the packet named; any new commit voids it. `up:changes` sends the run back with a comment; `up:hold` pauses it. A partial approval is a change request.
+- **One trail per ticket.** `tasks/<ID>/autopilot.json` and a hash-chained `tasks/<ID>/stage-log.jsonl` on the ticket branch; `/ultrapowers:task` reads them first. The documents repository, where init ran, is the ticket's home; code repositories get one branch each, in a worktree, only those the approved plan names, and one pull request each.
+- **The envelope.** The QA guardrail gained an autopilot profile: writes anywhere in the workspace except the configuration, hooks, CI and settings; git limited to an allow-list; no push, merge, rebase or tracker write; the engine does those between stages. A pre-push check in the engine refuses any branch outside the frozen scope.
+- **Autopilot form of the skills.** brainstorming, brainstorm-task, writing-plans, executing-plans and subagent-driven-development ask nothing when the run marker exists: each question becomes an assumption-ledger row, the plan copies or narrows the spec's repositories, and the finish step returns to the engine. Pressure scenarios A1 to A7, B1 to B4 and C1 to C2 are recorded under `tests/autopilot/`.
+- **Init.** `/ultrapowers:init autopilot` asks the mode, base branch, approvers, execution, harness and label names, shows a dry run, and creates the six labels on the source's default project after your yes.
+
+### Documentation
+
+- The Basic Workflow has step 10, the project configuration documents the `autopilot` block, Philosophy gains "Autonomous between your gates", and a new last section, Pipelines, draws the manual workflow, gated and full autopilot, and the watcher. `docs/autopilot-watcher.md` covers the watcher as a service, its tokens and the host it belongs on.
+
+### Not in this release
+
+- Odoo write-back (Odoo tickets are still read as in 1.1.0), a CI door, and per-ticket lanes. The README's roadmap line names them.
+
 ## v1.1.0 (2026-10-02)
 
 Tickets come from where the team already tracks them.

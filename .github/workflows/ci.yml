@@ -47,6 +47,8 @@ jobs:
       - run: bash tests/task-lifecycle/test-task-lifecycle.sh
       - run: node --test tests/task-lifecycle/ticket-sources.test.mjs
       - run: node --test tests/task-lifecycle/fetch-ticket.test.mjs
+      - run: bash tests/autopilot/run-tests.sh
+      - run: bash tests/autopilot/test-adapters.sh
       - run: bash tests/qa-gatekeeper/run-tests.sh
       - run: bash tests/skills/test-skill-bodies.sh
       - run: node --test tests/pi/test-pi-extension.mjs
@@ -88,3 +90,4 @@ jobs:
       - run: bash tests/init/run-tests.sh
       # fetch-ticket spawns gh and glab without a shell; Windows resolves them differently.
       - run: node --test tests/task-lifecycle/fetch-ticket.test.mjs
+      - run: bash tests/autopilot/run-tests.sh
