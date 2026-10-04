@@ -5,7 +5,7 @@ import process from 'node:process';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { effectiveTransport, serverId as ticketServerId, validateTickets, resolveTicket } from '../../new-task/scripts/ticket-sources.mjs';
-import { validateAutopilot, DEFAULTS as AUTOPILOT_DEFAULTS } from '../../autopilot/scripts/autopilot-lib.mjs';
+import { validateAutopilot, DEFAULTS as AUTOPILOT_DEFAULTS, ODOO_EVENTS, loadSecretsFile } from '../../autopilot/scripts/autopilot-lib.mjs';
 import { trackerFor } from '../../autopilot/scripts/tracker.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -521,7 +521,8 @@ export function ticketServers(tickets) {
 const TICKET_SECRETS = [
   ['GH_TOKEN', (s) => s.provider === 'github', (s) => `tickets ${s.prefix}: gh CLI and the GitHub MCP server`],
   ['GITLAB_TOKEN', (s) => s.provider === 'gitlab', (s) => `tickets ${s.prefix}: glab CLI (the GitLab MCP server signs in in the browser)`],
-  ['ODOO_API_KEY', (s) => s.provider === 'odoo' && Boolean(s.mcpHeader), (s) => `tickets ${s.prefix}: the Odoo MCP server`],
+  ['ODOO_API_KEY', (s) => s.provider === 'odoo', (s) => `tickets ${s.prefix}: the autopilot engine (a technical user's key) and the Odoo MCP server`],
+  ['ULTRAPOWERS_STAGE_ODOO_API_KEY', (s) => s.provider === 'odoo', (s) => `tickets ${s.prefix}: a watcher's stages, the key of a read-only Odoo user`],
 ];
 
 // The .agents/mcp-secrets.env.example lines the ticket sources need, one per variable.
@@ -1211,9 +1212,19 @@ export async function runAutopilot(opts) {
   if (!opts.answers) throw new InitError('bad-args', 'autopilot needs --answers <file>');
   const block = loadAutopilot(opts.answers);
   report.marker = { before: marker.autopilot ?? null, after: block };
-  const sources = (marker.tickets?.sources ?? []).filter((s) => s && ['github', 'gitlab'].includes(s.provider));
+  const sources = (marker.tickets?.sources ?? []).filter((s) => s && ['github', 'gitlab', 'odoo'].includes(s.provider));
   if (block && sources.length === 0) {
-    throw new InitError('no-source', 'autopilot needs a GitHub or GitLab ticket source; run init tickets first');
+    throw new InitError('no-source', 'autopilot needs a GitHub, GitLab or Odoo ticket source; run init tickets first');
+  }
+  if (block) {
+    const noLogin = (marker.tickets?.sources ?? []).findIndex((s) => s && s.provider === 'odoo' && !(typeof s.login === 'string' && s.login.trim()));
+    if (noLogin >= 0) {
+      throw new InitError('bad-tickets', `tickets.sources[${noLogin}].login is required for autopilot: the engine signs in to Odoo as a technical user; run init tickets and name it`);
+    }
+    // An Odoo-only project gets the readable tag names (spec 2026-10-05 D9) unless the answers chose.
+    const watched = sources.filter((s) => s.defaultProject);
+    if (!block.events && watched.length && watched.every((s) => s.provider === 'odoo')) block.events = { ...ODOO_EVENTS };
+    loadSecretsFile(opts.root, process.env);
   }
   const events = { ...AUTOPILOT_DEFAULTS.events, ...(block?.events ?? {}) };
   const failed = [];
@@ -1254,6 +1265,7 @@ export async function runAutopilot(opts) {
   report.nextSteps = block ? [
     'GitHub: a watcher or a session that writes back needs a fine-grained token with Issues, Contents and Pull requests read and write on the listed repositories, never workflow, in GH_TOKEN.',
     'GitLab: a project token with the api scope per repository, in GITLAB_TOKEN.',
+    ...(sources.some((s) => s.provider === 'odoo') ? ['Odoo: the engine signs in as a technical user, an internal user in the Project User group and nothing more, with its API key in ODOO_API_KEY; a watcher gives its stages the key of a read-only Odoo user in ULTRAPOWERS_STAGE_ODOO_API_KEY. Both may live in .agents/mcp-secrets.env, which is gitignored.'] : []),
     'A watcher: give its stages a read-only token of their own in ULTRAPOWERS_STAGE_GH_TOKEN (Issues, Contents and Metadata read) or ULTRAPOWERS_STAGE_GITLAB_TOKEN (read_api); the stage then holds nothing that can write. See docs/autopilot-watcher.md.',
     'The guardrail is a plugin hook on every harness but Devin; Codex asks you to trust the plugin hooks once (/hooks), Hermes needs the plugin in plugins.enabled, and Gemini CLI uses the BeforeTool hook this scaffold wrote to .gemini/settings.json. The harness table in README.md names each.',
     `Start a ticket with /ultrapowers:autopilot <ID>; mode ${block.mode} stops at ${block.mode === 'full' ? 'the pull requests' : 'the review packet and the pull requests'}.`,

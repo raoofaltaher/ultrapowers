@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -348,7 +348,7 @@ test('tickets --dry-run reports the change and writes nothing', () => {
   const report = run(['tickets', '--root', root, '--sources', sourcesFile(ticketsExample()), '--dry-run']);
   assert.equal(report.marker.before, null);
   assert.deepEqual(report.marker.after, ticketsExample());
-  assert.deepEqual(report.secrets, ['GH_TOKEN', 'GITLAB_TOKEN', 'ODOO_API_KEY']);
+  assert.deepEqual(report.secrets, ['GH_TOKEN', 'GITLAB_TOKEN', 'ODOO_API_KEY', 'ULTRAPOWERS_STAGE_ODOO_API_KEY']);
   assert.ok(report.mcp.some((m) => m.path === '.mcp.json' && m.action === 'proposal'));
   assert.deepEqual(changedFiles(before, snapshot(root)), []);
 });
@@ -370,7 +370,7 @@ test('tickets writes the block, proposals for existing MCP files and the secret 
   assert.ok('context7' in proposal.mcpServers, 'the proposal keeps the canonical servers');
   const secrets = fs.readFileSync(secretsFile, 'utf8');
   assert.ok(secrets.startsWith(secretsBefore), 'lines above the block stay byte-identical');
-  assert.match(secrets, /# >>> ultrapowers\nGH_TOKEN=.*\nGITLAB_TOKEN=.*\nODOO_API_KEY=.*\n# <<< ultrapowers\n$/);
+  assert.match(secrets, /# >>> ultrapowers\nGH_TOKEN=.*\nGITLAB_TOKEN=.*\nODOO_API_KEY=.*\nULTRAPOWERS_STAGE_ODOO_API_KEY=.*\n# <<< ultrapowers\n$/);
 });
 
 test('tickets creates a missing harness MCP file with the ticket servers only', () => {
@@ -486,6 +486,79 @@ test('autopilot with mode off removes the block', () => {
   const report = run(['autopilot', '--root', root, '--answers', answersFile({ mode: 'off' })]);
   assert.equal('autopilot' in marker(root), false);
   assert.deepEqual(report.labels, []);
+});
+
+// Odoo as an autopilot source (spec 2026-10-05 §9): the Ultrapowers tag names, the login, the keys.
+const ODOO_FAKE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'autopilot', 'fixtures', 'odoo-fake.mjs');
+const ODOO_LABELS = ['Ultrapowers Ready', 'Ultrapowers Approve', 'Ultrapowers Changes', 'Ultrapowers Hold', 'Ultrapowers Running', 'Ultrapowers Blocked'];
+const odooChildren = [];
+test.after(() => { for (const c of odooChildren) c.kill(); });
+
+function startOdoo(spec = {}) {
+  return new Promise((resolve, reject) => {
+    const seedFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'odoo-seed-')), 'seed.json');
+    fs.writeFileSync(seedFile, JSON.stringify(spec));
+    const child = spawn(process.execPath, [ODOO_FAKE, 'serve', '--seed-file', seedFile], { stdio: ['ignore', 'pipe', 'pipe'] });
+    odooChildren.push(child);
+    let out = '';
+    child.stdout.on('data', (d) => {
+      out += d;
+      const line = out.split('\n').find((l) => l.startsWith('{'));
+      if (line) resolve({ child, url: JSON.parse(line).url });
+    });
+    child.on('exit', (code) => reject(new Error(`the fake Odoo exited with ${code}`)));
+  });
+}
+
+function odooOnly(url, extra = {}) {
+  return { sources: [{ prefix: 'ODOO', provider: 'odoo', url, mcpUrl: `${url}/mcp`, mcpHeader: 'Authorization: Bearer', login: 'bot', db: 'erp', defaultProject: '34', ...extra }] };
+}
+
+test('autopilot on an Odoo-only project proposes the Ultrapowers tag names and lists the tags', () => {
+  const root = scaffolded();
+  run(['tickets', '--root', root, '--sources', sourcesFile(odooOnly('https://erp.example.com'))]);
+  const report = run(['autopilot', '--root', root, '--answers', answersFile(autopilotExample()), '--dry-run']);
+  assert.deepEqual(report.marker.after.events, Object.fromEntries(['ready', 'approve', 'changes', 'hold', 'running', 'blocked'].map((k, i) => [k, ODOO_LABELS[i]])));
+  const odoo = report.labels.filter((l) => l.source === 'ODOO');
+  assert.deepEqual(odoo.map((l) => l.name), ODOO_LABELS);
+  assert.ok(odoo.every((l) => l.action === 'would-create' && l.path === '34'), JSON.stringify(odoo));
+  assert.ok(report.nextSteps.some((s) => /ODOO_API_KEY/.test(s) && /ULTRAPOWERS_STAGE_ODOO_API_KEY/.test(s)));
+  assert.ok(report.nextSteps.some((s) => /Project User/.test(s)));
+});
+
+test('autopilot creates the Odoo tags through the engine tracker', async () => {
+  const { url } = await startOdoo();
+  const root = scaffolded();
+  run(['tickets', '--root', root, '--sources', sourcesFile(odooOnly(url))]);
+  const report = run(['autopilot', '--root', root, '--answers', answersFile(autopilotExample())], { env: { ODOO_API_KEY: 'k1' } });
+  assert.equal(report.labels.filter((l) => l.action === 'created').length, 6, JSON.stringify(report.labels));
+  const tags = (await (await fetch(`${url}/__fake/state`)).json()).tags.map((t) => t.name);
+  for (const name of ODOO_LABELS) assert.ok(tags.includes(name), name);
+  assert.equal(marker(root).autopilot.events.approve, 'Ultrapowers Approve');
+});
+
+test('autopilot refuses an Odoo source without login', () => {
+  const root = scaffolded();
+  run(['tickets', '--root', root, '--sources', sourcesFile(odooOnly('https://erp.example.com', { login: undefined }))]);
+  const report = run(['autopilot', '--root', root, '--answers', answersFile(autopilotExample())], { expectExit: 2 });
+  assert.equal(report.error.code, 'bad-tickets');
+  assert.match(report.error.message, /login/);
+});
+
+test('autopilot refuses an event name with a comma', () => {
+  const root = scaffolded();
+  run(['tickets', '--root', root, '--sources', sourcesFile(odooOnly('https://erp.example.com'))]);
+  const report = run(['autopilot', '--root', root, '--answers', answersFile({ ...autopilotExample(), events: { approve: 'A, B' } })], { expectExit: 2 });
+  assert.equal(report.error.code, 'bad-autopilot');
+  assert.match(report.error.message, /comma/);
+});
+
+test('tickets writes both Odoo keys into the secrets example', () => {
+  const root = scaffolded();
+  run(['tickets', '--root', root, '--sources', sourcesFile(odooOnly('https://erp.example.com'))]);
+  const secrets = fs.readFileSync(path.join(root, '.agents', 'mcp-secrets.env.example'), 'utf8');
+  assert.match(secrets, /^ODOO_API_KEY=/m);
+  assert.match(secrets, /^ULTRAPOWERS_STAGE_ODOO_API_KEY=/m);
 });
 
 test('an invalid autopilot block is bad-autopilot and writes nothing', () => {
