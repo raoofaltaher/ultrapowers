@@ -39,7 +39,7 @@
   "pr": {
     "docs": null
   },
-  "stageStatus": "running",
+  "stageStatus": "finished",
   "door": "command",
   "logHead": "d77a5cdf9171afc367a8673daec9e1ef960355f3a335f32c17c94271f1e61d69"
 }
