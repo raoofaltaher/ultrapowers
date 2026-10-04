@@ -364,7 +364,8 @@ The `autopilot` block (every field but `mode` is optional):
 | `baseBranch` | The base of the ticket branch in the documents repository, this workspace root; default the remote HEAD. Code repositories use their own `defaultBranch` from `repos` |
 | `approvers` | Tracker logins allowed to approve a packet; empty means any member with write access, including the account the engine runs as, so you approve your own tickets. If the engine runs as a bot, list your human approvers here to keep the bot out |
 | `execution` | `subagent` (a fresh subagent per plan task, the default) or `inline` |
-| `harness` | The headless harness the watcher spawns: `claude-code` (default) or `opencode` |
+| `harness` | The headless harness the watcher spawns: `claude-code` (default) or `opencode`. The watcher runs `claude-code` only until `opencode` has a guardrail; `opencode` tickets run from a session |
+| `watchSelfApproval` | `false` by default: the watcher does not take an approval from the account it runs as. `true` lets a solo developer approve their own tickets from a watcher that runs under their account; set it together with the read-only stage tokens in `docs/autopilot-watcher.md` |
 | `events` | The six label names, defaults `up:ready`, `up:approve`, `up:changes`, `up:hold`, `up:running`, `up:blocked` |
 | `watch` | `intervalSec` (default 60) and `maxConcurrent` (default 1) for the watcher |
 
@@ -521,9 +522,9 @@ The same workflow, four ways to run it. Every one keeps the brief, spec, plan an
    for each GitHub or GitLab source with a defaultProject:
      list open tickets labelled up:ready | up:approve | up:changes
    skip a ticket a session holds (lock) ─► run the rest one at a time:
-     next ─► one fresh headless harness call per agent stage (claude-code or opencode)
+     next ─► one fresh headless harness call per agent stage (claude-code)
           ─► engine steps for the gate and the pull requests ─► wait | done | stop
    tracker error? sleep doubles, up to 10 minutes
 ```
 
-The watcher runs the agent with permission prompts bypassed inside the guardrail's autopilot envelope: no push, no merge, no tracker write, no edit to the configuration, hooks, CI or settings. Run it on a disposable host that holds nothing else; see `docs/autopilot-watcher.md`.
+The watcher runs the agent with permission prompts bypassed inside the guardrail's autopilot envelope: no push, no merge, no tracker write, no edit to the configuration, hooks, CI or settings. With a read-only stage token set, the stage also holds no credential that could write, and only the project's MCP servers load. Run it on a disposable host that holds nothing else; see `docs/autopilot-watcher.md`.

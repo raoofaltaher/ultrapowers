@@ -351,7 +351,7 @@ if [ "$PROFILE" = "autopilot" ]; then
     seg="${seg#"${seg%%[![:space:]]*}"}"
     while printf '%s' "$seg" | grep -Eq '^[a-z_][a-z0-9_]*=[^[:space:]]*[[:space:]]+'; do seg="${seg#*[[:space:]]}"; seg="${seg#"${seg%%[![:space:]]*}"}"; done
     case "$seg" in
-      '$('*|'"$('*|"'\$("*|'`'*|'"`'*|nohup\ *\$\(*|nohup\ *\"\$\(*) deny "a command whose program is built by substitution cannot be verified during an autopilot stage; spell the command out" ;;
+      '$('*|'"$('*|"'\$("*|'`'*|'"`'*|nohup\ *\$\(*) deny "a command whose program is built by substitution cannot be verified during an autopilot stage; spell the command out" ;;
       eval\ *|eval) deny "eval is never run by an autopilot stage; its command cannot be verified" ;;
     esac
   done < <(printf '%s\n' "$lc" | tr ';&|' '\n')

@@ -59,6 +59,9 @@ export function validateAutopilot(block) {
   if (block.harness !== undefined && !HARNESSES.includes(block.harness)) {
     errors.push(`autopilot.harness must be one of ${HARNESSES.join(', ')}`);
   }
+  if (block.watchSelfApproval !== undefined && typeof block.watchSelfApproval !== 'boolean') {
+    errors.push('autopilot.watchSelfApproval must be true or false');
+  }
   if (block.events !== undefined) {
     if (!isObject(block.events)) errors.push('autopilot.events must be an object');
     else {
@@ -91,6 +94,8 @@ export function effectiveAutopilot(marker) {
     approvers: [...(block.approvers ?? [])],
     execution: block.execution ?? DEFAULTS.execution,
     harness: block.harness ?? DEFAULTS.harness,
+    // The watch door takes an approval from the account it runs as only when the project says so.
+    watchSelfApproval: block.watchSelfApproval === true,
     events: { ...DEFAULTS.events, ...(block.events ?? {}) },
     watch: { ...DEFAULTS.watch, ...(block.watch ?? {}) },
   };

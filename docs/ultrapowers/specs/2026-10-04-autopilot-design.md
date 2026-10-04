@@ -42,6 +42,10 @@ Not in scope:
 | D9 | One hash-chained log per ticket serves hand-offs, KPIs and audit. | One file instead of a stage log plus an audit log. |
 | D10 | The new skill and every changed skill go through `ultrapowers:writing-skills`, with the structure and voice of the skills under `skills/` (overview, announce line, arguments, numbered steps, checklist, Red Flags table). | Rule 2 and rule 3 of `AGENTS.md`. |
 | D11 | Amended 2026-10-04 after the live run on issue 16. The account the engine runs as may approve. The developer who runs the engine with their own tracker login approves their own tickets; a bot is kept out by the `approvers` allow-list. The agent still never adds a control label: the envelope denies it during stages and the skill forbids it at the gate. | The original rule, "the engine's own account never counts", left a solo developer no way to pass the gate. |
+| D12 | Amended 2026-10-04 after the final review. In the watch door, an approval by the account the watcher runs as counts only when `autopilot.watchSelfApproval` is true (reason `self-watch` otherwise). The session door is the developer at the keyboard, so D11 stands there unconditionally. | An unattended stage holds the watcher's account; a stage steered into labelling a ticket must not pass its own gate. |
+| D13 | Amended 2026-10-04. A headless stage runs with the stage credentials when the service provides them (`ULTRAPOWERS_STAGE_GH_TOKEN`, `ULTRAPOWERS_STAGE_GITLAB_TOKEN`, read-only tokens): the engine's tokens are removed, `gh` and `glab` see an empty configuration, the git credential helper is reset, git never prompts, and only the project's `.mcp.json` servers load (`--strict-mcp-config`). The tracker writes of `begin` and `end` are then made by the watcher around the stage. Without stage credentials the stage shares the engine's and the guardrail is the brake. | The envelope is a regex hook; a credential the stage never holds cannot be used. |
+| D14 | Amended 2026-10-04. The gate's record is not the gate: `begin execute` and `pr` require the recorded approval and check it again on the tracker (event id, actor, label, the packet's documents tip); the engine refuses `packet`, `approval`, `pr` and any other stage while a stage is open; the state files are protected paths in the envelope; a spec or plan changed after the approval blocks the run; `full` mode freezes the scope and records its approval at the packet; the `changes` label is taken when the stage begins; a run stops when a stage repeats; QA without a committed verdict fails closed. | The final review passed the gate by editing the state file and looped the unattended door. |
+| D15 | Amended 2026-10-04. The watch door refuses a harness without a guardrail (`harness-unguarded`); `opencode` is a session-door harness until its `tool.execute.before` hook exists. | Spec §8 calls the guardrail the only brake inside a headless stage. |
 
 ## 4. Configuration
 
@@ -66,7 +70,8 @@ The marker `.agents/ultrapowers.json` gains one optional block. Absent means `of
 | `baseBranch` | Base of the ticket branch in the documents repository. Default: its remote HEAD. Code repositories use their own `repos[].defaultBranch`. |
 | `approvers` | Tracker logins. Empty means any member with write access, the engine's own account included (D11). A team that runs the engine as a bot lists its human approvers here to keep the bot out. |
 | `execution` | `subagent` (subagent-driven-development) or `inline` (executing-plans). |
-| `harness` | The headless adapter the watcher uses: `claude-code` or `opencode`. |
+| `harness` | The headless adapter the watcher uses: `claude-code` or `opencode`. The watcher runs `claude-code` only until `opencode` has a guardrail (D15). |
+| `watchSelfApproval` | `false` by default. `true` lets the watch door take an approval from the account it runs as (D12); set it only with stage credentials (D13). |
 | `events` | The six label names. Configurable because teams own their label vocabularies. |
 | `watch` | `intervalSec` (default 60) and `maxConcurrent` (default 1). |
 
@@ -166,7 +171,7 @@ Envelope: the engine writes `.ultrapowers/autopilot-active`, holding the ticket 
 
 A pre-push check in the engine, independent of the hook, refuses a push whose branch is not `<ID>-*` or whose repository is not in the frozen scope, halts the run and reposts the packet with the reason.
 
-Tokens: the engine reads none; `gh` and `glab` read `GH_TOKEN` and `GITLAB_TOKEN`. Init's next steps recommend, for a watcher, one fine-grained GitHub token per workspace with Issues, Contents and Pull requests on the listed repositories only, never `workflow`, and GitLab project tokens per repository. The documentation states that a headless stage runs with permission prompts bypassed, that the hook is the only brake inside it, and that the host should be a non-production machine with no other credentials.
+Tokens: the engine reads none; `gh` and `glab` read `GH_TOKEN` and `GITLAB_TOKEN`. Init's next steps recommend, for a watcher, one fine-grained GitHub token per workspace with Issues, Contents and Pull requests on the listed repositories only, never `workflow`, and GitLab project tokens per repository; and a second, read-only token per provider for the stages (`ULTRAPOWERS_STAGE_GH_TOKEN`, `ULTRAPOWERS_STAGE_GITLAB_TOKEN`, D13). The documentation states that a headless stage runs with permission prompts bypassed, that the hook is the brake inside it and the stage credentials the second one, and that the host should be a non-production machine with no other credentials.
 
 Prompt injection: ticket text and comments stay quoted data. The `changes` stage reads comments inside the markers `source.md` uses. Team-memory entries written during a run land in the PR diff, never on a base branch.
 

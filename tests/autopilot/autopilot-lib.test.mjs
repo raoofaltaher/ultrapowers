@@ -391,3 +391,10 @@ test('renderPacket names the base commits that are not on origin', () => {
   assert.doesNotMatch(renderPacket(TEMPLATE, { state: S, ...args }), /ahead of origin/);
   assert.doesNotMatch(renderPacket(TEMPLATE, { state: S, ...args, baseAhead: [] }), /ahead of origin/);
 });
+
+test('watchSelfApproval is a boolean, off by default', () => {
+  assert.deepEqual(validateAutopilot({ mode: 'gated', watchSelfApproval: true }), []);
+  assert.match(validateAutopilot({ mode: 'gated', watchSelfApproval: 'yes' })[0], /autopilot\.watchSelfApproval must be true or false/);
+  assert.equal(effectiveAutopilot({ autopilot: { mode: 'gated' } }).watchSelfApproval, false);
+  assert.equal(effectiveAutopilot({ autopilot: { mode: 'gated', watchSelfApproval: true } }).watchSelfApproval, true);
+});

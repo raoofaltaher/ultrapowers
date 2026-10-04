@@ -1241,6 +1241,7 @@ export async function runAutopilot(opts) {
   report.nextSteps = block ? [
     'GitHub: a watcher or a session that writes back needs a fine-grained token with Issues, Contents and Pull requests read and write on the listed repositories, never workflow, in GH_TOKEN.',
     'GitLab: a project token with the api scope per repository, in GITLAB_TOKEN.',
+    'A watcher: give its stages a read-only token of their own in ULTRAPOWERS_STAGE_GH_TOKEN (Issues, Contents and Metadata read) or ULTRAPOWERS_STAGE_GITLAB_TOKEN (read_api); the stage then holds nothing that can write. See docs/autopilot-watcher.md.',
     `Start a ticket with /ultrapowers:autopilot <ID>; mode ${block.mode} stops at ${block.mode === 'full' ? 'the pull requests' : 'the review packet and the pull requests'}.`,
     ...(failed.length ? [`Create these labels by hand, the engine could not: ${failed.join(', ')}`] : []),
   ] : ['autopilot is off; every skill behaves as before.'];

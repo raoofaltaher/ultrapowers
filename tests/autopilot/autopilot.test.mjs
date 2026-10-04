@@ -759,3 +759,53 @@ test('the watcher starts a ticket on the ready label only', () => {
   assert.deepEqual(r.json.events.find((e) => e.event === 'cycle').tickets, []);
   assert.equal(harnessCalls(ws).length, 0);
 });
+
+test('the watch door does not take an approval from the account it runs as unless the project opts in', () => {
+  const ws = workspace();
+  throughPlan(ws);
+  run(ws, ['packet', 'GH-16']);
+  ws.setMap({ ...approvedBy('engine-bot') });
+  const w = run(ws, ['next', 'GH-16', '--door', 'watch']);
+  assert.deepEqual([w.json.action, w.json.approval.reason], ['wait', 'self-watch'], w.stdout);
+  assert.equal(state(ws).approval, null);
+  const s = run(ws, ['next', 'GH-16', '--door', 'command']);
+  assert.equal(s.json.reason, 'approved', 'the session door is the developer at the keyboard');
+});
+
+test('watchSelfApproval lets the watch door take the engine account approval', () => {
+  const ws = workspace({ autopilot: { mode: 'gated', baseBranch: 'main', watchSelfApproval: true } });
+  throughPlan(ws);
+  run(ws, ['packet', 'GH-16']);
+  ws.setMap({ ...approvedBy('engine-bot') });
+  assert.equal(run(ws, ['next', 'GH-16', '--door', 'watch']).json.reason, 'approved');
+});
+
+test('with stage credentials a headless stage holds only those, and loads only the project MCP servers', () => {
+  const ws = workspace();
+  fs.writeFileSync(path.join(ws.root, '.mcp.json'), JSON.stringify({ mcpServers: {} }));
+  const secrets = { GH_TOKEN: 'ghp_secret', GITHUB_TOKEN: 'ghp_secret2', GITLAB_TOKEN: 'glpat', GLAB_TOKEN: 'glpat2' };
+  const r = run(ws, ['run', 'GH-16', '--once'], headless(ws, { ...secrets, ULTRAPOWERS_STAGE_GH_TOKEN: 'ghs_readonly', ULTRAPOWERS_STAGE_GITLAB_TOKEN: 'gl_readonly' }));
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const call = harnessCalls(ws)[0];
+  assert.deepEqual([call.env.GH_TOKEN, call.env.GITHUB_TOKEN, call.env.GITLAB_TOKEN, call.env.GLAB_TOKEN], ['ghs_readonly', null, 'gl_readonly', null], 'the engine tokens are gone, the stage tokens are in');
+  assert.ok(call.env.GH_CONFIG_DIR && fs.existsSync(call.env.GH_CONFIG_DIR) && fs.readdirSync(call.env.GH_CONFIG_DIR).length === 0, 'gh sees an empty config');
+  assert.ok(call.env.GLAB_CONFIG_DIR && fs.existsSync(call.env.GLAB_CONFIG_DIR), 'glab sees an empty config');
+  assert.equal(call.env.GIT_TERMINAL_PROMPT, '0');
+  assert.ok(call.args.includes('--strict-mcp-config'), 'only the listed MCP servers load');
+  const i = call.args.indexOf('--mcp-config');
+  assert.ok(i > 0 && /\.mcp\.json$/.test(call.args[i + 1]), 'the project file is the list');
+  assert.ok(ws.calls().some((a) => a.includes('--add-label') && a.includes('up:running')), 'the watcher, not the stage, labels the ticket');
+});
+
+test('without stage credentials a headless stage shares the engine credentials, and still prompts for nothing', () => {
+  const ws = workspace();
+  fs.rmSync(path.join(ws.root, '.mcp.json'), { force: true });
+  const r = run(ws, ['run', 'GH-16', '--once'], headless(ws, { GH_TOKEN: 'ghp_shared' }));
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const call = harnessCalls(ws)[0];
+  assert.equal(call.env.GH_TOKEN, 'ghp_shared');
+  assert.equal(call.env.GH_CONFIG_DIR, null);
+  assert.equal(call.env.GIT_TERMINAL_PROMPT, '0');
+  const i = call.args.indexOf('--mcp-config');
+  assert.ok(call.args.includes('--strict-mcp-config') && i > 0 && /mcp-none\.json$/.test(call.args[i + 1]), 'no project .mcp.json: no server loads');
+});

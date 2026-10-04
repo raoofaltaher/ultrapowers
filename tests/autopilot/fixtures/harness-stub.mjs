@@ -14,7 +14,10 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ENGINE = path.resolve(HERE, '..', '..', '..', 'skills', 'autopilot', 'scripts', 'autopilot.mjs');
 const args = process.argv.slice(2);
-if (process.env.STUB_LOG) fs.appendFileSync(process.env.STUB_LOG, `${JSON.stringify({ harness: 'stub', args })}\n`);
+// The credentials a stage must not hold are logged as seen, so a test can check the watcher scrubbed them.
+const seen = Object.fromEntries(['GH_TOKEN', 'GITHUB_TOKEN', 'GITLAB_TOKEN', 'GLAB_TOKEN', 'GH_CONFIG_DIR', 'GLAB_CONFIG_DIR', 'GIT_TERMINAL_PROMPT']
+  .map((k) => [k, process.env[k] ?? null]));
+if (process.env.STUB_LOG) fs.appendFileSync(process.env.STUB_LOG, `${JSON.stringify({ harness: 'stub', args, env: seen })}\n`);
 
 const sleep = Number(process.env.HARNESS_SLEEP_MS ?? 0);
 if (sleep > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, sleep);

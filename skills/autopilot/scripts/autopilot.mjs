@@ -152,7 +152,10 @@ function context(opts) {
   // The ticket's documents live on its branch, checked out in place: put the documents
   // repository there before anything reads the state, so two tickets can share one workspace.
   ensureOnTicketBranch(dirs.docs, opts.id);
-  return { root, marker, settings, resolution, source, tracker, dirs };
+  // Inside a watcher's headless stage the engine CLI holds the stage's credentials, which may be
+  // read-only; the tracker writes of begin and end are then made by the watcher around the stage.
+  const inside = process.env.ULTRAPOWERS_AUTOPILOT_INSIDE === '1';
+  return { root, marker, settings, resolution, source, tracker, dirs, inside };
 }
 
 function trailerOf(marker) {
@@ -226,6 +229,24 @@ async function recheckApproval(ctx, state) {
   if (!found) throw new AutopilotError('approval-unverified', `${state.ticket}: the approval event ${a.eventId} by ${a.actor} is not on the tracker's timeline`);
 }
 
+// The tracker writes around a stage. In the session door `begin` and `end` make them; in the
+// watch door the watcher makes them, because the stage may hold a read-only credential.
+async function markRunning(ctx) {
+  const labels = await ctx.tracker.labels(ctx.source.number);
+  if (!labels.includes(ctx.settings.events.running)) await ctx.tracker.addLabel(ctx.source.number, ctx.settings.events.running);
+}
+
+// The changes request is taken: the label goes, so the gate that follows waits for a new one.
+async function takeChangesLabel(ctx, id, door) {
+  await ctx.tracker.removeLabel(ctx.source.number, ctx.settings.events.changes);
+  appendLog(ctx.root, id, { stage: 'changes', event: 'changes-taken', actor: 'engine', trigger: door, repo: 'docs' });
+}
+
+async function reportBlocked(ctx, id, stage, attempt, message) {
+  await ctx.tracker.addLabel(ctx.source.number, ctx.settings.events.blocked);
+  await ctx.tracker.comment(ctx.source.number, `Autopilot for ${id} is blocked at stage ${stage} (attempt ${attempt}): ${message}`);
+}
+
 // Spec §4: a changed spec or plan after the approval stops the run.
 function planChangedSince(ctx, state) {
   const since = state.approval?.docsTip;
@@ -254,7 +275,7 @@ async function runNext(opts) {
   // No approval is read, let alone consumed, while a stage is open: the agent inside it cannot pass its own gate.
   const stageOpen = openStage(ctx) !== null;
   if (state && !stageOpen && !state.approval && state.stage === 'gate' && (state.stageStatus ?? 'finished') === 'finished' && mode !== 'off' && mode !== 'full') {
-    approval = await pendingApproval(ctx, state, events);
+    approval = await pendingApproval(ctx, state, events, opts.door);
   }
   const facts = {
     mode, labels, events, approval,
@@ -419,7 +440,7 @@ async function runApproval(opts) {
   assertNoOpenStage(ctx, 'approval');
   const state = readState(ctx.root, opts.id);
   if (!state || state.stage !== 'gate') throw new AutopilotError('wrong-stage', `${opts.id} is not at the gate`);
-  const approval = await pendingApproval(ctx, state, ctx.settings.events);
+  const approval = await pendingApproval(ctx, state, ctx.settings.events, opts.door);
   if (approval.ok && !state.approval) await consumeApproval(ctx, state, approval, opts.door);
   if (!approval.ok && approval.reason === 'drift') await voidApproval(ctx, state, approval, opts.door);
   return { ticket: opts.id, approval, state: readState(ctx.root, opts.id) };
@@ -525,8 +546,10 @@ async function openPullRequests(ctx, opts, state, { resuming, qaOn }) {
   return { ticket: opts.id, stage: 'pr', prs };
 }
 
-// The approval verification of spec §7 against the tracker, as facts for nextStage.
-async function pendingApproval(ctx, state, events) {
+// The approval verification of spec §7 against the tracker, as facts for nextStage. D11: the
+// developer's own account approves in the session door; the watch door takes the account it
+// runs as only when `watchSelfApproval` is set, because an unattended stage holds that account.
+async function pendingApproval(ctx, state, events, door = 'command') {
   if (!state.packet) return { ok: false, reason: 'no-packet', detail: 'no packet has been posted' };
   const eventsList = await ctx.tracker.labelEvents(ctx.source.number);
   const tips = { docs: workTip(ctx.dirs.docs, state.ticket, state.docs.branch), repos: {} };
@@ -534,10 +557,17 @@ async function pendingApproval(ctx, state, events) {
     const dir = r.worktree && fs.existsSync(r.worktree) ? r.worktree : ctx.dirs.repos[r.name];
     tips.repos[r.name] = dir && r.branch ? tip(dir, r.branch) : null;
   }
-  return verifyApproval({
+  const verdict = await verifyApproval({
     events: eventsList, approveLabel: events.approve, packet: state.packet,
     permissionOf: (login) => ctx.tracker.permission(login), approvers: ctx.settings.approvers ?? [], tips,
   });
+  if (verdict.ok && door === 'watch' && !ctx.settings.watchSelfApproval) {
+    const me = await ctx.tracker.me().catch(() => '');
+    if (me && verdict.actor === me) {
+      return { ok: false, reason: 'self-watch', detail: `${me} is the account the watcher runs as; approve from another account, or set autopilot.watchSelfApproval to true` };
+    }
+  }
+  return verdict;
 }
 
 async function runBegin(opts) {
@@ -591,16 +621,11 @@ async function runBegin(opts) {
     }
     writeState(ctx.root, opts.id, state);
     appendLog(ctx.root, opts.id, { stage: opts.stage, event: 'started', actor: 'engine', trigger: opts.door, repo: 'docs' });
-    if (opts.stage === 'changes') {
-      // The request is taken: the label goes now, so the gate that follows waits for a new one.
-      await ctx.tracker.removeLabel(ctx.source.number, ctx.settings.events.changes);
-      appendLog(ctx.root, opts.id, { stage: 'changes', event: 'changes-taken', actor: 'engine', trigger: opts.door, repo: 'docs' });
-    }
+    if (opts.stage === 'changes' && !ctx.inside) await takeChangesLabel(ctx, opts.id, opts.door);
     commitState(ctx, opts.id, `chore(${opts.id}): autopilot ${opts.stage} started`);
   }
   writeActiveMarker(ctx.root, { ticket: opts.id, branch: state.docs.branch, scope: Array.isArray(state.scope.frozen) ? state.scope.frozen : [], stage: opts.stage });
-  const labels = await ctx.tracker.labels(ctx.source.number);
-  if (!labels.includes(ctx.settings.events.running)) await ctx.tracker.addLabel(ctx.source.number, ctx.settings.events.running);
+  if (!ctx.inside) await markRunning(ctx);
   const worktrees = Object.fromEntries((state.repos ?? []).filter((r) => r.worktree).map((r) => [r.name, r.worktree]));
   return { ticket: opts.id, stage: opts.stage, attempt: state.attempt, branch: state.docs.branch, mode: state.mode, door: opts.door, docs: ctx.dirs.docs, repos: ctx.dirs.repos, worktrees };
 }
@@ -683,8 +708,15 @@ async function runEnd(opts) {
   clearActiveMarker(ctx.root);
   releaseLock(ctx.root, opts.id);
   if (!ok) {
-    await ctx.tracker.addLabel(ctx.source.number, ctx.settings.events.blocked);
-    await ctx.tracker.comment(ctx.source.number, `Autopilot for ${opts.id} is blocked at stage ${opts.stage} (attempt ${state.attempt ?? 1}): ${message ?? `the ${opts.stage} stage did not finish`}`);
+    message = message ?? `the ${opts.stage} stage did not finish`;
+    if (ctx.inside) {
+      // The watcher reports it after the stage, with the credential that may write.
+      const s = readState(ctx.root, opts.id);
+      s.blockedMessage = message;
+      writeState(ctx.root, opts.id, s);
+    } else {
+      await reportBlocked(ctx, opts.id, opts.stage, state.attempt ?? 1, message);
+    }
   }
   return { ticket: opts.id, stage: opts.stage, status: state.stageStatus, tip: state.docs.tip, attempt: state.attempt ?? 1, ...(opts.stage === 'qa' ? { verdict } : {}) };
 }
@@ -698,17 +730,58 @@ function committedVerdict(ctx, report) {
   return m ? m[1].toUpperCase() : null;
 }
 
+// The environment a headless stage runs in. The stage never needs to write to the tracker or to
+// push: the engine does both between stages. When the service provides stage credentials
+// (ULTRAPOWERS_STAGE_GH_TOKEN, ULTRAPOWERS_STAGE_GITLAB_TOKEN; read-only tokens), the stage gets
+// those and nothing else: the engine's tokens are removed and gh and glab see an empty config
+// directory, so a stage steered into labelling a ticket has nothing to do it with. Without stage
+// credentials the stage shares the engine's, as before, and the guardrail is the brake. Git
+// never prompts, and the git credential helper is reset so a pushed-by-hand attempt finds none.
+function stageEnvironment(root) {
+  const env = { ...process.env, ULTRAPOWERS_AUTOPILOT_INSIDE: '1', GIT_TERMINAL_PROMPT: '0' };
+  const noAuth = path.join(root, '.ultrapowers', 'autopilot', 'no-auth');
+  const stageGh = process.env.ULTRAPOWERS_STAGE_GH_TOKEN;
+  const stageGl = process.env.ULTRAPOWERS_STAGE_GITLAB_TOKEN;
+  if (stageGh || stageGl) {
+    for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GLAB_TOKEN', 'OAUTH_TOKEN']) delete env[k];
+    for (const d of ['gh', 'glab']) fs.mkdirSync(path.join(noAuth, d), { recursive: true });
+    env.GH_CONFIG_DIR = path.join(noAuth, 'gh');
+    env.GLAB_CONFIG_DIR = path.join(noAuth, 'glab');
+    if (stageGh) env.GH_TOKEN = stageGh;
+    if (stageGl) env.GITLAB_TOKEN = stageGl;
+    const n = Number.parseInt(env.GIT_CONFIG_COUNT ?? '0', 10) || 0;
+    env[`GIT_CONFIG_KEY_${n}`] = 'credential.helper';
+    env[`GIT_CONFIG_VALUE_${n}`] = '';
+    env.GIT_CONFIG_COUNT = String(n + 1);
+  }
+  return env;
+}
+
+// Only the MCP servers the project lists load into a headless stage: the user's own connectors
+// (a tracker among them) stay out. Without a project .mcp.json, none loads.
+function mcpConfigArgs(root) {
+  const project = path.join(root, '.mcp.json');
+  let file = project;
+  if (!fs.existsSync(project)) {
+    file = path.join(root, '.ultrapowers', 'autopilot', 'mcp-none.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '{"mcpServers":{}}\n');
+  }
+  return ['--strict-mcp-config', '--mcp-config', file];
+}
+
 // One headless harness call; resolves { code, timedOut, stdout, stderr }.
-function spawnHarness(name, prompt, cwd) {
+function spawnHarness(name, prompt, cwd, root = cwd) {
   const adapter = HARNESSES[name];
   if (!adapter) throw new AutopilotError('bad-autopilot', `autopilot.harness ${name} has no headless adapter; ${Object.keys(HARNESSES).join(', ')} do`);
   const override = process.env[adapter.env];
   const command = override || adapter.bin;
   const script = /\.[cm]?js$/i.test(command);
-  const args = adapter.args(prompt, maxTurns());
+  const args = [...adapter.args(prompt, maxTurns()), ...(name === 'claude-code' ? mcpConfigArgs(root) : [])];
   const [file, argv] = script ? [process.execPath, [command, ...args]] : [command, args];
+  const env = stageEnvironment(root);
   return new Promise((resolve) => {
-    execFile(file, argv, { cwd, env: process.env, timeout: stageTimeoutMs(), windowsHide: true, maxBuffer: 64 * 1024 * 1024 }, (error, stdout, stderr) => {
+    execFile(file, argv, { cwd, env, timeout: stageTimeoutMs(), windowsHide: true, maxBuffer: 64 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (!error) return resolve({ code: 0, timedOut: false, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') });
       if (error.code === 'ENOENT') return resolve({ code: 127, timedOut: false, stdout: '', stderr: `${adapter.bin} is not on PATH (${file})` });
       return resolve({ code: typeof error.code === 'number' ? error.code : 1, timedOut: Boolean(error.killed), stdout: String(stdout ?? ''), stderr: String(stderr ?? error.message) });
@@ -779,12 +852,22 @@ async function runStages(ctx, base, opts, stages, seen) {
       }
     } else {
       const started = Date.now();
-      const spawned = await spawnHarness(ctx.settings.harness, stagePrompt(stage, opts.id), ctx.dirs.docs);
+      // The watcher makes the tracker writes around the stage: the stage may hold a read-only credential.
+      await markRunning(ctx);
+      if (stage === 'changes') await takeChangesLabel(ctx, opts.id, 'watch');
+      const spawned = await spawnHarness(ctx.settings.harness, stagePrompt(stage, opts.id), ctx.dirs.docs, ctx.root);
       const state = readState(ctx.root, opts.id);
       const pending = readLock(ctx.root, opts.id)?.pending;
       const ended = state ? state.stage === stage && state.stageStatus !== 'running' : false;
       let ok = spawned.code === 0 && ended;
       let message = null;
+      if (ended && state.stageStatus === 'blocked' && state.blockedMessage) {
+        // `end` inside the stage recorded the reason; the report is made from here.
+        await reportBlocked(ctx, opts.id, stage, state.attempt ?? 1, state.blockedMessage);
+        const s = readState(ctx.root, opts.id);
+        delete s.blockedMessage;
+        writeState(ctx.root, opts.id, s);
+      }
       if (!ended) {
         message = spawned.timedOut
           ? `the ${stage} stage timed out after ${stageTimeoutMs()} ms and was killed`
