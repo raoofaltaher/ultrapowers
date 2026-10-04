@@ -132,7 +132,10 @@ const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)h
 // Git subcommands an autopilot stage may run: the read-only set plus the commands that build the
 // ticket branch. Pushing and integrating belong to the engine; nothing discards work; `config` and
 // the `-c` global option are refused because an alias resolves to any command at all.
-const GIT_AUTOPILOT_ALLOWED = new Set(['add', 'commit', 'fetch', 'mv', 'rm', 'tag', 'notes', 'apply', 'am', 'format-patch', 'bisect', 'submodule', 'sparse-checkout', 'maintenance']);
+// Only commands that spawn no program and write nothing outside the index, the objects and the
+// worktree files the stage owns: no apply/am (patch paths are unseen), no bisect, submodule or
+// maintenance (they run hooks and commands), no tag (the engine names refs).
+const GIT_AUTOPILOT_ALLOWED = new Set(['add', 'commit', 'mv', 'rm']);
 
 // ---------- analysis ----------
 export function analyze(command, { cwd, root, ticket, profile = 'qa' }) {
@@ -277,6 +280,13 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa' }) {
             return deny('git -c and --exec-path can turn any git command into another; an autopilot stage runs plain git');
           }
           if (GIT_READ_ONLY.has(sub) || GIT_AUTOPILOT_ALLOWED.has(sub)) return;
+          if (sub === 'fetch') {
+            if (subArgs.some((x) => x === '-u' || x.startsWith('--upload-pack') || x.startsWith('ext::') || x.includes('://') && !/^https?:\/\//.test(x) || /^[a-z]:[\\/]|^\/|^\.\.?\//i.test(x))) {
+              return deny('git fetch with --upload-pack, an ext:: or local remote runs a program or reads outside origin; an autopilot stage fetches origin only');
+            }
+            return;
+          }
+          if (sub === 'commit' && subArgs.some((x) => x === '--no-verify' || x === '-n')) return;
           if (sub === 'branch') {
             if (subArgs.some((x) => ['-D', '-d', '--delete', '-M', '-m', '--move', '-f', '--force'].includes(x))) return deny('git branch -D, -m and -f change or delete branches; an autopilot stage only creates and lists them');
             return;
