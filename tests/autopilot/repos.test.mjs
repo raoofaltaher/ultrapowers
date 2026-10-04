@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
-  git, remoteHead, ensureBranch, ensureWorktree, tip, workTip, commitPaths, push, repoDirs,
+  git, remoteHead, remotePath, ensureBranch, ensureWorktree, tip, workTip, commitPaths, push, repoDirs,
 } from '../../skills/autopilot/scripts/repos.mjs';
 
 const GIT_ENV = {
@@ -134,6 +134,20 @@ test('push succeeds inside scope and for the docs repository', () => {
   push(clone, 'GH-16-x', { state: STATE(['backend']), repoName: 'backend' });
   assert.match(sh(origin, 'branch', '--list', 'GH-16-x'), /GH-16-x/);
   push(clone, 'GH-16-x', { state: STATE(false), repoName: 'docs' });
+});
+
+test('remotePath parses https and ssh origins and returns null for a local path', () => {
+  const { clone, base } = fixture();
+  assert.equal(remotePath(clone), null, 'a local bare path is not a tracker path');
+  sh(clone, 'remote', 'set-url', 'origin', 'https://github.com/o/backend.git');
+  assert.equal(remotePath(clone), 'o/backend');
+  sh(clone, 'remote', 'set-url', 'origin', 'git@gitlab.example.com:acme/platform/web.git');
+  assert.equal(remotePath(clone), 'acme/platform/web');
+  sh(clone, 'remote', 'set-url', 'origin', 'ssh://git@github.com/o/x');
+  assert.equal(remotePath(clone), 'o/x');
+  const plain = path.join(base, 'plain2');
+  sh(base, 'init', '-q', plain);
+  assert.equal(remotePath(plain), null);
 });
 
 test('repoDirs maps the marker to absolute paths', () => {

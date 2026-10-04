@@ -119,6 +119,16 @@ export function push(dir, branch, { state, repoName }) {
   must(dir, ['push', '--quiet', '-u', 'origin', branch], 'push');
 }
 
+// The `owner/repo` path of origin, parsed from an https or ssh URL; null for a local or unknown remote.
+export function remotePath(dir) {
+  const r = git(dir, ['remote', 'get-url', 'origin']);
+  if (!r.ok) return null;
+  const url = r.stdout.trim();
+  const m = /^(?:https?:\/\/[^/]+\/|[^@]+@[^:]+:|ssh:\/\/[^/]+\/)(.+?)(?:\.git)?\/?$/.exec(url);
+  if (!m || !m[1].includes('/') || /^[A-Za-z]:[\\/]|^\//.test(url) || /^[A-Za-z]:/.test(m[1])) return null;
+  return m[1];
+}
+
 // Absolute directories of the documents repository and every code repository of the marker.
 export function repoDirs(root, marker) {
   const repos = Array.isArray(marker?.repos) ? marker.repos : [];

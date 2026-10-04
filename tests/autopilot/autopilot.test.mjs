@@ -31,10 +31,22 @@ const BASE_MAP = {
   'issue edit 16 -R o/r --remove-label up:running': { stdout: '' },
   'issue edit 16 -R o/r --add-label up:blocked': { stdout: '' },
   'issue comment 16 -R o/r --body-file -': { stdout: 'https://github.com/o/r/issues/16#issuecomment-9\n' },
+  'api repos/o/r/issues/16/timeline': { stdout: [[]] },
 };
 
-// A scaffolded workspace on branch main with a GH source and an autopilot block.
-export function workspace({ autopilot = { mode: 'gated', baseBranch: 'main' }, map = {}, qa = false } = {}) {
+// A bare origin for `dir` with its current branch pushed.
+function withOrigin(base, name, dir) {
+  const origin = path.join(base, `${name}.git`);
+  git(base, 'init', '-q', '--bare', '-b', 'main', origin);
+  git(dir, 'remote', 'add', 'origin', origin);
+  git(dir, 'push', '-q', '-u', 'origin', 'main');
+  git(dir, 'remote', 'set-head', 'origin', 'main');
+  return origin;
+}
+
+// A scaffolded workspace on branch main with a GH source, an autopilot block and a bare origin.
+// `nested` adds a code repository clone `backend/` with its own origin and lists it in repos[].
+export function workspace({ autopilot = { mode: 'gated', baseBranch: 'main' }, map = {}, qa = false, nested = false } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'autopilot-cli-'));
   const root = path.join(base, 'ws');
   fs.mkdirSync(root);
@@ -44,10 +56,26 @@ export function workspace({ autopilot = { mode: 'gated', baseBranch: 'main' }, m
   marker.tickets = { transport: 'cli', sources: [{ prefix: 'GH', provider: 'github', owner: 'o', defaultProject: 'r' }] };
   if (autopilot) marker.autopilot = autopilot;
   if (!qa) delete marker.qa;
+  if (nested) {
+    marker.topology = 'nested';
+    marker.repos = [{ name: 'backend', path: 'backend', defaultBranch: 'main', area: 'backend' }];
+    fs.appendFileSync(path.join(root, '.gitignore'), 'backend/\n');
+  }
   fs.writeFileSync(markerPath, `${JSON.stringify(marker, null, 2)}\n`);
   git(root, 'init', '-q', '-b', 'main');
   git(root, 'add', '-A');
   git(root, 'commit', '-q', '-m', 'scaffold');
+  const origin = withOrigin(base, 'ws', root);
+  let backendOrigin = null;
+  if (nested) {
+    const backend = path.join(root, 'backend');
+    fs.mkdirSync(backend);
+    git(backend, 'init', '-q', '-b', 'main');
+    fs.writeFileSync(path.join(backend, 'README.md'), 'backend\n');
+    git(backend, 'add', '-A');
+    git(backend, 'commit', '-q', '-m', 'seed');
+    backendOrigin = withOrigin(base, 'backend', backend);
+  }
   const stubDir = path.join(base, 'stub');
   fs.mkdirSync(stubDir);
   fs.writeFileSync(path.join(stubDir, 'map.json'), JSON.stringify({ ...BASE_MAP, ...map }));
@@ -55,8 +83,42 @@ export function workspace({ autopilot = { mode: 'gated', baseBranch: 'main' }, m
   const env = { ...process.env, ...GIT_ENV, ULTRAPOWERS_GH: STUB, ULTRAPOWERS_GLAB: STUB, STUB_DIR: stubDir, STUB_LOG: log };
   const calls = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l).args) : []);
   const setMap = (extra) => fs.writeFileSync(path.join(stubDir, 'map.json'), JSON.stringify({ ...BASE_MAP, ...map, ...extra }));
-  return { root, env, calls, setMap, stubDir };
+  return { root, env, calls, setMap, stubDir, origin, backendOrigin };
 }
+
+const SPEC = (scope) => `# Spec\n\n## Repositories in scope\n\n${scope.map((s) => `- ${s}`).join('\n')}\n\n## Assumption ledger\n\n| # | Question | Chosen answer | Confidence | Reason |\n|---|---|---|---|---|\n| 1 | Which cache? | none | low | not asked |\n| 2 | Which auth? | OIDC | high | the app uses it |\n`;
+const PLAN = (scope) => `# Plan\n\n## Repositories in scope\n\n${scope.map((s) => `- ${s}`).join('\n')}\n\n### Task 1\n`;
+
+// Runs scaffold, spec and plan as the agent would, up to the gate.
+function throughPlan(ws, { scope = ['.'], planScope = scope } = {}) {
+  run(ws, ['begin', 'GH-16', 'scaffold']);
+  fs.mkdirSync(path.join(ws.root, 'tasks', 'GH-16'), { recursive: true });
+  fs.writeFileSync(path.join(ws.root, 'tasks', 'GH-16', 'GH-16.md'), '# GH-16 - Fix it now please\n');
+  run(ws, ['end', 'GH-16', 'scaffold', '--result', JSON.stringify({ ok: true })]);
+  run(ws, ['begin', 'GH-16', 'spec']);
+  fs.mkdirSync(path.join(ws.root, 'specs', 'GH-16'), { recursive: true });
+  fs.writeFileSync(path.join(ws.root, 'specs', 'GH-16', 'Spec.md'), SPEC(scope));
+  git(ws.root, 'add', '-A');
+  git(ws.root, 'commit', '-q', '-m', 'spec(GH-16): spec');
+  run(ws, ['end', 'GH-16', 'spec', '--result', JSON.stringify({ ok: true })]);
+  run(ws, ['begin', 'GH-16', 'plan']);
+  fs.mkdirSync(path.join(ws.root, 'plans', 'GH-16'), { recursive: true });
+  fs.writeFileSync(path.join(ws.root, 'plans', 'GH-16', 'Plan.md'), PLAN(planScope));
+  git(ws.root, 'add', '-A');
+  git(ws.root, 'commit', '-q', '-m', 'plan(GH-16): plan');
+  run(ws, ['end', 'GH-16', 'plan', '--result', JSON.stringify({ ok: true })]);
+}
+
+const APPROVE_AT = '2999-01-01T00:00:00Z';
+const approvedBy = (login) => ({
+  'api repos/o/r/issues/16/timeline': { stdout: [[{ id: 'e1', event: 'labeled', label: { name: 'up:approve' }, actor: { login }, created_at: APPROVE_AT }]] },
+  [`api repos/o/r/collaborators/${login}/permission`]: { stdout: { permission: 'write' } },
+  'issue edit 16 -R o/r --remove-label up:approve': { stdout: '' },
+});
+const stdinOf = (ws, pred) => {
+  const log = fs.readFileSync(path.join(ws.stubDir, 'calls.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  return log.filter((c) => pred(c.args)).map((c) => c.stdin);
+};
 
 export function run(ws, args, extraEnv = {}) {
   const result = spawnSync(process.execPath, [ENGINE, ...args, '--root', ws.root], { cwd: ws.root, encoding: 'utf8', env: { ...ws.env, ...extraEnv } });
@@ -192,6 +254,168 @@ test('next reports locked while the other door runs and leaves the running label
   const n = run(ws, ['next', 'GH-16']);
   assert.deepEqual([n.json.action, n.json.reason], ['wait', 'locked']);
   assert.ok(!ws.calls().some((a) => a.includes('--remove-label')));
+});
+
+// ---- Task 7: packet, approval and pr ----
+
+test('packet pushes the docs branch, posts under 25 lines, records tips and clears running', () => {
+  const ws = workspace();
+  throughPlan(ws);
+  assert.deepEqual([run(ws, ['next', 'GH-16']).json.action, run(ws, ['next', 'GH-16']).json.stage], ['run', 'gate']);
+  const r = run(ws, ['packet', 'GH-16']);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const bodies = stdinOf(ws, (a) => a[0] === 'issue' && a[1] === 'comment');
+  assert.equal(bodies.length, 1);
+  const lines = bodies[0].split('\n');
+  assert.ok(lines.length <= 25, `${lines.length} lines`);
+  assert.match(bodies[0], /Autopilot packet for GH-16 — gate 1 of 2 — mode gated/);
+  assert.match(bodies[0], /https:\/\/github\.com\/o\/r\/blob\/[0-9a-f]{40}\/specs\/GH-16\/Spec\.md/);
+  assert.match(bodies[0], /Which cache\?/);
+  assert.match(bodies[0], /Packet id [0-9a-f]{12}/);
+  const s = state(ws);
+  assert.equal(s.stage, 'gate');
+  assert.equal(s.stageStatus, 'finished');
+  assert.equal(s.packet.docsTip, s.docs.tip);
+  assert.equal(s.packet.commentUrl, 'https://github.com/o/r/issues/16#issuecomment-9');
+  assert.match(s.packet.postedAt, /^\d{4}-/);
+  assert.deepEqual(s.scope, { proposed: ['.'], frozen: false });
+  assert.match(git(ws.origin, 'branch', '--list', 'GH-16-fix-it-now-please'), /GH-16/);
+  assert.ok(ws.calls().some((a) => a.includes('--remove-label') && a.includes('up:running')));
+  assert.equal(logLines(ws).at(-1).event, 'packet-posted');
+  assert.equal(logLines(ws).at(-1).url, s.packet.commentUrl);
+  const n = run(ws, ['next', 'GH-16']);
+  assert.deepEqual([n.json.action, n.json.reason], ['wait', 'awaiting-approval']);
+});
+
+test('an approval by a permitted account removes the label, freezes scope and leads to execute', () => {
+  const ws = workspace();
+  throughPlan(ws);
+  run(ws, ['packet', 'GH-16']);
+  ws.setMap(approvedBy('alice'));
+  const n = run(ws, ['next', 'GH-16']);
+  assert.deepEqual([n.json.action, n.json.stage, n.json.reason], ['run', 'execute', 'approved'], n.stdout);
+  const s = state(ws);
+  assert.equal(s.approval.actor, 'alice');
+  assert.equal(s.approval.eventId, 'e1');
+  assert.deepEqual(s.scope, { proposed: ['.'], frozen: ['.'] });
+  assert.ok(ws.calls().some((a) => a.includes('--remove-label') && a.includes('up:approve')));
+  assert.equal(logLines(ws).at(-1).event, 'approved');
+  assert.equal(logLines(ws).at(-1).actor, 'alice');
+  assert.deepEqual([run(ws, ['next', 'GH-16']).json.action, run(ws, ['next', 'GH-16']).json.stage], ['run', 'execute'], 'idempotent');
+});
+
+test('an approval by a read-only account or before the packet does not count', () => {
+  const ws = workspace();
+  throughPlan(ws);
+  run(ws, ['packet', 'GH-16']);
+  ws.setMap({ ...approvedBy('bob'), 'api repos/o/r/collaborators/bob/permission': { stdout: { permission: 'read' } } });
+  const n = run(ws, ['next', 'GH-16']);
+  assert.deepEqual([n.json.action, n.json.reason, n.json.approval.reason], ['wait', 'awaiting-approval', 'not-permitted']);
+  assert.equal(state(ws).approval, null);
+  ws.setMap({ ...approvedBy('alice'), 'api repos/o/r/issues/16/timeline': { stdout: [[{ id: 'e0', event: 'labeled', label: { name: 'up:approve' }, actor: { login: 'alice' }, created_at: '2000-01-01T00:00:00Z' }]] } });
+  assert.equal(run(ws, ['next', 'GH-16']).json.approval.reason, 'before-packet');
+});
+
+test('a new commit after the packet voids the approval, comments, and the packet is reposted', () => {
+  const ws = workspace();
+  throughPlan(ws);
+  run(ws, ['packet', 'GH-16']);
+  const first = state(ws).packet.docsTip;
+  fs.appendFileSync(path.join(ws.root, 'tasks', 'GH-16', 'GH-16.md'), 'edited after the packet\n');
+  git(ws.root, 'add', '-A');
+  git(ws.root, 'commit', '-q', '-m', 'edit');
+  ws.setMap(approvedBy('alice'));
+  const n = run(ws, ['next', 'GH-16']);
+  assert.deepEqual([n.json.action, n.json.stage, n.json.reason], ['run', 'gate', 'drift'], n.stdout);
+  assert.equal(state(ws).approval, null);
+  assert.equal(logLines(ws).at(-1).event, 'voided');
+  const comments = stdinOf(ws, (a) => a[0] === 'issue' && a[1] === 'comment');
+  assert.equal(comments.length, 2);
+  assert.match(comments[1], /voided|drift|changed/i);
+  assert.ok(ws.calls().some((a) => a.includes('--remove-label') && a.includes('up:approve')));
+  run(ws, ['packet', 'GH-16']);
+  assert.notEqual(state(ws).packet.docsTip, first);
+  const bodies = stdinOf(ws, (a) => a[0] === 'issue' && a[1] === 'comment');
+  assert.match(bodies.at(-1), new RegExp(`changed since last packet: https://github.com/o/r/compare/${first}\\.\\.\\.`));
+});
+
+test('pr refuses before approval, then opens the docs PR and posts the closing comment', () => {
+  const ws = workspace();
+  throughPlan(ws);
+  run(ws, ['packet', 'GH-16']);
+  const refused = run(ws, ['pr', 'GH-16']);
+  assert.equal(refused.code, 2);
+  assert.equal(refused.json.error.code, 'not-approved');
+  ws.setMap({ ...approvedBy('alice'), 'pr create -R o/r --head GH-16-fix-it-now-please --base main': { stdout: 'https://github.com/o/r/pull/9\n' } });
+  run(ws, ['next', 'GH-16']);
+  run(ws, ['begin', 'GH-16', 'execute']);
+  fs.writeFileSync(path.join(ws.root, 'FEATURE.md'), 'done\n');
+  git(ws.root, 'add', '-A');
+  git(ws.root, 'commit', '-q', '-m', 'feat: the work');
+  run(ws, ['end', 'GH-16', 'execute', '--result', JSON.stringify({ ok: true })]);
+  const n = run(ws, ['next', 'GH-16']);
+  assert.deepEqual([n.json.action, n.json.stage, n.json.reason], ['run', 'pr', 'qa-not-configured']);
+  const r = run(ws, ['pr', 'GH-16']);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.equal(r.json.prs.docs, 'https://github.com/o/r/pull/9');
+  const prCalls = ws.calls().filter((a) => a[0] === 'pr' && a[1] === 'create');
+  assert.equal(prCalls.length, 1, 'root topology: one PR, the docs repository is the code repository');
+  const prBody = stdinOf(ws, (a) => a[0] === 'pr' && a[1] === 'create')[0];
+  assert.match(prBody, /issuecomment-9/);
+  assert.match(prBody, new RegExp(state(ws).packet.docsTip));
+  assert.match(prBody, /[0-9a-f]{64}/);
+  const closing = stdinOf(ws, (a) => a[0] === 'issue' && a[1] === 'comment').at(-1);
+  assert.match(closing, /https:\/\/github\.com\/o\/r\/pull\/9/);
+  const s = state(ws);
+  assert.equal(s.pr.docs, 'https://github.com/o/r/pull/9');
+  assert.equal(s.stage, 'pr');
+  assert.equal(s.stageStatus, 'finished');
+  assert.deepEqual([run(ws, ['next', 'GH-16']).json.action, run(ws, ['next', 'GH-16']).json.reason], ['done', 'pr-finished']);
+});
+
+test('nested: execute creates a worktree per frozen repo and pr opens one PR per repo plus docs', () => {
+  const ws = workspace({ nested: true });
+  throughPlan(ws, { scope: ['backend'] });
+  run(ws, ['packet', 'GH-16']);
+  ws.setMap({
+    ...approvedBy('alice'),
+    'pr create -R o/r --head GH-16-fix-it-now-please --base main': { stdout: 'https://github.com/o/r/pull/9\n' },
+    'pr create -R o/backend --head GH-16-fix-it-now-please --base main': { stdout: 'https://github.com/o/backend/pull/3\n' },
+  });
+  run(ws, ['next', 'GH-16']);
+  assert.deepEqual(state(ws).scope.frozen, ['backend']);
+  const b = run(ws, ['begin', 'GH-16', 'execute']);
+  assert.equal(b.code, 0, b.stdout + b.stderr);
+  const wt = path.join(ws.root, 'backend', '.worktrees', 'GH-16-fix-it-now-please');
+  assert.ok(fs.existsSync(path.join(wt, '.git')), 'worktree created');
+  assert.equal(git(wt, 'branch', '--show-current'), 'GH-16-fix-it-now-please');
+  assert.deepEqual(b.json.worktrees, { backend: wt });
+  assert.equal(state(ws).repos[0].name, 'backend');
+  assert.equal(state(ws).repos[0].worktree, wt);
+  fs.writeFileSync(path.join(wt, 'feature.js'), 'ok\n');
+  git(wt, 'add', '-A');
+  git(wt, 'commit', '-q', '-m', 'feat: backend work');
+  run(ws, ['end', 'GH-16', 'execute', '--result', JSON.stringify({ ok: true })]);
+  assert.equal(state(ws).repos[0].tip, git(wt, 'rev-parse', 'HEAD'));
+  const r = run(ws, ['pr', 'GH-16']);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.deepEqual(r.json.prs, { docs: 'https://github.com/o/r/pull/9', backend: 'https://github.com/o/backend/pull/3' });
+  assert.match(git(ws.backendOrigin, 'branch', '--list', 'GH-16-fix-it-now-please'), /GH-16/);
+  assert.equal(state(ws).repos[0].prUrl, 'https://github.com/o/backend/pull/3');
+  const closing = stdinOf(ws, (a) => a[0] === 'issue' && a[1] === 'comment').at(-1);
+  assert.match(closing, /pull\/3/);
+  assert.match(closing, /pull\/9/);
+});
+
+test('a plan that widens the spec scope blocks the approval with scope-widened', () => {
+  const ws = workspace({ nested: true });
+  throughPlan(ws, { scope: ['backend'], planScope: ['backend', 'web'] });
+  run(ws, ['packet', 'GH-16']);
+  ws.setMap(approvedBy('alice'));
+  const n = run(ws, ['next', 'GH-16']);
+  assert.equal(n.code, 2, n.stdout);
+  assert.match(n.json.error.code, /unknown-repo|scope-widened/);
+  assert.equal(state(ws).scope.frozen, false);
 });
 
 test('next removes the running label when it answers stop', () => {

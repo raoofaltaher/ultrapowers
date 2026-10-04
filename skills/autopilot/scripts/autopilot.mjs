@@ -12,17 +12,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { resolveTicket, TicketError } from '../../new-task/scripts/ticket-sources.mjs';
+import { fileURLToPath } from 'node:url';
 import {
   AutopilotError, STAGES, effectiveAutopilot, modeFor, branchName, initialState,
   readState, writeState, appendLog, readLog, verifyChain,
   nextStage, acquireLock, releaseLock, liveLock, readLock, lockPath,
   writeActiveMarker, clearActiveMarker, verifyApproval,
+  renderPacket, assumptionsFrom, scopeFrom, freezeScope, pushAllowed,
 } from './autopilot-lib.mjs';
 import { trackerFor } from './tracker.mjs';
-import { ensureBranch, remoteHead, tip, workTip, commitPaths, repoDirs } from './repos.mjs';
+import { ensureBranch, ensureWorktree, remoteHead, remotePath, tip, workTip, commitPaths, push, repoDirs } from './repos.mjs';
 
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const PACKET_TEMPLATE = path.join(HERE, '..', 'templates', 'packet.md');
 const MARKER = path.join('.agents', 'ultrapowers.json');
-const COMMANDS = ['status', 'next', 'begin', 'end'];
+const COMMANDS = ['status', 'next', 'begin', 'end', 'packet', 'approval', 'pr'];
 const DOORS = ['command', 'watch'];
 const FLAGS = { '--root': 'root', '--mode': 'mode', '--door': 'door', '--result': 'result', '--pid': 'pid' };
 
@@ -141,13 +145,192 @@ async function runNext(opts) {
   }
   const facts = {
     mode, labels, events, approval,
-    qaConfigured: Boolean(ctx.marker.qa && typeof ctx.marker.qa === 'object' && ctx.marker.qa.urls && Object.values(ctx.marker.qa.urls).some((v) => typeof v === 'string' && v.trim())),
+    qaConfigured: qaConfigured(ctx.marker),
     locked: liveLock(ctx.root, opts.id, opts.door),
   };
   const answer = nextStage(state, facts);
+  // A verified approval is consumed here: the label goes, the scope freezes, the log says who.
+  if (answer.reason === 'approved' && !state.approval) await consumeApproval(ctx, state, approval, opts.door);
+  if (answer.reason === 'drift' && approval && approval.reason === 'drift') await voidApproval(ctx, state, approval, opts.door);
   if (answer.action === 'wait' && answer.reason !== 'locked') await removeRunning(ctx);
   if (answer.action === 'done' || answer.action === 'stop') await removeRunning(ctx);
-  return { ...answer, ticket: opts.id, mode, approval, state };
+  return { ...answer, ticket: opts.id, mode, approval, state: readState(ctx.root, opts.id) };
+}
+
+function qaConfigured(marker) {
+  const qa = marker.qa;
+  return Boolean(qa && typeof qa === 'object' && qa.urls && Object.values(qa.urls).some((v) => typeof v === 'string' && v.trim()));
+}
+
+function readText(file) {
+  return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+}
+
+function knownRepos(ctx) {
+  return Object.keys(ctx.dirs.repos);
+}
+
+// Freezes the scope from the spec and the plan, removes the approve label, records the approval.
+async function consumeApproval(ctx, state, approval, door) {
+  const specRepos = scopeFrom(readText(path.join(ctx.root, 'specs', state.ticket, 'Spec.md')));
+  const planRepos = scopeFrom(readText(path.join(ctx.root, 'plans', state.ticket, 'Plan.md')));
+  const frozen = freezeScope(state, { specRepos, planRepos, knownRepos: knownRepos(ctx) });
+  frozen.approval = { actor: approval.actor, eventId: approval.eventId, at: approval.at, docsTip: state.packet.docsTip, tips: state.packet.tips };
+  writeState(ctx.root, state.ticket, frozen);
+  await ctx.tracker.removeLabel(ctx.source.number, ctx.settings.events.approve);
+  appendLog(ctx.root, state.ticket, { stage: 'gate', event: 'approved', actor: approval.actor, trigger: door, repo: 'docs', sha: state.packet.docsTip, url: state.packet.commentUrl });
+  commitState(ctx, state.ticket, `chore(${state.ticket}): autopilot approved by ${approval.actor}`);
+}
+
+// A new commit since the packet: the label goes, the reviewer is told, the gate reposts.
+async function voidApproval(ctx, state, approval, door) {
+  await ctx.tracker.removeLabel(ctx.source.number, ctx.settings.events.approve);
+  await ctx.tracker.comment(ctx.source.number, `Autopilot for ${state.ticket}: the approval is voided because the branch changed after the packet (${approval.detail}). A new packet follows; approve that one.`);
+  appendLog(ctx.root, state.ticket, { stage: 'gate', event: 'voided', actor: 'engine', trigger: door, repo: 'docs', sha: state.packet?.docsTip ?? null });
+  state.approval = null;
+  writeState(ctx.root, state.ticket, state);
+  commitState(ctx, state.ticket, `chore(${state.ticket}): autopilot approval voided`);
+}
+
+function webBase(ctx) {
+  const { provider, host } = ctx.resolution;
+  return provider === 'gitlab' ? `https://${host}/${ctx.source.path}` : `https://github.com/${ctx.source.path}`;
+}
+
+function blobUrl(ctx, sha, file) {
+  const sep = ctx.resolution.provider === 'gitlab' ? '/-/blob/' : '/blob/';
+  return `${webBase(ctx)}${sep}${sha}/${file}`;
+}
+
+function compareUrl(ctx, from, to) {
+  const sep = ctx.resolution.provider === 'gitlab' ? '/-/compare/' : '/compare/';
+  return `${webBase(ctx)}${sep}${from}...${to}`;
+}
+
+// The gate stage: push the documents branch, post the packet, record it, wait.
+async function runPacket(opts) {
+  const ctx = context(opts);
+  if (ctx.settings.mode === 'off') throw new AutopilotError('mode-off', 'autopilot.mode is off for this project; nothing runs');
+  const state = readState(ctx.root, opts.id);
+  if (!state) throw new AutopilotError('no-state', `${opts.id} has no autopilot state; run the scaffold, spec and plan stages first`);
+  const lock = acquireLock(ctx.root, opts.id, opts.door, opts.pid);
+  if (!lock.ok) throw new AutopilotError('locked', `${opts.id} is being run by the ${lock.door} door`);
+  const previous = state.packet;
+  state.stage = 'gate';
+  state.stageStatus = 'running';
+  state.attempt = 1;
+  const specText = readText(path.join(ctx.root, 'specs', opts.id, 'Spec.md'));
+  const specRepos = scopeFrom(specText);
+  state.scope = { ...state.scope, proposed: specRepos.length ? specRepos : (knownRepos(ctx).length === 1 ? knownRepos(ctx) : []) };
+  writeState(ctx.root, opts.id, state);
+  appendLog(ctx.root, opts.id, { stage: 'gate', event: 'started', actor: 'engine', trigger: opts.door, repo: 'docs' });
+  commitState(ctx, opts.id, `chore(${opts.id}): autopilot gate started`);
+  push(ctx.dirs.docs, state.docs.branch, { state, repoName: 'docs' });
+  const docsTip = workTip(ctx.dirs.docs, opts.id, state.docs.branch);
+  const tips = {};
+  for (const r of state.repos ?? []) {
+    const dir = ctx.dirs.repos[r.name];
+    if (dir && r.branch) {
+      r.tip = tip(dir, r.branch);
+      tips[r.name] = r.tip;
+    }
+  }
+  state.docs.tip = docsTip;
+  const links = {
+    brief: blobUrl(ctx, docsTip, `tasks/${opts.id}/${opts.id}.md`),
+    spec: blobUrl(ctx, docsTip, `specs/${opts.id}/Spec.md`),
+    plan: blobUrl(ctx, docsTip, `plans/${opts.id}/Plan.md`),
+    diff: previous && previous.docsTip && previous.docsTip !== docsTip ? compareUrl(ctx, previous.docsTip, docsTip) : null,
+  };
+  const body = renderPacket(readText(PACKET_TEMPLATE), { state, links, assumptions: assumptionsFrom(specText), events: ctx.settings.events });
+  const commentUrl = await ctx.tracker.comment(ctx.source.number, body);
+  const postedAt = new Date().toISOString();
+  state.packet = { commentUrl, docsTip, tips, postedAt };
+  state.approval = null;
+  state.stageStatus = 'finished';
+  writeState(ctx.root, opts.id, state);
+  appendLog(ctx.root, opts.id, { stage: 'gate', event: 'packet-posted', actor: 'engine', trigger: opts.door, repo: 'docs', sha: docsTip, url: commentUrl });
+  commitState(ctx, opts.id, `chore(${opts.id}): autopilot packet posted`);
+  await removeRunning(ctx);
+  clearActiveMarker(ctx.root);
+  releaseLock(ctx.root, opts.id);
+  return { ticket: opts.id, stage: 'gate', packet: state.packet, lines: body.split('\n').length, mode: state.mode };
+}
+
+// The explicit form of the approval check; `next` does the same when it finds one.
+async function runApproval(opts) {
+  const ctx = context(opts);
+  const state = readState(ctx.root, opts.id);
+  if (!state || state.stage !== 'gate') throw new AutopilotError('wrong-stage', `${opts.id} is not at the gate`);
+  const approval = await pendingApproval(ctx, state, ctx.settings.events);
+  if (approval.ok && !state.approval) await consumeApproval(ctx, state, approval, opts.door);
+  if (!approval.ok && approval.reason === 'drift') await voidApproval(ctx, state, approval, opts.door);
+  return { ticket: opts.id, approval, state: readState(ctx.root, opts.id) };
+}
+
+// The tracker path of a code repository: its origin URL, else <owner or namespace>/<name>.
+function repoTrackerPath(ctx, name, dir) {
+  const fromRemote = remotePath(dir);
+  if (fromRemote) return fromRemote;
+  const source = (ctx.marker.tickets?.sources ?? []).find((s) => s.prefix === ctx.resolution.prefix) ?? {};
+  const base = source.provider === 'gitlab' ? source.namespace : source.owner;
+  return `${base}/${name}`;
+}
+
+// The last stage: push every branch in scope, one PR per repository plus the documents PR.
+async function runPr(opts) {
+  const ctx = context(opts);
+  const state = readState(ctx.root, opts.id);
+  if (!state) throw new AutopilotError('no-state', `${opts.id} has no autopilot state`);
+  if (!Array.isArray(state.scope.frozen)) throw new AutopilotError('not-approved', `${opts.id} has no approved scope; the gate has not been passed`);
+  if (!['execute', 'qa'].includes(state.stage) || state.stageStatus !== 'finished') throw new AutopilotError('wrong-stage', `${opts.id} is at ${state.stage} (${state.stageStatus}); pr follows a finished execute or qa stage`);
+  const lock = acquireLock(ctx.root, opts.id, opts.door, opts.pid);
+  if (!lock.ok) throw new AutopilotError('locked', `${opts.id} is being run by the ${lock.door} door`);
+  state.stage = 'pr';
+  state.stageStatus = 'running';
+  state.attempt = 1;
+  writeState(ctx.root, opts.id, state);
+  appendLog(ctx.root, opts.id, { stage: 'pr', event: 'started', actor: 'engine', trigger: opts.door, repo: 'docs' });
+  commitState(ctx, opts.id, `chore(${opts.id}): autopilot pr started`);
+  const logHead = readState(ctx.root, opts.id).logHead ?? '';
+  const cite = (what) => [
+    `Autopilot pull request for ${opts.id}: ${what}.`,
+    '',
+    `- Packet: ${state.packet?.commentUrl ?? 'none'}`,
+    `- Documents tip at approval: ${state.approval?.docsTip ?? state.packet?.docsTip ?? 'none'}`,
+    `- Approved by: ${state.approval?.actor ?? 'n/a'}`,
+    `- Stage log head: ${logHead}`,
+    state.qa ? `- QA verdict: ${state.qa.verdict} (${state.qa.report})` : '- QA: not configured for this project',
+  ].join('\n');
+  const prs = {};
+  const title = `${opts.id}: ${state.title || 'autopilot'}`;
+  // Code repositories first, so the documents PR can list them.
+  for (const r of state.repos ?? []) {
+    if (!state.scope.frozen.includes(r.name) || r.name === '.') continue;
+    const dir = ctx.dirs.repos[r.name];
+    const workDir = r.worktree && fs.existsSync(r.worktree) ? r.worktree : dir;
+    push(workDir, r.branch, { state, repoName: r.name });
+    r.tip = tip(workDir, r.branch);
+    const tracker = trackerFor({ ...ctx.resolution, path: repoTrackerPath(ctx, r.name, dir) }, process.env);
+    r.prUrl = await tracker.createPr({ head: r.branch, base: r.base, title, body: cite(`the ${r.name} repository`) });
+    r.status = 'pr';
+    prs[r.name] = r.prUrl;
+    writeState(ctx.root, opts.id, state);
+  }
+  push(ctx.dirs.docs, state.docs.branch, { state, repoName: 'docs' });
+  const docsBody = `${cite('the documents repository')}\n${Object.entries(prs).map(([n, u]) => `- ${n}: ${u}`).join('\n')}`;
+  state.pr.docs = await ctx.tracker.createPr({ head: state.docs.branch, base: state.docs.base, title, body: docsBody });
+  prs.docs = state.pr.docs;
+  state.stageStatus = 'finished';
+  writeState(ctx.root, opts.id, state);
+  appendLog(ctx.root, opts.id, { stage: 'pr', event: 'finished', actor: 'engine', trigger: opts.door, repo: 'docs', sha: tip(ctx.dirs.docs, state.docs.branch), url: state.pr.docs });
+  commitState(ctx, opts.id, `chore(${opts.id}): autopilot pull requests opened`);
+  push(ctx.dirs.docs, state.docs.branch, { state, repoName: 'docs' });
+  await ctx.tracker.comment(ctx.source.number, `Autopilot for ${opts.id} opened the pull requests:\n${Object.entries(prs).map(([n, u]) => `- ${n}: ${u}`).join('\n')}`);
+  await removeRunning(ctx);
+  clearActiveMarker(ctx.root);
+  releaseLock(ctx.root, opts.id);
+  return { ticket: opts.id, stage: 'pr', prs };
 }
 
 // The approval verification of spec §7 against the tracker, as facts for nextStage.
@@ -157,7 +340,7 @@ async function pendingApproval(ctx, state, events) {
   const botLogin = await ctx.tracker.me().catch(() => '');
   const tips = { docs: workTip(ctx.dirs.docs, state.ticket, state.docs.branch), repos: {} };
   for (const r of state.repos ?? []) {
-    const dir = ctx.dirs.repos[r.name];
+    const dir = r.worktree && fs.existsSync(r.worktree) ? r.worktree : ctx.dirs.repos[r.name];
     tips.repos[r.name] = dir && r.branch ? tip(dir, r.branch) : null;
   }
   return verifyApproval({
@@ -197,6 +380,13 @@ async function runBegin(opts) {
     state.stage = opts.stage;
     state.stageStatus = 'running';
     state.door = opts.door;
+    if (opts.stage === 'execute') {
+      if (!Array.isArray(state.scope.frozen)) {
+        releaseLock(ctx.root, opts.id);
+        throw new AutopilotError('not-approved', `${opts.id} has no approved scope; execute follows a verified approval`);
+      }
+      prepareWorktrees(ctx, state);
+    }
     writeState(ctx.root, opts.id, state);
     appendLog(ctx.root, opts.id, { stage: opts.stage, event: 'started', actor: 'engine', trigger: opts.door, repo: 'docs' });
     commitState(ctx, opts.id, `chore(${opts.id}): autopilot ${opts.stage} started`);
@@ -204,7 +394,31 @@ async function runBegin(opts) {
   writeActiveMarker(ctx.root, { ticket: opts.id, branch: state.docs.branch, scope: Array.isArray(state.scope.frozen) ? state.scope.frozen : [] });
   const labels = await ctx.tracker.labels(ctx.source.number);
   if (!labels.includes(ctx.settings.events.running)) await ctx.tracker.addLabel(ctx.source.number, ctx.settings.events.running);
-  return { ticket: opts.id, stage: opts.stage, attempt: state.attempt, branch: state.docs.branch, mode: state.mode, door: opts.door, docs: ctx.dirs.docs, repos: ctx.dirs.repos };
+  const worktrees = Object.fromEntries((state.repos ?? []).filter((r) => r.worktree).map((r) => [r.name, r.worktree]));
+  return { ticket: opts.id, stage: opts.stage, attempt: state.attempt, branch: state.docs.branch, mode: state.mode, door: opts.door, docs: ctx.dirs.docs, repos: ctx.dirs.repos, worktrees };
+}
+
+// One ticket branch per frozen code repository, in a worktree of that clone. Root topology has none.
+function prepareWorktrees(ctx, state) {
+  const markerRepos = Array.isArray(ctx.marker.repos) ? ctx.marker.repos : [];
+  state.repos = state.repos ?? [];
+  for (const name of state.scope.frozen) {
+    if (name === '.') continue;
+    const dir = ctx.dirs.repos[name];
+    if (!dir || !fs.existsSync(dir)) throw new AutopilotError('unknown-repo', `${name} is not a clone of this workspace`);
+    const entry = markerRepos.find((r) => r.name === name) ?? {};
+    const base = entry.defaultBranch || remoteHead(dir);
+    const worktree = ensureWorktree(dir, state.docs.branch, base);
+    let r = state.repos.find((x) => x.name === name);
+    if (!r) {
+      r = { name, branch: state.docs.branch, base, tip: null, status: 'pending', prUrl: null, worktree };
+      state.repos.push(r);
+    }
+    r.branch = state.docs.branch;
+    r.base = base;
+    r.worktree = worktree;
+    r.tip = tip(worktree, state.docs.branch);
+  }
 }
 
 async function runEnd(opts) {
@@ -229,7 +443,7 @@ async function runEnd(opts) {
     appendLog(ctx.root, opts.id, { at: lock.startedAt, stage: opts.stage, event: 'started', actor: 'engine', trigger: lock.door ?? 'command', repo: 'docs' });
   }
   for (const r of state.repos ?? []) {
-    const dir = ctx.dirs.repos[r.name];
+    const dir = r.worktree && fs.existsSync(r.worktree) ? r.worktree : ctx.dirs.repos[r.name];
     if (dir && r.branch) r.tip = tip(dir, r.branch);
   }
   writeState(ctx.root, opts.id, state);
@@ -255,7 +469,7 @@ async function runEnd(opts) {
 export async function main(argv) {
   try {
     const opts = parseArgs(argv);
-    const runners = { status: runStatus, next: runNext, begin: runBegin, end: runEnd };
+    const runners = { status: runStatus, next: runNext, begin: runBegin, end: runEnd, packet: runPacket, approval: runApproval, pr: runPr };
     const result = await runners[opts.command](opts);
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return 0;
