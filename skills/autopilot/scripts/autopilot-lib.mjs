@@ -367,3 +367,122 @@ export function pushAllowed(state, repoName, branch) {
   if (repoName === 'docs') return true;
   return Array.isArray(state.scope?.frozen) && state.scope.frozen.includes(repoName);
 }
+
+// ---- Next stage, locks and the active marker (spec §6, §8) ----
+
+const MAX_ATTEMPTS = 3;
+const QA_STOPS = ['FAIL', 'PRECONDITION-FAILED'];
+const AFTER = { scaffold: 'spec', spec: 'plan', plan: 'gate', changes: 'gate' };
+
+// The engine's one decision: what to do next for this ticket.
+// facts = { mode, labels, events, approval, qaConfigured, locked }
+export function nextStage(state, facts) {
+  const { mode, labels = [], events = DEFAULTS.events, approval = null, qaConfigured = false, locked = null } = facts;
+  if (mode === 'off') return { action: 'stop', reason: 'mode-off' };
+  if (locked) return { action: 'wait', reason: 'locked' };
+  if (!state) return { action: 'run', stage: 'scaffold', reason: 'new-ticket' };
+  if (state.stage === 'done') return { action: 'done', reason: 'done' };
+  if (labels.includes(events.hold)) return { action: 'wait', reason: 'held' };
+  const status = state.stageStatus ?? 'finished';
+  if (status === 'running') return { action: 'run', stage: state.stage, reason: `${state.stage}-interrupted` };
+  if (status === 'blocked') {
+    if ((state.attempt ?? 1) >= MAX_ATTEMPTS) return { action: 'stop', reason: 'blocked' };
+    return { action: 'run', stage: state.stage, reason: `${state.stage}-retry` };
+  }
+  const stage = state.stage;
+  if (stage in AFTER) return { action: 'run', stage: AFTER[stage], reason: `${stage}-finished` };
+  if (stage === 'gate') {
+    if (labels.includes(events.changes)) return { action: 'run', stage: 'changes', reason: 'changes-requested' };
+    if (mode === 'full') return { action: 'run', stage: 'execute', reason: 'mode-full' };
+    if (approval?.ok) return { action: 'run', stage: 'execute', reason: 'approved' };
+    if (approval && approval.reason === 'drift') return { action: 'run', stage: 'gate', reason: 'drift' };
+    return { action: 'wait', reason: 'awaiting-approval' };
+  }
+  if (stage === 'execute') {
+    return qaConfigured ? { action: 'run', stage: 'qa', reason: 'execute-finished' } : { action: 'run', stage: 'pr', reason: 'qa-not-configured' };
+  }
+  if (stage === 'qa') {
+    const verdict = state.qa?.verdict ?? '';
+    if (QA_STOPS.includes(verdict)) return { action: 'stop', reason: `qa-${verdict}` };
+    return { action: 'run', stage: 'pr', reason: 'qa-finished' };
+  }
+  if (stage === 'pr') return { action: 'done', reason: 'pr-finished' };
+  throw new AutopilotError('bad-state', `unknown stage ${stage}`);
+}
+
+export function lockPath(root, id) {
+  return path.join(root, '.ultrapowers', 'autopilot', `${id}.lock`);
+}
+
+export function readLock(root, id) {
+  const file = lockPath(root, id);
+  if (!fs.existsSync(file)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return { pid: 0, door: 'unknown', startedAt: '' };
+  }
+}
+
+function pidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === 'EPERM';
+  }
+}
+
+function lockTtlMs() {
+  const value = Number(process.env.ULTRAPOWERS_AUTOPILOT_LOCK_TTL_MS);
+  return Number.isFinite(value) && value > 0 ? value : 6 * 60 * 60 * 1000;
+}
+
+// The live lock held by the other door, or null. A lock is per door: the same door re-enters.
+// A lock with a pid lives while that pid does; a lock without one (the session door, whose CLI
+// calls are short-lived processes) lives until `end` releases it or the TTL passes.
+export function liveLock(root, id, door) {
+  const lock = readLock(root, id);
+  if (!lock) return null;
+  if (lock.door === door) return null;
+  const stale = Number.isInteger(lock.pid) && lock.pid > 0
+    ? !pidAlive(lock.pid)
+    : Date.now() - Date.parse(lock.startedAt || 0) > lockTtlMs();
+  if (stale) {
+    fs.rmSync(lockPath(root, id), { force: true });
+    return null;
+  }
+  return lock;
+}
+
+// Takes the ticket's lock for this door; a stale lock is removed first. `pid` is the long-lived
+// process that owns the run (the watcher), or null for the session door.
+export function acquireLock(root, id, door, pid = process.pid) {
+  const other = liveLock(root, id, door);
+  if (other) return { ok: false, pid: other.pid ?? null, door: other.door };
+  const file = lockPath(root, id);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const existing = readLock(root, id);
+  const startedAt = existing && existing.door === door ? existing.startedAt : new Date().toISOString();
+  fs.writeFileSync(file, JSON.stringify({ ...(existing && existing.door === door ? existing : {}), pid: pid ?? null, door, startedAt }));
+  return { ok: true };
+}
+
+export function releaseLock(root, id) {
+  fs.rmSync(lockPath(root, id), { force: true });
+}
+
+export function activeMarkerPath(root) {
+  return path.join(root, '.ultrapowers', 'autopilot-active');
+}
+
+export function writeActiveMarker(root, { ticket, branch, scope }) {
+  const file = activeMarkerPath(root);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ ticket, branch, scope: scope ?? [] }));
+}
+
+export function clearActiveMarker(root) {
+  fs.rmSync(activeMarkerPath(root), { force: true });
+}

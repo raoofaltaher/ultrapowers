@@ -87,6 +87,19 @@ export function tip(dir, ref = 'HEAD') {
   return r.ok ? r.stdout.trim() : null;
 }
 
+// The newest commit on `ref` that touches anything other than the ticket's two state files.
+// Engine bookkeeping commits (state and log only) never move the work tip, so they are never drift.
+export function workTip(dir, id, ref = 'HEAD') {
+  const r = git(dir, ['log', '--format=%x00%H', '--name-only', '-n', '200', ref, '--']);
+  if (!r.ok) return tip(dir, ref);
+  const bookkeeping = new Set([`tasks/${id}/autopilot.json`, `tasks/${id}/stage-log.jsonl`]);
+  for (const block of r.stdout.split('\0').slice(1)) {
+    const [sha, ...files] = block.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (files.length === 0 || files.some((f) => !bookkeeping.has(f))) return sha;
+  }
+  return tip(dir, ref);
+}
+
 // Stages `paths`, commits with the message and the optional trailer; null when nothing changed.
 export function commitPaths(dir, paths, message, trailer = '') {
   must(dir, ['add', '-A', '--', ...paths], 'stage');

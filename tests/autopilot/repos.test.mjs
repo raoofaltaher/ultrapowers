@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
-  git, remoteHead, ensureBranch, ensureWorktree, tip, commitPaths, push, repoDirs,
+  git, remoteHead, ensureBranch, ensureWorktree, tip, workTip, commitPaths, push, repoDirs,
 } from '../../skills/autopilot/scripts/repos.mjs';
 
 const GIT_ENV = {
@@ -99,6 +99,24 @@ test('commitPaths returns null on no change and a sha on change, with trailer', 
   assert.match(message, /^chore\(GH-16\): autopilot state/);
   assert.match(message, /Reviewed-by: Bot/);
   assert.equal(sh(clone, 'status', '--porcelain'), '');
+});
+
+test('workTip skips commits that touch only the two state files', () => {
+  const { clone } = fixture();
+  const work = tip(clone);
+  fs.mkdirSync(path.join(clone, 'tasks', 'GH-16'), { recursive: true });
+  fs.writeFileSync(path.join(clone, 'tasks', 'GH-16', 'autopilot.json'), '{}\n');
+  fs.writeFileSync(path.join(clone, 'tasks', 'GH-16', 'stage-log.jsonl'), '{}\n');
+  commitPaths(clone, ['tasks/GH-16'], 'chore(GH-16): autopilot state', '');
+  assert.equal(workTip(clone, 'GH-16'), work);
+  fs.writeFileSync(path.join(clone, 'tasks', 'GH-16', 'GH-16.md'), '# brief\n');
+  fs.writeFileSync(path.join(clone, 'tasks', 'GH-16', 'autopilot.json'), '{"x":1}\n');
+  const withWork = commitPaths(clone, ['tasks/GH-16'], 'chore(GH-16): scaffold', '');
+  assert.equal(workTip(clone, 'GH-16'), withWork);
+  fs.writeFileSync(path.join(clone, 'tasks', 'GH-16', 'autopilot.json'), '{"x":2}\n');
+  commitPaths(clone, ['tasks/GH-16'], 'chore(GH-16): autopilot state', '');
+  assert.equal(workTip(clone, 'GH-16'), withWork);
+  assert.notEqual(tip(clone), withWork);
 });
 
 test('push refuses a branch outside <ID>- or a repo outside scope.frozen', () => {

@@ -86,6 +86,11 @@ class GitHubTracker {
     return parseJson(out.stdout, 'gh issue list').map((i) => ({ number: i.number, title: i.title, updatedAt: i.updatedAt }));
   }
 
+  async title(number) {
+    const out = await run(this.r, this.env, ['issue', 'view', String(number), '-R', this.path, '--json', 'title']);
+    return parseJson(out.stdout, 'gh issue view').title ?? '';
+  }
+
   async labels(number) {
     const out = await run(this.r, this.env, ['issue', 'view', String(number), '-R', this.path, '--json', 'labels']);
     return (parseJson(out.stdout, 'gh issue view').labels ?? []).map((l) => l.name);
@@ -171,6 +176,11 @@ class GitLabTracker {
   async listTickets(label) {
     const out = await run(this.r, this.env, ['issue', 'list', '-R', this.path, '-l', label, '-F', 'json']);
     return parseJson(out.stdout, 'glab issue list').map((i) => ({ number: i.iid, title: i.title, updatedAt: i.updated_at }));
+  }
+
+  async title(number) {
+    const out = await run(this.r, this.env, ['issue', 'view', String(number), '-R', this.path, '-F', 'json']);
+    return parseJson(out.stdout, 'glab issue view').title ?? '';
   }
 
   async labels(number) {

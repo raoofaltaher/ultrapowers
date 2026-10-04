@@ -8,6 +8,7 @@ import {
   AutopilotError, STAGES, DEFAULTS, validateAutopilot, effectiveAutopilot, slugFor, branchName, modeFor,
   initialState, statePath, logPath, readState, writeState, hashLine, appendLog, readLog, verifyChain,
   packetId, renderPacket, verifyApproval, assumptionsFrom, scopeFrom, freezeScope, pushAllowed,
+  nextStage, acquireLock, releaseLock, readLock, lockPath, activeMarkerPath, writeActiveMarker, clearActiveMarker,
 } from '../../skills/autopilot/scripts/autopilot-lib.mjs';
 
 const TEMPLATE = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'skills', 'autopilot', 'templates', 'packet.md'), 'utf8');
@@ -237,6 +238,81 @@ test('renderPacket is under 25 lines and carries the packet id', () => {
   const noDiff = renderPacket(TEMPLATE, { state: S, events: DEFAULTS.events, links: { brief: 'B', spec: 'S', plan: 'P', diff: null }, assumptions: [] });
   assert.match(noDiff, /changed since last packet: none/);
   assert.throws(() => renderPacket(`${TEMPLATE}${'\nx'.repeat(30)}`, { state: S, events: DEFAULTS.events, links: { brief: 'B', spec: 'S', plan: 'P', diff: null }, assumptions: [] }), { code: 'packet-too-long' });
+});
+
+// ---- Task 6: next-stage decision and locks ----
+const FACTS = { mode: 'gated', labels: [], events: DEFAULTS.events, approval: null, qaConfigured: false, locked: null };
+const finished = (stage, extra = {}) => stateWith({ stage, stageStatus: 'finished', ...extra });
+
+test('nextStage: the transition table', () => {
+  assert.deepEqual(nextStage(null, { ...FACTS, mode: 'off' }), { action: 'stop', reason: 'mode-off' });
+  assert.deepEqual(nextStage(null, FACTS), { action: 'run', stage: 'scaffold', reason: 'new-ticket' });
+  assert.deepEqual(nextStage(finished('scaffold'), FACTS), { action: 'run', stage: 'spec', reason: 'scaffold-finished' });
+  assert.deepEqual(nextStage(finished('spec'), FACTS), { action: 'run', stage: 'plan', reason: 'spec-finished' });
+  assert.deepEqual(nextStage(finished('plan'), FACTS), { action: 'run', stage: 'gate', reason: 'plan-finished' });
+  const gate = finished('gate', { packet: PACKET });
+  assert.deepEqual(nextStage(gate, { ...FACTS, mode: 'full' }), { action: 'run', stage: 'execute', reason: 'mode-full' });
+  assert.deepEqual(nextStage(gate, { ...FACTS, labels: ['up:hold'] }), { action: 'wait', reason: 'held' });
+  assert.deepEqual(nextStage(gate, { ...FACTS, labels: ['up:hold'], mode: 'full' }), { action: 'wait', reason: 'held' }, 'hold beats full');
+  assert.deepEqual(nextStage(gate, { ...FACTS, labels: ['up:changes'] }), { action: 'run', stage: 'changes', reason: 'changes-requested' });
+  assert.deepEqual(nextStage(gate, { ...FACTS, approval: { ok: true, actor: 'alice' } }), { action: 'run', stage: 'execute', reason: 'approved' });
+  assert.deepEqual(nextStage(gate, { ...FACTS, approval: { ok: false, reason: 'drift' } }), { action: 'run', stage: 'gate', reason: 'drift' });
+  assert.deepEqual(nextStage(gate, { ...FACTS, approval: { ok: false, reason: 'no-event' } }), { action: 'wait', reason: 'awaiting-approval' });
+  assert.deepEqual(nextStage(gate, FACTS), { action: 'wait', reason: 'awaiting-approval' });
+  assert.deepEqual(nextStage(finished('changes'), FACTS), { action: 'run', stage: 'gate', reason: 'changes-finished' });
+  assert.deepEqual(nextStage(finished('execute'), { ...FACTS, qaConfigured: true }), { action: 'run', stage: 'qa', reason: 'execute-finished' });
+  assert.deepEqual(nextStage(finished('execute'), FACTS), { action: 'run', stage: 'pr', reason: 'qa-not-configured' });
+  assert.deepEqual(nextStage(finished('qa', { qa: { verdict: 'FAIL' } }), FACTS), { action: 'stop', reason: 'qa-FAIL' });
+  assert.deepEqual(nextStage(finished('qa', { qa: { verdict: 'PRECONDITION-FAILED' } }), FACTS), { action: 'stop', reason: 'qa-PRECONDITION-FAILED' });
+  assert.deepEqual(nextStage(finished('qa', { qa: { verdict: 'PASS-WITH-ISSUES' } }), FACTS), { action: 'run', stage: 'pr', reason: 'qa-finished' });
+  assert.deepEqual(nextStage(finished('pr'), FACTS), { action: 'done', reason: 'pr-finished' });
+  assert.deepEqual(nextStage(stateWith({ stage: 'done', stageStatus: 'finished' }), FACTS), { action: 'done', reason: 'done' });
+  assert.deepEqual(nextStage(finished('spec'), { ...FACTS, locked: { pid: 4, door: 'watch' } }), { action: 'wait', reason: 'locked' });
+  assert.deepEqual(nextStage(null, { ...FACTS, locked: { pid: null, door: 'command' } }), { action: 'wait', reason: 'locked' }, 'a pending scaffold is locked too');
+  assert.deepEqual(nextStage(stateWith({ stage: 'spec', stageStatus: 'running', attempt: 1 }), FACTS), { action: 'run', stage: 'spec', reason: 'spec-interrupted' });
+  assert.deepEqual(nextStage(stateWith({ stage: 'spec', stageStatus: 'blocked', attempt: 2 }), FACTS), { action: 'run', stage: 'spec', reason: 'spec-retry' });
+  assert.deepEqual(nextStage(stateWith({ stage: 'spec', stageStatus: 'blocked', attempt: 3 }), FACTS), { action: 'stop', reason: 'blocked' });
+  assert.deepEqual(nextStage(finished('plan'), { ...FACTS, labels: ['up:hold'] }), { action: 'wait', reason: 'held' }, 'hold stops before any stage');
+  assert.deepEqual(nextStage(finished('plan'), { ...FACTS, mode: 'off' }), { action: 'stop', reason: 'mode-off' });
+});
+
+test('locks: acquire, refuse the other door, remove a stale pid, release', () => {
+  const root = tmpTicket('GH-16');
+  assert.deepEqual(acquireLock(root, 'GH-16', 'command'), { ok: true });
+  const lock = readLock(root, 'GH-16');
+  assert.equal(lock.pid, process.pid);
+  assert.equal(lock.door, 'command');
+  assert.match(lock.startedAt, /^\d{4}-/);
+  const again = acquireLock(root, 'GH-16', 'watch');
+  assert.equal(again.ok, false);
+  assert.equal(again.pid, process.pid);
+  assert.equal(again.door, 'command');
+  assert.deepEqual(acquireLock(root, 'GH-16', 'command'), { ok: true }, 'the same pid may re-enter');
+  releaseLock(root, 'GH-16');
+  assert.equal(readLock(root, 'GH-16'), null);
+  fs.mkdirSync(path.dirname(lockPath(root, 'GH-16')), { recursive: true });
+  fs.writeFileSync(lockPath(root, 'GH-16'), JSON.stringify({ pid: 999999, door: 'watch', startedAt: '2026-01-01T00:00:00Z' }));
+  assert.deepEqual(acquireLock(root, 'GH-16', 'command'), { ok: true }, 'a dead pid is removed');
+  assert.equal(readLock(root, 'GH-16').pid, process.pid);
+  releaseLock(root, 'GH-16');
+  assert.equal(lockPath(root, 'GH-16'), path.join(root, '.ultrapowers', 'autopilot', 'GH-16.lock'));
+  // A session-door lock has no pid: it lives until released or until the TTL passes.
+  assert.deepEqual(acquireLock(root, 'GH-16', 'command', null), { ok: true });
+  assert.equal(readLock(root, 'GH-16').pid, null);
+  assert.equal(acquireLock(root, 'GH-16', 'watch', 123).ok, false);
+  fs.writeFileSync(lockPath(root, 'GH-16'), JSON.stringify({ pid: null, door: 'command', startedAt: '2020-01-01T00:00:00Z' }));
+  assert.deepEqual(acquireLock(root, 'GH-16', 'watch', null), { ok: true }, 'an expired session lock is removed');
+  releaseLock(root, 'GH-16');
+});
+
+test('the active marker holds ticket, branch and scope', () => {
+  const root = tmpTicket('GH-16');
+  assert.equal(activeMarkerPath(root), path.join(root, '.ultrapowers', 'autopilot-active'));
+  writeActiveMarker(root, { ticket: 'GH-16', branch: 'GH-16-x', scope: ['backend'] });
+  assert.deepEqual(JSON.parse(fs.readFileSync(activeMarkerPath(root), 'utf8')), { ticket: 'GH-16', branch: 'GH-16-x', scope: ['backend'] });
+  clearActiveMarker(root);
+  assert.equal(fs.existsSync(activeMarkerPath(root)), false);
+  clearActiveMarker(root);
 });
 
 test('verifyChain on an absent or empty log is ok; a tampered line is named', () => {

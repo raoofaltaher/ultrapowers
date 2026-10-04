@@ -65,23 +65,26 @@ test('gitlab permission maps access levels', async () => {
   assert.equal(await trackerFor(GL, env({ 'api users?username=bob': { stdout: [] } })).permission('bob'), 'none');
 });
 
-test('me, labels and listTickets', async () => {
+test('me, title, labels and listTickets', async () => {
   const e = env({
     'api user': { stdout: { login: 'engine-bot' } },
+    'issue view 16 -R o/r --json title': { stdout: { title: 'Fix it' } },
     'issue view 16 -R o/r --json labels': { stdout: { labels: [{ name: 'bug' }, { name: 'up:ready' }] } },
     'issue list -R o/r --label up:ready': { stdout: [{ number: 16, title: 'T', updatedAt: '2026-10-04T00:00:00Z' }] },
   });
   const t = trackerFor(GH, e);
   assert.equal(await t.me(), 'engine-bot');
+  assert.equal(await t.title(16), 'Fix it');
   assert.deepEqual(await t.labels(16), ['bug', 'up:ready']);
   assert.deepEqual(await t.listTickets('up:ready'), [{ number: 16, title: 'T', updatedAt: '2026-10-04T00:00:00Z' }]);
   const gl = env({
     'api user': { stdout: { username: 'bot' } },
-    'issue view 7 -R acme/platform/web -F json': { stdout: { iid: 7, labels: ['x'] } },
+    'issue view 7 -R acme/platform/web -F json': { stdout: { iid: 7, title: 'G title', labels: ['x'] } },
     'issue list -R acme/platform/web -l up:ready -F json': { stdout: [{ iid: 7, title: 'G', updated_at: '2026-10-04T00:00:00Z' }] },
   });
   const g = trackerFor(GL, gl);
   assert.equal(await g.me(), 'bot');
+  assert.equal(await g.title(7), 'G title');
   assert.deepEqual(await g.labels(7), ['x']);
   assert.deepEqual(await g.listTickets('up:ready'), [{ number: 7, title: 'G', updatedAt: '2026-10-04T00:00:00Z' }]);
 });
