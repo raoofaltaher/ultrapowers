@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "ultrapowers",
   "displayName": "Ultrapowers",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Core skills library for Muse: TDD, debugging, collaboration patterns, and proven techniques",
   "compat": {
     "source": "native",
@@ -10,6 +10,10 @@
   },
   "capabilities": {
     "skills": [
+      {
+        "id": "autopilot",
+        "path": "skills/autopilot/SKILL.md"
+      },
       {
         "id": "brainstorm-task",
         "path": "skills/brainstorm-task/SKILL.md"

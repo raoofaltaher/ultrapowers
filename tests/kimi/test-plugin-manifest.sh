@@ -65,10 +65,23 @@ if not any(
         ".version-bump.json must update .kimi-plugin/plugin.json version"
     )
 
+# Plugin hooks are supported since Kimi Code 0.20.1: an array of {event, matcher, command,
+# timeout}, run from the plugin root. The guardrail rides on PreToolUse through its node entry.
+hooks = manifest.get("hooks")
+if not isinstance(hooks, list) or not hooks:
+    raise AssertionError("the Kimi manifest must declare the guardrail hook in `hooks`")
+for hook in hooks:
+    if set(hook.keys()) - {"event", "matcher", "command", "timeout"}:
+        raise AssertionError(f"a Kimi hook allows only event, matcher, command, timeout: {hook}")
+    if not (1 <= int(hook.get("timeout", 30)) <= 600):
+        raise AssertionError(f"a Kimi hook timeout is 1-600 seconds: {hook}")
+guard = [h for h in hooks if h.get("event") == "PreToolUse"]
+if not guard or "guardrail-cli.mjs" not in guard[0].get("command", ""):
+    raise AssertionError("the Kimi PreToolUse hook must run hooks/lib/guardrail-cli.mjs")
+
 unsupported_fields = [
     "tools",
     "commands",
-    "hooks",
     "apps",
     "inject",
     "configFile",

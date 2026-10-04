@@ -1,0 +1,17 @@
+{
+  "ultrapowers-guardrail": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node hooks/lib/guardrail-cli.mjs --antigravity",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

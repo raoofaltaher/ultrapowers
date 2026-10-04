@@ -1,0 +1,10 @@
+[
+  [
+    { "id": 1, "event": "labeled", "label": { "name": "enhancement" }, "actor": { "login": "owner" }, "created_at": "2026-10-01T00:22:03Z" },
+    { "id": 2, "event": "commented", "actor": { "login": "owner" }, "created_at": "2026-10-02T00:00:00Z" },
+    { "id": 3, "event": "unlabeled", "label": { "name": "enhancement" }, "actor": { "login": "owner" }, "created_at": "2026-10-03T00:00:00Z" }
+  ],
+  [
+    { "id": "e3", "event": "labeled", "label": { "name": "up:approve" }, "actor": { "login": "alice" }, "created_at": "2026-10-04T10:00:00Z" }
+  ]
+]

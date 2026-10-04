@@ -51,7 +51,7 @@ The `SELECTION` section applied the order, first hit wins:
 4. `SELECTED-ROOT` — the project has no nested repos; the root, shown as `.`, is the set.
 5. `ASK` — ask one multiple-choice question over the listed repos, proposing at most three.
 
-Whatever the selector produced, confirm the set with your human partner before reading any code.
+Whatever the selector produced, confirm the set with your human partner before reading any code. In the autopilot form (`.ultrapowers/autopilot-active` exists, or the autopilot skill invoked you), do not ask: take the selection, add every other configured repo the brief's Context names, and record the choice as the first row of the spec's assumption ledger; a `Repository:` hint that matches no configured repo is noted there and never read.
 
 ## Step 4: Ground in the code
 
@@ -69,17 +69,17 @@ Before the first question, print a table: every file read (repo and path) and ev
 
 ## Step 6: Brainstorm
 
-Invoke `ultrapowers:brainstorming` and follow it. Its knowledge-base rule routes the spec to `specs/<ID>/Spec.md`. One question per message; prefer multiple choice; lead with your recommendation; draw every question from the manifest. If a spec exists and your human partner chose revise, edit that file; if replace, write over it; with no answer yet, ask again and wait.
+Invoke `ultrapowers:brainstorming` and follow it. Its knowledge-base rule routes the spec to `specs/<ID>/Spec.md`. One question per message; prefer multiple choice; lead with your recommendation; draw every question from the manifest. If a spec exists and your human partner chose revise, edit that file; if replace, write over it; with no answer yet, ask again and wait. In the autopilot form its Autopilot form section applies: no question, a ledger row per decision, a `Repositories in scope` section naming the repos of Step 3 (the root as `.`), and an existing spec is revised in place.
 
 ## Step 7: Commit and hand off
 
-After the core skill's self-review and your human partner's review of the spec:
+After the core skill's self-review and your human partner's review of the spec (in the autopilot form, after the self-review alone; the review is the packet on the tracker):
 
 ```bash
 bash "<SKILL_DIR>/scripts/commit-spec.sh" "<ID>" "<one-line summary>"
 ```
 
-Commits `spec(<ID>): <summary>` with the project's `commitTrailer` when configured. Then hand off to `ultrapowers:writing-plans`.
+Commits `spec(<ID>): <summary>` with the project's `commitTrailer` when configured. Then hand off to `ultrapowers:writing-plans`; in the autopilot form, return to the autopilot skill instead, which ends the stage.
 
 ## Checklist
 

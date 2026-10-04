@@ -25,7 +25,7 @@ With no ticket, stop and print `usage: /ultrapowers:task <ticket>`.
 bash "<SKILL_DIR>/scripts/manifest.sh" "<ID>"
 ```
 
-Sections: `MARKDOWN TO READ` (path, bytes, estimated tokens), `NON-MARKDOWN` (listed, not read), `REPO STATE` (per repo: branch, whether it is a ticket branch, last ten commits, short status). Read the output before continuing. Any line containing `ERROR` means stop and print it verbatim; if the project is not scaffolded, offer `/ultrapowers:init`.
+Sections: `MARKDOWN TO READ` (path, bytes, estimated tokens), `STAGE LOG` (the autopilot engine's stage, status, mode, chain check and last ten log lines, or `(none)` for a ticket that never ran under it), `NON-MARKDOWN` (listed, not read), `REPO STATE` (per repo: branch, whether it is a ticket branch, last ten commits, short status). Read the output before continuing. Any line containing `ERROR` means stop and print it verbatim; if the project is not scaffolded, offer `/ultrapowers:init`.
 
 ## Step 2: Read everything listed
 
@@ -35,7 +35,7 @@ With the file-reading tool, one call per file, in this order: `tasks/`, `specs/`
 
 In this order:
 
-1. **Position, one sentence.** What stage is the ticket at?
+1. **Position, one sentence.** What stage is the ticket at? When the `STAGE LOG` section is not `(none)`, its stage and status are the position; say so, name the packet or pull request it lists, and note a broken chain as a finding. Otherwise infer the position from the documents.
 2. **Done**, with evidence from the documents.
 3. **In flight**: uncommitted files, an open review finding, a ticket branch with work on it.
 4. **Next step**, in order.

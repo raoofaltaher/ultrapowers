@@ -125,13 +125,40 @@ function normPath(p) {
   return s;
 }
 
+// Paths no stage may write through a shell, whatever the profile; the autopilot profile adds
+// CI, the plugin hooks and the env file (the QA profile never reaches them: its area is reviews/).
+// Named targets, not folder names (see the same lists in hooks/qa-guardrail): `src/hooks/` of a
+// React app and `appsettings.json` of a .NET app are ordinary files; the ticket's state files are
+// the gate's record; the repository's commit hooks run inside the engine's own commit and push.
+// The autopilot marker, the kill switch and the engine's lock folder are the envelope's own
+// switches, written by the engine outside the stage. The QA marker stays writable: the QA skill
+// writes and removes it itself inside the session.
+const PROTECTED_RE = /(^|\/)\.ssh\/|authorized_keys|id_rsa|id_ed25519|(^|\/)\.aws\/|mcp-secrets\.env|\.local\.(sh|env|json)$|hooks\/qa-guardrail|\.agents\/ultrapowers\.json|(^|\/)\.claude\/|(^|\/)\.git\/|(^|\/)\.githooks\/|(^|\/)\.[a-z0-9_-]+\/settings(\.local)?\.json$|(^|\/)tasks\/[^/]+\/(autopilot\.json|stage-log\.jsonl)$|(^|\/)\.ultrapowers\/(autopilot-active|autopilot-stop)$|(^|\/)\.ultrapowers\/autopilot(\/|$)|(^|\/)\.ultrapowers$/;
+const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)hooks\/(qa-guardrail|session-start|team-memory-[a-z]+|lib\/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|\/)\.gemini\/hooks\/|(^|\/)\.husky\/|(^|\/)\.pre-commit-config\.ya?ml$|(^|\/)lefthook\.ya?ml$|(^|\/)\.env($|\.)/;
+// Git subcommands an autopilot stage may run: the read-only set plus the commands that build the
+// ticket branch. Pushing and integrating belong to the engine; nothing discards work; `config` and
+// the `-c` global option are refused because an alias resolves to any command at all.
+// Only commands that spawn no program and write nothing outside the index, the objects and the
+// worktree files the stage owns: no apply/am (patch paths are unseen), no bisect, submodule or
+// maintenance (they run hooks and commands), no tag (the engine names refs).
+const GIT_AUTOPILOT_ALLOWED = new Set(['add', 'commit', 'mv', 'rm']);
+
 // ---------- analysis ----------
-export function analyze(command, { cwd, root, ticket }) {
+export function analyze(command, { cwd, root, ticket, profile = 'qa' }) {
+  const autopilot = profile === 'autopilot';
   const rootN = normPath(root).toLowerCase();
-  const areas = [ticket ? `${rootN}/reviews/${String(ticket).toLowerCase()}` : `${rootN}/reviews`, `${rootN}/.ultrapowers`];
+  const areas = autopilot
+    ? [rootN]
+    : [ticket ? `${rootN}/reviews/${String(ticket).toLowerCase()}` : `${rootN}/reviews`, `${rootN}/.ultrapowers`];
+  const areaText = autopilot ? 'the workspace' : `reviews/${ticket || '<id>'}/ and .ultrapowers/`;
+  const runKind = autopilot ? 'an autopilot stage' : 'a QA run';
   const vars = new Map();
   let reason = '';
   const deny = (r) => { if (!reason) reason = r; };
+  const protectedPath = (p) => {
+    const l = p.toLowerCase().replace(/\.env\.example/g, '');
+    return PROTECTED_RE.test(l) || (autopilot && AUTOPILOT_PROTECTED_RE.test(l));
+  };
 
   const resolveWord = (w) => {
     let s = '';
@@ -145,17 +172,18 @@ export function analyze(command, { cwd, root, ticket }) {
   const inArea = (abs) => areas.some((a) => abs === a || abs.startsWith(`${a}/`));
   const checkTarget = (w, dir, what, container) => {
     const raw = resolveWord(w);
-    if (raw === null) return deny(`${what} is built from a variable or command substitution and cannot be verified; write to a literal path under reviews/${ticket || '<id>'}/ or .ultrapowers/`);
+    if (raw === null) return deny(`${what} is built from a variable or command substitution and cannot be verified; write to a literal path under ${areaText}`);
     if (DEVICES.has(raw) || DEVICES.has(raw.toLowerCase()) || /^&?[0-9-]$/.test(raw)) return;
     if (container) return deny(`a write inside a container (${raw}) changes the stack; the stack stays as found`);
     let p = normPath(raw);
-    if (p.startsWith('~')) return deny(`${what} (${raw}) is outside the project; writes are limited to reviews/${ticket || '<id>'}/ and .ultrapowers/`);
+    if (p.startsWith('~')) return deny(`${what} (${raw}) is outside the project; writes are limited to ${areaText}`);
     if (!p.startsWith('/')) {
       if (dir === null) return deny(`${what} (${raw}) is relative to a directory the command changed to through a variable; use a literal path`);
       p = `${dir}/${p.replace(/^\.\//, '')}`;
     }
     if (p.split('/').includes('..')) return deny(`${what} (${raw}) has a parent-directory segment and cannot be verified`);
-    if (!inArea(p.toLowerCase())) deny(`${what} (${raw}) is outside reviews/${ticket || '<id>'}/ and .ultrapowers/; shell writes during a QA run are limited to those folders`);
+    if (protectedPath(p)) return deny(`${what} (${raw}) is a protected path; the config, hooks, CI, settings and key material are never written during ${runKind}`);
+    if (!inArea(p.toLowerCase())) deny(`${what} (${raw}) is outside ${areaText}; shell writes during ${runKind} are limited to ${autopilot ? 'the workspace' : 'those folders'}`);
   };
 
   const walk = (src, startDir, container, depth) => {
@@ -250,6 +278,42 @@ export function analyze(command, { cwd, root, ticket }) {
         const sub = rest[k] ? rest[k].v : '';
         const subArgs = rest.slice(k + 1).map((x) => x.v || '');
         if (!sub) return;
+        if (autopilot) {
+          // An allow-list: the stage commits, branches, stashes and fetches; it never pushes,
+          // integrates, discards or reconfigures git.
+          const globals = rest.slice(0, k).map((x) => x.v || '');
+          if (globals.some((g) => g === '-c' || g.startsWith('--config-env') || g === '--exec-path' || g.startsWith('--exec-path='))) {
+            return deny('git -c and --exec-path can turn any git command into another; an autopilot stage runs plain git');
+          }
+          if (GIT_READ_ONLY.has(sub) || GIT_AUTOPILOT_ALLOWED.has(sub)) return;
+          if (sub === 'fetch') {
+            // Positive form only: `git fetch origin [refspec...]` with a few plain options.
+            const options = /^(--prune|-p|--tags|--no-tags|--quiet|-q|--depth=\d+|--all)$/;
+            const refspec = /^[A-Za-z0-9][A-Za-z0-9._\/+-]*(:[A-Za-z0-9][A-Za-z0-9._\/+-]*)?$/;
+            const positional = subArgs.filter((x) => !options.test(x));
+            const ok = positional.length >= 1 && positional[0] === 'origin' && positional.slice(1).every((x) => refspec.test(x) && !x.startsWith('-'));
+            if (!ok) return deny('an autopilot stage fetches only `git fetch origin [refspec]`; other remotes, --upload-pack and local paths run programs or read outside origin');
+            return;
+          }
+          if (sub === 'branch') {
+            if (subArgs.some((x) => ['-D', '-d', '--delete', '-M', '-m', '--move', '-f', '--force'].includes(x))) return deny('git branch -D, -m and -f change or delete branches; an autopilot stage only creates and lists them');
+            return;
+          }
+          if (sub === 'checkout' || sub === 'switch') {
+            if (subArgs.includes('--') || subArgs.some((x) => ['-f', '--force', '--discard-changes', '--detach', '--orphan'].includes(x))) return deny(`git ${sub} with --, -f or --orphan discards or detaches work; an autopilot stage never discards`);
+            return;
+          }
+          if (sub === 'stash') {
+            if (subArgs.length === 0 || ['push', 'save', 'list', 'show', 'pop', 'apply'].includes(subArgs[0])) return;
+            return deny(`git stash ${subArgs[0]} discards or rewrites work; an autopilot stage never discards`);
+          }
+          if (sub === 'worktree') {
+            if (['add', 'list', 'lock', 'unlock'].includes(subArgs[0])) return;
+            return deny(`git worktree ${subArgs[0] || ''} removes or moves a worktree; the engine cleans up after the pull requests`);
+          }
+          if (sub === 'config') return deny('git config can define an alias or change the remote; the project config stays as it is during an autopilot stage');
+          return deny(`git ${sub} is not on the autopilot allow-list; the engine pushes and integrates, nothing discards work, and an alias is not run`);
+        }
         if (GIT_READ_ONLY.has(sub)) {
           if (subArgs.some((x) => x === '--output' || x.startsWith('--output='))) deny('git --output writes a file; redirect into reviews/<id>/artifacts/ instead');
           return;
@@ -262,10 +326,29 @@ export function analyze(command, { cwd, root, ticket }) {
         return deny(`git ${sub} changes a repository; only read-only git commands run during a QA run`);
       }
       if (prog === 'sed' || prog === 'perl' || prog === 'ruby') {
-        if (rest.some((x) => x.v && (x.v === '--in-place' || x.v.startsWith('--in-place=') || /^-[A-Za-z]*i/.test(x.v)))) deny(`${prog} -i edits files in place; the code under test is read-only during a QA run`);
+        const inPlace = rest.some((x) => x.v && (x.v === '--in-place' || x.v.startsWith('--in-place=') || /^-[A-Za-z]*i/.test(x.v)));
+        if (inPlace && !autopilot) deny(`${prog} -i edits files in place; the code under test is read-only during a QA run`);
+        if (inPlace && autopilot) {
+          // Every operand but the script is a file the edit writes. The script is the operand that
+          // follows -e/--expression/-f/--file, or the first plain operand when none is given.
+          const scripts = new Set();
+          for (let k = 0; k < rest.length; k++) {
+            const v = rest[k].v || '';
+            if (['-e', '--expression', '-f', '--file'].includes(v) && rest[k + 1]) scripts.add(rest[k + 1]);
+            else if (/^-(e|f)./.test(v) || /^--(expression|file)=/.test(v)) scripts.add(rest[k]);
+          }
+          // With a script flag every plain operand is a file; without one, the first plain operand
+          // is the script and the rest are files.
+          const files = scripts.size ? plain.filter((x) => !scripts.has(x)) : plain.slice(1);
+          for (const x of files) checkTarget(x.w, dir, `${prog} -i target`, container);
+        }
         return;
       }
-      if (prog === 'truncate') return deny('truncate changes a file; the code under test is read-only during a QA run');
+      if (prog === 'truncate') {
+        if (!autopilot) return deny('truncate changes a file; the code under test is read-only during a QA run');
+        for (const x of plain) if (x.v && !/^-/.test(x.v) && !/^[0-9]+[kmg]?$/i.test(x.v)) checkTarget(x.w, dir, 'truncate target', container);
+        return;
+      }
       if (prog === 'find') {
         const ei = rest.findIndex((x) => ['-exec', '-execdir', '-ok', '-okdir'].includes(x.v));
         if (ei !== -1) { const ip = (rest[ei + 1] && rest[ei + 1].v || '').split('/').pop().toLowerCase(); if (WRITE_PROGRAMS.has(ip)) deny(`find ${rest[ei].v} ${ip} writes to paths that cannot be seen before it runs`); }
@@ -338,7 +421,8 @@ function main() {
   let input = '';
   try { input = readFileSync(0, 'utf8'); } catch { input = ''; }
   const [cwd = '', root = '', ticket = '', ...cmdParts] = input.split('\0');
-  const out = analyze(cmdParts.join('\0'), { cwd, root, ticket });
+  const profile = process.env.ULTRAPOWERS_GUARD_PROFILE === 'autopilot' ? 'autopilot' : 'qa';
+  const out = analyze(cmdParts.join('\0'), { cwd, root, ticket, profile });
   if (out) process.stdout.write(out);
 }
 

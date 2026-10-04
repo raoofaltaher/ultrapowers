@@ -48,6 +48,7 @@ while [[ $# -gt 0 ]]; do
             echo "  test-session-bootstrap.sh  Verify session classification and lookup recovery"
             echo "  test-skill-registration.sh  Verify V2 skill registration contract (2.0.4 path field)"
             echo "  test-team-memory.sh     Verify team-memory nudge and post-compaction injection"
+            echo "  test-guardrail.sh       Verify the guardrail runs before tool calls of an active run"
             echo "  test-tools.sh           Test use_skill and find_skills tools (integration)"
             echo "  test-priority.sh        Test skill priority resolution (integration)"
             exit 0
@@ -67,6 +68,7 @@ tests=(
     "test-session-bootstrap.sh"
     "test-skill-registration.sh"
     "test-team-memory.sh"
+    "test-guardrail.sh"
 )
 
 # Integration tests (require OpenCode)
