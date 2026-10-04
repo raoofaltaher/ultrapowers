@@ -22,12 +22,13 @@ import {
   renderPacket, assumptionsFrom, scopeFrom, freezeScope, pushAllowed,
 } from './autopilot-lib.mjs';
 import { trackerFor } from './tracker.mjs';
-import { ensureBranch, ensureWorktree, remoteHead, remotePath, tip, workTip, commitPaths, push, repoDirs } from './repos.mjs';
+import { ensureBranch, ensureOnTicketBranch, ensureWorktree, remoteHead, remotePath, tip, workTip, commitPaths, push, repoDirs } from './repos.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PACKET_TEMPLATE = path.join(HERE, '..', 'templates', 'packet.md');
 const MARKER = path.join('.agents', 'ultrapowers.json');
-const COMMANDS = ['status', 'next', 'begin', 'end', 'packet', 'approval', 'pr', 'run'];
+const COMMANDS = ['status', 'next', 'begin', 'end', 'packet', 'approval', 'pr', 'run', 'watch'];
+const BACKOFF_CAP_MS = 600_000;
 const DOORS = ['command', 'watch'];
 const FLAGS = { '--root': 'root', '--mode': 'mode', '--door': 'door', '--result': 'result', '--pid': 'pid' };
 const SWITCHES = { '--once': 'once' };
@@ -84,7 +85,11 @@ function readMarker(root) {
 }
 
 function parseArgs(argv) {
-  const [command, id, ...rest] = argv;
+  // `watch` takes no ticket; every other command does.
+  const [command, ...tail] = argv;
+  const watchMode = command === 'watch';
+  const id = watchMode ? (tail[0] && !tail[0].startsWith('--') ? tail.shift() : null) : tail.shift();
+  const rest = tail;
   const opts = { command, id, stage: null, root: null, mode: null, door: 'command', result: null, pid: null, once: false };
   let i = 0;
   if ((command === 'begin' || command === 'end') && rest[0] && !rest[0].startsWith('--')) {
@@ -103,9 +108,10 @@ function parseArgs(argv) {
     opts[FLAGS[flag]] = value;
     i += 1;
   }
-  if (!COMMANDS.includes(command) || !id) {
-    throw new AutopilotError('bad-args', `usage: autopilot.mjs ${COMMANDS.join('|')} <ID> [<stage>] [--root <dir>] [--mode off|gated|full] [--door command|watch] [--result <json>]`);
+  if (!COMMANDS.includes(command) || (!id && !watchMode)) {
+    throw new AutopilotError('bad-args', `usage: autopilot.mjs ${COMMANDS.filter((c) => c !== 'watch').join('|')} <ID> [<stage>] [--root <dir>] [--mode off|gated|full] [--door command|watch] [--result <json>] | watch [--root <dir>] [--once]`);
   }
+  if (watchMode && id) throw new AutopilotError('bad-args', 'watch takes no ticket; it lists them from the tracker');
   if ((command === 'begin' || command === 'end') && !STAGES.includes(opts.stage)) {
     throw new AutopilotError('bad-args', `${command} needs a stage: ${STAGES.join(', ')}`);
   }
@@ -141,7 +147,11 @@ function context(opts) {
   }
   const tracker = trackerFor(resolution, process.env);
   const source = { provider: resolution.provider, path: resolution.path, number: resolution.number };
-  return { root, marker, settings, resolution, source, tracker, dirs: repoDirs(root, marker) };
+  const dirs = repoDirs(root, marker);
+  // The ticket's documents live on its branch, checked out in place: put the documents
+  // repository there before anything reads the state, so two tickets can share one workspace.
+  ensureOnTicketBranch(dirs.docs, opts.id);
+  return { root, marker, settings, resolution, source, tracker, dirs };
 }
 
 function trailerOf(marker) {
@@ -593,10 +603,98 @@ async function runRun(opts) {
   return result;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => { setTimeout(resolve, ms); });
+}
+
+// One cycle of the watcher door (spec section 8): the kill switch, the labelled tickets of every
+// source with a default project, skip the locked ones, run the rest in turn, and the next sleep.
+async function watchCycle(root, marker, settings, opts, previousSleepMs) {
+  const events = [];
+  const baseSleep = settings.watch.intervalSec * 1000;
+  if (fs.existsSync(path.join(root, '.ultrapowers', 'autopilot-stop'))) {
+    events.push({ event: 'idle', reason: 'autopilot-stop' });
+    return { events, nextSleepMs: baseSleep };
+  }
+  const sources = (marker.tickets?.sources ?? []).filter((s) => s && ['github', 'gitlab'].includes(s.provider));
+  const queue = [];
+  let failed = false;
+  for (const source of sources) {
+    if (!source.defaultProject) {
+      events.push({ event: 'unwatched', source: source.prefix, reason: `${source.prefix} has no defaultProject; run its tickets from a session with /ultrapowers:autopilot <ID>` });
+      continue;
+    }
+    let resolution;
+    try {
+      resolution = resolveTicket(marker, `${source.prefix}-1`);
+    } catch (err) {
+      events.push({ event: 'unwatched', source: source.prefix, reason: err.message });
+      continue;
+    }
+    const tracker = trackerFor(resolution, process.env);
+    try {
+      for (const label of [settings.events.ready, settings.events.approve, settings.events.changes]) {
+        for (const item of await tracker.listTickets(label)) {
+          const id = `${source.prefix}-${item.number}`;
+          if (!queue.some((q) => q.id === id)) queue.push({ id, number: item.number, tracker });
+        }
+      }
+    } catch (err) {
+      failed = true;
+      events.push({ event: 'tracker-error', source: source.prefix, code: err.code ?? 'error', message: err.message });
+    }
+  }
+  events.push({ event: 'cycle', tickets: queue.map((q) => q.id) });
+  let ran = 0;
+  for (const item of queue) {
+    if (ran >= settings.watch.maxConcurrent) break;
+    const held = liveLock(root, item.id, 'watch');
+    if (held) {
+      events.push({ event: 'skip', ticket: item.id, reason: 'locked', door: held.door, pid: held.pid ?? null });
+      continue;
+    }
+    try {
+      // `--once` bounds the watcher's cycles, not a ticket's stages: each ticket runs to wait, done or stop.
+      const result = await runRun({ ...opts, id: item.id, root, once: false });
+      ran += 1;
+      if (readState(root, item.id)) await item.tracker.removeLabel(item.number, settings.events.ready).catch(() => {});
+      events.push({ event: 'ran', ticket: item.id, final: result.final, stages: result.stages });
+    } catch (err) {
+      ran += 1;
+      events.push({ event: 'error', ticket: item.id, code: err.code ?? 'error', message: err.message });
+    }
+  }
+  const nextSleepMs = failed ? Math.min(Math.max(previousSleepMs, baseSleep) * 2, BACKOFF_CAP_MS) : baseSleep;
+  events.push({ event: 'sleep', nextSleepMs });
+  return { events, nextSleepMs };
+}
+
+// The watcher door: cycles until stopped. `--once` runs one cycle and returns it.
+async function runWatch(opts) {
+  const root = opts.root ? path.resolve(opts.root) : findRoot(process.cwd());
+  if (!fs.existsSync(path.join(root, MARKER))) throw new AutopilotError('no-marker', `no ${MARKER.replace(/\\/g, '/')} in ${root}`);
+  const marker = readMarker(root);
+  const settings = effectiveAutopilot(marker);
+  if (settings.mode === 'off') {
+    const events = [{ event: 'idle', reason: 'mode-off' }];
+    if (opts.once) return { root, events, nextSleepMs: 0 };
+    process.stdout.write(`${JSON.stringify(events[0])}\n`);
+    return { root, events, nextSleepMs: 0 };
+  }
+  let previousSleepMs = Number(process.env.ULTRAPOWERS_AUTOPILOT_SLEEP_MS) || settings.watch.intervalSec * 1000;
+  for (;;) {
+    const cycle = await watchCycle(root, marker, settings, opts, previousSleepMs);
+    if (opts.once) return { root, ...cycle };
+    for (const e of cycle.events) process.stdout.write(`${JSON.stringify({ at: new Date().toISOString(), ...e })}\n`);
+    previousSleepMs = cycle.nextSleepMs;
+    await sleep(cycle.nextSleepMs);
+  }
+}
+
 export async function main(argv) {
   try {
     const opts = parseArgs(argv);
-    const runners = { status: runStatus, next: runNext, begin: runBegin, end: runEnd, packet: runPacket, approval: runApproval, pr: runPr, run: runRun };
+    const runners = { status: runStatus, next: runNext, begin: runBegin, end: runEnd, packet: runPacket, approval: runApproval, pr: runPr, run: runRun, watch: runWatch };
     const result = await runners[opts.command](opts);
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     if (opts.command === 'run') return result.exitCode;

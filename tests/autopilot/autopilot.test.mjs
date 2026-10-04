@@ -366,7 +366,11 @@ test('a plan that widens the spec scope blocks the approval with scope-widened',
 // ---- Task 13: headless run ----
 const HARNESS_STUB = path.join(HERE, 'fixtures', 'harness-stub.mjs');
 const headless = (ws, extra = {}) => ({ ULTRAPOWERS_CLAUDE: HARNESS_STUB, ULTRAPOWERS_AUTOPILOT_MAX_TURNS: '7', ...extra });
-const harnessCalls = (ws) => fs.readFileSync(path.join(ws.stubDir, 'calls.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((c) => c.harness === 'stub');
+const harnessCalls = (ws) => {
+  const log = path.join(ws.stubDir, 'calls.log');
+  if (!fs.existsSync(log)) return [];
+  return fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((c) => c.harness === 'stub');
+};
 
 test('run performs scaffold, spec, plan and the gate with the stub and stops at wait', () => {
   const ws = workspace();
@@ -434,6 +438,97 @@ test('run skips a ticket the session door holds', () => {
   assert.equal(r.code, 0);
   assert.deepEqual([r.json.final.action, r.json.final.reason], ['wait', 'locked']);
   assert.equal(harnessCalls(ws).length, 0);
+});
+
+// ---- Task 14: the watcher ----
+const READY = (numbers) => ({ 'issue list -R o/r --label up:ready': { stdout: numbers.map((n) => ({ number: n, title: `T${n}`, updatedAt: '2026-10-04T00:00:00Z' })) }, 'issue list -R o/r --label up:approve': { stdout: [] }, 'issue list -R o/r --label up:changes': { stdout: [] } });
+const forNumber = (n) => ({
+  [`issue view ${n} -R o/r --json number,title,body`]: { stdout: { number: n, title: `Ticket ${n}`, body: 'body', state: 'OPEN', labels: [], author: { login: 'owner' }, url: `https://github.com/o/r/issues/${n}` } },
+  [`issue view ${n} -R o/r --json title`]: { stdout: { title: `Ticket ${n}` } },
+  [`issue view ${n} -R o/r --json labels`]: { stdout: { labels: [{ name: 'up:ready' }] } },
+  [`issue edit ${n} -R o/r --add-label up:running`]: { stdout: '' },
+  [`issue edit ${n} -R o/r --remove-label up:running`]: { stdout: '' },
+  [`issue edit ${n} -R o/r --remove-label up:ready`]: { stdout: '' },
+  [`issue comment ${n} -R o/r --body-file -`]: { stdout: `https://github.com/o/r/issues/${n}#issuecomment-1\n` },
+  [`api repos/o/r/issues/${n}/timeline`]: { stdout: [[]] },
+});
+const events = (r) => r.json.events.map((e) => e.event);
+
+test('watch --once picks a ready ticket and runs it to wait', () => {
+  const ws = workspace({ map: { ...READY([16]), ...forNumber(16) } });
+  const r = run(ws, ['watch', '--once'], headless(ws));
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.ok(events(r).includes('cycle'));
+  const ran = r.json.events.find((e) => e.event === 'ran');
+  assert.equal(ran.ticket, 'GH-16');
+  assert.deepEqual([ran.final.action, ran.final.reason], ['wait', 'awaiting-approval']);
+  assert.equal(state(ws).stage, 'gate');
+  assert.ok(ws.calls().some((a) => a.includes('--remove-label') && a.includes('up:ready')), 'the ready label is consumed');
+  assert.equal(r.json.nextSleepMs, 60000);
+});
+
+test('the kill switch idles the watcher', () => {
+  const ws = workspace({ map: { ...READY([16]), ...forNumber(16) } });
+  fs.mkdirSync(path.join(ws.root, '.ultrapowers'), { recursive: true });
+  fs.writeFileSync(path.join(ws.root, '.ultrapowers', 'autopilot-stop'), 'stop\n');
+  const r = run(ws, ['watch', '--once'], headless(ws));
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.deepEqual(events(r), ['idle']);
+  assert.equal(harnessCalls(ws).length, 0);
+});
+
+test('a ticket the session door holds is skipped', () => {
+  const ws = workspace({ map: { ...READY([16]), ...forNumber(16) } });
+  run(ws, ['begin', 'GH-16', 'scaffold', '--door', 'command']);
+  const r = run(ws, ['watch', '--once'], headless(ws));
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const skip = r.json.events.find((e) => e.event === 'skip');
+  assert.equal(skip.ticket, 'GH-16');
+  assert.equal(skip.reason, 'locked');
+  assert.equal(harnessCalls(ws).length, 0);
+});
+
+test('two ready tickets run one after the other, up to maxConcurrent per cycle', () => {
+  const ws = workspace({ autopilot: { mode: 'gated', baseBranch: 'main', watch: { intervalSec: 5, maxConcurrent: 2 } }, map: { ...READY([16, 17]), ...forNumber(16), ...forNumber(17) } });
+  const r = run(ws, ['watch', '--once'], headless(ws));
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const ran = r.json.events.filter((e) => e.event === 'ran').map((e) => e.ticket);
+  assert.deepEqual(ran, ['GH-16', 'GH-17']);
+  // The documents repository is on GH-17's branch now; an engine command for GH-16 switches back.
+  assert.equal(git(ws.root, 'branch', '--show-current'), 'GH-17-ticket-17');
+  assert.equal(run(ws, ['status', 'GH-17']).json.state.stage, 'gate');
+  assert.equal(run(ws, ['status', 'GH-16']).json.state.stage, 'gate');
+  assert.equal(git(ws.root, 'branch', '--show-current'), 'GH-16-ticket-16');
+  assert.equal(r.json.nextSleepMs, 5000);
+  const one = workspace({ autopilot: { mode: 'gated', baseBranch: 'main', watch: { intervalSec: 5, maxConcurrent: 1 } }, map: { ...READY([16, 17]), ...forNumber(16), ...forNumber(17) } });
+  const r1 = run(one, ['watch', '--once'], headless(one));
+  assert.deepEqual(r1.json.events.filter((e) => e.event === 'ran').map((e) => e.ticket), ['GH-16'], 'one per cycle');
+});
+
+test('backoff doubles the sleep on a tracker failure', () => {
+  const ws = workspace({ map: { 'issue list -R o/r --label up:ready': { exit: 1, stderr: 'gh: connection refused' } } });
+  const r = run(ws, ['watch', '--once'], headless(ws));
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const err = r.json.events.find((e) => e.event === 'tracker-error');
+  assert.match(err.message, /connection refused/);
+  assert.equal(r.json.nextSleepMs, 120000);
+  const r2 = run(ws, ['watch', '--once'], { ...headless(ws), ULTRAPOWERS_AUTOPILOT_SLEEP_MS: '120000' });
+  assert.equal(r2.json.nextSleepMs, 240000);
+  const capped = run(ws, ['watch', '--once'], { ...headless(ws), ULTRAPOWERS_AUTOPILOT_SLEEP_MS: '500000' });
+  assert.equal(capped.json.nextSleepMs, 600000);
+});
+
+test('a source without a default project is reported, not watched', () => {
+  const ws = workspace({ map: READY([]) });
+  const markerPath = path.join(ws.root, '.agents', 'ultrapowers.json');
+  const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
+  marker.tickets.sources.push({ prefix: 'GX', provider: 'github', owner: 'o' });
+  fs.writeFileSync(markerPath, JSON.stringify(marker, null, 2));
+  const r = run(ws, ['watch', '--once'], headless(ws));
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const unwatched = r.json.events.find((e) => e.event === 'unwatched');
+  assert.equal(unwatched.source, 'GX');
+  assert.match(unwatched.reason, /defaultProject/);
 });
 
 test('next removes the running label when it answers stop', () => {

@@ -65,6 +65,27 @@ export function ensureBranch(dir, branch, base) {
   return { created: true };
 }
 
+// The local `<ID>-*` branch of a ticket in `dir`, or null when none exists yet.
+export function ticketBranch(dir, id) {
+  const r = git(dir, ['for-each-ref', '--format=%(refname:short)', `refs/heads/${id}-*`]);
+  if (!r.ok) return null;
+  const names = r.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+  return names[0] ?? null;
+}
+
+// Puts `dir` on the ticket's branch when one exists and another branch is checked out.
+// A dirty tree is refused: the engine never discards work to switch tickets.
+export function ensureOnTicketBranch(dir, id) {
+  const branch = ticketBranch(dir, id);
+  if (!branch) return null;
+  const current = git(dir, ['branch', '--show-current']).stdout.trim();
+  if (current === branch) return branch;
+  const dirty = git(dir, ['status', '--porcelain', '--untracked-files=no']).stdout.trim();
+  if (dirty) throw new AutopilotError('dirty-worktree', `${dir} is on ${current || 'a detached HEAD'} with uncommitted changes; commit or stash them before running ${id}, whose branch is ${branch}`);
+  must(dir, ['checkout', '--quiet', branch], 'checkout');
+  return branch;
+}
+
 // A worktree for `branch` under <clone>/.worktrees/<branch>, created from the base when the branch is new.
 export function ensureWorktree(cloneDir, branch, base) {
   const target = path.join(cloneDir, WORKTREES, branch);

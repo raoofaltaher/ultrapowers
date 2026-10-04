@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
-  git, remoteHead, remotePath, ensureBranch, ensureWorktree, tip, workTip, commitPaths, push, repoDirs,
+  git, remoteHead, remotePath, ensureBranch, ensureOnTicketBranch, ensureWorktree, tip, workTip, commitPaths, push, repoDirs,
 } from '../../skills/autopilot/scripts/repos.mjs';
 
 const GIT_ENV = {
@@ -134,6 +134,20 @@ test('push succeeds inside scope and for the docs repository', () => {
   push(clone, 'GH-16-x', { state: STATE(['backend']), repoName: 'backend' });
   assert.match(sh(origin, 'branch', '--list', 'GH-16-x'), /GH-16-x/);
   push(clone, 'GH-16-x', { state: STATE(false), repoName: 'docs' });
+});
+
+test('ensureOnTicketBranch switches to an existing ticket branch and refuses a dirty tree', () => {
+  const { clone } = fixture();
+  assert.equal(ensureOnTicketBranch(clone, 'GH-16'), null, 'no branch yet');
+  ensureBranch(clone, 'GH-16-x', 'dev');
+  sh(clone, 'checkout', '-q', 'main');
+  assert.equal(ensureOnTicketBranch(clone, 'GH-16'), 'GH-16-x');
+  assert.equal(sh(clone, 'branch', '--show-current'), 'GH-16-x');
+  assert.equal(ensureOnTicketBranch(clone, 'GH-16'), 'GH-16-x', 'idempotent');
+  assert.equal(ensureOnTicketBranch(clone, 'GH-160'), null, 'GH-160 does not match GH-16-x');
+  sh(clone, 'checkout', '-q', 'main');
+  fs.appendFileSync(path.join(clone, 'README.md'), 'dirty\n');
+  assert.throws(() => ensureOnTicketBranch(clone, 'GH-16'), { code: 'dirty-worktree' });
 });
 
 test('remotePath parses https and ssh origins and returns null for a local path', () => {
