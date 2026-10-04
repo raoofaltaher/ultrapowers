@@ -20,7 +20,7 @@ test('validateAutopilot names the field', () => {
   assert.match(validateAutopilot({ mode: 'gated', events: { approve: '' } })[0], /events\.approve/);
   assert.match(validateAutopilot({ mode: 'gated', approvers: 'alice' })[0], /autopilot\.approvers must be a list/);
   assert.match(validateAutopilot({ mode: 'gated', execution: 'parallel' })[0], /autopilot\.execution/);
-  assert.match(validateAutopilot({ mode: 'gated', harness: 'cursor' })[0], /autopilot\.harness/);
+  assert.match(validateAutopilot({ mode: 'gated', harness: 'vim' })[0], /autopilot\.harness/);
   assert.match(validateAutopilot('gated')[0], /autopilot must be an object/);
 });
 

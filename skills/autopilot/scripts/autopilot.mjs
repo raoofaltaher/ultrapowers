@@ -22,6 +22,7 @@ import {
   renderPacket, assumptionsFrom, scopeFrom, freezeScope, pushAllowed,
 } from './autopilot-lib.mjs';
 import { trackerFor } from './tracker.mjs';
+import { HARNESSES, GUARDED_HARNESSES, PLUGIN_ROOT } from './harnesses.mjs';
 import { ensureBranch, ensureOnTicketBranch, ensureWorktree, remoteHead, remotePath, tip, workTip, commitPaths, push, repoDirs, baseAhead, pathsChanged, git } from './repos.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -35,20 +36,9 @@ const FLAGS = { '--root': 'root', '--mode': 'mode', '--door': 'door', '--result'
 const SWITCHES = { '--once': 'once' };
 const PROMPTS_DIR = path.join(HERE, '..', 'prompts');
 
-// The headless harnesses the watcher door can spawn, one fresh call per agent stage.
-// An override ending in .mjs/.js/.cjs runs under this node, for the tests.
-export const HARNESSES = {
-  'claude-code': {
-    bin: 'claude',
-    env: 'ULTRAPOWERS_CLAUDE',
-    args: (prompt, turns) => ['-p', prompt, '--permission-mode', 'bypassPermissions', '--max-turns', String(turns), '--output-format', 'json'],
-  },
-  opencode: {
-    bin: 'opencode',
-    env: 'ULTRAPOWERS_OPENCODE',
-    args: (prompt) => ['run', '--format', 'json', prompt],
-  },
-};
+// The headless harnesses the watcher door can spawn live in harnesses.mjs, one fresh call per
+// agent stage. An override ending in .mjs/.js/.cjs runs under this node, for the tests.
+export { HARNESSES };
 
 function maxTurns() {
   const v = Number(process.env.ULTRAPOWERS_AUTOPILOT_MAX_TURNS);
@@ -777,7 +767,7 @@ function spawnHarness(name, prompt, cwd, root = cwd) {
   const override = process.env[adapter.env];
   const command = override || adapter.bin;
   const script = /\.[cm]?js$/i.test(command);
-  const args = [...adapter.args(prompt, maxTurns()), ...(name === 'claude-code' ? mcpConfigArgs(root) : [])];
+  const args = [...adapter.args(prompt, maxTurns(), { pluginRoot: PLUGIN_ROOT }), ...(name === 'claude-code' ? mcpConfigArgs(root) : [])];
   const [file, argv] = script ? [process.execPath, [command, ...args]] : [command, args];
   const env = stageEnvironment(root);
   return new Promise((resolve) => {
@@ -791,10 +781,8 @@ function spawnHarness(name, prompt, cwd, root = cwd) {
 
 // The watcher door: one fresh headless harness call per agent stage, the engine steps in
 // process, until the ticket waits, is done or stops. Exit 0 on wait or done, 3 on stop.
-// The harnesses whose stages run inside the guardrail. A harness without the PreToolUse envelope
-// has no brake at all in the watcher, so the watcher refuses it until one is wired.
-const GUARDED_HARNESSES = ['claude-code'];
-
+// A harness whose stages do not run inside the guardrail has no brake at all in the watcher, so
+// the watcher refuses it (harnesses.mjs names them).
 function assertGuardedHarness(settings) {
   if (GUARDED_HARNESSES.includes(settings.harness)) return;
   throw new AutopilotError('harness-unguarded', `autopilot.harness ${settings.harness} has no guardrail in the watcher door yet; run its tickets from a session with /ultrapowers:autopilot <ID>, or set harness to ${GUARDED_HARNESSES.join(' or ')}`);

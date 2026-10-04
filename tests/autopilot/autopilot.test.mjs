@@ -648,8 +648,8 @@ test('the packet time is the tracker clock, so a label inside the packet second 
 });
 
 test('the watcher refuses a harness that has no guardrail', () => {
-  const ws = workspace({ autopilot: { mode: 'gated', baseBranch: 'main', harness: 'opencode' } });
-  const r = run(ws, ['run', 'GH-16'], { ULTRAPOWERS_OPENCODE: HARNESS_STUB });
+  const ws = workspace({ autopilot: { mode: 'gated', baseBranch: 'main', harness: 'devin' } });
+  const r = run(ws, ['run', 'GH-16'], { ULTRAPOWERS_DEVIN: HARNESS_STUB });
   assert.equal(r.code, 2, r.stdout + r.stderr);
   assert.equal(r.json.error.code, 'harness-unguarded');
   assert.equal(harnessCalls(ws).length, 0);

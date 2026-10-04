@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { HARNESS_NAMES } from './harnesses.mjs';
 
 export class AutopilotError extends Error {
   constructor(code, message) {
@@ -16,7 +17,7 @@ export class AutopilotError extends Error {
 export const STAGES = ['scaffold', 'spec', 'plan', 'gate', 'changes', 'execute', 'qa', 'pr', 'done'];
 export const MODES = ['off', 'gated', 'full'];
 export const EXECUTIONS = ['subagent', 'inline'];
-export const HARNESSES = ['claude-code', 'opencode'];
+export const HARNESSES = HARNESS_NAMES;
 export const EVENT_NAMES = ['ready', 'approve', 'changes', 'hold', 'running', 'blocked'];
 
 export const DEFAULTS = Object.freeze({

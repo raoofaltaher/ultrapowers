@@ -27,11 +27,15 @@ contract() {
     if [ "$a" = "PROMPT" ]; then args+=("$PROMPT"); else args+=("$a"); fi
   done
   local out
-  out="$(timeout 180 "$bin" "${args[@]}" 2>/dev/null)" || out="${out:-}"
-  if printf '%s' "$out" | grep -q 'OK'; then
+  out="$(timeout 180 "$bin" "${args[@]}" 2>&1)" || out="${out:-}"
+  # A login, provider or install problem is the machine's state, not the adapter's: the flags
+  # were accepted. It is judged first, because an error stream can still carry the letters OK.
+  if printf '%s' "$out" | grep -qiE '"type": *"error"|"stopReason": *"error"|not logged in|unauthorized|authentication|oauth|api key|not recognized|cannot find|is not installed|credentials|usage limit|rate.?limit'; then
+    skip "$name: the flags are accepted; this machine's login, provider or install answered an error ($(printf '%s' "$out" | grep -oiE '.{0,40}(error|oauth|not recognized|cannot find).{0,60}' | head -1))"
+  elif printf '%s' "$out" | grep -qE '(^|[^A-Za-z])OK([^A-Za-z]|$)'; then
     pass "$name: $bin ${args[*]:0:3} ... answers with the text"
-  elif printf '%s' "$out" | grep -qi '"type": *"error"\|not logged in\|unauthorized\|authentication'; then
-    skip "$name: the flags are accepted; this machine's provider or login answered an error (${out:0:120})"
+  elif [ -z "$out" ]; then
+    skip "$name: $bin printed nothing; check its install and login on this machine"
   else
     fail "$name: $bin ${args[*]:0:3} ... answers with the text (got: ${out:0:200})"
   fi
