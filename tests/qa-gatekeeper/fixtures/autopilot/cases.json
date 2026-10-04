@@ -118,5 +118,9 @@
   {"name":"deny_write_marker_file","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.ultrapowers/autopilot-active","content":""}}},
   {"name":"deny_shell_truncate_marker","event":{"tool_name":"Bash","tool_input":{"command":": > .ultrapowers/autopilot-active"}}},
   {"name":"deny_write_lock","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.ultrapowers/autopilot/GH-16.lock","content":"{}"}}},
-  {"name":"allow_write_sdd_ledger","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.ultrapowers/sdd/plan/progress.md","content":"x"}}}
+  {"name":"allow_write_sdd_ledger","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.ultrapowers/sdd/plan/progress.md","content":"x"}}},
+  {"name":"deny_patch_tool_protected_path","event":{"tool_name":"patch","tool_input":{"path":"{{ROOT}}/tasks/GH-16/autopilot.json","old_string":"a","new_string":"b"}}},
+  {"name":"allow_patch_tool_src","event":{"tool_name":"patch","tool_input":{"path":"{{ROOT}}/repo-a/src/x.ts","old_string":"a","new_string":"b"}}},
+  {"name":"deny_apply_patch_body_field","event":{"tool_name":"apply_patch","tool_input":{"patch":"*** Begin Patch\n*** Update File: .github/workflows/ci.yml\n@@\n+x\n*** End Patch"}}},
+  {"name":"deny_apply_patch_input_field","event":{"tool_name":"ApplyPatch","tool_input":{"input":"*** Begin Patch\n*** Add File: .husky/pre-commit\n@@\n+x\n*** End Patch"}}}
 ]

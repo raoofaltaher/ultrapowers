@@ -197,8 +197,12 @@ for (const key of ["file_path", "notebook_path", "path", "source", "destination"
 for (const key of ["paths", "files"]) {
   if (Array.isArray(inp[key])) for (const v of inp[key]) if (str(v)) pathFields.push(str(v));
 }
+// A patch tool may carry its patch under another field than command (Codex, Hermes); only a
+// patch tool reads those fields, so free text of another tool is never taken for a command.
+const isPatchTool = /patch/i.test(str(ev.tool_name));
+const command = str(inp.command) || (isPatchTool ? (str(inp.patch) || str(inp.patchText) || str(inp.input) || str(inp.diff)) : "");
 process.stdout.write([
-  "ok", str(ev.tool_name), str(inp.command),
+  "ok", str(ev.tool_name), command,
   str(inp.file_path) || str(inp.notebook_path) || str(inp.path),
   str(inp.url), str(ev.cwd), allowed.join(","), norm(hosts.forbidden).join(","), ticket,
   pathFields.join("\n"),
@@ -255,7 +259,7 @@ case "$tool" in
     # The other harnesses' spellings: Gemini's write_file and replace, Droid's Create, Antigravity's
     # write_to_file and replace_file_content, Codex's apply_patch (handled below, it carries a patch).
     case "$tool_lc" in
-      *write*|*edit*|*create*|*move_file*|*delete*|replace|*replace_file*|*apply_patch*|applypatch)
+      *write*|*edit*|*create*|*move_file*|*delete*|replace|*replace_file*|*patch*)
         [ -n "$wpath" ] && is_write_tool=1 ;;
     esac ;;
 esac
