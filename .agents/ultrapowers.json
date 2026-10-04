@@ -147,5 +147,14 @@
         "defaultProject": "ultrapowers"
       }
     ]
+  },
+  "autopilot": {
+    "mode": "gated",
+    "baseBranch": "dev",
+    "approvers": [
+      "raoofaltaher"
+    ],
+    "execution": "inline",
+    "harness": "claude-code"
   }
 }
