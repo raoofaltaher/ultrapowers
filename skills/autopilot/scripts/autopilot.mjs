@@ -284,6 +284,9 @@ async function runPr(opts) {
   if (!state) throw new AutopilotError('no-state', `${opts.id} has no autopilot state`);
   if (!Array.isArray(state.scope.frozen)) throw new AutopilotError('not-approved', `${opts.id} has no approved scope; the gate has not been passed`);
   if (!['execute', 'qa'].includes(state.stage) || state.stageStatus !== 'finished') throw new AutopilotError('wrong-stage', `${opts.id} is at ${state.stage} (${state.stageStatus}); pr follows a finished execute or qa stage`);
+  if (state.qa && ['FAIL', 'PRECONDITION-FAILED'].includes(state.qa.verdict)) {
+    throw new AutopilotError('qa-failed', `${opts.id} has QA verdict ${state.qa.verdict} (${state.qa.report}); no pull request opens on a failed gate`);
+  }
   const lock = acquireLock(ctx.root, opts.id, opts.door, opts.pid);
   if (!lock.ok) throw new AutopilotError('locked', `${opts.id} is being run by the ${lock.door} door`);
   state.stage = 'pr';

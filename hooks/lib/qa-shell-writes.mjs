@@ -129,9 +129,10 @@ function normPath(p) {
 // CI, the plugin hooks and the env file (the QA profile never reaches them: its area is reviews/).
 const PROTECTED_RE = /(^|\/)\.ssh\/|authorized_keys|id_rsa|id_ed25519|(^|\/)\.aws\/|mcp-secrets\.env|\.local\.|hooks\/qa-guardrail|\.agents\/ultrapowers\.json|(^|\/)\.claude\/|(^|\/)\.git\/|(^|\/)\.githooks\/|settings(\.local)?\.json$/;
 const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)hooks\/|(^|\/)\.env($|\.)/;
-// Git subcommands an autopilot stage never runs: pushing and integrating belong to the engine,
-// and nothing discards work.
-const GIT_AUTOPILOT_DENIED = new Set(['push', 'merge', 'rebase', 'cherry-pick', 'reset', 'clean', 'restore', 'filter-branch', 'filter-repo', 'gc', 'prune', 'reflog', 'update-ref', 'symbolic-ref', 'remote']);
+// Git subcommands an autopilot stage may run: the read-only set plus the commands that build the
+// ticket branch. Pushing and integrating belong to the engine; nothing discards work; `config` and
+// the `-c` global option are refused because an alias resolves to any command at all.
+const GIT_AUTOPILOT_ALLOWED = new Set(['add', 'commit', 'fetch', 'mv', 'rm', 'tag', 'notes', 'apply', 'am', 'format-patch', 'bisect', 'submodule', 'sparse-checkout', 'maintenance']);
 
 // ---------- analysis ----------
 export function analyze(command, { cwd, root, ticket, profile = 'qa' }) {
@@ -269,13 +270,31 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa' }) {
         const subArgs = rest.slice(k + 1).map((x) => x.v || '');
         if (!sub) return;
         if (autopilot) {
-          // The stage commits, branches, stashes and fetches; it never pushes, integrates or discards.
-          if (GIT_AUTOPILOT_DENIED.has(sub)) return deny(`git ${sub} is never run by an autopilot stage; the engine pushes and integrates, and nothing discards work`);
-          if (sub === 'checkout' && subArgs.includes('--')) return deny('git checkout -- discards work; an autopilot stage never discards');
-          if (sub === 'stash' && subArgs[0] === 'drop') return deny('git stash drop discards work; an autopilot stage never discards');
-          if (sub === 'branch' && subArgs.some((x) => x === '-D' || x === '--delete' || x === '-d')) return deny('git branch -D deletes a branch; an autopilot stage never discards');
-          if (sub === 'worktree' && ['remove', 'prune'].includes(subArgs[0])) return deny('git worktree remove discards a worktree; the engine cleans up after the pull requests');
-          return;
+          // An allow-list: the stage commits, branches, stashes and fetches; it never pushes,
+          // integrates, discards or reconfigures git.
+          const globals = rest.slice(0, k).map((x) => x.v || '');
+          if (globals.some((g) => g === '-c' || g.startsWith('--config-env') || g === '--exec-path' || g.startsWith('--exec-path='))) {
+            return deny('git -c and --exec-path can turn any git command into another; an autopilot stage runs plain git');
+          }
+          if (GIT_READ_ONLY.has(sub) || GIT_AUTOPILOT_ALLOWED.has(sub)) return;
+          if (sub === 'branch') {
+            if (subArgs.some((x) => ['-D', '-d', '--delete', '-M', '-m', '--move', '-f', '--force'].includes(x))) return deny('git branch -D, -m and -f change or delete branches; an autopilot stage only creates and lists them');
+            return;
+          }
+          if (sub === 'checkout' || sub === 'switch') {
+            if (subArgs.includes('--') || subArgs.some((x) => ['-f', '--force', '--discard-changes', '--detach', '--orphan'].includes(x))) return deny(`git ${sub} with --, -f or --orphan discards or detaches work; an autopilot stage never discards`);
+            return;
+          }
+          if (sub === 'stash') {
+            if (subArgs.length === 0 || ['push', 'save', 'list', 'show', 'pop', 'apply'].includes(subArgs[0])) return;
+            return deny(`git stash ${subArgs[0]} discards or rewrites work; an autopilot stage never discards`);
+          }
+          if (sub === 'worktree') {
+            if (['add', 'list', 'lock', 'unlock'].includes(subArgs[0])) return;
+            return deny(`git worktree ${subArgs[0] || ''} removes or moves a worktree; the engine cleans up after the pull requests`);
+          }
+          if (sub === 'config') return deny('git config can define an alias or change the remote; the project config stays as it is during an autopilot stage');
+          return deny(`git ${sub} is not on the autopilot allow-list; the engine pushes and integrates, nothing discards work, and an alias is not run`);
         }
         if (GIT_READ_ONLY.has(sub)) {
           if (subArgs.some((x) => x === '--output' || x.startsWith('--output='))) deny('git --output writes a file; redirect into reviews/<id>/artifacts/ instead');
@@ -298,8 +317,10 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa' }) {
           for (let k = 0; k < rest.length; k++) {
             const v = rest[k].v || '';
             if (['-e', '--expression', '-f', '--file'].includes(v) && rest[k + 1]) scripts.add(rest[k + 1]);
-            else if (/^-(e|f)./.test(v)) scripts.add(rest[k]);
+            else if (/^-(e|f)./.test(v) || /^--(expression|file)=/.test(v)) scripts.add(rest[k]);
           }
+          // With a script flag every plain operand is a file; without one, the first plain operand
+          // is the script and the rest are files.
           const files = scripts.size ? plain.filter((x) => !scripts.has(x)) : plain.slice(1);
           for (const x of files) checkTarget(x.w, dir, `${prog} -i target`, container);
         }

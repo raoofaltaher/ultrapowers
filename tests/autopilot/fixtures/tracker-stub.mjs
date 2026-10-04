@@ -9,9 +9,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const args = process.argv.slice(2);
+// Stdin is read only for the calls that carry a body on it; any other caller may leave the pipe
+// open (fetch-ticket's execFile does), and a blocking read there would hang the stub.
+const wantsStdin = args.some((a, i) => (a === '--body-file' || a === '-F' || a === '--input') && args[i + 1] === '-');
 let stdin = '';
 try {
-  if (!process.stdin.isTTY) stdin = fs.readFileSync(0, 'utf8');
+  if (wantsStdin) stdin = fs.readFileSync(0, 'utf8');
 } catch {
   stdin = '';
 }

@@ -63,5 +63,13 @@
   { "name": "deny_sed_in_place_marker", "event": { "tool_name": "Bash", "tool_input": { "command": "sed -i 's/gated/full/' .agents/ultrapowers.json" } } },
   { "name": "deny_sed_in_place_hook_no_dot", "event": { "tool_name": "Bash", "tool_input": { "command": "sed -i -e 's/exit 2/exit 0/' hooks/qa-guardrail" } } },
   { "name": "deny_truncate_workflow", "event": { "tool_name": "Bash", "tool_input": { "command": "truncate -s 0 .github/workflows/ci.yml" } } },
+  { "name": "deny_sed_expression_eq_marker", "event": { "tool_name": "Bash", "tool_input": { "command": "sed -i --expression=s/gated/full/ .agents/ultrapowers.json" } } },
+  { "name": "deny_git_config_alias", "event": { "tool_name": "Bash", "tool_input": { "command": "git config alias.pub 'push origin HEAD'" } } },
+  { "name": "deny_git_c_alias", "event": { "tool_name": "Bash", "tool_input": { "command": "git -c alias.x='push origin HEAD' x" } } },
+  { "name": "deny_git_unknown_alias", "event": { "tool_name": "Bash", "tool_input": { "command": "git pub" } } },
+  { "name": "deny_git_pull", "event": { "tool_name": "Bash", "tool_input": { "command": "git pull origin main" } } },
+  { "name": "allow_git_switch_create", "event": { "tool_name": "Bash", "tool_input": { "command": "git switch -c GH-16-x" } } },
+  { "name": "allow_git_stash_push", "event": { "tool_name": "Bash", "tool_input": { "command": "git stash push -u -m wip" } } },
+  { "name": "allow_git_rev_parse", "event": { "tool_name": "Bash", "tool_input": { "command": "git rev-parse HEAD" } } },
   { "name": "deny_run_code_unsafe", "event": { "tool_name": "mcp__playwright__browser_run_code_unsafe", "tool_input": { "code": "fetch('x')" } } }
 ]

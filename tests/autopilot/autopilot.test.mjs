@@ -6,85 +6,11 @@ import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+import { makeWorkspace as workspace, git } from './fixtures/make-workspace.mjs';
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..');
 const ENGINE = path.join(REPO, 'skills', 'autopilot', 'scripts', 'autopilot.mjs');
-const INIT = path.join(REPO, 'skills', 'init', 'scripts', 'init.mjs');
-const STUB = path.join(HERE, 'fixtures', 'tracker-stub.mjs');
-
-const GIT_ENV = {
-  GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.com',
-  GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.com',
-  GIT_CONFIG_GLOBAL: path.join(os.tmpdir(), 'autopilot-cli-gitconfig'),
-};
-fs.writeFileSync(GIT_ENV.GIT_CONFIG_GLOBAL, '');
-
-function git(cwd, ...args) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...GIT_ENV }, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-}
-
-const BASE_MAP = {
-  'api user': { stdout: { login: 'engine-bot' } },
-  'issue view 16 -R o/r --json title': { stdout: { title: 'Fix it now please' } },
-  'issue view 16 -R o/r --json labels': { stdout: { labels: [] } },
-  'issue edit 16 -R o/r --add-label up:running': { stdout: '' },
-  'issue edit 16 -R o/r --remove-label up:running': { stdout: '' },
-  'issue edit 16 -R o/r --add-label up:blocked': { stdout: '' },
-  'issue comment 16 -R o/r --body-file -': { stdout: 'https://github.com/o/r/issues/16#issuecomment-9\n' },
-  'api repos/o/r/issues/16/timeline': { stdout: [[]] },
-};
-
-// A bare origin for `dir` with its current branch pushed.
-function withOrigin(base, name, dir) {
-  const origin = path.join(base, `${name}.git`);
-  git(base, 'init', '-q', '--bare', '-b', 'main', origin);
-  git(dir, 'remote', 'add', 'origin', origin);
-  git(dir, 'push', '-q', '-u', 'origin', 'main');
-  git(dir, 'remote', 'set-head', 'origin', 'main');
-  return origin;
-}
-
-// A scaffolded workspace on branch main with a GH source, an autopilot block and a bare origin.
-// `nested` adds a code repository clone `backend/` with its own origin and lists it in repos[].
-export function workspace({ autopilot = { mode: 'gated', baseBranch: 'main' }, map = {}, qa = false, nested = false } = {}) {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'autopilot-cli-'));
-  const root = path.join(base, 'ws');
-  fs.mkdirSync(root);
-  execFileSync(process.execPath, [INIT, 'scaffold', '--root', root, '--name', 'WS', '--platform', 'linux', '--harnesses', 'claude-code'], { encoding: 'utf8', env: { ...process.env, ...GIT_ENV } });
-  const markerPath = path.join(root, '.agents', 'ultrapowers.json');
-  const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
-  marker.tickets = { transport: 'cli', sources: [{ prefix: 'GH', provider: 'github', owner: 'o', defaultProject: 'r' }] };
-  if (autopilot) marker.autopilot = autopilot;
-  if (!qa) delete marker.qa;
-  if (nested) {
-    marker.topology = 'nested';
-    marker.repos = [{ name: 'backend', path: 'backend', defaultBranch: 'main', area: 'backend' }];
-    fs.appendFileSync(path.join(root, '.gitignore'), 'backend/\n');
-  }
-  fs.writeFileSync(markerPath, `${JSON.stringify(marker, null, 2)}\n`);
-  git(root, 'init', '-q', '-b', 'main');
-  git(root, 'add', '-A');
-  git(root, 'commit', '-q', '-m', 'scaffold');
-  const origin = withOrigin(base, 'ws', root);
-  let backendOrigin = null;
-  if (nested) {
-    const backend = path.join(root, 'backend');
-    fs.mkdirSync(backend);
-    git(backend, 'init', '-q', '-b', 'main');
-    fs.writeFileSync(path.join(backend, 'README.md'), 'backend\n');
-    git(backend, 'add', '-A');
-    git(backend, 'commit', '-q', '-m', 'seed');
-    backendOrigin = withOrigin(base, 'backend', backend);
-  }
-  const stubDir = path.join(base, 'stub');
-  fs.mkdirSync(stubDir);
-  fs.writeFileSync(path.join(stubDir, 'map.json'), JSON.stringify({ ...BASE_MAP, ...map }));
-  const log = path.join(stubDir, 'calls.log');
-  const env = { ...process.env, ...GIT_ENV, ULTRAPOWERS_GH: STUB, ULTRAPOWERS_GLAB: STUB, STUB_DIR: stubDir, STUB_LOG: log };
-  const calls = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l).args) : []);
-  const setMap = (extra) => fs.writeFileSync(path.join(stubDir, 'map.json'), JSON.stringify({ ...BASE_MAP, ...map, ...extra }));
-  return { root, env, calls, setMap, stubDir, origin, backendOrigin };
-}
 
 const SPEC = (scope) => `# Spec\n\n## Repositories in scope\n\n${scope.map((s) => `- ${s}`).join('\n')}\n\n## Assumption ledger\n\n| # | Question | Chosen answer | Confidence | Reason |\n|---|---|---|---|---|\n| 1 | Which cache? | none | low | not asked |\n| 2 | Which auth? | OIDC | high | the app uses it |\n`;
 const PLAN = (scope) => `# Plan\n\n## Repositories in scope\n\n${scope.map((s) => `- ${s}`).join('\n')}\n\n### Task 1\n`;
@@ -371,6 +297,25 @@ test('pr refuses before approval, then opens the docs PR and posts the closing c
   assert.equal(s.stage, 'pr');
   assert.equal(s.stageStatus, 'finished');
   assert.deepEqual([run(ws, ['next', 'GH-16']).json.action, run(ws, ['next', 'GH-16']).json.reason], ['done', 'pr-finished']);
+});
+
+test('pr refuses after a QA FAIL verdict', () => {
+  const ws = workspace();
+  throughPlan(ws);
+  run(ws, ['packet', 'GH-16']);
+  ws.setMap(approvedBy('alice'));
+  run(ws, ['next', 'GH-16']);
+  run(ws, ['begin', 'GH-16', 'execute']);
+  run(ws, ['end', 'GH-16', 'execute', '--result', JSON.stringify({ ok: true })]);
+  run(ws, ['begin', 'GH-16', 'qa']);
+  run(ws, ['end', 'GH-16', 'qa', '--result', JSON.stringify({ ok: true, verdict: 'FAIL', report: 'reviews/GH-16/QA-REPORT.md' })]);
+  assert.deepEqual(state(ws).qa, { verdict: 'FAIL', report: 'reviews/GH-16/QA-REPORT.md' });
+  const n = run(ws, ['next', 'GH-16']);
+  assert.deepEqual([n.json.action, n.json.reason], ['stop', 'qa-FAIL']);
+  const r = run(ws, ['pr', 'GH-16']);
+  assert.equal(r.code, 2);
+  assert.equal(r.json.error.code, 'qa-failed');
+  assert.ok(!ws.calls().some((a) => a[0] === 'pr'));
 });
 
 test('nested: execute creates a worktree per frozen repo and pr opens one PR per repo plus docs', () => {

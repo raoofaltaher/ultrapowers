@@ -304,8 +304,13 @@ lc="$(lower "$cmd")"
 # `$(curl ...)` and `/bin/rm` match like the bare spelling.
 B="(^|[;&|[:space:]\"'(\`/\\\\])"
 
-# Never push. Fail closed on any git command carrying a push token.
-printf '%s' "$lc" | grep -Eq '\bgit\b[^;&|]*\bpush\b' && deny "git push is never allowed during $run_kind; the autopilot engine pushes between stages"
+# Never push. Fail closed on any git command segment carrying a push token, `git stash push`
+# excepted: it stores work locally and is the autopilot stage's way to set work aside.
+while IFS= read -r seg; do
+  printf '%s' "$seg" | grep -Eq '\bgit\b.*\bpush\b' || continue
+  printf '%s' "$seg" | grep -Eq '\bgit\b[^;&|]*\bstash[[:space:]]+push\b' && ! printf '%s' "$seg" | grep -Eq '\bpush\b.*\bpush\b' && continue
+  deny "git push is never allowed during $run_kind; the autopilot engine pushes between stages"
+done < <(printf '%s' "$lc" | tr ';&|' '\n')
 
 if [ "$PROFILE" = "autopilot" ]; then
   # The engine merges nothing and the agent merges nothing: the ticket branch is the only branch.
