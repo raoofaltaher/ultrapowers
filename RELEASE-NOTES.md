@@ -1,5 +1,14 @@
 # Ultrapowers Release Notes
 
+## v1.2.1 (2026-10-04)
+
+A patch release with no change to the plugin's behaviour.
+
+- **The version audit skips the ticket folders.** `scripts/bump-version.sh --audit` no longer scans `tasks/`, `specs/`, `plans/` and `reviews/`, which hold documents written for tickets and may quote a plugin version. The Linux CI job on `main` failed on that audit right after the 1.2.0 release merge, because the GH-16 spec quotes the version.
+- **README.** The first-ticket step says "this release" instead of a version number.
+
+**Heads up:** `/ultrapowers:init` offers upgrade mode once a project's marker says 1.2.0. No template changed in this release, so answer `--apply none`.
+
 ## v1.2.0 (2026-10-04)
 
 Autopilot: hand the agent a ticket, approve its plan on the ticket, review its pull request.

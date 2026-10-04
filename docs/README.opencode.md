@@ -111,7 +111,7 @@ V1 `plugin` key and the V2 `plugins` key):
 
 ```json
 {
-  "plugin": ["ultrapowers@git+https://github.com/raoofaltaher/ultrapowers.git#v1.2.0"]
+  "plugin": ["ultrapowers@git+https://github.com/raoofaltaher/ultrapowers.git#v1.2.1"]
 }
 ```
 
