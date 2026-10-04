@@ -45,7 +45,23 @@ Findings from this step:
 
 ## Step 3: approval
 
-Pending: the Owner adds `up:approve` on issue 16.
+The Owner added `up:approve` on issue 16 from the browser. `next GH-16` answered `wait`, `awaiting-approval`, with approval `{ ok: false, reason: "self" }`: the label's actor `raoofaltaher` is also the login `gh` runs as on this machine, and the spec says the engine's own account never counts. The engine followed the spec. The finding is that a solo developer whose `gh` login is their own account cannot pass the gate through the session door.
+
+The Owner ruled that the rule was wrong: the developer must be able to approve their own tickets. The engine's account now counts like any other (spec D11, commit `bc5228b`). A team that runs the engine as a bot keeps it out with `approvers`. Pressure scenario A8 then checked that the unchanged skill still keeps the agent from adding the label itself, both when the request sits in an owner comment and when the owner relays it in the prompt. Both runs passed.
+
+With the rule changed, the run resumed on the label already on the issue:
+
+| Stage | Command | Outcome |
+|---|---|---|
+| gate | `next GH-16` | `run execute`, reason `approved`; actor `raoofaltaher`, event `32442181332`; the label was removed and the scope froze at `.` |
+| execute | `begin GH-16 execute`, executing-plans inline on `plans/GH-16/Plan.md`, `end` | finished at `d9888d5` |
+| qa | `next GH-16` | `run pr`, reason `qa-not-configured` |
+| pr | `pr GH-16` | https://github.com/raoofaltaher/ultrapowers/pull/20 against `dev`, citing the packet, the approver and the log head; closing comment on issue 16 |
+| done | `next GH-16` | `done`, `pr-finished`; `verifyChain` ok |
+
+The ticket's own work ended at its Task 1 by the plan's rule. Six baseline runs of the new scenario S20 (three on claude-opus-5-5, three on claude-sonnet-5-5, the second three asked for by the ticket's branch review) found that the unedited writing-plans skill already names `plans/1234/Plan.md` in the hand-off. So the skill prose was not changed, and the pull request carries the S20 record only.
+
+Finding from this step: the log had no line for the skipped QA stage, which spec section 6 requires. `pr` now logs `qa skipped` once before it starts (commit `e507504`, test first). PR 20 was opened before that fix, so its log lacks the line.
 
 ## Step 4: negative check
 
