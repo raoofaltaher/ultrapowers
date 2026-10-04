@@ -1,5 +1,9 @@
-// Pure rules of the autopilot engine: configuration, slugs and branch names.
-// No I/O here. Node built-ins only.
+// Rules of the autopilot engine: configuration, slugs, branch names, the per-ticket
+// state file and the hash-chained stage log. Node built-ins only; no process is spawned here.
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
 
 export class AutopilotError extends Error {
   constructor(code, message) {
@@ -129,4 +133,111 @@ export function modeFor(block, { arg, labels = [] } = {}) {
     if (m) return m[1];
   }
   return block && MODES.includes(block.mode) ? block.mode : 'off';
+}
+
+// ---- State file and stage log (spec §5) ----
+
+const GENESIS = '0'.repeat(64);
+const LOG_KEYS = ['at', 'stage', 'event', 'actor', 'trigger', 'repo', 'sha', 'url', 'prev'];
+
+export function statePath(root, id) {
+  return path.join(root, 'tasks', id, 'autopilot.json');
+}
+
+export function logPath(root, id) {
+  return path.join(root, 'tasks', id, 'stage-log.jsonl');
+}
+
+export function initialState({ id, mode, source, docsBranch, docsBase, title }) {
+  return {
+    ticket: id,
+    title: title ?? '',
+    mode,
+    stage: 'scaffold',
+    attempt: 1,
+    source,
+    docs: { branch: docsBranch, base: docsBase, tip: null },
+    repos: [],
+    scope: { proposed: [], frozen: false },
+    packet: null,
+    approval: null,
+    pr: { docs: null },
+  };
+}
+
+export function readState(root, id) {
+  const file = statePath(root, id);
+  if (!fs.existsSync(file)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, ''));
+  } catch (err) {
+    throw new AutopilotError('bad-state', `${file} is not readable JSON: ${err.message}`);
+  }
+}
+
+export function writeState(root, id, state) {
+  const file = statePath(root, id);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(state, null, 2)}\n`);
+}
+
+export function hashLine(text) {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+function logLines(root, id) {
+  const file = logPath(root, id);
+  if (!fs.existsSync(file)) return [];
+  return fs.readFileSync(file, 'utf8').split('\n').filter((l) => l.trim() !== '');
+}
+
+// Appends one JSON line whose `prev` is the hash of the previous line's exact text.
+export function appendLog(root, id, entry) {
+  const lines = logLines(root, id);
+  const prev = lines.length ? hashLine(lines[lines.length - 1]) : GENESIS;
+  const full = { at: new Date().toISOString(), ...entry, prev };
+  const ordered = {};
+  for (const k of LOG_KEYS) if (full[k] !== undefined) ordered[k] = full[k];
+  for (const k of Object.keys(full)) if (!(k in ordered) && full[k] !== undefined) ordered[k] = full[k];
+  const line = JSON.stringify(ordered);
+  const file = logPath(root, id);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.appendFileSync(file, `${line}\n`);
+  const hash = hashLine(line);
+  // The state anchors the head of the chain, so an edit to the last line is visible too.
+  const state = readState(root, id);
+  if (state) {
+    state.logHead = hash;
+    writeState(root, id, state);
+  }
+  return { line, hash };
+}
+
+export function readLog(root, id) {
+  return logLines(root, id).map((l, i) => {
+    try {
+      return JSON.parse(l);
+    } catch (err) {
+      throw new AutopilotError('bad-log', `${logPath(root, id)} line ${i + 1} is not JSON: ${err.message}`);
+    }
+  });
+}
+
+// { ok: true }, or { ok: false, at: <1-based line whose prev does not match> }.
+export function verifyChain(root, id) {
+  const lines = logLines(root, id);
+  let expected = GENESIS;
+  for (let i = 0; i < lines.length; i += 1) {
+    let entry;
+    try {
+      entry = JSON.parse(lines[i]);
+    } catch {
+      return { ok: false, at: i + 1 };
+    }
+    if (entry.prev !== expected) return { ok: false, at: i + 1 };
+    expected = hashLine(lines[i]);
+  }
+  const state = lines.length ? readState(root, id) : null;
+  if (state && state.logHead && state.logHead !== expected) return { ok: false, at: lines.length };
+  return { ok: true };
 }

@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   AutopilotError, STAGES, DEFAULTS, validateAutopilot, effectiveAutopilot, slugFor, branchName, modeFor,
+  initialState, statePath, logPath, readState, writeState, hashLine, appendLog, readLog, verifyChain,
 } from '../../skills/autopilot/scripts/autopilot-lib.mjs';
 
 test('validateAutopilot names the field', () => {
@@ -59,4 +63,85 @@ test('modeFor precedence', () => {
   assert.equal(modeFor(b, {}), 'gated');
   assert.equal(modeFor({ mode: 'off' }, {}), 'off');
   assert.throws(() => modeFor(b, { arg: 'turbo' }), (e) => e.code === 'bad-args');
+});
+
+// ---- Task 2: state and stage log ----
+const SRC = { provider: 'github', path: 'acme/web', number: 16 };
+
+function tmpTicket(id) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'autopilot-lib-'));
+  fs.mkdirSync(path.join(root, 'tasks', id), { recursive: true });
+  return root;
+}
+
+test('initialState shape', () => {
+  const s = initialState({ id: 'GH-16', mode: 'gated', source: SRC, docsBranch: 'GH-16-x', docsBase: 'dev', title: 'x' });
+  assert.equal(s.ticket, 'GH-16');
+  assert.equal(s.mode, 'gated');
+  assert.equal(s.stage, 'scaffold');
+  assert.equal(s.attempt, 1);
+  assert.deepEqual(s.source, SRC);
+  assert.deepEqual(s.docs, { branch: 'GH-16-x', base: 'dev', tip: null });
+  assert.deepEqual(s.repos, []);
+  assert.deepEqual(s.scope, { proposed: [], frozen: false });
+  assert.equal(s.packet, null);
+  assert.equal(s.approval, null);
+  assert.deepEqual(s.pr, { docs: null });
+  assert.equal(s.title, 'x');
+});
+
+test('paths live under tasks/<ID>', () => {
+  assert.equal(statePath('/r', 'GH-16'), path.join('/r', 'tasks', 'GH-16', 'autopilot.json'));
+  assert.equal(logPath('/r', 'GH-16'), path.join('/r', 'tasks', 'GH-16', 'stage-log.jsonl'));
+});
+
+test('readState returns null when absent and round-trips', () => {
+  const root = tmpTicket('GH-16');
+  assert.equal(readState(root, 'GH-16'), null);
+  const s = initialState({ id: 'GH-16', mode: 'gated', source: SRC, docsBranch: 'GH-16-x', docsBase: 'dev', title: 'x' });
+  writeState(root, 'GH-16', s);
+  assert.deepEqual(readState(root, 'GH-16'), s);
+  const text = fs.readFileSync(statePath(root, 'GH-16'), 'utf8');
+  assert.ok(text.endsWith('\n'));
+  assert.ok(text.includes('\n  "ticket"'));
+});
+
+test('log chain links and detects edits', () => {
+  const root = tmpTicket('GH-16');
+  const first = appendLog(root, 'GH-16', { stage: 'scaffold', event: 'started', actor: 'engine', trigger: 'command', repo: 'docs' });
+  appendLog(root, 'GH-16', { stage: 'scaffold', event: 'finished', actor: 'engine', trigger: 'command', repo: 'docs', sha: 'abc' });
+  const lines = readLog(root, 'GH-16');
+  assert.equal(lines.length, 2);
+  assert.equal(lines[0].prev, '0'.repeat(64));
+  assert.match(lines[0].at, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(first.hash, hashLine(first.line));
+  assert.equal(lines[1].prev, hashLine(fs.readFileSync(logPath(root, 'GH-16'), 'utf8').split('\n')[0]));
+  assert.deepEqual(Object.keys(lines[1]), ['at', 'stage', 'event', 'actor', 'trigger', 'repo', 'sha', 'prev']);
+  assert.deepEqual(verifyChain(root, 'GH-16'), { ok: true });
+  const raw = fs.readFileSync(logPath(root, 'GH-16'), 'utf8').replace('"event":"started"', '"event":"startet"');
+  fs.writeFileSync(logPath(root, 'GH-16'), raw);
+  assert.deepEqual(verifyChain(root, 'GH-16'), { ok: false, at: 2 });
+});
+
+test('the state anchors the log head, so the last line cannot be edited either', () => {
+  const root = tmpTicket('GH-16');
+  writeState(root, 'GH-16', initialState({ id: 'GH-16', mode: 'gated', source: SRC, docsBranch: 'b', docsBase: 'dev', title: 'x' }));
+  appendLog(root, 'GH-16', { stage: 'scaffold', event: 'started', actor: 'engine', trigger: 'command', repo: 'docs' });
+  const last = appendLog(root, 'GH-16', { stage: 'scaffold', event: 'finished', actor: 'engine', trigger: 'command', repo: 'docs', sha: 'abc' });
+  assert.equal(readState(root, 'GH-16').logHead, last.hash);
+  assert.deepEqual(verifyChain(root, 'GH-16'), { ok: true });
+  const raw = fs.readFileSync(logPath(root, 'GH-16'), 'utf8').replace('"sha":"abc"', '"sha":"abd"');
+  fs.writeFileSync(logPath(root, 'GH-16'), raw);
+  assert.deepEqual(verifyChain(root, 'GH-16'), { ok: false, at: 2 });
+});
+
+test('verifyChain on an absent or empty log is ok; a tampered line is named', () => {
+  const root = tmpTicket('GH-16');
+  assert.deepEqual(verifyChain(root, 'GH-16'), { ok: true });
+  assert.deepEqual(readLog(root, 'GH-16'), []);
+  appendLog(root, 'GH-16', { stage: 'scaffold', event: 'started', actor: 'engine', trigger: 'command', repo: 'docs' });
+  appendLog(root, 'GH-16', { stage: 'scaffold', event: 'finished', actor: 'engine', trigger: 'command', repo: 'docs' });
+  const raw = fs.readFileSync(logPath(root, 'GH-16'), 'utf8').replace('"started"', '"starte"');
+  fs.writeFileSync(logPath(root, 'GH-16'), raw);
+  assert.deepEqual(verifyChain(root, 'GH-16'), { ok: false, at: 2 });
 });
