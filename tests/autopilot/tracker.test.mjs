@@ -195,6 +195,14 @@ test('odoo labelEvents fall back to the last writer when the field is not tracke
   assert.equal(ev[0].at, '2026-10-05T08:00:00Z');
 });
 
+test('odoo labelEvents fall back to the last writer when the tracking values are not readable (Odoo 19, non-administrator)', async () => {
+  const f = await odooFake(odooSeedWithTask({ tagTracking: true, trackingReadable: false }));
+  const ev = await trackerFor(ODOO(f), E_ODOO).labelEvents(13627);
+  assert.equal(ev.length, 3);
+  assert.ok(ev.every((e) => e.attribution === 'last-writer'));
+  assert.equal(ev[0].actor, 'val');
+});
+
 test('odoo permission: portal none, internal without group read, project user write', async () => {
   const f = await odooFake();
   const t = trackerFor(ODOO(f), E_ODOO);
@@ -202,6 +210,16 @@ test('odoo permission: portal none, internal without group read, project user wr
   assert.equal(await t.permission('intern'), 'read');
   assert.equal(await t.permission('val'), 'write');
   assert.equal(await t.permission('nobody'), 'none');
+});
+
+test('odoo permission reads the groups through the field this server has (all_group_ids on Odoo 19, group_ids)', async () => {
+  for (const groupsField of ['all_group_ids', 'group_ids']) {
+    const f = await odooFake(odooSeedWithTask({ groupsField }));
+    const t = trackerFor(ODOO(f), E_ODOO);
+    assert.equal(await t.permission('guest'), 'none', groupsField);
+    assert.equal(await t.permission('intern'), 'read', groupsField);
+    assert.equal(await t.permission('val'), 'write', groupsField);
+  }
 });
 
 test('odoo comments are the human messages after since, as text', async () => {

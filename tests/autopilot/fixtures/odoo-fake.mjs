@@ -72,13 +72,17 @@ function base64Of(size) {
 // A seed with one project, two tasks, tags, users, chatter and attachments: what the tracker,
 // the fetch step and the engine tests need. `tagTracking: false` turns tag tracking off.
 export function odooSeedWithTask(overrides = {}) {
-  const s = seed({ tagTracking: true, ...overrides });
+  const s = seed({ tagTracking: true, groupsField: 'groups_id', ...overrides });
   s.groups = { 'project.group_project_user': 100, 'project.group_project_manager': 101 };
+  // The field that carries a user's groups: `groups_id` up to Odoo 18, `all_group_ids` (with
+  // the implied groups) and `group_ids` from Odoo 19. A read of any other field is refused, as
+  // the real server refuses it.
+  const g = s.groupsField;
   s.users = [
-    { id: 7, login: 'bot', partner_id: [17, 'Bot'], share: false, groups_id: [100] },
-    { id: 9, login: 'val', partner_id: [19, 'Val'], share: false, groups_id: [100] },
-    { id: 10, login: 'guest', partner_id: [20, 'Guest'], share: true, groups_id: [] },
-    { id: 11, login: 'intern', partner_id: [21, 'Intern'], share: false, groups_id: [] },
+    { id: 7, login: 'bot', partner_id: [17, 'Bot'], share: false, [g]: [100] },
+    { id: 9, login: 'val', partner_id: [19, 'Val'], share: false, [g]: [100] },
+    { id: 10, login: 'guest', partner_id: [20, 'Guest'], share: true, [g]: [] },
+    { id: 11, login: 'intern', partner_id: [21, 'Intern'], share: false, [g]: [] },
   ];
   s.tags = [{ id: 1, name: 'AI', color: 5 }, { id: 2, name: 'Backend', color: 6 }, { id: 3, name: 'Ultrapowers Ready', color: 10 }, { id: 4, name: 'Ultrapowers Approve', color: 4 }];
   s.tasks = [
@@ -94,7 +98,10 @@ export function odooSeedWithTask(overrides = {}) {
     { id: 51, model: 'project.task', res_id: 13627, message_type: 'notification', date: '2026-10-02 19:50:00', dateIso: '2026-10-02T19:50:00Z', author_id: [19, 'Val'], body: '', tracking_value_ids: [1] },
   ];
   s.tracking = [{ id: 1, mail_message_id: [51, 'm'], field_id: [301, 'Tags'], old_value_char: 'AI, Backend', new_value_char: 'AI, Backend, Ultrapowers Approve' }];
-  s.fields = [{ id: 301, model: 'project.task', name: 'tag_ids', tracking: s.tagTracking ? 100 : false }];
+  s.fields = [
+    { id: 301, model: 'project.task', name: 'tag_ids', tracking: s.tagTracking ? 100 : false },
+    { id: 302, model: 'res.users', name: g, tracking: false },
+  ];
   s.attachments = [
     { id: 5, name: 'mockup.png', mimetype: 'image/png', file_size: 800, res_model: 'project.task', res_id: 13627, datas: base64Of(800) },
     { id: 6, name: 'big.pdf', mimetype: 'application/pdf', file_size: 2 * 1024 * 1024, res_model: 'project.task', res_id: 13627, datas: base64Of(16) },
@@ -158,13 +165,30 @@ export function odooSeedWithTask(overrides = {}) {
       },
     },
     'mail.message': {
-      search_read: searchRead((x) => x.messages, 'mail.message'),
+      // On Odoo 19 the tracking values of a message are readable by administrators only;
+      // `trackingReadable: false` plays that server.
+      search_read: (args, kwargs, x) => {
+        if (x.trackingReadable === false && (kwargs.fields ?? args[1] ?? []).includes('tracking_value_ids')) throw new Error('You do not have enough rights to access the field "tracking_value_ids" on Message (mail.message). Please contact your system administrator.');
+        return searchRead((y) => y.messages, 'mail.message')(args, kwargs, x);
+      },
       read: read((x) => x.messages),
     },
-    'mail.tracking.value': { search_read: searchRead((x) => x.tracking, 'mail.tracking.value') },
+    'mail.tracking.value': {
+      search_read: (args, kwargs, x) => {
+        if (x.trackingReadable === false) throw new Error("You are not allowed to access 'Mail Tracking Value' (mail.tracking.value) records.");
+        return searchRead((y) => y.tracking, 'mail.tracking.value')(args, kwargs, x);
+      },
+    },
     'ir.model.fields': { search_read: searchRead((x) => x.fields, 'ir.model.fields') },
     'res.users': {
-      search_read: searchRead((x) => x.users, 'res.users'),
+      search_read: (args, kwargs, x) => {
+        // Like the real server, a field no user record carries is an error, not `false`.
+        const known = new Set(x.users.flatMap((u) => Object.keys(u)));
+        for (const f of kwargs.fields ?? args[1] ?? []) {
+          if (!known.has(f)) throw new Error(`Invalid field '${f}' on 'res.users'`);
+        }
+        return searchRead((y) => y.users, 'res.users')(args, kwargs, x);
+      },
       read: read((x) => x.users),
     },
     'ir.model.data': {

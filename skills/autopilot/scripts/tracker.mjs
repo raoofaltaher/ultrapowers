@@ -354,10 +354,22 @@ class OdooTracker {
     return this.tagNames((await this.task(number)).tag_ids ?? []);
   }
 
+  // Tag events come from the chatter's tracking values when the tags field is tracked and the
+  // technical user may read them: from Odoo 19 that read is reserved to administrators, and a
+  // refusal means the last-writer attribution (spec D3), not a failed run.
   async tagsTracked() {
     if (this.cache.tracked === undefined) {
       const rows = await this.call('ir.model.fields', 'search_read', [[['model', '=', 'project.task'], ['name', '=', 'tag_ids']]], { fields: ['tracking'] });
-      this.cache.tracked = Boolean(rows[0]?.tracking);
+      let tracked = Boolean(rows[0]?.tracking);
+      if (tracked) {
+        try {
+          await this.call('mail.tracking.value', 'search_read', [[['id', '=', 0]]], { fields: ['id'], limit: 1 });
+        } catch (err) {
+          if (err.code !== 'tracker-failed' || !/not allowed to access|not enough rights/i.test(err.message)) throw err;
+          tracked = false;
+        }
+      }
+      this.cache.tracked = tracked;
     }
     return this.cache.tracked;
   }
@@ -426,12 +438,25 @@ class OdooTracker {
     return this.cache.groups;
   }
 
+  // The field that carries a user's groups: `groups_id` up to Odoo 18; from Odoo 19
+  // `all_group_ids` (the groups with the ones they imply) and `group_ids`. Read once per run.
+  async userGroupsField() {
+    if (!this.cache.userGroupsField) {
+      const candidates = ['all_group_ids', 'groups_id', 'group_ids'];
+      const rows = await this.call('ir.model.fields', 'search_read', [[['model', '=', 'res.users'], ['name', 'in', candidates]]], { fields: ['name'] });
+      const names = new Set(rows.map((r) => r.name));
+      this.cache.userGroupsField = candidates.find((c) => names.has(c)) ?? 'groups_id';
+    }
+    return this.cache.userGroupsField;
+  }
+
   async permission(login) {
-    const rows = await this.call('res.users', 'search_read', [[['login', '=', login]]], { fields: ['id', 'share', 'groups_id'] });
+    const groupsField = await this.userGroupsField();
+    const rows = await this.call('res.users', 'search_read', [[['login', '=', login]]], { fields: ['id', 'share', groupsField] });
     const user = rows[0];
     if (!user || user.share) return 'none';
     const groups = await this.projectGroups();
-    return (user.groups_id ?? []).some((g) => groups.includes(g)) ? 'write' : 'read';
+    return (user[groupsField] ?? []).some((g) => groups.includes(g)) ? 'write' : 'read';
   }
 
   async comment(number, body) {
