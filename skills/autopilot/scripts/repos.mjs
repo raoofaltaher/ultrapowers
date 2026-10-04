@@ -53,12 +53,13 @@ function startPoint(dir, base) {
     const f = git(dir, ['fetch', '--quiet', 'origin', base]);
     remote = f.ok && git(dir, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${base}`]).ok;
   }
+  // Full ref names: a tag or a file called like the branch must not stand in for it.
   if (local && remote) {
-    const localContainsRemote = git(dir, ['merge-base', '--is-ancestor', `origin/${base}`, base]).ok;
-    return localContainsRemote ? base : `origin/${base}`;
+    const localContainsRemote = git(dir, ['merge-base', '--is-ancestor', `refs/remotes/origin/${base}`, `refs/heads/${base}`]).ok;
+    return localContainsRemote ? `refs/heads/${base}` : `refs/remotes/origin/${base}`;
   }
-  if (remote) return `origin/${base}`;
-  if (local) return base;
+  if (remote) return `refs/remotes/origin/${base}`;
+  if (local) return `refs/heads/${base}`;
   throw new AutopilotError('no-base', `${dir} has no branch ${base} locally or on origin`);
 }
 
