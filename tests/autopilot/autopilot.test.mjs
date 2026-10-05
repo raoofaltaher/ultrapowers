@@ -507,6 +507,24 @@ test('a QA stop posts the report on the ticket once', () => {
   assert.equal(git(ws.root, 'status', '--porcelain', '--', 'tasks').trim(), '', 'the posted report is committed with the state');
 });
 
+// A QA stop is not the end of the ticket: once the cause is addressed, the QA stage is begun
+// again and a passing verdict lets the run go on to the pull requests.
+test('a stopped QA run resumes with begin qa and a new verdict', () => {
+  const ws = workspace({ nested: true, qa: true });
+  nestedThroughQa(ws, 'PRECONDITION-FAILED');
+  assert.deepEqual([run(ws, ['next', 'GH-16']).json.action, run(ws, ['next', 'GH-16']).json.reason], ['stop', 'qa-PRECONDITION-FAILED']);
+  const b = run(ws, ['begin', 'GH-16', 'qa']);
+  assert.equal(b.code, 0, b.stdout + b.stderr);
+  fs.writeFileSync(path.join(ws.root, 'reviews', 'GH-16', 'QA-REPORT.md'), '# QA report\n\n## Verdict\n\nVerdict: PASS\n\n## Lanes\n- UI: fine\n');
+  git(ws.root, 'add', '-A');
+  git(ws.root, 'commit', '-q', '-m', 'qa(GH-16): report, second run');
+  const e = run(ws, ['end', 'GH-16', 'qa', '--result', JSON.stringify({ ok: true, verdict: 'PASS', report: 'reviews/GH-16/QA-REPORT.md' })]);
+  assert.equal(e.code, 0, e.stdout + e.stderr);
+  assert.equal(state(ws).qa.verdict, 'PASS');
+  const n = run(ws, ['next', 'GH-16']);
+  assert.deepEqual([n.json.action, n.json.stage, n.json.reason], ['run', 'pr', 'qa-finished']);
+});
+
 test('without a QA stage the report is one line', () => {
   const ws = workspace();
   throughPlan(ws);
