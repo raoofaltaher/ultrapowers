@@ -1,5 +1,20 @@
 # Ultrapowers Release Notes
 
+## v1.3.1 (2026-10-05)
+
+A resumed QA stage's report reaches the ticket.
+
+In 1.3.0 the engine posted the QA report on the ticket only while the ticket carried none. A QA stage begun again after a stop (PRECONDITION-FAILED, FAIL or INCOMPLETE) ended with a new verdict that stayed in the repository: the task never saw it, and a pass after a stop reached the pull requests but not the ticket. The ticket comment is now keyed by the report's text, so every new report posts once and a `next` that only repeats a stop posts nothing. Found in the live round on the Owner's VM, where the headless QA stage ran end to end for the first time; `tests/autopilot/acceptance-2026-10.md` step 6 has the record.
+
+**Heads up:** a ticket whose 1.3.0 state already carries a posted report posts it once more on its next `next`, because the old state has no report key; nothing else changes.
+
+### What was verified, and how
+
+| | Verified |
+|---|---|
+| Live, the Owner's VM | the headless QA stage on the ticket branch's stack, its verdict committed and, after the fix, its report as a log note on the task |
+| Offline suites | `tests/autopilot/run-tests.sh` with the new case, and every suite `AGENTS.md` lists |
+
 ## v1.3.0 (2026-10-05)
 
 Odoo as an autopilot tracker: the tag on the task starts the run, the packet and the QA report are log notes, the pull requests open on your forge.

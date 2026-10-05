@@ -141,10 +141,24 @@ Cycle 2, after the approve tag was added by the Owner's account: the watcher ans
 
 Not run live in this round: the headless execute stage (the session door ran it inline), the changes loop, and merge requests on GitLab, which the QA stop prevented in both doors. The VM's `glab` token is revoked and must be re-issued before any pull request can open from there.
 
+### Step 6: the headless QA stage on the VM, and the resumed report (release 1.3.1)
+
+The Owner brought the project's `int-*` stack up on the VM from the ticket branches (four compose projects; the MinIO image pinned by digest is no longer pullable anonymously and was loaded from a saved archive), signed `glab` in to the GitLab host, added `ULTRAPOWERS_STAGE_GITLAB_TOKEN` to the VM's secrets file and reverted a key-order rewrite of `.claude/settings.json` that a headless stage had left in the docs clone (the engine refuses to switch ticket branches over a modified file).
+
+| Event | Outcome |
+|---|---|
+| `begin ODOO-<task> qa --door command` then `run` | `wait`, `locked`: the command door's `begin` holds the ticket for an inline session, and `run` is the other door. A headless resume is `run` alone; `next` treats a stage left running as interrupted and runs it again |
+| `run`, after the lock was released | the QA stage headless, 915 s, exit 0, verdict INCOMPLETE, committed as `qa(ODOO-<task>): INCOMPLETE`; `stop`, `qa-INCOMPLETE`; no pull request |
+| the report on the task | **not posted**: the engine posted a QA report only while the ticket carried none, so the second verdict never reached the task. Fixed test-first (`a resumed QA stage posts its new report on the ticket`): the ticket comment is keyed by the report's text, and a repeated `next` on the same stop posts nothing. With the fix deployed, `next` posted the INCOMPLETE report as a log note on the task |
+| the verdict's reasons | three environment gaps, none in the ticket's code: the Playwright MCP server is launched through the Windows `cmd` wrapper in the committed `.mcp.json`, which does not exist on Linux; the QA Admin and SuperAdmin accounts have no company in the VM's fresh database; the read-only database role had no credential. The first two lanes are the VM's: a `cmd` shim and Chromium for the VM user, and the `qa_agent_ro` role from the project's own SQL. The tenant seeding is the Owner's, by their reseed procedure |
+
+Finding for the plugin, deferred: init renders the project's `.mcp.json` with the host's launcher shape (`cmd /c npx` on Windows), so a committed file does not run a stage on another OS; a platform-neutral launcher belongs in the template.
+
 ### What this round verified
 
 | | Verified |
 |---|---|
 | Live, Owner's workspace | Odoo 19 as the tracker through its JSON-RPC API with one key read from `.agents/mcp-secrets.env`; init creating the six tags and the six GitLab labels; the session door from a task URL through scaffold, spec, plan, packet (log note), approval by tag with last-writer attribution, execute in two nested repositories' worktrees, the QA stage's PRECONDITION-FAILED stop and the QA report posted on the task; the watcher door on the VM through scaffold, spec, plan and packet with the engine's own plugin checkout in the headless stages, and the self-approval rule refusing the watcher's own account |
 | Offline suites | every suite in `AGENTS.md`, with the new Odoo scenarios |
-| Not yet run live | headless execute and QA stages, the changes loop, merge requests opened by the engine on GitLab, `full` mode |
+| Live, the VM (step 6) | the headless QA stage end to end on the ticket branch's stack, with a real verdict and its report committed; the resumed report reaching the task after the 1.3.1 fix |
+| Not yet run live | the headless execute stage, the changes loop, merge requests opened by the engine on GitLab, `full` mode |
