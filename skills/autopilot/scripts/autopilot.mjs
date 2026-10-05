@@ -309,6 +309,7 @@ async function runNext(opts) {
   // A QA stop opens no pull request, so the report goes on the ticket from here, once.
   if (answer.action === 'stop' && /^qa-/.test(answer.reason) && state?.qa?.report && !state.report?.ticketCommentUrl) {
     await postReport(ctx, opts, state, {}, qaConfigured(ctx.marker), 'qa');
+    commitState(ctx, opts.id, `chore(${opts.id}): autopilot QA report posted`);
   }
   return { ...answer, ticket: opts.id, mode, approval, state: readState(ctx.root, opts.id) };
 }

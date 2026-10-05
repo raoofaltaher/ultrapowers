@@ -503,6 +503,7 @@ test('a QA stop posts the report on the ticket once', () => {
   assert.match(state(ws).report.ticketCommentUrl, /issuecomment/);
   assert.equal(logLines(ws).filter((l) => l.event === 'report posted').length, 1);
   assert.equal(prComments(ws).length, 0);
+  assert.equal(git(ws.root, 'status', '--porcelain', '--', 'tasks').trim(), '', 'the posted report is committed with the state');
 });
 
 test('without a QA stage the report is one line', () => {
