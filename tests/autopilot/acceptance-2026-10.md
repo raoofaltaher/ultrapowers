@@ -84,13 +84,13 @@ Findings from this step, all fixed with tests before the run went on:
 
 ### Step 2: session door to the gate
 
-`/ultrapowers:autopilot <task URL>` resolved the URL to the short id `ODOO-13627` (the task is in the source's default project). The documents branch `ODOO-13627-improvement-integration-m365` was cut from `draft`.
+`/ultrapowers:autopilot <task URL>` resolved the URL to the short id `ODOO-<task>` (the task is in the source's default project). The documents branch `ODOO-<task>-<slug>` was cut from `draft`.
 
 | Stage | Outcome |
 |---|---|
 | scaffold | brief, `source.md` with 48 messages, 5 attachments and 9 links; the five attachments are kept outside Odoo by a cloud storage module, so they were listed at their addresses, not downloaded |
-| spec | `specs/ODOO-13627/Spec.md`: a bounded slice (the Compliance findings register) with a ten-row assumption ledger and the two repositories in scope; the grounding manifest names every file and page read and the three sources that could not be read (the cloud-stored attachments, a design page answering 403, a meeting recording behind the team's sign-in); the ticket's earlier working branches were read through the local clones |
-| plan | `plans/ODOO-13627/Plan.md`, two tasks |
+| spec | `specs/ODOO-<task>/Spec.md`: a bounded slice (the Compliance findings register) with a ten-row assumption ledger and the two repositories in scope; the grounding manifest names every file and page read and the three sources that could not be read (the cloud-stored attachments, a design page answering 403, a meeting recording behind the team's sign-in); the ticket's earlier working branches were read through the local clones |
+| plan | `plans/ODOO-<task>/Plan.md`, two tasks |
 | gate | `packet` pushed the branch and posted the packet as an internal log note on the task (16 lines, three links at the docs tip, the five lowest-confidence assumptions) |
 | next | `wait`, `awaiting-approval`, `no-event` |
 
