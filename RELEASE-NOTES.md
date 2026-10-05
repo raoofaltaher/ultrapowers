@@ -30,9 +30,9 @@ Teams whose tickets live in Odoo's Project app, and anyone whose code repositori
 | Offline suites, every commit | The engine against a fake Odoo server (tags, tracking and last-writer attribution, permissions, notes, the watcher cycle, the URL id, the secrets file), the tracker and the forge rule, the fetch step's messages, attachments and links, init's Odoo questions and tags, the guardrail's Odoo cases, the pressure scenarios P1 to P3 |
 | Not yet run live | Headless execute and QA stages, the changes loop, pull requests opened by the engine on GitLab, full mode |
 
-### Found during the live run, fixed in this release
+### Found during the live run and the final review, fixed in this release
 
-Odoo 19 renames the user groups field and restricts the tracking values to administrators; its cloud storage module keeps attachments outside the database; `message_post` escapes a plain body; the packet showed the documents base for code repositories; a QA stop left the ticket without the report; a stage's report path was posted unchecked; a headless stage ran with the host's plugins. Each has a test.
+Odoo 19 renames the user groups field and restricts the tracking values to administrators; its cloud storage module keeps attachments outside the database; `message_post` escapes a plain body, and a markdown report posted as text appeared raw; the packet showed the documents base for code repositories; a QA stop left the ticket without the report; a stage's report path was posted unchecked; a headless stage ran with the host's plugins. The final review added: in last-writer mode the engine's own label writes now come before the packet, so a pre-placed approve tag can never pass as the engine's own approval; a source without `db` asks the server's database list; a renamed tag or a user's tag with a comma no longer hides the approve event; a GitHub or GitLab ticket keeps its own forge when a remote's host is an ssh alias; a stray `%` in a link, a `$&` in a report and an attachment id of another task are handled. Each has a test.
 
 ### Not in this release
 

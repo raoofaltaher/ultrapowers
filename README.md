@@ -425,7 +425,7 @@ The `autopilot` block (every field but `mode` is optional):
 
 Autopilot needs a GitHub, GitLab or Odoo source in `tickets`; an Odoo source needs its `login`. The engine writes `tasks/<ID>/autopilot.json` and a hash-chained `tasks/<ID>/stage-log.jsonl` on the ticket branch; `/ultrapowers:task` reads them first.
 
-**Where the envelope runs.** The engine, the skill, the tracker write-back through `gh` and `glab`, and the watcher are the same on every harness. On Odoo the engine writes back itself, over the server's JSON-RPC API with `ODOO_API_KEY`: the packet and the QA report are internal log notes on the task, the approval is a tag, and the pull requests open on the forge each repository's `origin` remote points to. What differs is how each harness runs the guardrail, the hook that denies a push, a merge or a tracker write to the agent during a stage:
+**Where the envelope runs.** The engine, the skill, the tracker write-back through `gh` and `glab`, and the watcher are the same on every harness. On Odoo the engine writes back itself, over the server's JSON-RPC API with `ODOO_API_KEY`: the packet and the QA report are internal log notes on the task, the approval is a tag, and the pull requests open on the forge each repository's `origin` remote points to (GitHub for github.com, GitLab for any other host; a GitHub or GitLab ticket keeps its own forge when a remote uses an ssh host alias). What differs is how each harness runs the guardrail, the hook that denies a push, a merge or a tracker write to the agent during a stage:
 
 | Harness | The guardrail during a session stage | A watcher stage (`autopilot.harness`) | Notes |
 |---|---|---|---|
