@@ -335,6 +335,24 @@ test('end qa refuses a report path outside reviews/<ID>/', () => {
     assert.equal(r.json.error.code, 'bad-result', report);
   }
   assert.equal(state(ws).qa, undefined, 'no report path was recorded');
+  // A symbolic link inside the folder reaches outside it: the report must be a regular file.
+  fs.mkdirSync(path.join(ws.root, 'reviews', 'GH-16'), { recursive: true });
+  fs.writeFileSync(path.join(ws.root, 'reviews', 'GH-16', 'secret.env'), 'TOKEN=x\n');
+  let linked = false;
+  try {
+    fs.symlinkSync(path.join('..', '..', 'reviews', 'GH-16', 'secret.env'), path.join(ws.root, 'reviews', 'GH-16', 'QA-REPORT.md'), 'file');
+    linked = true;
+  } catch { /* a Windows checkout without symlink rights: the lstat rule is covered by the next check */ }
+  if (linked) {
+    const r = run(ws, ['end', 'GH-16', 'qa', '--result', JSON.stringify({ ok: true, verdict: 'PASS', report: 'reviews/GH-16/QA-REPORT.md' })]);
+    assert.equal(r.code, 2, r.stdout);
+    assert.equal(r.json.error.code, 'bad-result');
+    fs.unlinkSync(path.join(ws.root, 'reviews', 'GH-16', 'QA-REPORT.md'));
+  }
+  fs.mkdirSync(path.join(ws.root, 'reviews', 'GH-16', 'QA-REPORT.md'));
+  const dir = run(ws, ['end', 'GH-16', 'qa', '--result', JSON.stringify({ ok: true, verdict: 'PASS', report: 'reviews/GH-16/QA-REPORT.md' })]);
+  assert.equal(dir.code, 2, 'a directory is not a report');
+  assert.equal(dir.json.error.code, 'bad-result');
 });
 
 test('pr refuses after a QA FAIL verdict', () => {

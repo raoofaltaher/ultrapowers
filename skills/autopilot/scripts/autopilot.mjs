@@ -496,7 +496,10 @@ async function postReport(ctx, opts, state, prs, qaOn, stage = 'pr') {
   state.report = state.report ?? { ticketCommentUrl: null, prComments: {} };
   const logHead = readState(ctx.root, opts.id).logHead ?? '';
   let body;
-  if (state.qa?.report) body = readText(path.join(ctx.root, state.qa.report)) || `QA verdict ${state.qa.verdict}; the report at ${state.qa.report} is empty`;
+  if (state.qa?.report) {
+    assertReportPath(ctx, opts.id, state.qa.report);
+    body = readText(path.join(ctx.root, state.qa.report)) || `QA verdict ${state.qa.verdict}; the report at ${state.qa.report} is empty`;
+  }
   else body = qaOn ? 'QA: skipped' : 'QA: not configured for this project';
   const text = readText(REPORT_TEMPLATE)
     .replace('{{ID}}', opts.id)
@@ -785,9 +788,7 @@ async function runEnd(opts) {
     const report = typeof result.report === 'string' && result.report ? result.report.replace(/\\/g, '/') : `reviews/${opts.id}/QA-REPORT.md`;
     // The engine posts this file on the ticket and the pull requests, so a stage's result may
     // only name a markdown file inside the ticket's own reviews folder, with no path step out.
-    if (!new RegExp(`^reviews/${opts.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/[A-Za-z0-9._-]+\\.md$`).test(report) || report.includes('/../')) {
-      throw new AutopilotError('bad-result', `${opts.id}: the QA report must be a .md file under reviews/${opts.id}/, not ${report}`);
-    }
+    assertReportPath(ctx, opts.id, report);
     verdict = committedVerdict(ctx, report);
     if (!verdict && !qaConfigured(ctx.marker) && typeof result.verdict === 'string') verdict = result.verdict;
     if (verdict) state.qa = { verdict, report };
@@ -843,6 +844,28 @@ async function runEnd(opts) {
 
 // The Verdict line of a QA report as committed on HEAD of the documents branch; null when the
 // file is not committed or carries no verdict.
+// The report a stage names is posted on the ticket and the pull requests, so it may only be a
+// markdown file directly under the ticket's reviews folder, and, where it exists in the working
+// tree, a regular file that resolves inside that folder: no path step out, no symbolic link, no
+// directory.
+function assertReportPath(ctx, id, report) {
+  const folder = `reviews/${id}/`;
+  const name = report.startsWith(folder) ? report.slice(folder.length) : '';
+  if (!/^[A-Za-z0-9._-]+\.md$/.test(name)) {
+    throw new AutopilotError('bad-result', `${id}: the QA report must be a .md file under ${folder}, not ${report}`);
+  }
+  const full = path.join(ctx.root, report);
+  const stat = fs.lstatSync(full, { throwIfNoEntry: false });
+  if (!stat) return;
+  let inside = false;
+  try {
+    inside = stat.isFile() && fs.realpathSync(full).startsWith(fs.realpathSync(path.join(ctx.root, 'reviews', id)) + path.sep);
+  } catch {
+    inside = false;
+  }
+  if (!inside) throw new AutopilotError('bad-result', `${id}: ${report} is not a regular file inside ${folder}`);
+}
+
 function committedVerdict(ctx, report) {
   const r = git(ctx.dirs.docs, ['show', `HEAD:${report.replace(/\\/g, '/')}`]);
   if (!r.ok) return null;
