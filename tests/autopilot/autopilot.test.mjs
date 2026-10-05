@@ -451,6 +451,23 @@ test('pr posts the QA report on the ticket and on every pull request', () => {
   assert.ok(logLines(ws).some((l) => l.event === 'report posted'));
 });
 
+// A QA stop opens no pull request, so the report would otherwise never reach the ticket: the
+// stop posts it once, and a later next does not post it again.
+test('a QA stop posts the report on the ticket once', () => {
+  const ws = workspace({ nested: true, qa: true });
+  nestedThroughQa(ws, 'FAIL');
+  const first = run(ws, ['next', 'GH-16']);
+  assert.deepEqual([first.json.action, first.json.reason], ['stop', 'qa-FAIL']);
+  const second = run(ws, ['next', 'GH-16']);
+  assert.deepEqual([second.json.action, second.json.reason], ['stop', 'qa-FAIL']);
+  const reports = commentBodies(ws).filter((b) => /Verdict: FAIL/.test(b));
+  assert.equal(reports.length, 1, 'the report is on the ticket exactly once');
+  assert.match(reports[0], /Packet id [0-9a-f]{12}[\s\S]*approved by alice/);
+  assert.match(state(ws).report.ticketCommentUrl, /issuecomment/);
+  assert.equal(logLines(ws).filter((l) => l.event === 'report posted').length, 1);
+  assert.equal(prComments(ws).length, 0);
+});
+
 test('without a QA stage the report is one line', () => {
   const ws = workspace();
   throughPlan(ws);

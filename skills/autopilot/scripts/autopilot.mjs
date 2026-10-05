@@ -306,6 +306,10 @@ async function runNext(opts) {
   if (answer.reason === 'drift' && approval && approval.reason === 'drift') await voidApproval(ctx, state, approval, opts.door);
   if (answer.action === 'wait' && answer.reason !== 'locked') await removeRunning(ctx);
   if (answer.action === 'done' || answer.action === 'stop') await removeRunning(ctx);
+  // A QA stop opens no pull request, so the report goes on the ticket from here, once.
+  if (answer.action === 'stop' && /^qa-/.test(answer.reason) && state?.qa?.report && !state.report?.ticketCommentUrl) {
+    await postReport(ctx, opts, state, {}, qaConfigured(ctx.marker), 'qa');
+  }
   return { ...answer, ticket: opts.id, mode, approval, state: readState(ctx.root, opts.id) };
 }
 
@@ -488,7 +492,7 @@ function forgeOf(ctx, name, dir) {
 // After the pull requests open, the QA report goes on the ticket and on every pull request, each
 // headed by the packet id, the approver and the log head (spec 2026-10-05 §8). Every post is saved
 // as it lands, so a stage blocked halfway resumes with the missing ones only.
-async function postReport(ctx, opts, state, prs, qaOn) {
+async function postReport(ctx, opts, state, prs, qaOn, stage = 'pr') {
   state.report = state.report ?? { ticketCommentUrl: null, prComments: {} };
   const logHead = readState(ctx.root, opts.id).logHead ?? '';
   let body;
@@ -511,8 +515,8 @@ async function postReport(ctx, opts, state, prs, qaOn) {
     state.report.prComments[name] = await trackerFor(forgeOf(ctx, name, dir), process.env).prComment(prUrl, text);
     writeState(ctx.root, opts.id, state);
   }
-  if (!readLog(ctx.root, opts.id).some((l) => l.stage === 'pr' && l.event === 'report posted')) {
-    appendLog(ctx.root, opts.id, { stage: 'pr', event: 'report posted', actor: 'engine', trigger: opts.door, repo: 'docs', url: state.report.ticketCommentUrl });
+  if (!readLog(ctx.root, opts.id).some((l) => l.event === 'report posted')) {
+    appendLog(ctx.root, opts.id, { stage, event: 'report posted', actor: 'engine', trigger: opts.door, repo: 'docs', url: state.report.ticketCommentUrl });
     state.logHead = readState(ctx.root, opts.id).logHead;
   }
 }
