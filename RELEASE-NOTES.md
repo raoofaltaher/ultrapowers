@@ -1,5 +1,45 @@
 # Ultrapowers Release Notes
 
+## v1.3.0 (2026-10-05)
+
+Odoo as an autopilot tracker: the tag on the task starts the run, the packet and the QA report are log notes, the pull requests open on your forge.
+
+Teams that track work in Odoo tasks rather than GitHub or GitLab issues can now run autopilot from the task. The engine talks to the Odoo server's own JSON-RPC API with one key you issue; the approval is a tag an internal user adds; the review packet and the QA report are internal log notes on the task; and the pull requests open on whichever forge each repository's `origin` remote names. Everything that worked for GitHub and GitLab issues in 1.2.0 keeps working unchanged.
+
+**Heads up:** an Odoo source that autopilot will run needs the technical user's `login` (and `db` when the server hosts several databases): `/ultrapowers:init tickets` asks for them, and `init autopilot` creates the six `Ultrapowers …` tags on the project after your yes. The key lives in `ODOO_API_KEY`, in your environment or in `.agents/mcp-secrets.env` (gitignored), the one Odoo variable for the engine and its stages alike. Upgrade mode finds no changed template; answer `--apply none`.
+
+### Who it is for
+
+Teams whose tickets live in Odoo's Project app, and anyone whose code repositories live on a different forge than their tickets.
+
+### What is new
+
+- **Odoo as a tracker.** `/ultrapowers:autopilot ODOO-1203`, or the task's URL, runs the ticket through the same stages and gates. The engine reads the task, its tags and its chatter over JSON-RPC, posts the packet as an internal note with clickable links, and reads the approve tag from the chatter's tracking values; when the server keeps those for administrators only (Odoo 19 does), the tag is attributed to the task's last writer and the log says so. Only internal users in the Project User or Project Manager group count; a portal user's tag is refused.
+- **The forge is the repository's remote.** Each repository's pull request opens on the forge its `origin` points to, GitHub through `gh` or GitLab through `glab`, whatever the ticket source is. A repository without a GitHub or GitLab remote stops the run with `no-forge`.
+- **The rich ticket read, for every provider.** The brief's source file now carries the ticket's messages, its attachments (downloaded up to `tickets.attachmentMaxBytes`, default 10 MB, or listed at their address when they are larger or kept outside the tracker) and every link they hold; brainstorm-task reads them all before the first question, through the harness's web reader or the Firecrawl MCP server, and lists them in the grounding manifest.
+- **The QA report on the ticket and the pull requests.** After the pull requests open, the full QA report is posted on the ticket and as a comment on every pull request, headed by the packet id, the approver and the stage log head. A QA stop posts the report on the ticket too, so the human reads why the run stopped.
+- **The guardrail knows Odoo.** During a stage the MCP write verbs of an Odoo server (`call_model_method`, `execute_kw`, `update_record`, `post_message`) and any `curl`, `wget` or `Invoke-WebRequest` to a configured ticket source's host are denied; reads pass.
+- **A headless Claude Code stage loads the engine's own plugin checkout** (`--plugin-dir`), so its skills and its guardrail are the engine's version on any host.
+- **Init.** Ticket sources ask for the Odoo login and database; autopilot proposes the readable tag names for an Odoo-only project and creates the tags; the secrets example names `ODOO_API_KEY` once.
+
+### What was verified, and how
+
+| | Verified |
+|---|---|
+| Live, the Owner's workspace | Odoo 19 as the tracker in a nested workspace of eleven repositories with self-hosted GitLab remotes: init creating the tags and the labels; the session door from a task URL through scaffold, spec, plan and the packet as a log note, the approval by tag, execute in two repositories' worktrees, and the QA stage's PRECONDITION-FAILED stop with the report on the task; the watcher on the Owner's VM from the Ready tag through the headless scaffold, spec and plan stages to the packet, and its self-approval rule refusing the watcher's own account (`tests/autopilot/acceptance-2026-10.md`) |
+| Offline suites, every commit | The engine against a fake Odoo server (tags, tracking and last-writer attribution, permissions, notes, the watcher cycle, the URL id, the secrets file), the tracker and the forge rule, the fetch step's messages, attachments and links, init's Odoo questions and tags, the guardrail's Odoo cases, the pressure scenarios P1 to P3 |
+| Not yet run live | Headless execute and QA stages, the changes loop, pull requests opened by the engine on GitLab, full mode |
+
+### Found during the live run, fixed in this release
+
+Odoo 19 renames the user groups field and restricts the tracking values to administrators; its cloud storage module keeps attachments outside the database; `message_post` escapes a plain body; the packet showed the documents base for code repositories; a QA stop left the ticket without the report; a stage's report path was posted unchecked; a headless stage ran with the host's plugins. Each has a test.
+
+### Not in this release
+
+- A second gate on the pull request with the engine merging on your label, and the QA fix loop.
+- Approval from Odoo portal users or by message; a CI door; per-ticket lanes.
+- A switch to skip the in-run QA gate for a team whose QA runs after the merge: today the QA stage runs whenever `qa.urls` is set.
+
 ## v1.2.1 (2026-10-04)
 
 A patch release with no change to the plugin's behaviour.

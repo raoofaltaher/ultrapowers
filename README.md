@@ -97,7 +97,7 @@ There's a bunch more to it, but that's the core of the system. And because the s
 |---|---|---|---|
 | Manual | Run each skill, answer questions, approve spec and plan, choose merge. | Reads your code, drafts spec and plan, codes test-first, reviews each task. | Every supported harness, as in earlier releases. |
 | One command (`/ultrapowers:autopilot <ticket>`) | Approve spec and plan with one label; review and merge the PR. | Spec, plan, then test-first code and reviews; the engine opens the PR. | Live: Claude Code, GitHub, one repo, gated; issue 16 became PR 20. |
-| Watcher *(beta)* | Run it on a disposable host; then label tickets and merge PRs. | Same stages as One command, started from a ticket label. | Offline tests and vendor documentation only; no live run yet. |
+| Watcher *(beta)* | Run it on a disposable host; then label tickets and merge PRs. | Same stages as One command, started from a ticket label. | Run live once on Claude Code with Odoo, from the tag to the review packet; the rest offline tests and vendor documentation. |
 
 ### How you stay in control
 
@@ -125,7 +125,7 @@ Rows assume `gated`, the default mode. During a stage, a guardrail hook denies t
 
 **What leaves our network?** No telemetry: the plugin opens no connection itself. Your agent calls its model provider; `gh`, `glab` and git reach GitHub or GitLab with your tokens; with an Odoo source, the autopilot engine calls your own Odoo server's JSON-RPC API with the key you issued.
 
-**What has been verified?** Live: one GitHub ticket on Claude Code, gated. Offline: 54 engine scenarios, 120 guardrail cases. Not yet run: watcher, GitLab, full mode, in-run QA.
+**What has been verified?** Live: one GitHub ticket on Claude Code, gated, in the first autopilot release; in this release one Odoo task on Claude Code in a nested workspace with GitLab remotes, gated, through the session door to a QA stop and through the watcher to the review packet. Offline: the engine against fake trackers and a fake Odoo, the guardrail cases, the init modes. Not yet run live: headless execute and QA stages, the changes loop, pull requests opened by the engine on GitLab, full mode.
 
 ## Installation
 

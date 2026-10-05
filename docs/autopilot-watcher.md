@@ -70,7 +70,7 @@ The minimum for a professional team, in the order the executive review set it:
 6. One test stage per host before the first real ticket: label a throwaway issue `up:ready`, let the stage run, and read the stage log and the guardrail denials in the harness transcript; a stage that can push has no envelope on that host.
 7. `maxConcurrent` at 1, and the kill switch (`.ultrapowers/autopilot-stop`) and `up:hold` known to everyone who can label a ticket.
 
-What has run live so far is the session door on Claude Code with GitHub, one repository, gated mode, inline execution, without a QA stage (`tests/autopilot/acceptance-2026-10.md`). The watcher, GitLab, nested workspaces, full mode, stage tokens, the changes loop and the QA stage are covered by the offline suites and by each vendor's documentation, not yet by a public run.
+What has run live so far (`tests/autopilot/acceptance-2026-10.md`): the session door on Claude Code with GitHub, one repository, gated, inline, without a QA stage (1.2.0); and with Odoo as the tracker in a nested workspace whose remotes are on a self-hosted GitLab, gated, inline, through execute and a QA stop (1.3.0); and the watcher on a developer's VM with Odoo, from the Ready tag through the headless scaffold, spec and plan stages to the packet, where its self-approval rule held (1.3.0). Headless execute and QA stages, the changes loop, pull requests opened by the engine on GitLab, full mode and stage tokens are covered by the offline suites and by each vendor's documentation, not yet by a public run.
 
 ## The host
 
