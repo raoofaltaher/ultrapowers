@@ -782,7 +782,12 @@ async function runEnd(opts) {
   if (opts.stage === 'qa') {
     // The verdict is read from the committed report, not taken from the result: the gate fails
     // closed when QA is configured and no committed report carries a Verdict line.
-    const report = typeof result.report === 'string' && result.report ? result.report : `reviews/${opts.id}/QA-REPORT.md`;
+    const report = typeof result.report === 'string' && result.report ? result.report.replace(/\\/g, '/') : `reviews/${opts.id}/QA-REPORT.md`;
+    // The engine posts this file on the ticket and the pull requests, so a stage's result may
+    // only name a markdown file inside the ticket's own reviews folder, with no path step out.
+    if (!new RegExp(`^reviews/${opts.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/[A-Za-z0-9._-]+\\.md$`).test(report) || report.includes('/../')) {
+      throw new AutopilotError('bad-result', `${opts.id}: the QA report must be a .md file under reviews/${opts.id}/, not ${report}`);
+    }
     verdict = committedVerdict(ctx, report);
     if (!verdict && !qaConfigured(ctx.marker) && typeof result.verdict === 'string') verdict = result.verdict;
     if (verdict) state.qa = { verdict, report };

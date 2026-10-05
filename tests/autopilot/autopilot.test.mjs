@@ -318,6 +318,25 @@ test('pr refuses before approval, then opens the docs PR and posts the closing c
   assert.deepEqual([run(ws, ['next', 'GH-16']).json.action, run(ws, ['next', 'GH-16']).json.reason], ['done', 'pr-finished']);
 });
 
+// The report path comes from the stage's result and the engine posts that file on the ticket
+// and the pull requests: it must be a markdown file under the ticket's reviews folder.
+test('end qa refuses a report path outside reviews/<ID>/', () => {
+  const ws = workspace();
+  throughPlan(ws);
+  run(ws, ['packet', 'GH-16']);
+  ws.setMap(approvedBy('alice'));
+  run(ws, ['next', 'GH-16']);
+  run(ws, ['begin', 'GH-16', 'execute']);
+  run(ws, ['end', 'GH-16', 'execute', '--result', JSON.stringify({ ok: true })]);
+  run(ws, ['begin', 'GH-16', 'qa']);
+  for (const report of ['../.agents/mcp-secrets.env', 'reviews/GH-16/../../.env', 'reviews/GH-17/QA-REPORT.md', 'reviews/GH-16/notes.txt']) {
+    const r = run(ws, ['end', 'GH-16', 'qa', '--result', JSON.stringify({ ok: true, verdict: 'PASS', report })]);
+    assert.equal(r.code, 2, `${report}: ${r.stdout}`);
+    assert.equal(r.json.error.code, 'bad-result', report);
+  }
+  assert.equal(state(ws).qa, undefined, 'no report path was recorded');
+});
+
 test('pr refuses after a QA FAIL verdict', () => {
   const ws = workspace();
   throughPlan(ws);
