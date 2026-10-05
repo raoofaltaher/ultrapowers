@@ -231,7 +231,9 @@ test('a cli-only source gets no MCP server; a self-hosted GitLab uses its host',
 
 test('ticketSecretLines names each token variable once', () => {
   const names = (t) => ticketSecretLines(t).map((l) => l.split('=')[0]);
-  assert.deepEqual(names(ticketsExample()), ['GH_TOKEN', 'GITLAB_TOKEN']);
+  // An Odoo source always names ODOO_API_KEY: the autopilot engine signs in with it whatever
+  // the MCP server's sign-in is, and it is the one Odoo key.
+  assert.deepEqual(names(ticketsExample()), ['GH_TOKEN', 'GITLAB_TOKEN', 'ODOO_API_KEY']);
   const t = ticketsExample();
   t.sources[2].mcpHeader = 'Authorization: Bearer';
   t.sources.push({ prefix: 'GH2', provider: 'github', owner: 'other' });
