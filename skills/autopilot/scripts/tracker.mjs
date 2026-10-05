@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import { execFile } from 'node:child_process';
 import { AutopilotError } from './autopilot-lib.mjs';
-import { createOdooClient, htmlToText, textToNoteHtml, tagEventsFromTracking, lastWriterEvents, odooColorIndex, odooIso } from './odoo.mjs';
+import { createOdooClient, htmlToText, textToNoteHtml, markdownToNoteHtml, tagEventsFromTracking, lastWriterEvents, odooColorIndex, odooIso } from './odoo.mjs';
 
 const CLI = {
   github: { name: 'gh', env: 'ULTRAPOWERS_GH' },
@@ -459,10 +459,13 @@ class OdooTracker {
     return (user[groupsField] ?? []).some((g) => groups.includes(g)) ? 'write' : 'read';
   }
 
-  // Odoo 17 and later escape a plain string body, so the note's markup is sent with
-  // body_is_html; an older server that does not know the argument gets the body alone.
-  async comment(number, body) {
-    const kwargs = { body: textToNoteHtml(body), message_type: 'comment', subtype_xmlid: 'mail.mt_note' };
+  // A note is markdown rendered to HTML, so a report reads as a report in the chatter; the
+  // packet, whose columns are aligned, asks for `preformatted` and keeps its pre block. Odoo 17
+  // and later escape a plain string body, so the markup is sent with body_is_html; an older
+  // server that does not know the argument gets the body alone.
+  async comment(number, body, { preformatted = false } = {}) {
+    const html = preformatted ? textToNoteHtml(body) : markdownToNoteHtml(body);
+    const kwargs = { body: html, message_type: 'comment', subtype_xmlid: 'mail.mt_note' };
     let id;
     try {
       id = await this.call('project.task', 'message_post', [[Number(number)]], { ...kwargs, body_is_html: true });

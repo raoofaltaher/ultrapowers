@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startOdooFake, seed } from './fixtures/odoo-fake.mjs';
 import {
-  createOdooClient, discoverDb, htmlToText, textToNoteHtml, parseOdooTaskUrl, splitTagNames,
+  createOdooClient, discoverDb, htmlToText, textToNoteHtml, markdownToNoteHtml, parseOdooTaskUrl, splitTagNames,
   tagEventsFromTracking, lastWriterEvents, odooColorIndex, odooIso,
 } from '../../skills/autopilot/scripts/odoo.mjs';
 
@@ -68,6 +68,30 @@ test('htmlToText keeps paragraphs and drops script, style and data URIs', () => 
 
 test('textToNoteHtml escapes and links', () => {
   assert.equal(textToNoteHtml('a <b> https://x.y/z'), '<pre style="white-space:pre-wrap">a &lt;b&gt; <a href="https://x.y/z">https://x.y/z</a></pre>');
+});
+
+// A QA report is markdown; Odoo's chatter shows HTML, so the note carries the markdown's
+// structure: headings, tables, lists, code, links, with the text escaped.
+test('markdownToNoteHtml renders headings, paragraphs and inline marks', () => {
+  const html = markdownToNoteHtml('# QA report — X\n\nVerdict: **PASS** — all `3` lanes <ok>\nsecond line\n\n## Lanes');
+  assert.match(html, /^<h2>QA report — X<\/h2>/);
+  assert.match(html, /<p>Verdict: <strong>PASS<\/strong> — all <code>3<\/code> lanes &lt;ok&gt;<br>second line<\/p>/);
+  assert.match(html, /<h3>Lanes<\/h3>$/);
+});
+
+test('markdownToNoteHtml renders a pipe table with its header row', () => {
+  const html = markdownToNoteHtml('| Field | Value |\n|---|---|\n| Ticket | X-1 |\n| Date | 2026 |');
+  assert.match(html, /^<table class="table table-sm">/);
+  assert.match(html, /<thead><tr><th>Field<\/th><th>Value<\/th><\/tr><\/thead>/);
+  assert.match(html, /<tbody><tr><td>Ticket<\/td><td>X-1<\/td><\/tr><tr><td>Date<\/td><td>2026<\/td><\/tr><\/tbody><\/table>$/);
+  assert.doesNotMatch(html, /---/);
+});
+
+test('markdownToNoteHtml renders lists, fenced code and links', () => {
+  const html = markdownToNoteHtml('Pull requests\n- docs: https://g/x/pull/1\n- web: see [the PR](https://g/y/pull/2)\n\n1. first\n2. second\n\n```\ncurl -s <url>\n```');
+  assert.match(html, /<ul><li>docs: <a href="https:\/\/g\/x\/pull\/1">https:\/\/g\/x\/pull\/1<\/a><\/li><li>web: see <a href="https:\/\/g\/y\/pull\/2">the PR<\/a><\/li><\/ul>/);
+  assert.match(html, /<ol><li>first<\/li><li>second<\/li><\/ol>/);
+  assert.match(html, /<pre>curl -s &lt;url&gt;<\/pre>$/);
 });
 
 test('parseOdooTaskUrl reads project and task from the three shapes', () => {

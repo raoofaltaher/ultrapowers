@@ -439,7 +439,9 @@ async function postPacket(ctx, opts, state) {
   };
   const repoBases = Object.fromEntries((ctx.marker.repos ?? []).filter((r) => r?.name && r.defaultBranch).map((r) => [r.name, r.defaultBranch]));
   const body = renderPacket(readText(PACKET_TEMPLATE), { state, links, assumptions: assumptionsFrom(specText), events: ctx.settings.events, baseAhead: ahead, repoBases });
-  const commentUrl = await ctx.tracker.comment(ctx.source.number, body);
+  // The packet's columns are aligned: on Odoo it keeps a preformatted block (the other trackers
+  // take the text as it is).
+  const commentUrl = await ctx.tracker.comment(ctx.source.number, body, { preformatted: true });
   // The packet time is the tracker's clock, the same clock that stamps the label events.
   const postedAt = (await ctx.tracker.commentTime(commentUrl).catch(() => null)) ?? new Date().toISOString();
   state.packet = { commentUrl, docsTip, tips, postedAt };

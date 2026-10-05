@@ -134,10 +134,92 @@ function escapeHtml(text) {
   return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// Pre-formatted text (a packet, a report) as a log note: escaped, line breaks kept, URLs clickable.
+// Pre-formatted text (the packet, whose columns are aligned) as a log note: escaped, line
+// breaks kept, URLs clickable.
 export function textToNoteHtml(text) {
-  const escaped = escapeHtml(text).replace(/https?:\/\/[^\s<"']+/g, (url) => `<a href="${url}">${url}</a>`);
-  return `<pre style="white-space:pre-wrap">${escaped}</pre>`;
+  return `<pre style="white-space:pre-wrap">${linkUrls(escapeHtml(text))}</pre>`;
+}
+
+function linkUrls(escaped) {
+  return escaped.replace(/https?:\/\/[^\s<"']+/g, (url) => `<a href="${url}">${url}</a>`);
+}
+
+// Inline markdown on an escaped line: links, bare URLs, code, bold, italics. A markdown link's
+// address is set aside first so the bare-URL pass does not link it twice.
+function inlineMarkdown(escaped) {
+  const links = [];
+  let s = escaped.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (m, text, url) => {
+    links.push(`<a href="${url}">${text}</a>`);
+    return `\u0000${links.length - 1}\u0000`;
+  });
+  s = linkUrls(s);
+  s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/(^|[\s(])\*([^*\s][^*]*?)\*(?=[\s).,;:!?]|$)/g, '$1<em>$2</em>');
+  return s.replace(/\u0000(\d+)\u0000/g, (m, i) => links[Number(i)]);
+}
+
+// A markdown document (a QA report, a closing comment) as a log note: headings, pipe tables,
+// lists, fenced code and paragraphs, every text escaped. Odoo's chatter shows HTML; markdown
+// posted as text appears raw.
+export function markdownToNoteHtml(markdown) {
+  const lines = String(markdown ?? '').replace(/\r\n?/g, '\n').split('\n');
+  const out = [];
+  let paragraph = [];
+  let list = null;
+  const flushParagraph = () => {
+    if (paragraph.length) out.push(`<p>${paragraph.map((l) => inlineMarkdown(escapeHtml(l))).join('<br>')}</p>`);
+    paragraph = [];
+  };
+  const flushList = () => {
+    if (list) out.push(`<${list.tag}>${list.items.map((i) => `<li>${inlineMarkdown(escapeHtml(i))}</li>`).join('')}</${list.tag}>`);
+    list = null;
+  };
+  const isTableLine = (l) => /^\s*\|.*\|\s*$/.test(l);
+  const isSeparator = (l) => /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/.test(l);
+  const cells = (l) => l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => inlineMarkdown(escapeHtml(c.trim())));
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^```/.test(line)) {
+      flushParagraph(); flushList();
+      const code = [];
+      i++;
+      while (i < lines.length && !/^```/.test(lines[i])) code.push(lines[i++]);
+      out.push(`<pre>${escapeHtml(code.join('\n'))}</pre>`);
+      continue;
+    }
+    if (isTableLine(line) && i + 1 < lines.length && isSeparator(lines[i + 1])) {
+      flushParagraph(); flushList();
+      const head = cells(line);
+      const rows = [];
+      i += 2;
+      while (i < lines.length && isTableLine(lines[i])) rows.push(cells(lines[i++]));
+      i--;
+      out.push(`<table class="table table-sm"><thead><tr>${head.map((c) => `<th>${c}</th>`).join('')}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`);
+      continue;
+    }
+    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (heading) {
+      flushParagraph(); flushList();
+      const level = Math.min(heading[1].length + 1, 6);
+      out.push(`<h${level}>${inlineMarkdown(escapeHtml(heading[2].trim()))}</h${level}>`);
+      continue;
+    }
+    const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
+    const numbered = /^\s*\d+[.)]\s+(.*)$/.exec(line);
+    if (bullet || numbered) {
+      flushParagraph();
+      const tag = bullet ? 'ul' : 'ol';
+      if (!list || list.tag !== tag) { flushList(); list = { tag, items: [] }; }
+      list.items.push((bullet ?? numbered)[1]);
+      continue;
+    }
+    if (!line.trim()) { flushParagraph(); flushList(); continue; }
+    flushList();
+    paragraph.push(line);
+  }
+  flushParagraph(); flushList();
+  return out.join('');
 }
 
 // An Odoo task URL in its three shapes; null for anything else.

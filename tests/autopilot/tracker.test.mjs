@@ -228,17 +228,27 @@ test('odoo comments are the human messages after since, as text', async () => {
   assert.deepEqual(c, [{ id: '50', author: 'val', at: '2026-10-02T18:39:00Z', body: 'will have kick off today, got access from clients', url: '' }]);
 });
 
-test('odoo comment posts an internal note and commentTime reads it back', async () => {
+test('odoo comment posts an internal note, markdown rendered, and commentTime reads it back', async () => {
   const f = await odooFake();
   const t = trackerFor(ODOO(f), E_ODOO);
-  const url = await t.comment(13627, 'Packet\n  brief https://d/x');
+  const url = await t.comment(13627, '# QA report\n\n| Field | Value |\n|---|---|\n| Ticket | X |\n\nVerdict: **PASS** https://d/x');
   assert.match(url, /web#model=project\.task&id=13627&message=\d+$/);
   const post = f.seed.writes.at(-1);
   assert.equal(post.method, 'message_post');
   assert.equal(post.kwargs.subtype_xmlid, 'mail.mt_note');
   assert.equal(post.kwargs.body_is_html, true, 'Odoo 17+ escapes a plain body; the note is HTML');
-  assert.match(post.kwargs.body, /<pre[^>]*>Packet\n  brief <a href="https:\/\/d\/x">/);
+  assert.match(post.kwargs.body, /^<h2>QA report<\/h2><table/);
+  assert.match(post.kwargs.body, /<strong>PASS<\/strong> <a href="https:\/\/d\/x">/);
+  assert.doesNotMatch(post.kwargs.body, /<pre/);
   assert.equal(await t.commentTime(url), f.seed.messages.at(-1).dateIso);
+});
+
+test('odoo comment keeps a preformatted body, the packet, in a pre block', async () => {
+  const f = await odooFake();
+  const t = trackerFor(ODOO(f), E_ODOO);
+  await t.comment(13627, 'Packet\n  brief https://d/x', { preformatted: true });
+  const post = f.seed.writes.at(-1);
+  assert.match(post.kwargs.body, /^<pre[^>]*>Packet\n  brief <a href="https:\/\/d\/x">/);
 });
 
 test('odoo comment falls back to a plain message_post on a server without body_is_html', async () => {
@@ -249,7 +259,7 @@ test('odoo comment falls back to a plain message_post on a server without body_i
   const post = f.seed.writes.at(-1);
   assert.equal(post.method, 'message_post');
   assert.ok(!('body_is_html' in post.kwargs));
-  assert.match(post.kwargs.body, /<pre/);
+  assert.equal(post.kwargs.body, '<p>Packet</p>');
 });
 
 test('odoo addLabel creates a missing tag then writes it; removeLabel removes it', async () => {
