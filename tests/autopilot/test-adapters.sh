@@ -43,7 +43,7 @@ contract() {
 }
 
 # The same flags as harnesses.mjs, written out so a drift in either place shows here.
-contract claude-code claude -p PROMPT --permission-mode bypassPermissions --max-turns 1 --output-format json
+contract claude-code claude -p PROMPT --permission-mode bypassPermissions --max-turns 1 --output-format json --plugin-dir "$REPO_ROOT"
 contract codex codex exec --json --dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust --skip-git-repo-check --ignore-user-config PROMPT
 contract copilot copilot -p PROMPT --allow-all-tools --no-ask-user --output-format json -s --disable-builtin-mcps
 contract cursor agent -p --force --trust --output-format json PROMPT

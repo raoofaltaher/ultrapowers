@@ -82,7 +82,7 @@ A headless stage runs the coding agent with permission prompts bypassed. Inside 
 
 | `harness` | CLI | What the stage loads |
 |---|---|---|
-| `claude-code` | `claude -p` | only the project's `.mcp.json` servers (`--strict-mcp-config`) |
+| `claude-code` | `claude -p` | only the project's `.mcp.json` servers (`--strict-mcp-config`); the engine's own plugin checkout (`--plugin-dir`), so the stage's skills and guardrail are the engine's version whether or not the host has the plugin enabled |
 | `codex` | `codex exec` | `--ignore-user-config`: the project's `.codex/config.toml` only; `--dangerously-bypass-hook-trust` runs the plugin's guardrail hook without the interactive trust step |
 | `copilot` | `copilot -p` | `--disable-builtin-mcps` |
 | `cursor` | `agent -p` | the project's MCP configuration |

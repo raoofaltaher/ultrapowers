@@ -429,7 +429,7 @@ Autopilot needs a GitHub, GitLab or Odoo source in `tickets`; an Odoo source nee
 
 | Harness | The guardrail during a session stage | A watcher stage (`autopilot.harness`) | Notes |
 |---|---|---|---|
-| Claude Code | plugin hook `hooks/hooks.json` (PreToolUse) | yes | Verified live (the session door, GitHub). Only the project's `.mcp.json` servers load into a headless stage. A hook that crashes or exceeds its timeout is non-blocking in Claude Code; the deny path is exit 2 |
+| Claude Code | plugin hook `hooks/hooks.json` (PreToolUse) | yes | Verified live (the session door, GitHub and Odoo). Only the project's `.mcp.json` servers load into a headless stage, and the stage loads the engine's own plugin checkout (`--plugin-dir`), so its skills and hook are the engine's version on any host. A hook that crashes or exceeds its timeout is non-blocking in Claude Code; the deny path is exit 2 |
 | Codex | plugin hook `hooks/hooks-codex.json` | yes | Trust the plugin's hooks once with `/hooks`; the watcher passes `--dangerously-bypass-hook-trust`. Edits through `apply_patch` are checked file by file |
 | GitHub Copilot CLI | plugin hook `hooks/hooks.json` | yes | A failing hook denies the call |
 | Cursor | plugin hook `hooks/hooks-cursor.json`, `failClosed` | yes (`agent -p`) | |

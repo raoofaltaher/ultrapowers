@@ -15,7 +15,10 @@ export const HARNESSES = {
   'claude-code': {
     bin: 'claude',
     env: 'ULTRAPOWERS_CLAUDE',
-    args: (prompt, turns) => ['-p', prompt, '--permission-mode', 'bypassPermissions', '--max-turns', String(turns), '--output-format', 'json'],
+    // --plugin-dir: the stage loads the engine's own plugin checkout, so the skills its prompt
+    // names and the guardrail hook come from the same version as the engine, whether or not the
+    // host has the plugin enabled or installed from a marketplace.
+    args: (prompt, turns, ctx = {}) => ['-p', prompt, '--permission-mode', 'bypassPermissions', '--max-turns', String(turns), '--output-format', 'json', '--plugin-dir', ctx.pluginRoot ?? PLUGIN_ROOT],
   },
   codex: {
     bin: 'codex',

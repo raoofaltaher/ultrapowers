@@ -35,5 +35,10 @@ test('each adapter carries the prompt, bypasses its own prompts, and asks for ma
     assert.ok(!args.includes('--pure'), `${name}: --pure would drop the plugin`);
   }
   assert.ok(HARNESSES.pi.args(P, 1, { pluginRoot: '/plug' }).includes(path.join('/plug', '.pi', 'extensions', 'ultrapowers.ts')), 'pi loads this plugin extension explicitly');
+  // A headless Claude Code stage loads the engine's own plugin checkout: the skills the stage
+  // prompt names and the guardrail come from the same version as the engine, whether or not the
+  // host has the plugin enabled.
+  const cc = HARNESSES['claude-code'].args(P, 1, { pluginRoot: '/plug' });
+  assert.equal(cc[cc.indexOf('--plugin-dir') + 1], '/plug', `claude-code loads the engine's plugin: ${cc.join(' ')}`);
   assert.equal(HARNESSES['claude-code'].args(P, 7)[HARNESSES['claude-code'].args(P, 7).indexOf('--max-turns') + 1], '7');
 });
