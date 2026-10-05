@@ -643,10 +643,10 @@ test('the watcher polls an Odoo source and starts a tagged task', async () => {
 });
 
 // Odoo has one key, ODOO_API_KEY, for the engine and the stages alike (the Owner's decision):
-// the watcher starts on an Odoo-only source with that key and no stage token, and the stage
-// holds the same key, so the project's Odoo MCP server works inside it.
-test('the watcher starts on an Odoo-only source with ODOO_API_KEY alone and no stage token', async () => {
-  const ws = await odooWorkspace({ seed: READY_BY_VAL, autopilot: { mode: 'gated', baseBranch: 'main', watch: { sharedCredentials: false } } });
+// a stage holds the same key, so the project's Odoo MCP server works inside it. The stage
+// credential rule itself is unchanged: forge stage tokens, or sharedCredentials in writing.
+test('a watcher stage holds the one Odoo key when the project shares its credentials', async () => {
+  const ws = await odooWorkspace({ seed: READY_BY_VAL, autopilot: { mode: 'gated', baseBranch: 'main', watch: { sharedCredentials: true } } });
   const r = run(ws, ['watch', '--once'], headless(ws));
   assert.equal(r.code, 0, r.stdout + r.stderr);
   const ran = r.json.events.find((e) => e.event === 'ran');
@@ -655,6 +655,14 @@ test('the watcher starts on an Odoo-only source with ODOO_API_KEY alone and no s
   assert.ok(call, 'a stage ran');
   assert.equal(call.env.ODOO_API_KEY, 'k1');
   assert.ok(!call.env.ULTRAPOWERS_STAGE_ODOO_API_KEY, 'no second Odoo key reaches the stage');
+});
+
+test('an Odoo project without sharedCredentials still needs a forge stage token to start the watcher', async () => {
+  const ws = await odooWorkspace({ autopilot: { mode: 'gated', baseBranch: 'main', watch: { sharedCredentials: false } } });
+  const r = run(ws, ['watch', '--once'], headless(ws));
+  assert.equal(r.json.error?.code, 'stage-credentials-missing', r.stdout);
+  assert.match(r.json.error.message, /ULTRAPOWERS_STAGE_GH_TOKEN, ULTRAPOWERS_STAGE_GITLAB_TOKEN\)/);
+  assert.doesNotMatch(r.json.error.message, /ODOO/);
 });
 
 // ---- Task 13: headless run ----

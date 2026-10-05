@@ -363,6 +363,8 @@ test('attachments downloads under the cap, lists the rest, and write-source rend
   const root = odooProject(url);
   const f = run(root, ['fetch', 'ODOO-34-13627'], { ODOO_API_KEY: 'k1' });
   const from = path.join(root, 'ticket.json');
+  // A stale `file` from an earlier run must not survive a skip: write-source would list a path that is not there.
+  f.json.attachments[2].file = 'tasks/ODOO-34-13627/attachments/7-backlog.md';
   fs.writeFileSync(from, JSON.stringify(f.json));
   const r = run(root, ['attachments', 'ODOO-34-13627', '--from', from, '--max', '1000'], { ODOO_API_KEY: 'k1' });
   assert.equal(r.code, 0, r.stdout + r.stderr);
@@ -378,6 +380,7 @@ test('attachments downloads under the cap, lists the rest, and write-source rend
   assert.equal(updated.attachments[0].file, 'tasks/ODOO-34-13627/attachments/5-mockup.png');
   assert.equal(updated.attachments[1].reason, 'larger than 1000 bytes');
   assert.equal(updated.attachments[2].url, 'https://files.example.com/13627/backlog.md');
+  assert.equal(updated.attachments[2].file, undefined, 'a skipped attachment carries no file path');
   const w = run(root, ['write-source', 'ODOO-34-13627', '--from', from]);
   assert.equal(w.code, 0, w.stdout + w.stderr);
   const src = fs.readFileSync(path.join(root, 'tasks', 'ODOO-34-13627', 'source.md'), 'utf8');

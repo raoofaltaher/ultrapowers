@@ -912,12 +912,11 @@ function assertGuardedHarness(settings) {
 
 // A watcher's stages hold their own read-only tokens (D13). Without them a stage holds the
 // engine's write token, so the watcher refuses to start unless the project says so in writing.
-// Odoo is the exception: it has one key, so a project whose ticket sources are all Odoo starts
-// with ODOO_API_KEY alone; there is no forge token in the stage to protect with a second one.
-function assertStageCredentials(ctx) {
-  if (stageTokensConfigured() || ctx.settings.watch?.sharedCredentials) return;
-  const sources = ctx.marker.tickets?.sources ?? [];
-  if (sources.length && sources.every((s) => s.provider === 'odoo')) return;
+// The rule holds for an Odoo project too: its one key is shared by design, but the forge token
+// and the CLI logins the stage would inherit still need either a stage token or the project's
+// written sharedCredentials.
+function assertStageCredentials(settings) {
+  if (stageTokensConfigured() || settings.watch?.sharedCredentials) return;
   throw new AutopilotError('stage-credentials-missing', `the watcher starts only with read-only stage tokens in its environment (${STAGE_TOKEN_VARS.join(', ')}); to run its stages with the engine's own credentials, set autopilot.watch.sharedCredentials to true`);
 }
 
@@ -925,7 +924,7 @@ async function runRun(opts) {
   const base = { ...opts, door: 'watch', pid: process.pid };
   const ctx = context(base);
   assertGuardedHarness(ctx.settings);
-  assertStageCredentials(ctx);
+  assertStageCredentials(ctx.settings);
   const stages = [];
   const seen = {};
   let final = null;
@@ -1104,7 +1103,7 @@ async function runWatch(opts) {
   loadSecretsFile(root, process.env);
   if (settings.mode !== 'off') {
     assertGuardedHarness(settings);
-    assertStageCredentials({ settings, marker });
+    assertStageCredentials(settings);
   }
   if (settings.mode === 'off') {
     const events = [{ event: 'idle', reason: 'mode-off' }];

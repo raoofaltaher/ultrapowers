@@ -302,6 +302,7 @@ async function downloadAttachments(root, resolution, id, opts) {
   for (const a of list) {
     const skip = (reason) => {
       a.reason = reason;
+      delete a.file; // a path from an earlier run would name a file that is not there
       skipped.push({ name: a.name, url: a.url ?? '', reason });
     };
     if (resolution.provider !== 'odoo' || !Number.isInteger(a.id)) {
