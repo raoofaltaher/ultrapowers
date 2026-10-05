@@ -19,7 +19,7 @@ import {
   readState, writeState, appendLog, readLog, verifyChain,
   nextStage, acquireLock, releaseLock, liveLock, readLock, lockPath,
   writeActiveMarker, clearActiveMarker, readActiveMarker, verifyApproval,
-  renderPacket, assumptionsFrom, scopeFrom, freezeScope, pushAllowed, loadSecretsFile, packetId,
+  renderPacket, assumptionsFrom, scopeFrom, freezeScope, pushAllowed, loadSecretsFile, packetId, hashLine,
 } from './autopilot-lib.mjs';
 import { trackerFor } from './tracker.mjs';
 import { HARNESSES, GUARDED_HARNESSES, PLUGIN_ROOT } from './harnesses.mjs';
@@ -306,8 +306,9 @@ async function runNext(opts) {
   if (answer.reason === 'drift' && approval && approval.reason === 'drift') await voidApproval(ctx, state, approval, opts.door);
   if (answer.action === 'wait' && answer.reason !== 'locked') await removeRunning(ctx);
   if (answer.action === 'done' || answer.action === 'stop') await removeRunning(ctx);
-  // A QA stop opens no pull request, so the report goes on the ticket from here, once.
-  if (answer.action === 'stop' && /^qa-/.test(answer.reason) && state?.qa?.report && !state.report?.ticketCommentUrl) {
+  // A QA stop opens no pull request, so the report goes on the ticket from here: once per verdict,
+  // so a resumed QA stage that stops again with a new report posts that report too.
+  if (answer.action === 'stop' && /^qa-/.test(answer.reason) && state?.qa?.report && reportDue(ctx, opts.id, state)) {
     await postReport(ctx, opts, state, {}, qaConfigured(ctx.marker), 'qa');
     commitState(ctx, opts.id, `chore(${opts.id}): autopilot QA report posted`);
   }
@@ -500,15 +501,28 @@ function forgeOf(ctx, name, dir) {
 // After the pull requests open, the QA report goes on the ticket and on every pull request, each
 // headed by the packet id, the approver and the log head (spec 2026-10-05 §8). Every post is saved
 // as it lands, so a stage blocked halfway resumes with the missing ones only.
+// The text the report comment carries for the ticket's current QA state.
+function reportBody(ctx, id, state, qaOn) {
+  if (state.qa?.report) {
+    assertReportPath(ctx, id, state.qa.report);
+    return readText(path.join(ctx.root, state.qa.report)) || `QA verdict ${state.qa.verdict}; the report at ${state.qa.report} is empty`;
+  }
+  return qaOn ? 'QA: skipped' : 'QA: not configured for this project';
+}
+
+// True until the ticket carries the comment for the report as it stands now. The key is the
+// report's text, so a QA stage run again with a new verdict posts again and a `next` that only
+// repeats the stop does not.
+function reportDue(ctx, id, state) {
+  const key = hashLine(reportBody(ctx, id, state, qaConfigured(ctx.marker)));
+  return state.report?.ticketReportKey !== key;
+}
+
 async function postReport(ctx, opts, state, prs, qaOn, stage = 'pr') {
   state.report = state.report ?? { ticketCommentUrl: null, prComments: {} };
   const logHead = readState(ctx.root, opts.id).logHead ?? '';
-  let body;
-  if (state.qa?.report) {
-    assertReportPath(ctx, opts.id, state.qa.report);
-    body = readText(path.join(ctx.root, state.qa.report)) || `QA verdict ${state.qa.verdict}; the report at ${state.qa.report} is empty`;
-  }
-  else body = qaOn ? 'QA: skipped' : 'QA: not configured for this project';
+  const body = reportBody(ctx, opts.id, state, qaOn);
+  const key = hashLine(body);
   // Replacement functions: a `$&` or `$'` in a report is text, not a replacement pattern.
   const text = readText(REPORT_TEMPLATE)
     .replace('{{ID}}', () => opts.id)
@@ -517,9 +531,12 @@ async function postReport(ctx, opts, state, prs, qaOn, stage = 'pr') {
     .replace('{{LOG_HEAD}}', () => logHead)
     .replace('{{PR_LINES}}', () => Object.entries(prs).map(([n, u]) => `- ${n}: ${u}`).join('\n'))
     .replace('{{BODY}}', () => body.replace(/\n+$/, ''));
-  if (!state.report.ticketCommentUrl) {
+  let posted = false;
+  if (state.report.ticketReportKey !== key) {
     state.report.ticketCommentUrl = await ctx.tracker.comment(ctx.source.number, text);
+    state.report.ticketReportKey = key;
     writeState(ctx.root, opts.id, state);
+    posted = true;
   }
   for (const [name, prUrl] of Object.entries(prs)) {
     if (state.report.prComments[name] || !prUrl) continue;
@@ -527,7 +544,7 @@ async function postReport(ctx, opts, state, prs, qaOn, stage = 'pr') {
     state.report.prComments[name] = await trackerFor(forgeOf(ctx, name, dir), process.env).prComment(prUrl, text);
     writeState(ctx.root, opts.id, state);
   }
-  if (!readLog(ctx.root, opts.id).some((l) => l.event === 'report posted')) {
+  if (posted || !readLog(ctx.root, opts.id).some((l) => l.event === 'report posted')) {
     appendLog(ctx.root, opts.id, { stage, event: 'report posted', actor: 'engine', trigger: opts.door, repo: 'docs', url: state.report.ticketCommentUrl });
     state.logHead = readState(ctx.root, opts.id).logHead;
   }

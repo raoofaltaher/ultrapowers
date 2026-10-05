@@ -525,6 +525,38 @@ test('a stopped QA run resumes with begin qa and a new verdict', () => {
   assert.deepEqual([n.json.action, n.json.stage, n.json.reason], ['run', 'pr', 'qa-finished']);
 });
 
+// The report on the ticket follows the verdict, not the first posting: a resumed QA stage that
+// ends in a new verdict posts its report, and a pass after a stop reaches the ticket from pr.
+test('a resumed QA stage posts its new report on the ticket', () => {
+  const ws = workspace({ nested: true, qa: true });
+  nestedThroughQa(ws, 'PRECONDITION-FAILED');
+  assert.equal(run(ws, ['next', 'GH-16']).json.reason, 'qa-PRECONDITION-FAILED');
+  assert.equal(commentBodies(ws).filter((b) => /Verdict: PRECONDITION-FAILED/.test(b)).length, 1);
+  run(ws, ['begin', 'GH-16', 'qa']);
+  fs.writeFileSync(path.join(ws.root, 'reviews', 'GH-16', 'QA-REPORT.md'), '# QA report\n\n## Verdict\n\nVerdict: INCOMPLETE\n\n## Lanes\n- UI: the browser never opened\n');
+  git(ws.root, 'add', '-A');
+  git(ws.root, 'commit', '-q', '-m', 'qa(GH-16): report, second run');
+  run(ws, ['end', 'GH-16', 'qa', '--result', JSON.stringify({ ok: true, verdict: 'INCOMPLETE', report: 'reviews/GH-16/QA-REPORT.md' })]);
+  const second = run(ws, ['next', 'GH-16']);
+  assert.deepEqual([second.json.action, second.json.reason], ['stop', 'qa-INCOMPLETE']);
+  assert.equal(commentBodies(ws).filter((b) => /Verdict: INCOMPLETE/.test(b)).length, 1, 'the second verdict is on the ticket');
+  assert.equal(run(ws, ['next', 'GH-16']).json.reason, 'qa-INCOMPLETE');
+  assert.equal(commentBodies(ws).filter((b) => /Verdict: INCOMPLETE/.test(b)).length, 1, 'and only once');
+  assert.equal(logLines(ws).filter((l) => l.event === 'report posted').length, 2);
+  assert.equal(git(ws.root, 'status', '--porcelain', '--', 'tasks').trim(), '', 'the second posting is committed with the state');
+  run(ws, ['begin', 'GH-16', 'qa']);
+  fs.writeFileSync(path.join(ws.root, 'reviews', 'GH-16', 'QA-REPORT.md'), '# QA report\n\n## Verdict\n\nVerdict: PASS\n\n## Lanes\n- UI: fine\n');
+  git(ws.root, 'add', '-A');
+  git(ws.root, 'commit', '-q', '-m', 'qa(GH-16): report, third run');
+  run(ws, ['end', 'GH-16', 'qa', '--result', JSON.stringify({ ok: true, verdict: 'PASS', report: 'reviews/GH-16/QA-REPORT.md' })]);
+  assert.equal(run(ws, ['next', 'GH-16']).json.stage, 'pr');
+  const r = run(ws, ['pr', 'GH-16']);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.equal(commentBodies(ws).filter((b) => /Verdict: PASS/.test(b)).length, 1, 'the passing report is on the ticket');
+  assert.match(prComments(ws)[0].stdin, /Verdict: PASS/);
+});
+
+
 test('without a QA stage the report is one line', () => {
   const ws = workspace();
   throughPlan(ws);
