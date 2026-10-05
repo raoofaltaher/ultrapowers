@@ -69,6 +69,82 @@ Issue 18 received `up:approve` before any autopilot run. `next GH-18` answered `
 
 The plan expected `wait` with `no-event` or `before-packet`. The engine is stricter than that expectation: an approval is only read once a packet exists, so an early label changes nothing at all. The `before-packet` rule itself is covered by the `verifyApproval` tests.
 
-## GitLab nested workspace and VM watcher
+## Odoo, GitLab, nested workspace (release 1.3.0, 2026-10-05)
 
-Not run in this round; recorded here when the Owner's workspaces are available.
+The second live round ran the Odoo tracker on the Owner's workspace: a nested documents repository with eleven code repositories, every remote on the Owner's self-hosted GitLab, tickets in the Owner's Odoo (version 19, enterprise). The engine ran from the `feat-odoo-tracker` worktree against the Owner's workspace root; the stages were performed inline in the session. Times are UTC.
+
+### Step 1: configuration
+
+`init tickets` added the technical user's `login` and the `db` to the Odoo source (the database name came from `/web/database/list`); `init autopilot` wrote `gated`, inline execution, the Owner's login as the approver, `watchSelfApproval` and `watch.sharedCredentials` true, and the six `Ultrapowers …` tag names. It created the six tags on the Odoo project and the six labels on the GitLab documents project. The key lives in `.agents/mcp-secrets.env`, which the engine reads; the Owner's single variable is `ODOO_API_KEY`. Init also regenerated nine MCP proposals (`*.ultrapowers-new`) beside the Owner's richer MCP files; they were deleted unmerged, since the Owner's files hold many more servers than the template.
+
+Findings from this step, all fixed with tests before the run went on:
+
+- The Owner's server is Odoo 19: `res.users` carries `all_group_ids` and `group_ids`, not `groups_id`. The tracker now reads `ir.model.fields` once and uses the field the server has.
+- On Odoo 19 `mail.tracking.value` and the `tracking_value_ids` field are readable by administrators only, and the technical user is a Project User. The tracker probes that read once and falls back to the last-writer attribution of spec D3 instead of failing the run.
+
+### Step 2: session door to the gate
+
+`/ultrapowers:autopilot <task URL>` resolved the URL to the short id `ODOO-13627` (the task is in the source's default project). The documents branch `ODOO-13627-improvement-integration-m365` was cut from `draft`.
+
+| Stage | Outcome |
+|---|---|
+| scaffold | brief, `source.md` with 48 messages, 5 attachments and 9 links; the five attachments are kept outside Odoo by a cloud storage module, so they were listed at their addresses, not downloaded |
+| spec | `specs/ODOO-13627/Spec.md`: a bounded slice (the Compliance findings register) with a ten-row assumption ledger and the two repositories in scope; the grounding manifest names every file and page read and the three sources that could not be read (the cloud-stored attachments, a design page answering 403, a meeting recording behind the team's sign-in); the ticket's earlier working branches were read through the local clones |
+| plan | `plans/ODOO-13627/Plan.md`, two tasks |
+| gate | `packet` pushed the branch and posted the packet as an internal log note on the task (16 lines, three links at the docs tip, the five lowest-confidence assumptions) |
+| next | `wait`, `awaiting-approval`, `no-event` |
+
+Findings from this step, fixed with tests:
+
+- The fetch step wrote five empty files for the cloud-stored attachments (`ir.attachment.type` `cloud_storage`, empty `datas`). A `url` or `cloud_storage` attachment is now listed at its own address and never downloaded; a stale file path from an earlier run is dropped when an attachment is skipped.
+- The first packet note appeared as raw markup with no clickable link: Odoo 17 and later escape a plain `message_post` body. Notes now go with `body_is_html`, with a plain retry for an older server. The packet was re-posted; both notes stay on the task.
+- The packet's scope lines said `base draft` for the two code repositories, whose bases are `main`: the renderer fell back to the documents base before the code branches existed. It now shows each repository's own default branch.
+
+### Step 3: approval and implementation
+
+The Owner was away; on the Owner's standing instruction to run the full flow, the approve tag was added through the API by the Owner's own account, standing in for the Owner's click. `next` answered `run execute`, reason `approved`, actor the Owner's login, `attribution: last-writer`, and the tag was consumed. `begin execute` opened one worktree per repository in scope under `.worktrees/<branch>` in the backend and the frontend clones.
+
+The plan ran inline under the workspace's house rules (no test file committed; no code comment). Backend: an entity with its migration, a service and a thin controller, proved by six throwaway xunit tests against a disposable PostgreSQL container (the in-memory provider cannot map this context's JSONB columns), then `dotnet build` of the solution. Frontend: a DTO, a service, a findings card with a drawer and a JSON import, wired into the Compliance tab, proved by six throwaway vitest component tests, then the whole suite and `npm run build` with its i18n gate. The frontend suite is red on the base branch itself (147 failures in 20 files, identical on the `main` checkout); the slice adds six passing tests and no failure.
+
+### Step 4: QA and the stop
+
+`next` → `run qa` (the project has a `qa` block). The QA preflight listed four preconditions (no QA role has credentials in the environment) and the two configured URLs did not answer: the Owner's local `int-*` stack was not running, and the Owner's own QA process runs after the merge on a QA host. The report was written as `PRECONDITION-FAILED` and committed; `end qa` recorded the verdict and `next` answered `stop`, `qa-PRECONDITION-FAILED`. No pull request opened, by design: the engine refuses `pr` after a QA stop.
+
+Findings from this step, fixed with tests:
+
+- A QA stop left the task with nothing but a removed running tag: the report was posted at the pull-request stage only. A QA stop now posts the report on the ticket once.
+- The report path a stage names was posted unchecked; `end qa` now accepts only a markdown file under `reviews/<ID>/`.
+
+Found and deferred: the QA preflight's change set reads each repository's main checkout, so inside an autopilot run it sees no ticket branch; the QA stage's contract should read the engine's worktrees.
+
+### Step 5: the watcher on the Owner's VM
+
+The Owner's development VM (Debian, Node 22, Claude Code 2.1, `glab` 1.53) holds a clone of the workspace with all repositories. The branch under test was cloned there as the plugin checkout, the documents repository pulled to the committed configuration, and the one Odoo key put in `.agents/mcp-secrets.env`. The VM's Claude Code had no ultrapowers plugin enabled.
+
+Finding, fixed with tests before the cycle: a headless Claude Code stage ran with whatever plugins the host enables, so on this VM a stage would have had no skills and no guardrail. The adapter now passes `--plugin-dir` with the engine's own checkout; the stage command on the VM showed `--plugin-dir <checkout> --strict-mcp-config --mcp-config <project>/.mcp.json`.
+
+A small test task was created in the Odoo project (titled as a test, safe to archive) with a docs-only ask, tagged `Ultrapowers Ready` by the Owner's account.
+
+Cycle 1, `watch --once`, gated:
+
+| Event | Outcome |
+|---|---|
+| GitLab source | `tracker-error`: the VM's `glab` token is revoked, `glab issue list` printed text instead of JSON; logged, the cycle went on |
+| cycle | one ticket, the test task |
+| scaffold | headless, 83 s, ok |
+| spec | headless, 166 s, ok: a spec with a five-row assumption ledger and `.` in scope |
+| plan | headless, 97 s, ok: one task |
+| gate | the branch pushed to GitLab; the packet posted as a log note on the task with clickable links; the Ready tag consumed |
+| final | `wait`, `awaiting-approval`; next sleep 120 s |
+
+Cycle 2, after the approve tag was added by the Owner's account: the watcher answered `wait`, `awaiting-approval` and ran no stage. The approval was verified (actor, permission, timing) and then refused by the watch door's self-approval rule, `self-watch-no-stage-tokens`: the account that added the tag is the one the watcher runs as, `watchSelfApproval` is true, but the stages hold no read-only token of their own, and Odoo has one key by the Owner's decision. The rule is the one spec D13 set in 1.2.0; the way through for a solo developer on Odoo is a read-only forge token for the stages (`ULTRAPOWERS_STAGE_GITLAB_TOKEN` with `read_api` here), which also keeps the engine's GitLab token out of the stages, or a second person who approves. The approve tag stays on the test task for the Owner to decide.
+
+Not run live in this round: the headless execute stage (the session door ran it inline), the changes loop, and merge requests on GitLab, which the QA stop prevented in both doors. The VM's `glab` token is revoked and must be re-issued before any pull request can open from there.
+
+### What this round verified
+
+| | Verified |
+|---|---|
+| Live, Owner's workspace | Odoo 19 as the tracker through its JSON-RPC API with one key read from `.agents/mcp-secrets.env`; init creating the six tags and the six GitLab labels; the session door from a task URL through scaffold, spec, plan, packet (log note), approval by tag with last-writer attribution, execute in two nested repositories' worktrees, the QA stage's PRECONDITION-FAILED stop and the QA report posted on the task; the watcher door on the VM through scaffold, spec, plan and packet with the engine's own plugin checkout in the headless stages, and the self-approval rule refusing the watcher's own account |
+| Offline suites | every suite in `AGENTS.md`, with the new Odoo scenarios |
+| Not yet run live | headless execute and QA stages, the changes loop, merge requests opened by the engine on GitLab, `full` mode |
