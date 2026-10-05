@@ -439,6 +439,12 @@ async function postPacket(ctx, opts, state) {
   };
   const repoBases = Object.fromEntries((ctx.marker.repos ?? []).filter((r) => r?.name && r.defaultBranch).map((r) => [r.name, r.defaultBranch]));
   const body = renderPacket(readText(PACKET_TEMPLATE), { state, links, assumptions: assumptionsFrom(specText), events: ctx.settings.events, baseAhead: ahead, repoBases });
+  // The engine's own label writes come before the packet: an approve label placed before the
+  // packet never counts, so it is cleared here for the approver to add again, and the running
+  // label goes now. In last-writer mode a write after the packet would make the engine the
+  // last writer and attribute every tag on the ticket, the approve tag included, to itself.
+  await ctx.tracker.removeLabel(ctx.source.number, ctx.settings.events.approve);
+  await removeRunning(ctx);
   // The packet's columns are aligned: on Odoo it keeps a preformatted block (the other trackers
   // take the text as it is).
   const commentUrl = await ctx.tracker.comment(ctx.source.number, body, { preformatted: true });
@@ -460,7 +466,6 @@ async function postPacket(ctx, opts, state) {
     appendLog(ctx.root, opts.id, { stage: 'gate', event: 'approved', actor: 'engine', trigger: opts.door, repo: 'docs', sha: docsTip, url: commentUrl, mode: 'full' });
   }
   commitState(ctx, opts.id, `chore(${opts.id}): autopilot packet posted`);
-  await removeRunning(ctx);
   clearActiveMarker(ctx.root);
   releaseLock(ctx.root, opts.id);
   return { ticket: opts.id, stage: 'gate', packet: state.packet, lines: body.split('\n').length, mode: state.mode };
@@ -482,7 +487,7 @@ async function runApproval(opts) {
 // The forge a repository's pull request opens on: its origin remote (spec D5); for a GitHub or
 // GitLab ticket, a repository without a usable remote falls back to the ticket source as before.
 function forgeOf(ctx, name, dir) {
-  const fromRemote = forgeFor(dir);
+  const fromRemote = forgeFor(dir, { provider: ctx.resolution.provider, host: ctx.resolution.host });
   if (fromRemote) return fromRemote;
   if (!['github', 'gitlab'].includes(ctx.resolution.provider)) {
     throw new AutopilotError('no-forge', `${name} has no origin remote on a forge; an ${ctx.resolution.provider} ticket opens pull requests on the forge of each repository`);
@@ -504,13 +509,14 @@ async function postReport(ctx, opts, state, prs, qaOn, stage = 'pr') {
     body = readText(path.join(ctx.root, state.qa.report)) || `QA verdict ${state.qa.verdict}; the report at ${state.qa.report} is empty`;
   }
   else body = qaOn ? 'QA: skipped' : 'QA: not configured for this project';
+  // Replacement functions: a `$&` or `$'` in a report is text, not a replacement pattern.
   const text = readText(REPORT_TEMPLATE)
-    .replace('{{ID}}', opts.id)
-    .replace('{{PACKET_ID}}', packetId(state.packet?.docsTip, state.packet?.tips))
-    .replace('{{APPROVER}}', state.approval?.mode === 'full' ? 'nobody (mode full: the packet is the record)' : state.approval?.actor ?? 'n/a')
-    .replace('{{LOG_HEAD}}', logHead)
-    .replace('{{PR_LINES}}', Object.entries(prs).map(([n, u]) => `- ${n}: ${u}`).join('\n'))
-    .replace('{{BODY}}', body.replace(/\n+$/, ''));
+    .replace('{{ID}}', () => opts.id)
+    .replace('{{PACKET_ID}}', () => packetId(state.packet?.docsTip, state.packet?.tips))
+    .replace('{{APPROVER}}', () => (state.approval?.mode === 'full' ? 'nobody (mode full: the packet is the record)' : state.approval?.actor ?? 'n/a'))
+    .replace('{{LOG_HEAD}}', () => logHead)
+    .replace('{{PR_LINES}}', () => Object.entries(prs).map(([n, u]) => `- ${n}: ${u}`).join('\n'))
+    .replace('{{BODY}}', () => body.replace(/\n+$/, ''));
   if (!state.report.ticketCommentUrl) {
     state.report.ticketCommentUrl = await ctx.tracker.comment(ctx.source.number, text);
     writeState(ctx.root, opts.id, state);
@@ -1115,10 +1121,13 @@ async function watchCycle(root, marker, settings, opts, previousSleepMs) {
       continue;
     }
     try {
+      // The start label goes before the stages: a write after the packet would, in last-writer
+      // mode, attribute every tag on the ticket to the engine. A run that fails to start leaves
+      // the ticket for the next cycle, which lists it by its other labels or its state.
+      await item.tracker.removeLabel(item.number, settings.events.ready).catch(() => {});
       // `--once` bounds the watcher's cycles, not a ticket's stages: each ticket runs to wait, done or stop.
       const result = await runRun({ ...opts, id: item.id, root, once: false });
       ran += 1;
-      if (readState(root, item.id)) await item.tracker.removeLabel(item.number, settings.events.ready).catch(() => {});
       events.push({ event: 'ran', ticket: item.id, final: result.final, stages: result.stages });
     } catch (err) {
       ran += 1;

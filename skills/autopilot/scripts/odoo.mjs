@@ -87,12 +87,12 @@ export function createOdooClient({ url, db, login, apiKey, env = process.env }) 
 }
 
 // The one database of a server whose list is public; anything else asks for tickets.sources[].db.
-export async function discoverDb(url, env = process.env) {
+export async function discoverDb(url, env = process.env, field = 'tickets.sources[].db') {
   const base = String(url ?? '').replace(/\/+$/, '');
   const { status, json } = await postJson(`${base}/web/database/list`, { jsonrpc: '2.0', method: 'call', params: {} }, env, 'Odoo database list');
   const list = status === 200 && Array.isArray(json?.result) ? json.result : null;
-  if (!list) throw new AutopilotError('bad-tickets', `tickets.sources[].db is required: ${base} does not list its databases (HTTP ${status})`);
-  if (list.length !== 1) throw new AutopilotError('bad-tickets', `tickets.sources[].db is required: ${base} lists ${list.length} databases`);
+  if (!list) throw new AutopilotError('bad-tickets', `${field} is required: ${base} does not list its databases (HTTP ${status})`);
+  if (list.length !== 1) throw new AutopilotError('bad-tickets', `${field} is required: ${base} lists ${list.length} databases`);
   return list[0];
 }
 
@@ -243,13 +243,23 @@ export function parseOdooTaskUrl(url) {
   return null;
 }
 
-// Odoo joins many2many display names with ", " in a tracking value. The split is accepted only
-// when every piece is a known tag; a tag whose own name holds ", " makes the row ambiguous.
+// Odoo joins many2many display names with ", " in a tracking value, and a row keeps the names
+// of its moment: a tag renamed since, or one a user created, is still a name of its own. The
+// split is refused only when a current tag's own name holds ", " and appears in the value, since
+// its pieces could then be read as several tags (the control tags never hold a comma).
 export function splitTagNames(value, knownTags) {
   if (typeof value !== 'string' || value.trim() === '') return [];
-  const names = value.split(', ').map((n) => n.trim()).filter(Boolean);
   const known = new Set(knownTags ?? []);
-  return names.every((n) => known.has(n)) ? names : null;
+  const pieces = value.split(', ').map((n) => n.trim()).filter(Boolean);
+  const withComma = [...known].filter((n) => n.includes(', ')).sort((a, b) => b.length - a.length);
+  for (const name of withComma) {
+    const parts = name.split(', ');
+    if (parts.some((p) => known.has(p))) return null;
+    for (let i = 0; i + parts.length <= pieces.length; i++) {
+      if (parts.every((p, j) => pieces[i + j] === p)) pieces.splice(i, parts.length, name);
+    }
+  }
+  return pieces;
 }
 
 // Label events from the chatter's tracking values on the tags field, oldest first.

@@ -140,7 +140,17 @@ const ATTACHMENT_HOST = /github\.com\/user-attachments\/|githubusercontent\.com\
 export function attachmentsFromLinks(links) {
   return links
     .filter((url) => FILE_LINK.test(url) || ATTACHMENT_HOST.test(url))
-    .map((url) => ({ name: decodeURIComponent(new URL(url).pathname.split('/').pop() || 'attachment'), url, size: null, mimetype: null }));
+    .map((url) => ({ name: fileNameOf(url), url, size: null, mimetype: null }));
+}
+
+// The last path segment, decoded when it is valid percent-encoding and kept as written otherwise.
+function fileNameOf(url) {
+  const segment = new URL(url).pathname.split('/').pop() || 'attachment';
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
 }
 
 export function formatSize(bytes) {
@@ -188,14 +198,18 @@ function odooState(value) {
 }
 
 function fetchErrorFrom(err) {
-  if (err instanceof AutopilotError) return new FetchError(err.code === 'timeout' ? 'timeout' : 'cli-failed', `Odoo: ${err.message}`);
+  if (err instanceof AutopilotError) {
+    if (err.code === 'bad-tickets') return new FetchError('bad-tickets', err.message);
+    return new FetchError(err.code === 'timeout' ? 'timeout' : 'cli-failed', `Odoo: ${err.message}`);
+  }
   return err;
 }
 
 // An Odoo task over JSON-RPC with the technical user's key (spec 2026-10-05 §7); the project of
 // the id must be the task's.
 async function odooClientFor(resolution) {
-  const db = resolution.db ?? await discoverDb(resolution.url);
+  const field = `tickets.sources[${Number.isInteger(resolution.sourceIndex) ? resolution.sourceIndex : ''}].db`;
+  const db = resolution.db ?? await discoverDb(resolution.url, process.env, field);
   return createOdooClient({ url: resolution.url, db, login: resolution.login, apiKey: process.env.ODOO_API_KEY });
 }
 
@@ -315,8 +329,12 @@ async function downloadAttachments(root, resolution, id, opts) {
     }
     try {
       client = client ?? await odooClientFor(resolution);
-      const [row] = await client.call('ir.attachment', 'read', [[a.id]], { fields: ['datas', 'type', 'url'] });
-      if (!row) throw new FetchError('cli-failed', 'no content');
+      // Only the task's own attachments are read: the ids come from a file the session wrote.
+      const [row] = await client.call('ir.attachment', 'search_read', [[['id', '=', a.id], ['res_model', '=', 'project.task'], ['res_id', '=', Number(resolution.number)]]], { fields: ['datas', 'type', 'url'] });
+      if (!row) {
+        skip('not an attachment of this task');
+        continue;
+      }
       // The bytes of a URL or cloud-stored attachment are not in Odoo: the link stays a link,
       // and no empty file is written.
       if (EXTERNAL_ATTACHMENT_TYPES.has(row.type)) {

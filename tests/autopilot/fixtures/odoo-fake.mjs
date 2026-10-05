@@ -107,6 +107,7 @@ export function odooSeedWithTask(overrides = {}) {
     { id: 6, name: 'big.pdf', mimetype: 'application/pdf', file_size: 2 * 1024 * 1024, type: 'binary', url: false, res_model: 'project.task', res_id: 13627, datas: base64Of(16) },
     // An attachment kept outside Odoo (a cloud storage module): no bytes in datas, a URL instead.
     { id: 7, name: 'backlog.md', mimetype: 'text/markdown', file_size: 0, type: 'cloud_storage', url: 'https://files.example.com/13627/backlog.md', res_model: 'project.task', res_id: 13627, datas: '' },
+    { id: 8, name: 'other-task.txt', mimetype: 'text/plain', file_size: 16, type: 'binary', url: false, res_model: 'project.task', res_id: 13628, datas: base64Of(16) },
   ];
   s.relations = {
     'project.task.tag_ids': Object.assign(s.tags, { model: 'project.tags' }),

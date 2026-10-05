@@ -464,7 +464,7 @@ function nestedThroughQa(ws, verdict = 'PASS') {
     assert.equal(run(ws, ['next', 'GH-16']).json.stage, 'qa');
     run(ws, ['begin', 'GH-16', 'qa']);
     fs.mkdirSync(path.join(ws.root, 'reviews', 'GH-16'), { recursive: true });
-    fs.writeFileSync(path.join(ws.root, 'reviews', 'GH-16', 'QA-REPORT.md'), `# QA report\n\n## Verdict\n\nVerdict: ${verdict}\n\n## Lanes\n- UI: fine\n`);
+    fs.writeFileSync(path.join(ws.root, 'reviews', 'GH-16', 'QA-REPORT.md'), `# QA report\n\n## Verdict\n\nVerdict: ${verdict}\n\n## Lanes\n- UI: fine, ran \`printf $'\\n'\` and kept $& literally\n`);
     git(ws.root, 'add', '-A');
     git(ws.root, 'commit', '-q', '-m', 'qa(GH-16): report');
     run(ws, ['end', 'GH-16', 'qa', '--result', JSON.stringify({ ok: true, verdict, report: 'reviews/GH-16/QA-REPORT.md' })]);
@@ -485,6 +485,7 @@ test('pr posts the QA report on the ticket and on every pull request', () => {
   const onTicket = commentBodies(ws).find((b) => /## Verdict/.test(b));
   assert.ok(onTicket, 'the report is on the ticket');
   assert.match(onTicket, /Stage log head [0-9a-f]+/);
+  assert.ok(onTicket.includes("ran `printf $'\\n'` and kept $& literally"), 'dollar sequences in the report are posted as written');
   assert.ok(logLines(ws).some((l) => l.event === 'report posted'));
 });
 
@@ -672,6 +673,49 @@ test('a task URL is accepted as the ticket and its state lives under the short i
   const e = run(ws, ['end', url, 'scaffold', '--result', JSON.stringify({ ok: true })]);
   assert.equal(e.code, 0, e.stdout + e.stderr);
   assert.ok(fs.existsSync(path.join(ws.root, 'tasks', ODOO_ID, 'autopilot.json')));
+});
+
+// Last-writer mode attributes every current tag to whoever wrote the task last. The engine's
+// own writes (removing the running tag, the ready tag) must therefore come before the packet,
+// or an approve tag that was already on the task becomes the engine's own approval.
+const PRE_PACKET_APPROVE = { tagTracking: false, now: '2999-06-01 00:00:00', setup: { tagTasks: [{ taskId: 13627, name: 'Ultrapowers Approve', by: 'val', at: '2026-01-01 00:00:00', tracked: false }] } };
+
+test('last-writer mode: an approve tag placed before the packet is not taken as the engine\'s own approval', async () => {
+  const ws = await odooWorkspace({ seed: PRE_PACKET_APPROVE });
+  throughPlan(ws, { id: ODOO_ID });
+  const p = run(ws, ['packet', ODOO_ID]);
+  assert.equal(p.code, 0, p.stdout + p.stderr);
+  const n = run(ws, ['next', ODOO_ID]);
+  assert.equal(n.json.action, 'wait', JSON.stringify(n.json.approval));
+  assert.notEqual(n.json.approval?.actor, 'bot', 'the engine never approves its own packet');
+  const s = await ws.odoo.state();
+  const approve = s.tags.find((t) => t.name === 'Ultrapowers Approve').id;
+  assert.ok(!s.tasks[0].tag_ids.includes(approve), 'a pre-packet approve tag is cleared by the packet, so the approver adds it again');
+});
+
+test('last-writer mode: the watcher clears the ready tag before its stages, not after the packet', async () => {
+  const seed = { ...PRE_PACKET_APPROVE, setup: { tagTasks: [...PRE_PACKET_APPROVE.setup.tagTasks, { taskId: 13627, name: 'Ultrapowers Ready', by: 'val', at: '2026-01-02 00:00:00', tracked: false }] } };
+  const ws = await odooWorkspace({ seed, autopilot: { mode: 'gated', baseBranch: 'main', watch: { sharedCredentials: true } } });
+  const r = run(ws, ['watch', '--once'], headless(ws));
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const ran = r.json.events.find((e) => e.event === 'ran');
+  assert.deepEqual([ran.final.action, ran.final.reason], ['wait', 'awaiting-approval']);
+  const n = run(ws, ['next', ODOO_ID]);
+  assert.equal(n.json.action, 'wait', JSON.stringify(n.json.approval));
+  assert.notEqual(n.json.approval?.actor, 'bot');
+});
+
+// README and init let a single-database server leave `db` out: the engine then asks the server.
+test('an Odoo source without db works on a single-database server and is bad-tickets when the list is disabled', async () => {
+  const ws = await odooWorkspace({ odooDb: null });
+  const ok = run(ws, ['next', ODOO_ID]);
+  assert.equal(ok.code, 0, ok.stdout + ok.stderr);
+  assert.deepEqual([ok.json.action, ok.json.stage], ['run', 'scaffold']);
+  const closed = await odooWorkspace({ odooDb: null, seed: { listDisabled: true } });
+  const bad = run(closed, ['next', ODOO_ID]);
+  assert.equal(bad.code, 2, bad.stdout + bad.stderr);
+  assert.equal(bad.json.error.code, 'bad-tickets');
+  assert.match(bad.json.error.message, /tickets\.sources\[0\]\.db/);
 });
 
 test('without ODOO_API_KEY an Odoo ticket is no-credentials, and the secrets file supplies it', async () => {

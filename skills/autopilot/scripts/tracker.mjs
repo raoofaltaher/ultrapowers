@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import { execFile } from 'node:child_process';
 import { AutopilotError } from './autopilot-lib.mjs';
-import { createOdooClient, htmlToText, textToNoteHtml, markdownToNoteHtml, tagEventsFromTracking, lastWriterEvents, odooColorIndex, odooIso } from './odoo.mjs';
+import { createOdooClient, discoverDb, htmlToText, textToNoteHtml, markdownToNoteHtml, tagEventsFromTracking, lastWriterEvents, odooColorIndex, odooIso } from './odoo.mjs';
 
 const CLI = {
   github: { name: 'gh', env: 'ULTRAPOWERS_GH' },
@@ -308,20 +308,27 @@ class OdooTracker {
     this.cache = { partners: new Map(), users: new Map(), groups: null, tracked: undefined };
   }
 
-  client() {
-    if (!this.c) this.c = createOdooClient({ url: this.r.url, db: this.r.db, login: this.r.login, apiKey: this.env.ODOO_API_KEY, env: this.env });
+  // The database comes from the source, or from the server's own list when the source names
+  // none (a single-database server); a server that lists none, or several, is bad-tickets.
+  async client() {
+    if (!this.c) {
+      const field = `tickets.sources[${Number.isInteger(this.r.sourceIndex) ? this.r.sourceIndex : ''}].db`;
+      const db = this.r.db ?? await discoverDb(this.r.url, this.env, field);
+      this.c = createOdooClient({ url: this.r.url, db, login: this.r.login, apiKey: this.env.ODOO_API_KEY, env: this.env });
+    }
     return this.c;
   }
 
-  call(model, method, args, kwargs) {
-    return this.client().call(model, method, args, kwargs);
+  async call(model, method, args, kwargs) {
+    return (await this.client()).call(model, method, args, kwargs);
   }
 
   async cliReady() {
     try {
-      await this.client().authenticate();
+      await (await this.client()).authenticate();
       return true;
-    } catch {
+    } catch (err) {
+      if (err.code === 'bad-tickets') throw err;
       return false;
     }
   }

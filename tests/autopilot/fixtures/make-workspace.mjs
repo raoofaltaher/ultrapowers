@@ -60,7 +60,7 @@ const ODOO_EVENTS = { ready: 'Ultrapowers Ready', approve: 'Ultrapowers Approve'
 
 // `odoo`: the URL of a fake Odoo; the workspace then has one Odoo source (project 34, login bot,
 // db erp), the Odoo tag names as its events, and ODOO_API_KEY (`odooKey`) in its environment.
-export function makeWorkspace({ dir = null, autopilot = { mode: 'gated', baseBranch: 'main' }, map = {}, qa = false, nested = false, backendRemote = null, odoo = null, odooKey = 'k1' } = {}) {
+export function makeWorkspace({ dir = null, autopilot = { mode: 'gated', baseBranch: 'main' }, map = {}, qa = false, nested = false, backendRemote = null, odoo = null, odooKey = 'k1', odooDb = 'erp' } = {}) {
   const base = dir ? path.resolve(dir) : fs.mkdtempSync(path.join(os.tmpdir(), 'autopilot-cli-'));
   fs.mkdirSync(base, { recursive: true });
   const root = path.join(base, 'ws');
@@ -73,7 +73,7 @@ export function makeWorkspace({ dir = null, autopilot = { mode: 'gated', baseBra
   // as a real project without stage tokens must (autopilot.watch.sharedCredentials).
   if (autopilot) marker.autopilot = { ...autopilot, watch: { sharedCredentials: true, ...(autopilot.watch ?? {}) } };
   if (odoo) {
-    marker.tickets = { sources: [{ prefix: 'ODOO', provider: 'odoo', url: odoo, mcpUrl: `${odoo}/mcp`, login: 'bot', db: 'erp', defaultProject: '34' }] };
+    marker.tickets = { sources: [{ prefix: 'ODOO', provider: 'odoo', url: odoo, mcpUrl: `${odoo}/mcp`, login: 'bot', ...(odooDb ? { db: odooDb } : {}), defaultProject: '34' }] };
     if (marker.autopilot) marker.autopilot.events = { ...ODOO_EVENTS, ...(autopilot?.events ?? {}) };
   }
   // `qa: true` means a configured QA gate: at least one url, which is what the engine checks.

@@ -196,6 +196,22 @@ test('forgeFor reads provider, host and path from the configured origin url', ()
   assert.equal(forgeFor(plain), null);
 });
 
+// A GitHub or GitLab ticket keeps its own forge when the remote's host is an ssh alias or an
+// unknown host (as in 1.2.0); the remote decides only on github.com, a configured GitLab host,
+// or for an Odoo ticket, which has no forge of its own. A port stays with a GitLab host.
+test('forgeFor takes the ticket\'s forge for an alias host and keeps a GitLab port', () => {
+  const { clone } = fixture();
+  sh(clone, 'remote', 'set-url', 'origin', 'git@github-work:org/repo.git');
+  assert.deepEqual(forgeFor(clone, { provider: 'github', host: 'github.com' }), { provider: 'github', host: 'github.com', path: 'org/repo' });
+  assert.deepEqual(forgeFor(clone, { provider: 'gitlab', host: 'gitlab.example.com' }), { provider: 'gitlab', host: 'gitlab.example.com', path: 'org/repo' });
+  assert.deepEqual(forgeFor(clone, { provider: 'odoo' }), { provider: 'gitlab', host: 'github-work', path: 'org/repo' });
+  sh(clone, 'remote', 'set-url', 'origin', 'https://gitlab.corp:8443/g/r.git');
+  assert.deepEqual(forgeFor(clone, { provider: 'odoo' }), { provider: 'gitlab', host: 'gitlab.corp:8443', path: 'g/r' });
+  assert.deepEqual(forgeFor(clone, { provider: 'gitlab', host: 'gitlab.corp:8443' }), { provider: 'gitlab', host: 'gitlab.corp:8443', path: 'g/r' });
+  sh(clone, 'remote', 'set-url', 'origin', 'git@github.com:o/r.git');
+  assert.deepEqual(forgeFor(clone, { provider: 'gitlab', host: 'gitlab.example.com' }), { provider: 'github', host: 'github.com', path: 'o/r' }, 'github.com is always GitHub');
+});
+
 test('forgeFor reads the configured url, not an insteadOf rewrite', () => {
   const { clone, origin } = fixture();
   sh(clone, 'remote', 'set-url', 'origin', 'https://gitlab.example.com/acme/platform/web.git');

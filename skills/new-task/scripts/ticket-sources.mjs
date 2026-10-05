@@ -145,6 +145,7 @@ function resolution(marker, tickets, source, prefix, segment, number, id = null)
     out.url = source.url.replace(/\/+$/, '');
     out.db = isText(source.db) ? source.db : null;
     out.login = isText(source.login) ? source.login : null;
+    out.sourceIndex = Array.isArray(tickets?.sources) ? tickets.sources.indexOf(source) : -1;
   }
   return out;
 }

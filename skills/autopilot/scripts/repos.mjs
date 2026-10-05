@@ -181,17 +181,28 @@ export function remotePath(dir) {
 // The forge of a repository, from its configured origin url (not an insteadOf rewrite): github.com
 // is GitHub through gh, any other host is GitLab through glab against that host (spec D5). Null for
 // a local path or no remote.
-export function forgeFor(dir) {
+// The forge of a repository, from its origin remote: the path always; the provider and host
+// from the remote when it names github.com or the ticket's own GitLab host, or when the ticket
+// has no forge of its own (Odoo). A GitHub or GitLab ticket otherwise keeps its own forge, so an
+// ssh host alias (`git@github-work:org/repo`) still opens its pull request where 1.2.0 did. An
+// https or ssh port stays with a GitLab host; an ssh port (`ssh://host:2222/`) is not a web port.
+export function forgeFor(dir, ticket = {}) {
   const r = git(dir, ['config', '--get', 'remote.origin.url']);
   if (!r.ok) return null;
   const url = r.stdout.trim();
   if (/^[A-Za-z]:[\\/]|^\/|^\.\.?[\\/]/.test(url)) return null;
-  const m = /^(?:https?:\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?\/|ssh:\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?\/|(?:[^@/]+@)?([^:/]+):(?!\/))(.+?)(?:\.git)?\/?$/.exec(url);
+  const m = /^(?:https?:\/\/(?:[^@/]+@)?([^/:]+)(:\d+)?\/|ssh:\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?\/|(?:[^@/]+@)?([^:/]+):(?!\/))(.+?)(?:\.git)?\/?$/.exec(url);
   if (!m) return null;
-  const host = (m[1] ?? m[2] ?? m[3] ?? '').toLowerCase();
-  const repoPath = m[4];
-  if (!host || !repoPath.includes('/') || /^[A-Za-z]:/.test(repoPath)) return null;
-  return { provider: host === 'github.com' ? 'github' : 'gitlab', host, path: repoPath };
+  const bare = (m[1] ?? m[3] ?? m[4] ?? '').toLowerCase();
+  const host = m[1] && m[2] ? `${bare}${m[2]}` : bare;
+  const repoPath = m[5];
+  if (!bare || !repoPath.includes('/') || /^[A-Za-z]:/.test(repoPath)) return null;
+  if (bare === 'github.com') return { provider: 'github', host: 'github.com', path: repoPath };
+  const ticketHost = String(ticket.host ?? '').toLowerCase();
+  if (['github', 'gitlab'].includes(ticket.provider) && host !== ticketHost && bare !== ticketHost) {
+    return { provider: ticket.provider, host: ticketHost || host, path: repoPath };
+  }
+  return { provider: 'gitlab', host, path: repoPath };
 }
 
 // Absolute directories of the documents repository and every code repository of the marker.

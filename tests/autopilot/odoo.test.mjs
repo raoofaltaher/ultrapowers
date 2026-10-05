@@ -105,7 +105,9 @@ test('parseOdooTaskUrl reads project and task from the three shapes', () => {
 test('splitTagNames splits Odoo display names and refuses an ambiguous split', () => {
   assert.deepEqual(splitTagNames('AI, Backend', ['AI', 'Backend']), ['AI', 'Backend']);
   assert.deepEqual(splitTagNames(false, ['AI']), []);
-  assert.equal(splitTagNames('Odd, Name', ['Odd, Name']), null);
+  assert.deepEqual(splitTagNames('Odd, Name', ['Odd, Name']), ['Odd, Name'], 'a tag whose own name holds a comma is read back as one tag');
+  assert.equal(splitTagNames('Odd, Name', ['Odd', 'Odd, Name']), null, 'one tag or two: the row cannot be told apart');
+  assert.deepEqual(splitTagNames('AI, Back-end', ['AI']), ['AI', 'Back-end'], 'a name that is no longer a current tag is kept');
 });
 
 test('tagEventsFromTracking diffs before and after lists into events', () => {
@@ -115,9 +117,25 @@ test('tagEventsFromTracking diffs before and after lists into events', () => {
   assert.deepEqual(ev, [{ id: '51', action: 'labeled', label: 'Ultrapowers Approve', actor: 'val', at: '2026-10-02T19:50:00Z' }]);
 });
 
-test('tagEventsFromTracking ignores a row whose names cannot be split', () => {
-  const rows = [{ mail_message_id: [51, 'm'], field_id: [1, 'Tags'], old_value_char: '', new_value_char: 'Odd, Name' }];
-  assert.deepEqual(tagEventsFromTracking([{ id: 51, date: '2026-10-02 19:50:00', author_id: [9, 'V'] }], rows, ['Odd, Name'], () => 'v'), []);
+test('tagEventsFromTracking ignores a row whose names cannot be told apart', () => {
+  // "Odd" and "Odd, Name" are both tags: the row "Odd, Name" is one tag or two, so it is skipped.
+  const rows = [{ mail_message_id: [51, 'm'], field_id: [1, 'Tags'], old_value_char: '', new_value_char: 'Odd, Name, Ultrapowers Approve' }];
+  assert.deepEqual(tagEventsFromTracking([{ id: 51, date: '2026-10-02 19:50:00', author_id: [9, 'V'] }], rows, ['Odd', 'Odd, Name', 'Ultrapowers Approve'], () => 'v'), []);
+  // "Odd, Name" alone is one tag whose name holds a comma: the row reads as that tag.
+  const one = [{ mail_message_id: [51, 'm'], field_id: [1, 'Tags'], old_value_char: '', new_value_char: 'Odd, Name' }];
+  assert.deepEqual(tagEventsFromTracking([{ id: 51, date: '2026-10-02 19:50:00', author_id: [9, 'V'] }], one, ['Odd, Name'], () => 'v').map((e) => e.label), ['Odd, Name']);
+});
+
+// A tracking row keeps the names of its moment: a tag renamed since, or a user's tag whose
+// name is not a current tag, must not hide the control tag events in the same row.
+test('tagEventsFromTracking keeps a row whose other names are no longer current tags', () => {
+  const messages = [{ id: 51, date: '2026-10-02 19:50:00', author_id: [9, 'V'] }];
+  const rows = [{ mail_message_id: [51, 'm'], field_id: [1, 'Tags'], old_value_char: 'AI, Backend', new_value_char: 'AI, Backend, Ultrapowers Approve' }];
+  const renamed = tagEventsFromTracking(messages, rows, ['AI', 'Back-end', 'Ultrapowers Approve'], () => 'v');
+  assert.deepEqual(renamed.map((e) => [e.action, e.label]), [['labeled', 'Ultrapowers Approve']]);
+  const userComma = [{ mail_message_id: [51, 'm'], field_id: [1, 'Tags'], old_value_char: 'Bug, Critical', new_value_char: 'Bug, Critical, Ultrapowers Approve' }];
+  const kept = tagEventsFromTracking(messages, userComma, ['Bug, Critical', 'Ultrapowers Approve'], () => 'v');
+  assert.deepEqual(kept.map((e) => [e.action, e.label]), [['labeled', 'Ultrapowers Approve']]);
 });
 
 test('lastWriterEvents attributes every current tag to the last writer', () => {

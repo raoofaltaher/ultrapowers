@@ -318,8 +318,8 @@ function startOdoo(spec = {}) {
   });
 }
 
-function odooProject(url) {
-  const root = project(tickets({ ODOO: { url, mcpUrl: `${url}/mcp`, login: 'bot', db: 'erp' } }));
+function odooProject(url, over = {}) {
+  const root = project(tickets({ ODOO: { url, mcpUrl: `${url}/mcp`, login: 'bot', db: 'erp', ...over } }));
   fs.mkdirSync(path.join(root, 'tasks', 'ODOO-34-13627'), { recursive: true });
   return root;
 }
@@ -356,6 +356,37 @@ test('fetch without the key answers via mcp for Odoo, as before', () => {
   const r = run(project(), ['fetch', 'ODOO-12-1203']);
   assert.equal(r.code, 0, r.stdout + r.stderr);
   assert.deepEqual(r.json, { via: 'mcp', provider: 'odoo', server: 'tickets-odoo', path: '12', number: 1203 });
+});
+
+test('a file link whose name has a stray percent sign is kept, not a crash', () => {
+  const comments = JSON.stringify([[{ id: 1, user: { login: 'ana' }, created_at: '2026-10-01T10:00:00Z', body: 'see https://x.test/files/report-100%.pdf' }]]);
+  const r = run(project(), ['fetch', 'GH-web-7'], { STUB_JSON: GH_JSON, STUB_COMMENTS_JSON: comments });
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.deepEqual(r.json.attachments, [{ name: 'report-100%.pdf', url: 'https://x.test/files/report-100%.pdf', size: null, mimetype: null }]);
+});
+
+test('attachments refuses an attachment id that belongs to another task', async () => {
+  const { url } = await startOdoo();
+  const root = odooProject(url);
+  const f = run(root, ['fetch', 'ODOO-34-13627'], { ODOO_API_KEY: 'k1' });
+  const from = path.join(root, 'ticket.json');
+  f.json.attachments.push({ id: 8, name: 'other-task.txt', mimetype: 'text/plain', size: 16, url: `${url}/web/content/8?download=true` });
+  fs.writeFileSync(from, JSON.stringify(f.json));
+  const r = run(root, ['attachments', 'ODOO-34-13627', '--from', from], { ODOO_API_KEY: 'k1' });
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const foreign = r.json.skipped.find((s) => s.name === 'other-task.txt');
+  assert.ok(foreign, JSON.stringify(r.json));
+  assert.match(foreign.reason, /not an attachment of this task/);
+  assert.ok(!fs.existsSync(path.join(root, 'tasks', 'ODOO-34-13627', 'attachments', '8-other-task.txt')));
+});
+
+test('fetch without db on a server whose database list is disabled is bad-tickets naming the field', async () => {
+  const { url } = await startOdoo({ listDisabled: true });
+  const root = odooProject(url, { db: undefined });
+  const r = run(root, ['fetch', 'ODOO-34-13627'], { ODOO_API_KEY: 'k1' });
+  assert.equal(r.code, 2, r.stdout + r.stderr);
+  assert.equal(r.json.error.code, 'bad-tickets');
+  assert.match(r.json.error.message, /tickets\.sources\[2\]\.db is required/, 'the Odoo source is the third in this project');
 });
 
 test('attachments downloads under the cap, lists the rest, and write-source renders the sections', async () => {
