@@ -111,7 +111,7 @@ export function makeWorkspace({ dir = null, autopilot = { mode: 'gated', baseBra
   const log = path.join(stubDir, 'calls.log');
   const env = { ...process.env, ...GIT_ENV, ULTRAPOWERS_GH: STUB, ULTRAPOWERS_GLAB: STUB, STUB_DIR: stubDir, STUB_LOG: log };
   delete env.ODOO_API_KEY;
-  delete env.ULTRAPOWERS_STAGE_ODOO_API_KEY;
+  delete env.ULTRAPOWERS_STAGE_ODOO_API_KEY; // a test machine's environment must not leak a key into the stage checks
   if (odoo && odooKey) env.ODOO_API_KEY = odooKey;
   const calls = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l).args) : []);
   const setMap = (extra) => fs.writeFileSync(path.join(stubDir, 'map.json'), JSON.stringify({ ...BASE_MAP, ...map, ...extra }));

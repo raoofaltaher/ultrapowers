@@ -521,8 +521,7 @@ export function ticketServers(tickets) {
 const TICKET_SECRETS = [
   ['GH_TOKEN', (s) => s.provider === 'github', (s) => `tickets ${s.prefix}: gh CLI and the GitHub MCP server`],
   ['GITLAB_TOKEN', (s) => s.provider === 'gitlab', (s) => `tickets ${s.prefix}: glab CLI (the GitLab MCP server signs in in the browser)`],
-  ['ODOO_API_KEY', (s) => s.provider === 'odoo', (s) => `tickets ${s.prefix}: the autopilot engine (a technical user's key) and the Odoo MCP server`],
-  ['ULTRAPOWERS_STAGE_ODOO_API_KEY', (s) => s.provider === 'odoo', (s) => `tickets ${s.prefix}: a watcher's stages, the key of a read-only Odoo user`],
+  ['ODOO_API_KEY', (s) => s.provider === 'odoo', (s) => `tickets ${s.prefix}: the autopilot engine and its stages (a technical user's key) and the Odoo MCP server`],
 ];
 
 // The .agents/mcp-secrets.env.example lines the ticket sources need, one per variable.
@@ -1265,7 +1264,7 @@ export async function runAutopilot(opts) {
   report.nextSteps = block ? [
     'GitHub: a watcher or a session that writes back needs a fine-grained token with Issues, Contents and Pull requests read and write on the listed repositories, never workflow, in GH_TOKEN.',
     'GitLab: a project token with the api scope per repository, in GITLAB_TOKEN.',
-    ...(sources.some((s) => s.provider === 'odoo') ? ['Odoo: the engine signs in as a technical user, an internal user in the Project User group and nothing more, with its API key in ODOO_API_KEY; a watcher gives its stages the key of a read-only Odoo user in ULTRAPOWERS_STAGE_ODOO_API_KEY. Both may live in .agents/mcp-secrets.env, which is gitignored.'] : []),
+    ...(sources.some((s) => s.provider === 'odoo') ? ['Odoo: the engine and its stages sign in as a technical user, an internal user in the Project User group and nothing more, with its API key in ODOO_API_KEY, the one Odoo key; it may live in .agents/mcp-secrets.env, which is gitignored.'] : []),
     'A watcher: give its stages a read-only token of their own in ULTRAPOWERS_STAGE_GH_TOKEN (Issues, Contents and Metadata read) or ULTRAPOWERS_STAGE_GITLAB_TOKEN (read_api); the stage then holds nothing that can write. See docs/autopilot-watcher.md.',
     'The guardrail is a plugin hook on every harness but Devin; Codex asks you to trust the plugin hooks once (/hooks), Hermes needs the plugin in plugins.enabled, and Gemini CLI uses the BeforeTool hook this scaffold wrote to .gemini/settings.json. The harness table in README.md names each.',
     `Start a ticket with /ultrapowers:autopilot <ID>; mode ${block.mode} stops at ${block.mode === 'full' ? 'the pull requests' : 'the review packet and the pull requests'}.`,

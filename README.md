@@ -407,7 +407,7 @@ One entry of `tickets.sources` (the id of its tickets is `<prefix>-<project>-<nu
 | `defaultProject` | all | Optional; lets `GL-42` mean the default project. On Odoo it is the project id, and the watcher lists that project's tasks |
 | `transport` | all, or the whole block | `auto` (the CLI when signed in, else the MCP server), `cli` or `mcp` |
 
-Tokens never go in this file. Put them in your environment or in `.agents/mcp-secrets.env`, which is ignored by git; `.agents/mcp-secrets.env.example` lists their names (`GH_TOKEN`, `GITLAB_TOKEN`, `ODOO_API_KEY`, and for a watcher's stages `ULTRAPOWERS_STAGE_ODOO_API_KEY`, a second key of a read-only Odoo user).
+Tokens never go in this file. Put them in your environment or in `.agents/mcp-secrets.env`, which is ignored by git; `.agents/mcp-secrets.env.example` lists their names (`GH_TOKEN`, `GITLAB_TOKEN`, `ODOO_API_KEY`). Odoo has one key, `ODOO_API_KEY`, for the engine and the stages alike.
 
 The `autopilot` block (every field but `mode` is optional):
 

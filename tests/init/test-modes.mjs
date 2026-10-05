@@ -329,7 +329,7 @@ function ticketsExample() {
     sources: [
       { prefix: 'GL', provider: 'gitlab', host: 'gitlab.com', namespace: 'acme/platform', defaultProject: 'tracker' },
       { prefix: 'GH', provider: 'github', owner: 'acme' },
-      { prefix: 'ODOO', provider: 'odoo', url: 'https://erp.example.com', mcpUrl: 'https://erp.example.com/mcp', mcpHeader: 'Authorization: Bearer' },
+      { prefix: 'ODOO', provider: 'odoo', url: 'https://erp.example.com', mcpUrl: 'https://erp.example.com/mcp', mcpHeader: 'Authorization: Bearer', login: 'bot@example.com' },
     ],
   };
 }
@@ -348,7 +348,7 @@ test('tickets --dry-run reports the change and writes nothing', () => {
   const report = run(['tickets', '--root', root, '--sources', sourcesFile(ticketsExample()), '--dry-run']);
   assert.equal(report.marker.before, null);
   assert.deepEqual(report.marker.after, ticketsExample());
-  assert.deepEqual(report.secrets, ['GH_TOKEN', 'GITLAB_TOKEN', 'ODOO_API_KEY', 'ULTRAPOWERS_STAGE_ODOO_API_KEY']);
+  assert.deepEqual(report.secrets, ['GH_TOKEN', 'GITLAB_TOKEN', 'ODOO_API_KEY']);
   assert.ok(report.mcp.some((m) => m.path === '.mcp.json' && m.action === 'proposal'));
   assert.deepEqual(changedFiles(before, snapshot(root)), []);
 });
@@ -370,7 +370,7 @@ test('tickets writes the block, proposals for existing MCP files and the secret 
   assert.ok('context7' in proposal.mcpServers, 'the proposal keeps the canonical servers');
   const secrets = fs.readFileSync(secretsFile, 'utf8');
   assert.ok(secrets.startsWith(secretsBefore), 'lines above the block stay byte-identical');
-  assert.match(secrets, /# >>> ultrapowers\nGH_TOKEN=.*\nGITLAB_TOKEN=.*\nODOO_API_KEY=.*\nULTRAPOWERS_STAGE_ODOO_API_KEY=.*\n# <<< ultrapowers\n$/);
+  assert.match(secrets, /# >>> ultrapowers\nGH_TOKEN=.*\nGITLAB_TOKEN=.*\nODOO_API_KEY=.*\n# <<< ultrapowers\n$/);
 });
 
 test('tickets creates a missing harness MCP file with the ticket servers only', () => {
@@ -446,7 +446,9 @@ test('autopilot --dry-run reports the block and the labels and writes nothing', 
   const gh = report.labels.filter((l) => l.source === 'GH');
   assert.equal(gh.length, 6);
   assert.ok(gh.every((l) => l.action === 'skipped' && /defaultProject/.test(l.message)), 'a source without a default project names no repository');
-  assert.equal(report.labels.filter((l) => l.source === 'ODOO').length, 0);
+  const odoo = report.labels.filter((l) => l.source === 'ODOO');
+  assert.equal(odoo.length, 6);
+  assert.ok(odoo.every((l) => l.action === 'skipped' && /defaultProject/.test(l.message)), 'an Odoo source without a default project names no project for its tags');
   assert.ok(report.nextSteps.some((s) => /\/ultrapowers:autopilot <ID>/.test(s)));
   assert.deepEqual(changedFiles(before, snapshot(root)), []);
 });
@@ -522,7 +524,8 @@ test('autopilot on an Odoo-only project proposes the Ultrapowers tag names and l
   const odoo = report.labels.filter((l) => l.source === 'ODOO');
   assert.deepEqual(odoo.map((l) => l.name), ODOO_LABELS);
   assert.ok(odoo.every((l) => l.action === 'would-create' && l.path === '34'), JSON.stringify(odoo));
-  assert.ok(report.nextSteps.some((s) => /ODOO_API_KEY/.test(s) && /ULTRAPOWERS_STAGE_ODOO_API_KEY/.test(s)));
+  assert.ok(report.nextSteps.some((s) => /ODOO_API_KEY/.test(s)));
+  assert.ok(!report.nextSteps.some((s) => /ULTRAPOWERS_STAGE_ODOO_API_KEY/.test(s)), 'Odoo has one key');
   assert.ok(report.nextSteps.some((s) => /Project User/.test(s)));
 });
 
@@ -553,12 +556,12 @@ test('autopilot refuses an event name with a comma', () => {
   assert.match(report.error.message, /comma/);
 });
 
-test('tickets writes both Odoo keys into the secrets example', () => {
+test('tickets writes the single Odoo key into the secrets example', () => {
   const root = scaffolded();
   run(['tickets', '--root', root, '--sources', sourcesFile(odooOnly('https://erp.example.com'))]);
   const secrets = fs.readFileSync(path.join(root, '.agents', 'mcp-secrets.env.example'), 'utf8');
-  assert.match(secrets, /^ODOO_API_KEY=/m);
-  assert.match(secrets, /^ULTRAPOWERS_STAGE_ODOO_API_KEY=/m);
+  assert.match(secrets, /^ODOO_API_KEY=.*engine.*stages/m);
+  assert.doesNotMatch(secrets, /ULTRAPOWERS_STAGE_ODOO_API_KEY/);
 });
 
 test('an invalid autopilot block is bad-autopilot and writes nothing', () => {

@@ -640,7 +640,9 @@ async function pendingApproval(ctx, state, events, door = 'command') {
   return verdict;
 }
 
-const STAGE_TOKEN_VARS = ['ULTRAPOWERS_STAGE_GH_TOKEN', 'ULTRAPOWERS_STAGE_GITLAB_TOKEN', 'ULTRAPOWERS_STAGE_ODOO_API_KEY'];
+// Odoo has one key, ODOO_API_KEY, for the engine and the stages alike: the stage keeps it, so
+// the project's Odoo MCP server works inside the stage, and the guardrail denies tracker writes.
+const STAGE_TOKEN_VARS = ['ULTRAPOWERS_STAGE_GH_TOKEN', 'ULTRAPOWERS_STAGE_GITLAB_TOKEN'];
 
 function stageTokensConfigured() {
   return STAGE_TOKEN_VARS.some((k) => Boolean(process.env[k]));
@@ -850,17 +852,15 @@ function stageEnvironment(root) {
   const noAuth = path.join(root, '.ultrapowers', 'autopilot', 'no-auth');
   const stageGh = process.env.ULTRAPOWERS_STAGE_GH_TOKEN;
   const stageGl = process.env.ULTRAPOWERS_STAGE_GITLAB_TOKEN;
-  const stageOdoo = process.env.ULTRAPOWERS_STAGE_ODOO_API_KEY;
-  if (stageGh || stageGl || stageOdoo) {
+  if (stageGh || stageGl) {
     // The engine's tokens, and the ssh agent: a push over ssh would not need a token at all.
-    for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GLAB_TOKEN', 'OAUTH_TOKEN', 'ODOO_API_KEY', 'SSH_AUTH_SOCK', 'GIT_SSH_COMMAND', 'GIT_SSH']) delete env[k];
+    // ODOO_API_KEY stays: it is the one Odoo key, and the project's Odoo MCP server reads it.
+    for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GLAB_TOKEN', 'OAUTH_TOKEN', 'SSH_AUTH_SOCK', 'GIT_SSH_COMMAND', 'GIT_SSH']) delete env[k];
     for (const d of ['gh', 'glab']) fs.mkdirSync(path.join(noAuth, d), { recursive: true });
     env.GH_CONFIG_DIR = path.join(noAuth, 'gh');
     env.GLAB_CONFIG_DIR = path.join(noAuth, 'glab');
     if (stageGh) env.GH_TOKEN = stageGh;
     if (stageGl) env.GITLAB_TOKEN = stageGl;
-    // The project's Odoo MCP server reads ${ODOO_API_KEY}: inside a stage that is the read-only key.
-    if (stageOdoo) env.ODOO_API_KEY = stageOdoo;
     const n = Number.parseInt(env.GIT_CONFIG_COUNT ?? '0', 10) || 0;
     env[`GIT_CONFIG_KEY_${n}`] = 'credential.helper';
     env[`GIT_CONFIG_VALUE_${n}`] = '';
@@ -912,8 +912,12 @@ function assertGuardedHarness(settings) {
 
 // A watcher's stages hold their own read-only tokens (D13). Without them a stage holds the
 // engine's write token, so the watcher refuses to start unless the project says so in writing.
-function assertStageCredentials(settings) {
-  if (stageTokensConfigured() || settings.watch?.sharedCredentials) return;
+// Odoo is the exception: it has one key, so a project whose ticket sources are all Odoo starts
+// with ODOO_API_KEY alone; there is no forge token in the stage to protect with a second one.
+function assertStageCredentials(ctx) {
+  if (stageTokensConfigured() || ctx.settings.watch?.sharedCredentials) return;
+  const sources = ctx.marker.tickets?.sources ?? [];
+  if (sources.length && sources.every((s) => s.provider === 'odoo')) return;
   throw new AutopilotError('stage-credentials-missing', `the watcher starts only with read-only stage tokens in its environment (${STAGE_TOKEN_VARS.join(', ')}); to run its stages with the engine's own credentials, set autopilot.watch.sharedCredentials to true`);
 }
 
@@ -921,7 +925,7 @@ async function runRun(opts) {
   const base = { ...opts, door: 'watch', pid: process.pid };
   const ctx = context(base);
   assertGuardedHarness(ctx.settings);
-  assertStageCredentials(ctx.settings);
+  assertStageCredentials(ctx);
   const stages = [];
   const seen = {};
   let final = null;
@@ -1100,7 +1104,7 @@ async function runWatch(opts) {
   loadSecretsFile(root, process.env);
   if (settings.mode !== 'off') {
     assertGuardedHarness(settings);
-    assertStageCredentials(settings);
+    assertStageCredentials({ settings, marker });
   }
   if (settings.mode === 'off') {
     const events = [{ event: 'idle', reason: 'mode-off' }];

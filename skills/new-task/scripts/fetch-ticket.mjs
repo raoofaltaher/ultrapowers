@@ -222,7 +222,10 @@ async function fetchOdoo(resolution) {
     const rows = await c.call('mail.message', 'search_read', [[['model', '=', 'project.task'], ['res_id', '=', n], ['message_type', '=', 'comment']]], { fields: ['id', 'date', 'author_id', 'body'], order: 'date asc' });
     const messages = [];
     for (const m of rows) messages.push({ author: await loginOf(m.author_id?.[0]), at: odooIso(m.date), body: htmlToText(m.body) });
-    const files = await c.call('ir.attachment', 'search_read', [[['res_model', '=', 'project.task'], ['res_id', '=', n]]], { fields: ['id', 'name', 'mimetype', 'file_size'] });
+    const files = await c.call('ir.attachment', 'search_read', [[['res_model', '=', 'project.task'], ['res_id', '=', n]]], { fields: ['id', 'name', 'mimetype', 'file_size', 'type', 'url'] });
+    // A file kept outside Odoo (a URL attachment, a cloud storage module) is listed at its own
+    // address: /web/content would only redirect there, and its bytes are not in the database.
+    const addressOf = (f) => (EXTERNAL_ATTACHMENT_TYPES.has(f.type) && typeof f.url === 'string' && f.url ? f.url : `${resolution.url}/web/content/${f.id}?download=true`);
     const author = task.create_uid?.[0] ? (await c.call('res.users', 'read', [[task.create_uid[0]]], { fields: ['login'] }))[0]?.login ?? null : null;
     const ticket = {
       title: task.name ?? '',
@@ -232,7 +235,7 @@ async function fetchOdoo(resolution) {
       labels: tags,
       author,
       via: 'rpc',
-      attachments: files.map((f) => ({ id: f.id, name: f.name, mimetype: f.mimetype ?? null, size: f.file_size ?? null, url: `${resolution.url}/web/content/${f.id}?download=true` })),
+      attachments: files.map((f) => ({ id: f.id, name: f.name, mimetype: f.mimetype ?? null, size: f.file_size ?? null, url: addressOf(f) })),
     };
     return withReads(ticket, messages);
   } catch (err) {
@@ -275,6 +278,10 @@ async function fetchTicket(resolution) {
 
 // Downloads the ticket's attachments under the cap into tasks/<ID>/attachments/ and records, in the
 // ticket JSON itself, the file of each one or why it was left as a link (spec D8).
+// ir.attachment.type values whose bytes live outside Odoo: `url` (a link) and `cloud_storage`
+// (Odoo's cloud storage modules, which keep the file at `url`).
+const EXTERNAL_ATTACHMENT_TYPES = new Set(['url', 'cloud_storage']);
+
 async function downloadAttachments(root, resolution, id, opts) {
   if (resolution.provider === 'local') throw new FetchError('bad-ticket', `${id} is a local ticket; attachments needs a ticket from a configured source`);
   const dir = path.join(root, 'tasks', id);
@@ -307,8 +314,16 @@ async function downloadAttachments(root, resolution, id, opts) {
     }
     try {
       client = client ?? await odooClientFor(resolution);
-      const [row] = await client.call('ir.attachment', 'read', [[a.id]], { fields: ['datas'] });
-      if (!row || typeof row.datas !== 'string') throw new FetchError('cli-failed', 'no content');
+      const [row] = await client.call('ir.attachment', 'read', [[a.id]], { fields: ['datas', 'type', 'url'] });
+      if (!row) throw new FetchError('cli-failed', 'no content');
+      // The bytes of a URL or cloud-stored attachment are not in Odoo: the link stays a link,
+      // and no empty file is written.
+      if (EXTERNAL_ATTACHMENT_TYPES.has(row.type)) {
+        if (typeof row.url === 'string' && row.url) a.url = row.url;
+        skip(`stored outside Odoo (${row.type})`);
+        continue;
+      }
+      if (typeof row.datas !== 'string' || row.datas === '') throw new FetchError('cli-failed', 'no content');
       const bytes = Buffer.from(row.datas, 'base64');
       if (bytes.length > cap) {
         skip(`larger than ${cap} bytes`);
@@ -386,9 +401,10 @@ function writeSource(root, resolution, id, opts) {
   if (attachments.length) {
     sections.push('## Attachments', '');
     for (const a of attachments) {
-      const size = formatSize(a.size);
-      if (a.file) sections.push(`- ${oneLine(a.name)} (${size}) → ${a.file}`);
-      else sections.push(`- ${oneLine(a.name)} (${size}) ${oneLine(a.url)}, not downloaded: ${oneLine(a.reason) || 'not downloaded'}; read in the session only`);
+      // A file kept outside the tracker reports no size; "(0 B)" would misdescribe it.
+      const size = Number(a.size) > 0 ? `(${formatSize(a.size)}) ` : '';
+      if (a.file) sections.push(`- ${oneLine(a.name)} ${size}→ ${a.file}`);
+      else sections.push(`- ${oneLine(a.name)} ${size}${oneLine(a.url)}, not downloaded: ${oneLine(a.reason) || 'not downloaded'}; read in the session only`);
     }
     sections.push('');
   }

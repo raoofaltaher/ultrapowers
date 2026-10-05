@@ -337,6 +337,10 @@ test('fetch reads an Odoo task over RPC when the key and login are set', async (
   assert.deepEqual(r.json.links, ['https://design.example.com/mockup/1']);
   assert.equal(r.json.attachments[0].name, 'mockup.png');
   assert.equal(r.json.attachments[0].size, 800);
+  assert.match(r.json.attachments[0].url, /\/web\/content\/5\?download=true$/);
+  // An attachment stored outside Odoo is listed at its own address, not at /web/content.
+  assert.equal(r.json.attachments[2]?.name, 'backlog.md', JSON.stringify(r.json.attachments));
+  assert.equal(r.json.attachments[2].url, 'https://files.example.com/13627/backlog.md');
   assert.match(r.json.url, /web#model=project\.task&id=13627$/);
 });
 
@@ -365,16 +369,21 @@ test('attachments downloads under the cap, lists the rest, and write-source rend
   assert.deepEqual(r.json.downloaded.map((d) => d.file), ['tasks/ODOO-34-13627/attachments/5-mockup.png']);
   assert.equal(r.json.skipped[0].name, 'big.pdf');
   assert.equal(r.json.skipped[0].reason, 'larger than 1000 bytes');
+  // The cloud-stored attachment has no bytes in Odoo: no empty file is written, the link stays.
+  assert.equal(r.json.skipped[1].name, 'backlog.md');
+  assert.match(r.json.skipped[1].reason, /stored outside Odoo \(cloud_storage\)/);
   assert.equal(fs.statSync(path.join(root, 'tasks', 'ODOO-34-13627', 'attachments', '5-mockup.png')).size, 800);
+  assert.ok(!fs.existsSync(path.join(root, 'tasks', 'ODOO-34-13627', 'attachments', '7-backlog.md')));
   const updated = JSON.parse(fs.readFileSync(from, 'utf8'));
   assert.equal(updated.attachments[0].file, 'tasks/ODOO-34-13627/attachments/5-mockup.png');
   assert.equal(updated.attachments[1].reason, 'larger than 1000 bytes');
+  assert.equal(updated.attachments[2].url, 'https://files.example.com/13627/backlog.md');
   const w = run(root, ['write-source', 'ODOO-34-13627', '--from', from]);
   assert.equal(w.code, 0, w.stdout + w.stderr);
   const src = fs.readFileSync(path.join(root, 'tasks', 'ODOO-34-13627', 'source.md'), 'utf8');
   assert.match(src, /- Fetched: \S+ via rpc/);
   assert.match(src, /## Messages\n\n- val 2026-10-02T18:39:00Z:\n {2}will have kick off today, got access from clients/);
-  assert.match(src, /## Attachments\n\n- mockup\.png \(800 B\) → tasks\/ODOO-34-13627\/attachments\/5-mockup\.png\n- big\.pdf \(2\.0 MB\) http[^\n]*, not downloaded: larger than 1000 bytes; read in the session only/);
+  assert.match(src, /## Attachments\n\n- mockup\.png \(800 B\) → tasks\/ODOO-34-13627\/attachments\/5-mockup\.png\n- big\.pdf \(2\.0 MB\) http[^\n]*, not downloaded: larger than 1000 bytes; read in the session only\n- backlog\.md https:\/\/files\.example\.com\/13627\/backlog\.md, not downloaded: stored outside Odoo \(cloud_storage\); read in the session only/);
   assert.match(src, /## Links\n\n- https:\/\/design\.example\.com\/mockup\/1/);
 });
 
