@@ -266,6 +266,15 @@ test('renderPacket is under 25 lines and carries the packet id', () => {
   assert.throws(() => renderPacket(`${TEMPLATE}${'\nx'.repeat(30)}`, { state: S, events: DEFAULTS.events, links: { brief: 'B', spec: 'S', plan: 'P', diff: null }, assumptions: [] }), { code: 'packet-too-long' });
 });
 
+test('renderPacket shows a code repository its own default branch before its branch exists', () => {
+  const S = stateWith({ docs: { branch: 'GH-16-x', base: 'draft', tip: 'd1' }, scope: { proposed: ['backend', 'web'], frozen: false }, repos: [] });
+  const args = { events: DEFAULTS.events, links: { brief: 'B', spec: 'S', plan: 'P', diff: null }, assumptions: [], repoBases: { backend: 'main', web: 'int' } };
+  const text = renderPacket(TEMPLATE, { state: S, ...args });
+  assert.match(text, /backend\s+base main\s+branch not yet created/);
+  assert.match(text, /web\s+base int\s+branch not yet created/);
+  assert.doesNotMatch(text, /backend\s+base draft/);
+});
+
 test('renderPacket names the docs branch for the root repository', () => {
   const S = stateWith({ docs: { branch: 'GH-16-x', base: 'dev', tip: 'd1' }, scope: { proposed: ['.'], frozen: false }, repos: [] });
   const args = { events: DEFAULTS.events, links: { brief: 'B', spec: 'S', plan: 'P', diff: null }, assumptions: [] };

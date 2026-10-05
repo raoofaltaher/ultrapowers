@@ -459,8 +459,17 @@ class OdooTracker {
     return (user[groupsField] ?? []).some((g) => groups.includes(g)) ? 'write' : 'read';
   }
 
+  // Odoo 17 and later escape a plain string body, so the note's markup is sent with
+  // body_is_html; an older server that does not know the argument gets the body alone.
   async comment(number, body) {
-    const id = await this.call('project.task', 'message_post', [[Number(number)]], { body: textToNoteHtml(body), message_type: 'comment', subtype_xmlid: 'mail.mt_note' });
+    const kwargs = { body: textToNoteHtml(body), message_type: 'comment', subtype_xmlid: 'mail.mt_note' };
+    let id;
+    try {
+      id = await this.call('project.task', 'message_post', [[Number(number)]], { ...kwargs, body_is_html: true });
+    } catch (err) {
+      if (err.code !== 'tracker-failed' || !/body_is_html/.test(err.message)) throw err;
+      id = await this.call('project.task', 'message_post', [[Number(number)]], kwargs);
+    }
     return `${this.r.url.replace(/\/+$/, '')}/web#model=project.task&id=${number}&message=${id}`;
   }
 

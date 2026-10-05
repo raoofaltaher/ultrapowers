@@ -236,8 +236,20 @@ test('odoo comment posts an internal note and commentTime reads it back', async 
   const post = f.seed.writes.at(-1);
   assert.equal(post.method, 'message_post');
   assert.equal(post.kwargs.subtype_xmlid, 'mail.mt_note');
+  assert.equal(post.kwargs.body_is_html, true, 'Odoo 17+ escapes a plain body; the note is HTML');
   assert.match(post.kwargs.body, /<pre[^>]*>Packet\n  brief <a href="https:\/\/d\/x">/);
   assert.equal(await t.commentTime(url), f.seed.messages.at(-1).dateIso);
+});
+
+test('odoo comment falls back to a plain message_post on a server without body_is_html', async () => {
+  const f = await odooFake(odooSeedWithTask({ bodyIsHtmlUnsupported: true }));
+  const t = trackerFor(ODOO(f), E_ODOO);
+  const url = await t.comment(13627, 'Packet');
+  assert.match(url, /message=\d+$/);
+  const post = f.seed.writes.at(-1);
+  assert.equal(post.method, 'message_post');
+  assert.ok(!('body_is_html' in post.kwargs));
+  assert.match(post.kwargs.body, /<pre/);
 });
 
 test('odoo addLabel creates a missing tag then writes it; removeLabel removes it', async () => {

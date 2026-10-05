@@ -432,7 +432,8 @@ async function postPacket(ctx, opts, state) {
     plan: blobUrl(ctx, docsTip, `plans/${opts.id}/Plan.md`),
     diff: previous && previous.docsTip && previous.docsTip !== docsTip ? compareUrl(ctx, previous.docsTip, docsTip) : null,
   };
-  const body = renderPacket(readText(PACKET_TEMPLATE), { state, links, assumptions: assumptionsFrom(specText), events: ctx.settings.events, baseAhead: ahead });
+  const repoBases = Object.fromEntries((ctx.marker.repos ?? []).filter((r) => r?.name && r.defaultBranch).map((r) => [r.name, r.defaultBranch]));
+  const body = renderPacket(readText(PACKET_TEMPLATE), { state, links, assumptions: assumptionsFrom(specText), events: ctx.settings.events, baseAhead: ahead, repoBases });
   const commentUrl = await ctx.tracker.comment(ctx.source.number, body);
   // The packet time is the tracker's clock, the same clock that stamps the label events.
   const postedAt = (await ctx.tracker.commentTime(commentUrl).catch(() => null)) ?? new Date().toISOString();

@@ -269,7 +269,7 @@ function fill(template, values) {
 }
 
 // Renders the review packet from the template beside the skill; under 25 lines or it throws.
-export function renderPacket(template, { state, links, assumptions = [], events, baseAhead = [] }) {
+export function renderPacket(template, { state, links, assumptions = [], events, baseAhead = [], repoBases = {} }) {
   // Commits on the local base that origin does not have ride into the ticket's pull request;
   // the reviewer sees them here instead of discovering them in the diff.
   const ahead = Array.isArray(baseAhead) ? baseAhead.filter(Boolean) : [];
@@ -281,7 +281,9 @@ export function renderPacket(template, { state, links, assumptions = [], events,
   const repoLines = (repoNames.length ? repoNames : ['.']).map((name) => {
     // The root repository is the documents repository: its branch, tip and PR are the docs ones.
     const r = byName[name] ?? (name === '.' ? { base: state.docs.base, branch: state.docs.branch, tip: state.docs.tip, prUrl: state.pr?.docs ?? null } : undefined);
-    const base = r?.base ?? state.docs.base ?? '';
+    // A code repository keeps its own default branch; before its branch exists that comes from the
+    // configured repos, never from the documents base.
+    const base = r?.base ?? repoBases[name] ?? state.docs.base ?? '';
     const branchState = r?.prUrl ? `PR ${r.prUrl}` : r?.tip ? `branch ${r.branch} at ${r.tip}` : 'branch not yet created';
     return `  ${name}   base ${base}     ${branchState}`;
   });

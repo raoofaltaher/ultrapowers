@@ -148,6 +148,8 @@ export function odooSeedWithTask(overrides = {}) {
         return true;
       },
       message_post: (args, kwargs, x) => {
+        // Odoo 17 and later take body_is_html; `bodyIsHtmlUnsupported: true` plays an older server.
+        if (x.bodyIsHtmlUnsupported && 'body_is_html' in kwargs) throw new Error("message_post() got an unexpected keyword argument 'body_is_html'");
         const id = x.nextId++;
         const dateIso = x.nowIso ?? new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
         x.messages.push({ id, model: 'project.task', res_id: args[0][0], message_type: kwargs.message_type ?? 'comment', date: dateIso.replace('T', ' ').replace('Z', ''), dateIso, author_id: [17, 'Bot'], body: kwargs.body ?? '', tracking_value_ids: [] });
