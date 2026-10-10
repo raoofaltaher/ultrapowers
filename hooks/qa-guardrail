@@ -151,6 +151,7 @@ hook_dir_node="$hook_dir"
 if command -v cygpath >/dev/null 2>&1; then hook_dir_node="$(cygpath -m "$hook_dir" 2>/dev/null || printf '%s' "$hook_dir")"; fi
 
 parse_status=""; tool=""; cmd=""; wpath=""; url=""; event_cwd=""; allowed=""; forbidden=""; ticket=""; keypaths=""; tracker_hosts=""; ignore_case="0"
+wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""
 {
   IFS= read -r -d '' parse_status || true
   IFS= read -r -d '' tool || true
@@ -164,6 +165,10 @@ parse_status=""; tool=""; cmd=""; wpath=""; url=""; event_cwd=""; allowed=""; fo
   IFS= read -r -d '' keypaths || true
   IFS= read -r -d '' tracker_hosts || true
   IFS= read -r -d '' ignore_case || true
+  IFS= read -r -d '' wpath_real || true
+  IFS= read -r -d '' wpath_rel || true
+  IFS= read -r -d '' keypaths_real || true
+  IFS= read -r -d '' patch_recs || true
 } < <(printf '%s' "$event" | node -e '
 const fs = require("node:fs");
 const path = require("node:path");
@@ -226,11 +231,37 @@ const isPatchTool = /patch/i.test(str(ev.tool_name));
 const command = str(inp.command) || (isPatchTool ? (str(inp.patch) || str(inp.patchText) || str(inp.input) || str(inp.diff)) : "");
 // The path resolver is an ES module: import() works on every node this plugin supports (18+).
 import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guard-paths.mjs")).href).then((guard) => {
+  // Every path below is resolved to its real spelling (8.3 short names, Git Bash forms, symlinks)
+  // against the event cwd, and compared exactly unless the project folder ignores case. The bash
+  // rules then match on these trusted values: `real` is the full canonical path, `rel` the path
+  // inside the project written "./<path>" (empty when the path is outside it).
+  let base = process.cwd();
+  try { if (str(ev.cwd) && fs.statSync(guard.toNative(str(ev.cwd))).isDirectory()) base = str(ev.cwd); } catch (e) { /* keep the process cwd */ }
+  const rootReal = guard.realCanonical(root, root);
+  const ignoreCase = guard.rootIgnoresCase(root);
+  const resolve = (p) => {
+    const real = guard.realCanonical(p, base);
+    const inner = guard.rel(real, rootReal, ignoreCase);
+    return { real, rel: inner === null ? "" : "./" + inner };
+  };
+  const writeRaw = str(inp.file_path) || str(inp.notebook_path) || str(inp.path);
+  const w = writeRaw ? resolve(writeRaw) : { real: "", rel: "" };
+  const keyReal = pathFields.map((p) => { const r = resolve(p); return r.rel ? r.rel.slice(2) : r.real; }).filter(Boolean);
+  // The files a patch names (Codex apply_patch, Droid ApplyPatch), each as raw, rel and real.
+  const patchRecs = [];
+  if (/^(apply_?patch)$/i.test(str(ev.tool_name))) {
+    for (const line of command.split("\n")) {
+      const m = /^\*\*\* (?:Add|Update|Delete) File: *(.+)$/.exec(line) || /^\*\*\* Move to: *(.+)$/.exec(line);
+      if (!m) continue;
+      const r = resolve(m[1]);
+      patchRecs.push([m[1], r.rel, r.real].join("\u0001"));
+    }
+  }
   process.stdout.write([
-    "ok", str(ev.tool_name), command,
-    str(inp.file_path) || str(inp.notebook_path) || str(inp.path),
+    "ok", str(ev.tool_name), command, writeRaw,
     str(inp.url), str(ev.cwd), allowed.join(","), norm(hosts.forbidden).join(","), ticket,
-    pathFields.join("\n"), trackerHosts.join(","), guard.rootIgnoresCase(root) ? "1" : "0",
+    pathFields.join("\n"), trackerHosts.join(","), ignoreCase ? "1" : "0",
+    w.real, w.rel, keyReal.join("\n"), patchRecs.join("\n"),
   ].join("\0") + "\0");
 }, (e) => {
   process.stdout.write(["noresolver:" + String(e.message).split("\n")[0], "", "", "", "", "", "", "", ""].join("\0") + "\0");
@@ -256,7 +287,6 @@ if [ -n "$event_cwd" ]; then
 fi
 
 tool_lc="$(lower "$tool")"
-root_lc="$(lower "$root")"
 
 # Key material: never read, searched, uploaded or written by any tool during a run. A
 # `.env.example` file is the documented template and stays readable.
@@ -268,6 +298,16 @@ if [ -n "$keypaths" ]; then
     kl="${kl//.env.example/}"
     printf '%s' "$kl" | grep -Eq "$KEY_RE" && deny "key material ($kp) is never read, searched, uploaded or written during $run_kind"
   done <<< "$keypaths"
+fi
+# The same paths again in their real spelling: an 8.3 short name or a symlink names the key file
+# while the text above does not.
+if [ -n "$keypaths_real" ]; then
+  while IFS= read -r kp; do
+    [ -n "$kp" ] || continue
+    kl="$(lower "$kp")"
+    kl="${kl//.env.example/}"
+    printf '%s' "$kl" | grep -Eq "$KEY_RE" && deny "key material ($kp) is never read, searched, uploaded or written during $run_kind"
+  done <<< "$keypaths_real"
 fi
 
 # --- File tools. QA profile: the only legitimate writes are the report, its artifacts and
@@ -299,60 +339,63 @@ esac
 case "$tool_lc" in
   apply_patch|applypatch)
     [ -n "$cmd" ] || deny "an empty patch cannot be verified during $run_kind"
-    while IFS= read -r ppath; do
+    # Each record: the path as written, its path inside the project ("./..." or empty when the
+    # path is outside it) and its real canonical path, resolved by the node block.
+    while IFS=$'\001' read -r ppath prel preal; do
       [ -n "$ppath" ] || continue
-      pl="$(lower "$(norm_path "$ppath")")"
+      pcheck="${prel:-$preal}"
+      pl="$(lower "${pcheck#./}")"
       printf '%s' "$pl" | grep -Eq "$PROTECTED_RE" \
         && deny "the patch writes a protected path ($ppath); never allowed during $run_kind"
       if [ "$PROFILE" = "autopilot" ]; then
         printf '%s' "${pl//.env.example/}" | grep -Eq "$AUTOPILOT_PROTECTED_RE" \
           && deny "the patch writes a protected path ($ppath); CI, hooks, settings and the project config stay as they are"
       fi
-      case "$pl" in
+      case "$(lower "$(norm_path "$ppath")")" in
         ..|../*|*/../*|*/..) deny "the patch names a path with a parent-directory segment ($ppath)" ;;
       esac
-      case "$pl" in
-        /*) pabs="$pl" ;;
-        ./*) pabs="$(lower "$base_cwd")/${pl#./}" ;;
-        *) pabs="$(lower "$base_cwd")/$pl" ;;
-      esac
       if [ "$PROFILE" = "autopilot" ]; then
-        case "$pabs" in "$root_lc/"*) ;; *) deny "the patch writes outside the workspace $root ($ppath)" ;; esac
+        [ -n "$prel" ] || deny "the patch writes outside the workspace $root ($ppath)"
       else
-        case "$pabs" in "$root_lc/reviews/"*|"$root_lc/.ultrapowers/"*) ;; *) deny "a patch during a QA run is limited to reviews/ and .ultrapowers/ ($ppath)" ;; esac
+        prc="${prel#./}"
+        [ "$ignore_case" = "1" ] && prc="$(lower "$prc")"
+        case "$prc" in reviews/*|.ultrapowers/*) ;; *) deny "a patch during a QA run is limited to reviews/ and .ultrapowers/ ($ppath)" ;; esac
       fi
-    done < <(printf '%s\n' "$cmd" | sed -nE 's/^\*\*\* (Add|Update|Delete) File: *(.+)$/\2/p; s/^\*\*\* Move to: *(.+)$/\1/p')
+    done <<< "$patch_recs"
     exit 0 ;;
 esac
 
 if [ "$is_write_tool" -eq 1 ]; then
-  wl="$(lower "$(norm_path "$wpath")")"
+  # The protected-name rules judge the path inside the project (or the full canonical path when
+  # it lies outside); both come from the node block, resolved to the real spelling.
+  wcheck="${wpath_rel:-$wpath_real}"
+  wl="$(lower "${wcheck#./}")"
   printf '%s' "$wl" | grep -Eq "$PROTECTED_RE" \
     && deny "write to a protected path ($wpath) is never allowed during $run_kind"
   if [ "$PROFILE" = "autopilot" ]; then
     printf '%s' "${wl//.env.example/}" | grep -Eq "$AUTOPILOT_PROTECTED_RE" \
       && deny "write to a protected path ($wpath) is never allowed during an autopilot stage: CI, hooks, settings and the project config stay as they are"
   fi
-  case "$wl" in
+  case "$(lower "$(norm_path "$wpath")")" in
     ..|../*|*/../*|*/..) deny "write path with a parent-directory segment ($wpath) cannot be verified" ;;
-  esac
-  case "$wl" in
-    /*) abs="$wl" ;;
-    ./*) abs="$(lower "$base_cwd")/${wl#./}" ;;
-    *) abs="$(lower "$base_cwd")/$wl" ;;
   esac
   ok=0
   if [ "$PROFILE" = "autopilot" ]; then
-    case "$abs" in "$root_lc/"*) ok=1 ;; esac
+    [ -n "$wpath_rel" ] && ok=1
     [ "$ok" -eq 1 ] || deny "writes during an autopilot stage stay inside the workspace $root (got: $wpath)"
     exit 0
   fi
-  if [ -n "$ticket" ]; then
-    case "$abs" in "$root_lc/reviews/$(lower "$ticket")/"*) ok=1 ;; esac
-  else
-    case "$abs" in "$root_lc/reviews/"*) ok=1 ;; esac
+  wrel="${wpath_rel#./}"
+  tk="$ticket"
+  if [ "$ignore_case" = "1" ]; then wrel="$(lower "$wrel")"; tk="$(lower "$ticket")"; fi
+  if [ -n "$wpath_rel" ]; then
+    if [ -n "$tk" ]; then
+      case "$wrel" in "reviews/$tk/"*) ok=1 ;; esac
+    else
+      case "$wrel" in reviews/*) ok=1 ;; esac
+    fi
+    case "$wrel" in .ultrapowers/*) ok=1 ;; esac
   fi
-  case "$abs" in "$root_lc/.ultrapowers/"*) ok=1 ;; esac
   [ "$ok" -eq 1 ] || deny "writes during a QA run are limited to reviews/${ticket:-<id>}/ and .ultrapowers/ (got: $wpath)"
   exit 0
 fi
