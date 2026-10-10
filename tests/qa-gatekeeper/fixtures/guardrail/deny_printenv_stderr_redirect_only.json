@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"printenv GITHUB_TOKEN 2>/dev/null"}}

@@ -67,3 +67,13 @@ def test_plugin_yaml_declares_the_hook():
     here = os.path.dirname(os.path.abspath(__file__))
     text = open(os.path.join(here, "..", "..", ".hermes-plugin", "plugin.yaml"), encoding="utf-8").read()
     assert "pre_tool_call" in text
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is needed to run the guardrail")
+def test_a_non_dict_args_reaches_the_hook_and_is_refused(hook, tmp_path, monkeypatch):
+    root = _project(tmp_path)
+    monkeypatch.chdir(root)
+    for args in (["git", "push", "origin", "GH-16-x"], "git push origin GH-16-x"):
+        verdict = hook("terminal", args, "t6")
+        assert verdict and verdict.get("action") == "block", args
+    assert hook("terminal", None, "t7") is None

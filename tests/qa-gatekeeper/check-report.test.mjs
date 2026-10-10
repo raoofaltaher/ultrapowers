@@ -10,6 +10,7 @@ const { checkReport, checkResume, snapshot } = await import(pathToFileURL(resolv
 
 const GOOD = [
   '# QA report — 2001', '', '| Ticket | 2001 |', '|---|---|', '',
+  'Guardrail: active', '',
   'Verdict: PASS-WITH-ISSUES — one Confirmed Medium Localization finding.', '',
   '## Exit criteria', '- [x] No open Confirmed Critical', '',
   '## Findings', '### F1 Raw key in French', '![French refusal](artifacts/items-user-fr-empty-name.png)', '',
@@ -66,9 +67,18 @@ test('a gated lane without its not-covered reason fails, and so does a JWT anywh
   assert.ok(names.includes('no bearer token or JWT in the report'));
 });
 
-test('a PRECONDITION-FAILED report needs only the title, the verdict and the lanes', () => {
+test('the Guardrail line is required, exactly one, and says active or not active on this harness', () => {
+  const names = (text) => failed(checkReport(text, OPTS));
+  assert.ok(names(GOOD.replace('Guardrail: active\n\n', '')).some((n) => n.startsWith('exactly one Guardrail: line')), 'a report without the line fails');
+  assert.ok(names(GOOD.replace('Guardrail: active', 'Guardrail: active\nGuardrail: active')).some((n) => n.startsWith('exactly one Guardrail: line')), 'two lines fail');
+  assert.ok(names(GOOD.replace('Guardrail: active', 'Guardrail: probably')).includes('Guardrail line says active or not active on this harness'));
+  assert.ok(names(GOOD.replace('Guardrail: active', 'Guardrail: not probed')).includes('Guardrail line says active or not active on this harness'), 'not probed is for a PRECONDITION-FAILED report only');
+  assert.deepEqual(names(GOOD.replace('Guardrail: active', 'Guardrail: not active on this harness')), []);
+});
+
+test('a PRECONDITION-FAILED report needs only the title, the guardrail line, the verdict and the lanes', () => {
   const lanes = ['1: UI', '2: Logs', '3: API', '4: Database', '5: Observability', '6: Suites', '7: Generated content'];
-  const text = ['# QA report — 2001', '', 'Verdict: PRECONDITION-FAILED — the frontend did not answer.', '', '## Per-lane coverage',
+  const text = ['# QA report — 2001', '', 'Guardrail: not probed — the run ended before STEP 4', '', 'Verdict: PRECONDITION-FAILED — the frontend did not answer.', '', '## Per-lane coverage',
     ...lanes.flatMap((lane) => [`### Lane ${lane}`, 'not-covered — precondition failed: frontend', '']),
   ].join('\n');
   assert.deepEqual(failed(checkReport(text, { id: '2001', verdict: 'PRECONDITION-FAILED', notCovered: [1, 2, 3, 4, 5, 6, 7] })), []);

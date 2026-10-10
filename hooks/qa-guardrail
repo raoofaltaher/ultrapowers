@@ -22,7 +22,8 @@ GUARD_PREFIX="QA-GUARDRAIL"
 # JSON verdict on stdout, in their own shapes; the others get no stdout at all (Gemini CLI
 # allows the call when stdout holds anything but JSON).
 deny() {
-  local msg="$GUARD_PREFIX DENY: $1"
+  marker_suffix_r
+  local msg="$GUARD_PREFIX DENY: $1$REPLY"
   printf '%s\n' "$msg" >&2
   local escaped
   escaped="$(printf '%s' "$msg" | sed 's/["\\]/\\&/g')"
@@ -35,6 +36,27 @@ deny() {
 }
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+# The run marker as a fact in every deny: where it is, whose run it is, how old it is, and who can
+# end it. A marker can outlive its run; the advice to end it is addressed to the human partner and
+# never to the agent (an agent told to remove its own guardrail would do it). Shell builtins only.
+# Result in REPLY; empty before a run is known.
+marker_suffix_r() {
+  REPLY=""
+  [ -n "${root:-}" ] || return 0
+  local f ticket_id="${ticket:-}" age="${marker_age:-}" stage="${marker_stage:-}"
+  if [ "${PROFILE:-}" = "autopilot" ]; then
+    f="$root/.ultrapowers/autopilot-active"
+    if [ -f "$f" ]; then
+      REPLY=" (autopilot stage${stage:+ $stage}${ticket_id:+ for ticket $ticket_id}: $f${age:+, $age old}. If no stage is running, your human partner can end it with autopilot.mjs end ${ticket_id:-<ID>} ${stage:-<stage>} or remove that file.)"
+    else
+      REPLY=" (autopilot stage${ticket_id:+ for ticket $ticket_id}: ULTRAPOWERS_AUTOPILOT_INSIDE is set and the marker $f is gone. If no stage is running, your human partner can end it with autopilot.mjs end ${ticket_id:-<ID>} ${stage:-<stage>} or unset that variable.)"
+    fi
+  else
+    f="$root/.ultrapowers/qa-active"
+    REPLY=" (QA run${ticket_id:+ for ticket $ticket_id}: $f${age:+, $age old}. If no QA run is in progress, your human partner can end it with /ultrapowers:qa-specialist ${ticket_id:-<id>} or remove that file.)"
+  fi
+}
 
 # The inert path below runs on every tool call of every session with the plugin installed,
 # so everything up to the marker check uses shell builtins only: no process is started.
@@ -131,7 +153,7 @@ command -v node >/dev/null 2>&1 || deny "node is required to inspect tool calls 
 # The rules below are grep, sed and tr pipelines: a missing tool would make every rule
 # "not match" and allow the call.
 for tool in grep sed tr; do
-  command -v "$tool" >/dev/null 2>&1 || deny "$tool is required to inspect tool calls during a QA run and is not on PATH"
+  command -v "$tool" >/dev/null 2>&1 || deny "$tool is required to inspect tool calls during $run_kind and is not on PATH"
 done
 
 # Node on Windows reads `/c/x` as `C:\c\x` unless Git Bash converts the argument, and a
@@ -141,7 +163,17 @@ if command -v cygpath >/dev/null 2>&1; then
   root_node="$(cygpath -m "$root" 2>/dev/null)" || root_node="$root"
 fi
 
-parse_status=""; tool=""; cmd=""; wpath=""; url=""; event_cwd=""; allowed=""; forbidden=""; ticket=""; keypaths=""; tracker_hosts=""
+# The hook's own folder: the node block and the write analyzer load hooks/lib/ from it.
+# cmd.exe hands bash this script as S:\...\hooks\qa-guardrail, so normalize the slashes first.
+hook_src="${BASH_SOURCE[0]}"
+slash='/'
+hook_src="${hook_src//\\/$slash}"
+case "$hook_src" in */*) hook_dir="${hook_src%/*}" ;; *) hook_dir="." ;; esac
+hook_dir_node="$hook_dir"
+if command -v cygpath >/dev/null 2>&1; then hook_dir_node="$(cygpath -m "$hook_dir" 2>/dev/null || printf '%s' "$hook_dir")"; fi
+
+parse_status=""; tool=""; cmd=""; wpath=""; url=""; event_cwd=""; allowed=""; forbidden=""; ticket=""; keypaths=""; tracker_hosts=""; ignore_case="0"
+wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""; role_vars=""; ro_role=""; marker_age=""; marker_stage=""
 {
   IFS= read -r -d '' parse_status || true
   IFS= read -r -d '' tool || true
@@ -154,6 +186,15 @@ parse_status=""; tool=""; cmd=""; wpath=""; url=""; event_cwd=""; allowed=""; fo
   IFS= read -r -d '' ticket || true
   IFS= read -r -d '' keypaths || true
   IFS= read -r -d '' tracker_hosts || true
+  IFS= read -r -d '' ignore_case || true
+  IFS= read -r -d '' wpath_real || true
+  IFS= read -r -d '' wpath_rel || true
+  IFS= read -r -d '' keypaths_real || true
+  IFS= read -r -d '' patch_recs || true
+  IFS= read -r -d '' role_vars || true
+  IFS= read -r -d '' ro_role || true
+  IFS= read -r -d '' marker_age || true
+  IFS= read -r -d '' marker_stage || true
 } < <(printf '%s' "$event" | node -e '
 const fs = require("node:fs");
 const path = require("node:path");
@@ -164,8 +205,27 @@ if (!ev || typeof ev !== "object") {
   process.exit(0);
 }
 const root = process.argv[1];
-const inp = ev.tool_input && typeof ev.tool_input === "object" ? ev.tool_input : {};
 const str = (v) => (typeof v === "string" ? v : "");
+// The harnesses spell the event differently: tool_name / toolName, tool_input / toolArgs / input
+// (Copilot CLI sends toolArgs as a JSON string). Normalize the documented shapes, then refuse
+// what is left: an event with no readable tool name or no object as input is not "nothing to
+// check", it is a call that cannot be judged.
+const shapeless = () => {
+  process.stdout.write(["shapeless", "", "", "", "", "", "", "", ""].join("\0") + "\0");
+  process.exit(0);
+};
+if (Array.isArray(ev)) shapeless();
+const toolName = typeof ev.tool_name === "string" && ev.tool_name ? ev.tool_name : ev.toolName;
+if (typeof toolName !== "string" || !toolName) shapeless();
+let toolInput = [ev.tool_input, ev.toolArgs, ev.input].find((v) => v !== undefined && v !== null);
+if (typeof toolInput === "string") { try { toolInput = JSON.parse(toolInput); } catch (e) { shapeless(); } }
+if (!toolInput || typeof toolInput !== "object" || Array.isArray(toolInput)) shapeless();
+const inp = { ...toolInput };
+// A shell command given as an argv array runs as the words joined.
+if (Array.isArray(inp.command)) {
+  if (!inp.command.every((w) => typeof w === "string")) shapeless();
+  inp.command = inp.command.join(" ");
+}
 let qa = {};
 let sources = [];
 try {
@@ -188,6 +248,12 @@ for (const value of Object.values(urls)) {
 }
 // The hosts of the ticket trackers (an Odoo source names its server by URL): a stage never
 // calls the tracker from the shell, whatever the egress allow-list says.
+// The variables that hold the logins of the QA roles: the only names a QA run may read with printenv.
+const roleVars = [];
+for (const role of Array.isArray(qa.roles) ? qa.roles : []) {
+  if (!role || typeof role !== "object") continue;
+  for (const key of ["userEnv", "passwordEnv"]) if (str(role[key])) roleVars.push(str(role[key]).trim());
+}
 const trackerHosts = [];
 for (const source of sources) {
   if (!source || typeof source !== "object") continue;
@@ -201,6 +267,17 @@ if (!ticket) {
   // The autopilot marker is JSON: { ticket, branch, scope }. Its ticket id serves the same role.
   try { ticket = str(JSON.parse(fs.readFileSync(path.join(root, ".ultrapowers", "autopilot-active"), "utf8")).ticket).trim(); } catch (e) { ticket = ""; }
 }
+// Facts about the run marker for every deny message: how long ago it was written, and the stage
+// an autopilot marker records. A marker that outlived its run is for the human partner to end.
+let markerAge = "";
+let markerStage = "";
+try {
+  const qaMarker = path.join(root, ".ultrapowers", "qa-active");
+  const marker = fs.existsSync(qaMarker) ? qaMarker : path.join(root, ".ultrapowers", "autopilot-active");
+  const seconds = Math.max(0, Math.round((Date.now() - fs.statSync(marker).mtimeMs) / 1000));
+  markerAge = seconds < 60 ? "<1m" : seconds < 3600 ? Math.floor(seconds / 60) + "m" : seconds < 172800 ? Math.floor(seconds / 3600) + "h" : Math.floor(seconds / 86400) + "d";
+  if (marker !== qaMarker) markerStage = str(JSON.parse(fs.readFileSync(marker, "utf8")).stage).trim();
+} catch (e) { /* no facts: the deny message omits them */ }
 // Every path-shaped field any tool carries (a read, a search, an upload), for the
 // key-material check that applies to all tools, not only to file writes.
 const pathFields = [];
@@ -212,17 +289,52 @@ for (const key of ["paths", "files"]) {
 }
 // A patch tool may carry its patch under another field than command (Codex, Hermes); only a
 // patch tool reads those fields, so free text of another tool is never taken for a command.
-const isPatchTool = /patch/i.test(str(ev.tool_name));
+const isPatchTool = /patch/i.test(toolName);
 const command = str(inp.command) || (isPatchTool ? (str(inp.patch) || str(inp.patchText) || str(inp.input) || str(inp.diff)) : "");
-process.stdout.write([
-  "ok", str(ev.tool_name), command,
-  str(inp.file_path) || str(inp.notebook_path) || str(inp.path),
-  str(inp.url), str(ev.cwd), allowed.join(","), norm(hosts.forbidden).join(","), ticket,
-  pathFields.join("\n"), trackerHosts.join(","),
-].join("\0") + "\0");
-' "$root_node")
+// The path resolver is an ES module: import() works on every node this plugin supports (18+).
+import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guard-paths.mjs")).href).then((guard) => {
+  // Every path below is resolved to its real spelling (8.3 short names, Git Bash forms, symlinks)
+  // against the event cwd, and compared exactly unless the project folder ignores case. The bash
+  // rules then match on these trusted values: `real` is the full canonical path, `rel` the path
+  // inside the project written "./<path>" (empty when the path is outside it).
+  let base = process.cwd();
+  try { if (str(ev.cwd) && fs.statSync(guard.toNative(str(ev.cwd))).isDirectory()) base = str(ev.cwd); } catch (e) { /* keep the process cwd */ }
+  const rootReal = guard.realCanonical(root, root);
+  const ignoreCase = guard.rootIgnoresCase(root);
+  const resolve = (p) => {
+    const real = guard.realCanonical(p, base);
+    const inner = guard.rel(real, rootReal, ignoreCase);
+    return { real, rel: inner === null ? "" : "./" + inner };
+  };
+  const writeRaw = str(inp.file_path) || str(inp.notebook_path) || str(inp.path);
+  const w = writeRaw ? resolve(writeRaw) : { real: "", rel: "" };
+  const keyReal = pathFields.map((p) => { const r = resolve(p); return r.rel ? r.rel.slice(2) : r.real; }).filter(Boolean);
+  // The files a patch names (Codex apply_patch, Droid ApplyPatch), each as raw, rel and real.
+  const patchRecs = [];
+  if (/^(apply_?patch)$/i.test(toolName)) {
+    for (const line of command.split("\n")) {
+      const m = /^\*\*\* (?:Add|Update|Delete) File: *(.+)$/.exec(line) || /^\*\*\* Move to: *(.+)$/.exec(line);
+      if (!m) continue;
+      const r = resolve(m[1]);
+      patchRecs.push([m[1], r.rel, r.real].join("\u0001"));
+    }
+  }
+  process.stdout.write([
+    "ok", toolName, command, writeRaw,
+    str(inp.url), str(ev.cwd), allowed.join(","), norm(hosts.forbidden).join(","), ticket,
+    pathFields.join("\n"), trackerHosts.join(","), ignoreCase ? "1" : "0",
+    w.real, w.rel, keyReal.join("\n"), patchRecs.join("\n"), roleVars.join(","),
+    str((qa.db && typeof qa.db === "object" ? qa.db : {}).roRole).trim() || "qa_agent_ro",
+    markerAge, markerStage,
+  ].join("\0") + "\0");
+}, (e) => {
+  process.stdout.write(["noresolver:" + String(e.message).split("\n")[0], "", "", "", "", "", "", "", ""].join("\0") + "\0");
+});
+' "$root_node" "$hook_dir_node")
 case "$parse_status" in
+  noresolver:*) deny "the path resolver hooks/lib/guard-paths.mjs cannot be loaded (${parse_status#noresolver:}); every call is refused during $run_kind" ;;
   badconfig:*) deny "the project config .agents/ultrapowers.json cannot be read (${parse_status#badconfig:}); every call is refused while a run marker exists under .ultrapowers/" ;;
+  shapeless) deny "the tool event has no readable tool name or input; an uninspectable call is refused during $run_kind" ;;
 esac
 [ "$parse_status" = "ok" ] || deny "the tool event could not be parsed; an uninspectable call is refused during $run_kind"
 
@@ -240,7 +352,6 @@ if [ -n "$event_cwd" ]; then
 fi
 
 tool_lc="$(lower "$tool")"
-root_lc="$(lower "$root")"
 
 # Key material: never read, searched, uploaded or written by any tool during a run. A
 # `.env.example` file is the documented template and stays readable.
@@ -252,6 +363,16 @@ if [ -n "$keypaths" ]; then
     kl="${kl//.env.example/}"
     printf '%s' "$kl" | grep -Eq "$KEY_RE" && deny "key material ($kp) is never read, searched, uploaded or written during $run_kind"
   done <<< "$keypaths"
+fi
+# The same paths again in their real spelling: an 8.3 short name or a symlink names the key file
+# while the text above does not.
+if [ -n "$keypaths_real" ]; then
+  while IFS= read -r kp; do
+    [ -n "$kp" ] || continue
+    kl="$(lower "$kp")"
+    kl="${kl//.env.example/}"
+    printf '%s' "$kl" | grep -Eq "$KEY_RE" && deny "key material ($kp) is never read, searched, uploaded or written during $run_kind"
+  done <<< "$keypaths_real"
 fi
 
 # --- File tools. QA profile: the only legitimate writes are the report, its artifacts and
@@ -283,67 +404,72 @@ esac
 case "$tool_lc" in
   apply_patch|applypatch)
     [ -n "$cmd" ] || deny "an empty patch cannot be verified during $run_kind"
-    while IFS= read -r ppath; do
+    # Each record: the path as written, its path inside the project ("./..." or empty when the
+    # path is outside it) and its real canonical path, resolved by the node block.
+    while IFS=$'\001' read -r ppath prel preal; do
       [ -n "$ppath" ] || continue
-      pl="$(lower "$(norm_path "$ppath")")"
+      pcheck="${prel:-$preal}"
+      pl="$(lower "${pcheck#./}")"
       printf '%s' "$pl" | grep -Eq "$PROTECTED_RE" \
         && deny "the patch writes a protected path ($ppath); never allowed during $run_kind"
       if [ "$PROFILE" = "autopilot" ]; then
         printf '%s' "${pl//.env.example/}" | grep -Eq "$AUTOPILOT_PROTECTED_RE" \
           && deny "the patch writes a protected path ($ppath); CI, hooks, settings and the project config stay as they are"
       fi
-      case "$pl" in
+      case "$(lower "$(norm_path "$ppath")")" in
         ..|../*|*/../*|*/..) deny "the patch names a path with a parent-directory segment ($ppath)" ;;
       esac
-      case "$pl" in
-        /*) pabs="$pl" ;;
-        ./*) pabs="$(lower "$base_cwd")/${pl#./}" ;;
-        *) pabs="$(lower "$base_cwd")/$pl" ;;
-      esac
       if [ "$PROFILE" = "autopilot" ]; then
-        case "$pabs" in "$root_lc/"*) ;; *) deny "the patch writes outside the workspace $root ($ppath)" ;; esac
+        [ -n "$prel" ] || deny "the patch writes outside the workspace $root ($ppath)"
       else
-        case "$pabs" in "$root_lc/reviews/"*|"$root_lc/.ultrapowers/"*) ;; *) deny "a patch during a QA run is limited to reviews/ and .ultrapowers/ ($ppath)" ;; esac
+        prc="${prel#./}"
+        [ "$ignore_case" = "1" ] && prc="$(lower "$prc")"
+        case "$prc" in reviews/*|.ultrapowers/*) ;; *) deny "a patch during a QA run is limited to reviews/ and .ultrapowers/ ($ppath)" ;; esac
       fi
-    done < <(printf '%s\n' "$cmd" | sed -nE 's/^\*\*\* (Add|Update|Delete) File: *(.+)$/\2/p; s/^\*\*\* Move to: *(.+)$/\1/p')
+    done <<< "$patch_recs"
     exit 0 ;;
 esac
 
 if [ "$is_write_tool" -eq 1 ]; then
-  wl="$(lower "$(norm_path "$wpath")")"
+  # A write tool whose path the hook cannot read (an unknown key) is a write that cannot be judged.
+  [ -n "$wpath" ] || deny "a write tool without a readable path cannot be verified during $run_kind"
+  # The protected-name rules judge the path inside the project (or the full canonical path when
+  # it lies outside); both come from the node block, resolved to the real spelling.
+  wcheck="${wpath_rel:-$wpath_real}"
+  wl="$(lower "${wcheck#./}")"
   printf '%s' "$wl" | grep -Eq "$PROTECTED_RE" \
     && deny "write to a protected path ($wpath) is never allowed during $run_kind"
   if [ "$PROFILE" = "autopilot" ]; then
     printf '%s' "${wl//.env.example/}" | grep -Eq "$AUTOPILOT_PROTECTED_RE" \
       && deny "write to a protected path ($wpath) is never allowed during an autopilot stage: CI, hooks, settings and the project config stay as they are"
   fi
-  case "$wl" in
+  case "$(lower "$(norm_path "$wpath")")" in
     ..|../*|*/../*|*/..) deny "write path with a parent-directory segment ($wpath) cannot be verified" ;;
-  esac
-  case "$wl" in
-    /*) abs="$wl" ;;
-    ./*) abs="$(lower "$base_cwd")/${wl#./}" ;;
-    *) abs="$(lower "$base_cwd")/$wl" ;;
   esac
   ok=0
   if [ "$PROFILE" = "autopilot" ]; then
-    case "$abs" in "$root_lc/"*) ok=1 ;; esac
+    [ -n "$wpath_rel" ] && ok=1
     [ "$ok" -eq 1 ] || deny "writes during an autopilot stage stay inside the workspace $root (got: $wpath)"
     exit 0
   fi
-  if [ -n "$ticket" ]; then
-    case "$abs" in "$root_lc/reviews/$(lower "$ticket")/"*) ok=1 ;; esac
-  else
-    case "$abs" in "$root_lc/reviews/"*) ok=1 ;; esac
+  wrel="${wpath_rel#./}"
+  tk="$ticket"
+  if [ "$ignore_case" = "1" ]; then wrel="$(lower "$wrel")"; tk="$(lower "$ticket")"; fi
+  if [ -n "$wpath_rel" ]; then
+    if [ -n "$tk" ]; then
+      case "$wrel" in "reviews/$tk/"*) ok=1 ;; esac
+    else
+      case "$wrel" in reviews/*) ok=1 ;; esac
+    fi
+    case "$wrel" in .ultrapowers/*) ok=1 ;; esac
   fi
-  case "$abs" in "$root_lc/.ultrapowers/"*) ok=1 ;; esac
   [ "$ok" -eq 1 ] || deny "writes during a QA run are limited to reviews/${ticket:-<id>}/ and .ultrapowers/ (got: $wpath)"
   exit 0
 fi
 
 # --- Arbitrary in-page code is an egress and exfiltration bypass; never.
 case "$tool_lc" in
-  *run_code_unsafe*) deny "arbitrary in-page code execution is never allowed during $run_kind" ;;
+  *run_code*|*browser_evaluate*|*evaluate_script*|*javascript_tool*) deny "arbitrary in-page code execution is never allowed during $run_kind; it is an egress and exfiltration path no host list can see" ;;
 esac
 
 # --- MCP tools of a tracker or of git, autopilot profile: reads pass, writes belong to the
@@ -351,7 +477,7 @@ esac
 if [ "$PROFILE" = "autopilot" ]; then
   case "$tool_lc" in
     mcp__*)
-      if printf '%s' "$tool_lc" | grep -Eq 'github|gitlab|glab|jira|linear|odoo|bitbucket|azure_?devops' \
+      if printf '%s' "$tool_lc" | grep -Eq 'github|gitlab|glab|jira|linear|odoo|bitbucket|azure_?devops|^mcp__tickets-' \
         && ! printf '%s' "$tool_lc" | grep -Eq '(^|_)(get|list|search|read|view|fetch|show|describe|find|query|resolve)(_|$)' \
         && printf '%s' "$tool_lc" | grep -Eq '(create|update|edit|add|remove|delete|merge|comment|note|label|close|reopen|post|save|accept|push|fork|assign|transfer|lock|approve|submit|publish|manage|link|call|execute|write|unlink|method)'; then
         deny "tracker writes through MCP tools are never run by an autopilot stage; the engine writes back between stages"
@@ -370,16 +496,14 @@ on_list() {
   [ -n "$1" ] && [ -n "$2" ] && printf ',%s,' "$1" | grep -qF ",$2,"
 }
 
-# --- Navigation and fetch tools: forbidden hosts never; allowed hosts only when a list is set.
+# --- Any tool that carries a url (navigation, fetch, scrape, crawl, whatever its name): forbidden
+# hosts never; allowed hosts only when a list is set.
 if [ -n "$url" ]; then
-  case "$tool_lc" in
-    *navigate*|*goto*|*open_url*|*new_page*|*fetch*)
-      h="$(host_of "$url")"
-      on_list "$forbidden" "$h" && deny "host '$h' is on qa.hosts.forbidden"
-      if [ -n "$allowed" ]; then
-        on_list "$allowed" "$h" || deny "host '$h' is not in qa.hosts.allowed"
-      fi ;;
-  esac
+  h="$(host_of "$url")"
+  on_list "$forbidden" "$h" && deny "host '$h' is on qa.hosts.forbidden"
+  if [ -n "$allowed" ]; then
+    on_list "$allowed" "$h" || deny "host '$h' is not in qa.hosts.allowed"
+  fi
 fi
 
 # --- Shell command surface.
@@ -393,10 +517,12 @@ B="(^|[;&|[:space:]\"'(\`/\\\\])"
 
 # Never push. Fail closed on any git command segment carrying a push token, `git stash push`
 # excepted: it stores work locally and is the autopilot stage's way to set work aside.
+push_why="the QA gate reads and reports, it never publishes"
+[ "$PROFILE" = "autopilot" ] && push_why="the autopilot engine pushes between stages"
 while IFS= read -r seg; do
   printf '%s' "$seg" | grep -Eq '\bgit\b.*\bpush\b' || continue
   printf '%s' "$seg" | grep -Eq '\bgit\b[^;&|]*\bstash[[:space:]]+push\b' && ! printf '%s' "$seg" | grep -Eq '\bpush\b.*\bpush\b' && continue
-  deny "git push is never allowed during $run_kind; the autopilot engine pushes between stages"
+  deny "git push is never allowed during $run_kind; $push_why"
 done < <(printf '%s\n' "$lc" | tr ';&|' '\n')
 
 if [ "$PROFILE" = "autopilot" ]; then
@@ -433,37 +559,29 @@ done
 
 # No stack teardown: docker[- ]compose down|stop|rm; docker rm|kill|stop; the container,
 # volume, network and image sub-noun forms; any docker ... prune.
-printf '%s' "$lc" | grep -Eq 'docker[-[:space:]]compose[^;&|]*\b(down|stop|rm)\b|docker[[:space:]]+(rm|kill|stop)\b|docker[[:space:]]+(container|volume|network|image)[[:space:]]+(rm|stop|prune)\b|docker[^;&|]*\bprune\b' \
+# The compose rules match the SUBCOMMAND: compose's global options (with or without a value:
+# `-f a.yml`, `--profile p`, `--verbose`) are skipped and the next word is the subcommand, so
+# `docker compose run --rm api` and `docker compose exec api npm start` are not a teardown or a start.
+COMPOSE_SUB='docker[-[:space:]]compose([[:space:]]+-[a-z-]+([[:space:]=][^[:space:]]+)?)*[[:space:]]+'
+printf '%s' "$lc" | grep -Eq "${COMPOSE_SUB}(down|stop|rm)\\b"'|docker[[:space:]]+(rm|kill|stop)\b|docker[[:space:]]+(container|volume|network|image)[[:space:]]+(rm|stop|prune)\b|docker[^;&|]*\bprune\b' \
   && deny "container stop, remove, down or prune is never allowed; the stack stays as found"
 # Nor a restart, start, rebuild or pause: the run observes the stack, it does not change it.
-printf '%s' "$lc" | grep -Eq 'docker[-[:space:]]compose[^;&|]*[[:space:]](up|build|restart|start|kill|pause|unpause|create)\b|docker[[:space:]]+(restart|start|pause|unpause|update)\b|docker[[:space:]]+container[[:space:]]+(restart|start|kill|pause)\b' \
+printf '%s' "$lc" | grep -Eq "${COMPOSE_SUB}(up|build|restart|start|kill|pause|unpause|create)\\b"'|docker[[:space:]]+(restart|start|pause|unpause|update)\b|docker[[:space:]]+container[[:space:]]+(restart|start|kill|pause)\b' \
   && deny "restarting, starting, rebuilding or pausing containers is never allowed; the stack stays as found"
 # Killing processes by name reaches the app under test; a targeted kill <pid> of the run's
 # own background suite stays allowed.
 printf '%s' "$lc" | grep -Eq "${B}(pkill|killall|taskkill)([[:space:]]|\$)|stop-process([[:space:]]|\$)" \
   && deny "killing processes by name is blocked; the stack stays as found"
 
-# Database read-only. A mutating verb is blocked when it LEADS a psql statement (right after
-# the -c quote or a `;`), so column names and filter literals like action='delete' pass.
+# Database read-only. The SQL itself (statement starts, functions, meta-commands, the user a
+# connection string names) is judged by the write analyzer below, which tokenizes the command and
+# follows `sh -c` and `docker exec`; what stays here is what only a text match can see: a
+# substitution inside the command and a comment that could hide a verb.
 if printf '%s' "$lc" | grep -Eq '\bpsql\b'; then
-  printf '%s' "$lc" | grep -Eq '(-u[[:space:]=]?|--username[[:space:]=])postgres([^a-z0-9_]|$)' \
-    && deny "psql as the database superuser is blocked; use the configured read-only role (qa.db.roRole)"
   printf '%s' "$cmd" | grep -Eq '\$\(|`' \
     && deny "command substitution inside a psql command is blocked; the SQL must be literal and inspectable"
   printf '%s' "$cmd" | grep -Eq '/\*|\*/|--[[:space:]]|--$' \
     && deny "SQL comments inside inline psql are blocked; they only serve to hide a write verb"
-  printf '%s' "$lc" | grep -Eq '(^|[[:space:]])-c[[:space:]=]?|(^|[[:space:]])--command[[:space:]=]' \
-    || deny "psql without an inline -c statement is blocked; lane 4 runs single inline statements only"
-  printf '%s' "$lc" | grep -Eq '(^|[[:space:]])(-f|--file)([[:space:]=])|\\i[[:space:]]|<<' \
-    && deny "psql from a script file or heredoc is blocked; the SQL is not inspectable"
-  printf '%s' "$lc" | grep -Eq "(['\"]|;)[[:space:]]*(insert|update|delete|merge|drop|truncate|alter|grant|revoke|create|copy)[[:space:]]" \
-    && deny "mutating SQL is blocked; lane 4 is read-only"
-  printf '%s' "$lc" | grep -Eq '\([[:space:]]*(insert|update|delete|merge)[[:space:]]' \
-    && deny "a write inside a CTE or subquery is blocked; lane 4 is read-only"
-  printf '%s' "$lc" | grep -Eq '\bdo[[:space:]]*\$' \
-    && deny "a psql DO block is blocked; lane 4 is read-only"
-  printf '%s' "$lc" | grep -Eq '\bselect\b[^;]*[[:space:]]into[[:space:]]+[a-z0-9_."]+[[:space:]]+from\b' \
-    && deny "SELECT ... INTO <table> creates a table and is blocked; lane 4 is read-only"
 fi
 
 # Destructive filesystem: short and long rm options, find -delete, disk tools, device writes.
@@ -472,7 +590,7 @@ printf '%s' "$lc" | grep -Eq "${B}rm[[:space:]]+-[a-z]*[rf]|${B}rm[[:space:]]+--
 # PowerShell file cmdlets write, move or delete files; the file tools are gated to
 # reviews/<id>/ and .ultrapowers/, these are not.
 printf '%s' "$lc" | grep -Eq '(^|[^a-z-])(set-content|add-content|out-file|new-item|copy-item|move-item|remove-item|rename-item|clear-content|set-item)([^a-z-]|$)' \
-  && deny "PowerShell file cmdlets are blocked during a QA run; write reports and evidence with the file tools"
+  && deny "PowerShell file cmdlets are blocked during $run_kind; write files with the file tools"
 
 # Git working-tree destruction.
 printf '%s' "$lc" | grep -Eq '\bgit\b[^;&|]*\b(reset[[:space:]]+--hard|clean[[:space:]]+-[a-z]*f|checkout[[:space:]]+--[[:space:]]|restore[[:space:]]|stash[[:space:]]+drop|branch[[:space:]]+-d)' \
@@ -485,7 +603,7 @@ printf '%s' "$lc" | grep -Eq "${B}(chmod|chown|chgrp|icacls|takeown)[[:space:]]"
 # Remote shells and copies; inline interpreters; raw network redirection.
 printf '%s' "$lc" | grep -Eq "${B}(ssh|scp|sftp|rsync|telnet|nc|ncat|netcat)(\\.exe)?[[:space:]]" \
   && deny "remote shell or copy is blocked"
-printf '%s' "$lc" | grep -Eq "${B}(python3?|node|nodejs|perl|ruby|php|deno|bun)(\\.exe)?[[:space:]]+(-c|-e|-)([[:space:]]|\$)" \
+printf '%s' "$lc" | grep -Eq "${B}(python3?|node|nodejs|perl|ruby|php|deno|bun)(\\.exe)?[[:space:]]+(-c|-e|-p|--print|--eval|-)([[:space:]]|\$)" \
   && deny "inline interpreter code is blocked; it is an unbounded egress and execution bypass"
 printf '%s' "$lc" | grep -Eq '/dev/(tcp|udp)/' \
   && deny "/dev/tcp and /dev/udp network redirection is blocked"
@@ -497,6 +615,9 @@ printf '%s' "$key_lc" | grep -Eq '(^|/)\.ssh/|authorized_keys|id_rsa|id_ed25519|
   && deny "reading or transferring key material is blocked"
 printf '%s' "$lc" | grep -Eq "${B}(printenv|env)[[:space:]]*(\$|[;&|])" \
   && deny "dumping the environment is blocked; check a variable with \${NAME:+set} instead"
+# The process environment is also a file: /proc/<pid>/environ holds every variable.
+printf '%s' "$lc" | grep -Eq '/proc/[^/[:space:]]+/environ' \
+  && deny "reading a process environment (/proc/<pid>/environ) is blocked; check a variable with \${NAME:+set} instead"
 printf '%s' "$lc" | grep -Eq '(curl|wget)[^;&|]*(-t |--upload-file|--data-binary[[:space:]]*@|-d[[:space:]]*@|-f[[:space:]][^;&|]*@)' \
   && deny "outbound file upload is blocked"
 
@@ -507,14 +628,8 @@ printf '%s' "$lc" | grep -Eq '(curl|wget)[^;&|]*(-t |--upload-file|--data-binary
 # Shell writes (spec 3.5): redirects, tee, curl -o, cp/mv/install/ln destinations, rm
 # operands, in-place editors and git subcommands, checked by the quote-aware analyzer. Its
 # inputs travel on stdin so Git Bash's argument conversion cannot rewrite the paths.
-# cmd.exe hands bash this script as S:\...\hooks\qa-guardrail, so normalize the slashes first.
-hook_src="${BASH_SOURCE[0]}"
-slash='/'
-hook_src="${hook_src//\\/$slash}"
-case "$hook_src" in */*) hook_dir="${hook_src%/*}" ;; *) hook_dir="." ;; esac
-writes_js="$hook_dir/lib/qa-shell-writes.mjs"
-if command -v cygpath >/dev/null 2>&1; then writes_js="$(cygpath -m "$writes_js" 2>/dev/null || printf '%s' "$writes_js")"; fi
-wreason="$(printf '%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$cmd" | ULTRAPOWERS_GUARD_PROFILE="$PROFILE" node "$writes_js" 2>&1)" \
+writes_js="$hook_dir_node/lib/qa-shell-writes.mjs"
+wreason="$(printf '%s\0%s\0%s\0%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$ignore_case" "$role_vars" "$ro_role" "$cmd" | ULTRAPOWERS_GUARD_PROFILE="$PROFILE" node "$writes_js" 2>&1)" \
   || wreason="the command could not be analysed for writes; it is refused during $run_kind"
 [ -z "$wreason" ] || deny "$wreason"
 

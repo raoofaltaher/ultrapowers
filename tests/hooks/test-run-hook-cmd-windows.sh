@@ -218,6 +218,58 @@ else
     fail "no usable bash exits 0 with no output (rc=$RC, out=$OUT)"
 fi
 
+# --- no usable bash: the guardrail fails closed while a run is active (issue 12) ---
+# Every other hook keeps exiting 0 (above); qa-guardrail is the brake of a QA run or an autopilot
+# stage, and a brake that silently vanishes is worse than a refused call.
+qa_proj="$TEST_ROOT/qa-project"
+mkdir -p "$qa_proj/.ultrapowers" "$qa_proj/sub/deeper"
+printf '1234' > "$qa_proj/.ultrapowers/qa-active"
+ap_proj="$TEST_ROOT/ap-project"
+mkdir -p "$ap_proj/.ultrapowers" "$ap_proj/sub"
+printf '{"ticket":"GH-16"}' > "$ap_proj/.ultrapowers/autopilot-active"
+idle_proj="$TEST_ROOT/idle-project"
+mkdir -p "$idle_proj/sub"
+
+run_nobash() {
+    # $1 cwd, $2 hook name, then VAR=value...
+    local cwd="$1" probe="$2"
+    shift 2
+    run_hook "$sandbox" "$cwd" "$probe" LOCALAPPDATA="$NO_LA" PATH="$SYS32_PATH" "$@"
+}
+
+printf 'echo probe-ran
+' > "$sandbox/hooks/qa-guardrail"
+run_nobash "$qa_proj/sub/deeper" qa-guardrail
+if [[ "$RC" -eq 2 && "$OUT" == *"QA-GUARDRAIL DENY: no bash found"* ]]; then
+    pass "no bash and a QA marker above the cwd: qa-guardrail exits 2 with the QA deny"
+else
+    fail "no bash and a QA marker above the cwd: qa-guardrail exits 2 with the QA deny (rc=$RC, out=$OUT)"
+fi
+run_nobash "$ap_proj/sub" qa-guardrail
+if [[ "$RC" -eq 2 && "$OUT" == *"AUTOPILOT-GUARDRAIL DENY: no bash found"* ]]; then
+    pass "no bash and an autopilot marker: qa-guardrail exits 2 with the autopilot deny"
+else
+    fail "no bash and an autopilot marker: qa-guardrail exits 2 with the autopilot deny (rc=$RC, out=$OUT)"
+fi
+run_nobash "$idle_proj/sub" qa-guardrail ULTRAPOWERS_AUTOPILOT_INSIDE=1
+if [[ "$RC" -eq 2 && "$OUT" == *"AUTOPILOT-GUARDRAIL DENY: no bash found"* ]]; then
+    pass "no bash inside a watcher stage (ULTRAPOWERS_AUTOPILOT_INSIDE=1) with no marker: exits 2"
+else
+    fail "no bash inside a watcher stage (ULTRAPOWERS_AUTOPILOT_INSIDE=1) with no marker: exits 2 (rc=$RC, out=$OUT)"
+fi
+run_nobash "$idle_proj/sub" qa-guardrail
+if [[ "$RC" -eq 0 && -z "$OUT" ]]; then
+    pass "no bash and no run marker: qa-guardrail still exits 0 with no output"
+else
+    fail "no bash and no run marker: qa-guardrail still exits 0 with no output (rc=$RC, out=$OUT)"
+fi
+run_nobash "$qa_proj" probe-ok
+if [[ "$RC" -eq 0 && -z "$OUT" ]]; then
+    pass "no bash and a QA marker: every other hook still exits 0 with no output"
+else
+    fail "no bash and a QA marker: every other hook still exits 0 with no output (rc=$RC, out=$OUT)"
+fi
+
 if [[ "$FAILURES" -gt 0 ]]; then
     echo "STATUS: FAILED ($FAILURES failure(s))"
     exit 1

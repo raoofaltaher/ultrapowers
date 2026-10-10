@@ -11,6 +11,7 @@
 // command substitution). A regex hook cannot contain a determined adversary; this closes the
 // ordinary spellings of a write.
 import { readFileSync } from 'node:fs';
+import { inside, realCanonical, rel } from './guard-paths.mjs';
 
 const DEVICES = new Set(['/dev/null', '/dev/stdout', '/dev/stderr', '/dev/tty', 'nul', '/dev/fd/1', '/dev/fd/2']);
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
@@ -89,13 +90,15 @@ function tokenize(src) {
     if (c === '`') { const j = src.indexOf('`', i + 1); i = j === -1 ? src.length : j + 1; push({ t: 'dyn' }); continue; }
     // operators; a word made only of digits right before < or > is a file descriptor
     if (c === '>' || c === '<') {
-      if (word && word.length === 1 && word[0].t === 'lit' && /^[0-9]+$/.test(word[0].v)) word = null;
+      let fd = null;
+      if (word && word.length === 1 && word[0].t === 'lit' && /^[0-9]+$/.test(word[0].v)) { fd = word[0].v; word = null; }
       let v = c; i++;
       if (c === '<' && src[i] === '<') { v = '<<'; i++; if (src[i] === '<') { v = '<<<'; i++; } else if (src[i] === '-') { i++; } }
       else if (c === '>' && (src[i] === '>' || src[i] === '|')) { v += src[i]; i++; }
       else if (c === '<' && src[i] === '>') { v = '<>'; i++; }
       if ((v === '>' || v === '<') && src[i] === '&') { v += '&'; i++; }
       op(v);
+      toks[toks.length - 1].fd = fd;
       if (v === '<<') { // remember the delimiter so the body is skipped at the next newline
         let j = i; while (src[j] === ' ' || src[j] === '\t') j++;
         const m = /^(['"]?)([^\s'"<>;&|()]+)\1/.exec(src.slice(j));
@@ -134,6 +137,11 @@ function normPath(p) {
 // switches, written by the engine outside the stage. The QA marker stays writable: the QA skill
 // writes and removes it itself inside the session.
 const PROTECTED_RE = /(^|\/)\.ssh\/|authorized_keys|id_rsa|id_ed25519|(^|\/)\.aws\/|mcp-secrets\.env|\.local\.(sh|env|json)$|hooks\/qa-guardrail|\.agents\/ultrapowers\.json|(^|\/)\.claude\/|(^|\/)\.git\/|(^|\/)\.githooks\/|(^|\/)\.[a-z0-9_-]+\/settings(\.local)?\.json$|(^|\/)tasks\/[^/]+\/(autopilot\.json|stage-log\.jsonl)$|(^|\/)\.ultrapowers\/(autopilot-active|autopilot-stop)$|(^|\/)\.ultrapowers\/autopilot(\/|$)|(^|\/)\.ultrapowers$/;
+// Key material no stage may read through a shell (the same list as the hook's shell rule). The
+// hook tests the typed command; an 8.3 short name (MCP-SE~1.ENV) hides the name from it, so any
+// word with an alias-shaped segment is resolved here and its real name is tested.
+const KEY_RE = /(^|\/)\.ssh\/|authorized_keys|id_rsa|id_ed25519|\.aws\/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|\/)\.env($|\.)/;
+const SHORT_SEG = /[^\\/]~[0-9]/;
 const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)hooks\/(qa-guardrail|session-start|team-memory-[a-z]+|lib\/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|\/)\.gemini\/hooks\/|(^|\/)\.husky\/|(^|\/)\.pre-commit-config\.ya?ml$|(^|\/)lefthook\.ya?ml$|(^|\/)\.env($|\.)/;
 // Git subcommands an autopilot stage may run: the read-only set plus the commands that build the
 // ticket branch. Pushing and integrating belong to the engine; nothing discards work; `config` and
@@ -143,20 +151,183 @@ const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)h
 // maintenance (they run hooks and commands), no tag (the engine names refs).
 const GIT_AUTOPILOT_ALLOWED = new Set(['add', 'commit', 'mv', 'rm']);
 
+// ---------- psql ----------
+// Lane 4 reads the database and never writes it. SQL is judged as an allow-list of statement
+// starts, not a deny-list of verbs: a function call, EXPLAIN ANALYZE, PREPARE, CALL, VACUUM, a
+// psql meta-command or a variable interpolation all write without a leading write verb.
+// The qa.db.roRole grants (SELECT only) are the guarantee; this is the layer in front of them.
+const PSQL_DYN = '\0dyn';
+const PSQL_VAR = '\0var:';
+const PSQL_VALUED = new Set(['c', 'd', 'f', 'h', 'L', 'o', 'p', 'P', 'R', 'T', 'U', 'v', 'F']);
+const PSQL_LONG = { command: 'c', dbname: 'd', file: 'f', host: 'h', 'log-file': 'L', output: 'o', port: 'p', pset: 'P', 'record-separator': 'R', 'table-attr': 'T', username: 'U', set: 'v', variable: 'v', 'field-separator': 'F' };
+const SQL_START_OK = new Set(['select', 'with', 'show', 'table', 'values', 'explain']);
+const SQL_FUNCTIONS = /\b(setval|nextval|set_config|pg_terminate_backend|pg_cancel_backend|pg_reload_conf|pg_rotate_logfile|pg_switch_wal|pg_promote|lo_[a-z_]+|dblink[a-z_]*|pg_advisory_[a-z_]+|pg_(?:read|ls|stat)_[a-z_]*file[a-z_]*|pg_ls_dir|pg_file_[a-z_]+|pg_(?:create|drop)_[a-z_]+|pg_replication_[a-z_]+|pg_logical_[a-z_]+|query_to_xml[a-z_]*|table_to_xml[a-z_]*|cursor_to_xml)\b/;
+
+// The SQL with every quoted string, quoted identifier and dollar-quoted body replaced by an empty
+// placeholder, so a `;` or a verb inside a literal is not taken for code. null: an unterminated one.
+function stripLiterals(sql) {
+  let out = '';
+  for (let i = 0; i < sql.length;) {
+    const c = sql[i];
+    if (c === "'" || c === '"') {
+      let j = i + 1;
+      for (;;) {
+        if (j >= sql.length) return null;
+        if (sql[j] === c) { if (sql[j + 1] === c) { j += 2; continue; } break; }
+        j++;
+      }
+      out += c === "'" ? "''" : '"q"';
+      i = j + 1;
+      continue;
+    }
+    if (c === '$') {
+      const m = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i));
+      if (m) {
+        const end = sql.indexOf(m[0], i + m[0].length);
+        if (end === -1) return null;
+        out += "''";
+        i = end + m[0].length;
+        continue;
+      }
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+function analyzeSql(sql) {
+  const text = stripLiterals(sql);
+  if (text === null) return 'an unterminated quote in the SQL cannot be verified; lane 4 is read-only';
+  if (/\\[A-Za-z!]/.test(text)) return 'a psql meta-command (a backslash command) is blocked; it can run a shell, read a file or repeat a statement';
+  if (/(^|[^:]):[A-Za-z_]/.test(text)) return 'psql variable interpolation (:name) is blocked; the SQL must be literal and inspectable';
+  for (const piece of text.split(';')) {
+    const st = piece.trim().toLowerCase();
+    if (!st) continue;
+    const first = (/^[a-z]+/.exec(st) || [''])[0];
+    if (!SQL_START_OK.has(first)) return `psql statement "${first.toUpperCase() || st.slice(0, 12)}" is not a read; lane 4 runs SELECT, WITH, SHOW, TABLE, VALUES and EXPLAIN only`;
+    if (first === 'explain' && /\banaly[sz]e\b/.test(st)) return 'EXPLAIN ANALYZE runs the statement it explains; lane 4 is read-only';
+    if (/\bselect\b[^;]*\binto\b/.test(st)) return 'SELECT ... INTO <table> creates a table and is blocked; lane 4 is read-only';
+    if (/\b(insert\s+into|delete\s+from|merge\s+into)\b|\bupdate\s+(only\s+)?[a-z0-9_."]+\s+(as\s+[a-z0-9_"]+\s+)?set\b/.test(st)) return 'a write inside a CTE or subquery is blocked; lane 4 is read-only';
+    const fn = SQL_FUNCTIONS.exec(st);
+    if (fn) return `${fn[1]}() can change data or the server and is blocked; lane 4 is read-only`;
+  }
+  return '';
+}
+
+// Splits the words after `psql` into its options: the SQL given with -c, the database targets,
+// the user, the positional arguments and the files it writes (-o, -L). Short options cluster
+// (`-Atc SQL`, `-cSQL`, `-Uapp`), long ones take `=` or the next word.
+function parsePsql(args) {
+  const out = { sqls: [], targets: [], positionals: [], user: undefined, file: false, outputs: [] };
+  const handle = (opt, val) => {
+    if (opt === 'c') out.sqls.push(val === undefined ? '' : val);
+    else if (opt === 'f') out.file = true;
+    else if (opt === 'd') out.targets.push(val);
+    else if (opt === 'U') out.user = val;
+    else if (opt === 'o' || opt === 'L') { if (val !== undefined) out.outputs.push(val); }
+  };
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === PSQL_DYN || a.startsWith(PSQL_VAR)) { out.positionals.push(a); continue; }
+    if (a === '--') { out.positionals.push(...args.slice(i + 1)); break; }
+    if (a.startsWith('--')) {
+      const eq = a.indexOf('=');
+      const opt = PSQL_LONG[(eq === -1 ? a : a.slice(0, eq)).slice(2)];
+      if (opt) handle(opt, eq === -1 ? args[++i] : a.slice(eq + 1));
+      continue;
+    }
+    if (a.length > 1 && a[0] === '-') {
+      for (let k = 1; k < a.length; k++) {
+        if (!PSQL_VALUED.has(a[k])) continue;
+        const attached = a.slice(k + 1);
+        handle(a[k], attached === '' ? args[++i] : attached);
+        break;
+      }
+      continue;
+    }
+    out.positionals.push(a);
+  }
+  return out;
+}
+
+// The files a psql command writes through -o and -L, as words.
+export function psqlOutputs(args) { return parsePsql(args).outputs; }
+
+// `args` are the words after `psql`; a word built from a variable or substitution is PSQL_DYN,
+// a pure $NAME reference is PSQL_VAR + NAME (`-U "$POSTGRES_USER"` is the recipe's fallback).
+// pgUser: the value of a PGUSER= given to the command, when there is one.
+export function analyzePsql(args, { roRole = 'qa_agent_ro', pgUser } = {}) {
+  const role = roRole || 'qa_agent_ro';
+  const { sqls, targets, positionals, user, file } = parsePsql(args);
+  if (file) return 'psql from a script file (-f) is blocked; the SQL is not inspectable';
+  if (sqls.length === 0) return 'psql without an inline -c statement is blocked; lane 4 runs single inline statements only';
+  const superuser = (u) => /^postgres$/i.test(String(u).trim());
+  const noSuper = 'psql as the database superuser is blocked; use the configured read-only role (qa.db.roRole)';
+  // A connection string names its user itself: it must be the read-only role.
+  for (const t of [...targets, positionals[0]]) {
+    if (t === undefined) continue;
+    if (t === PSQL_DYN) return 'a psql database argument is built from a substitution; it cannot be verified';
+    if (t.startsWith(PSQL_VAR)) continue;
+    let who = null;
+    if (/^postgres(ql)?:\/\//i.test(t)) {
+      try { const u = new URL(t); who = decodeURIComponent(u.username) || u.searchParams.get('user') || ''; } catch { return 'a psql connection URI that cannot be parsed is blocked'; }
+    } else if (t.includes('=')) {
+      const m = /(?:^|\s)user\s*=\s*('(?:[^'\\]|\\.)*'|\S+)/i.exec(t);
+      who = m ? m[1].replace(/^'|'$/g, '') : '';
+    } else continue;
+    if (superuser(who)) return noSuper;
+    if (who !== role) return `a psql connection string must name the read-only role (qa.db.roRole = ${role}), not ${who ? `"${who}"` : 'the default user'}`;
+  }
+  const named = user !== undefined ? user : positionals[1];
+  if (named === PSQL_DYN) return 'the psql user is built from a substitution; it cannot be verified';
+  if (named !== undefined && named.startsWith(PSQL_VAR) && named !== `${PSQL_VAR}POSTGRES_USER`) return 'the psql user comes from a variable; use the read-only role by name (qa.db.roRole)';
+  if (named !== undefined && superuser(named)) return noSuper;
+  if (pgUser !== undefined) {
+    if (pgUser === null || pgUser === PSQL_DYN) return 'PGUSER is built from a variable; it cannot be verified';
+    if (superuser(pgUser)) return noSuper;
+    if (pgUser !== role) return `PGUSER must be the read-only role (qa.db.roRole = ${role}), not "${pgUser}"`;
+  }
+  for (const sql of sqls) {
+    if (sql === PSQL_DYN || sql.startsWith(PSQL_VAR)) return 'the SQL is built from a variable or substitution; it must be literal and inspectable';
+    const reason = analyzeSql(sql);
+    if (reason) return reason;
+  }
+  return '';
+}
+
 // ---------- analysis ----------
-export function analyze(command, { cwd, root, ticket, profile = 'qa' }) {
+const ENV_DUMP = 'dumping the environment is blocked; check a variable with ${NAME:+set} instead';
+// A stage reads no tracker credential and nothing named like a secret out of the environment.
+const TRACKER_VARS = /^(GH_TOKEN|GITHUB_TOKEN|GITLAB_TOKEN|GLAB_TOKEN|ODOO_API_KEY|ULTRAPOWERS_STAGE_.*)$/i;
+const SECRET_VARS = /TOKEN|KEY|SECRET|PASS|CREDENTIAL|AUTH|COOKIE|SESSION|PRIVATE/i;
+
+export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase = process.platform === 'win32' || process.platform === 'darwin', roleVars = [], roRole = 'qa_agent_ro' }) {
   const autopilot = profile === 'autopilot';
-  const rootN = normPath(root).toLowerCase();
+  // Every compare below is between real canonical paths (8.3 short names, Git Bash forms and
+  // symlinks resolved), exact unless the project's folder ignores case.
+  const rootC = realCanonical(root, root);
   const areas = autopilot
-    ? [rootN]
-    : [ticket ? `${rootN}/reviews/${String(ticket).toLowerCase()}` : `${rootN}/reviews`, `${rootN}/.ultrapowers`];
+    ? [rootC]
+    : [realCanonical(ticket ? `${rootC}/reviews/${ticket}` : `${rootC}/reviews`, rootC), realCanonical(`${rootC}/.ultrapowers`, rootC)];
   const areaText = autopilot ? 'the workspace' : `reviews/${ticket || '<id>'}/ and .ultrapowers/`;
   const runKind = autopilot ? 'an autopilot stage' : 'a QA run';
   const vars = new Map();
+  // PGUSER handed down to a nested shell (`PGUSER=x sh -c '...'`, `docker exec -e PGUSER=x ... sh -c`).
+  const walkEnv = { pgUser: undefined };
+  const walkNested = (src, startDir, container, depth, pgUser) => {
+    const saved = walkEnv.pgUser;
+    walkEnv.pgUser = pgUser;
+    try { walk(src, startDir, container, depth); } finally { walkEnv.pgUser = saved; }
+  };
   let reason = '';
   const deny = (r) => { if (!reason) reason = r; };
-  const protectedPath = (p) => {
-    const l = p.toLowerCase().replace(/\.env\.example/g, '');
+  // The path inside the project is what the protected-name patterns judge, so a project that
+  // sits under a folder like .claude/worktrees is not protected as a whole; a path outside the
+  // project is judged by its full canonical spelling.
+  const protectedPath = (real) => {
+    const inner = rel(real, rootC, ignoreCase);
+    const l = (inner === null ? real : inner).toLowerCase().replace(/\.env\.example/g, '');
     return PROTECTED_RE.test(l) || (autopilot && AUTOPILOT_PROTECTED_RE.test(l));
   };
 
@@ -169,7 +340,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa' }) {
     }
     return s;
   };
-  const inArea = (abs) => areas.some((a) => abs === a || abs.startsWith(`${a}/`));
+  const inArea = (real) => areas.some((a) => inside(real, a, ignoreCase));
   const checkTarget = (w, dir, what, container) => {
     const raw = resolveWord(w);
     if (raw === null) return deny(`${what} is built from a variable or command substitution and cannot be verified; write to a literal path under ${areaText}`);
@@ -182,8 +353,21 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa' }) {
       p = `${dir}/${p.replace(/^\.\//, '')}`;
     }
     if (p.split('/').includes('..')) return deny(`${what} (${raw}) has a parent-directory segment and cannot be verified`);
-    if (protectedPath(p)) return deny(`${what} (${raw}) is a protected path; the config, hooks, CI, settings and key material are never written during ${runKind}`);
-    if (!inArea(p.toLowerCase())) deny(`${what} (${raw}) is outside ${areaText}; shell writes during ${runKind} are limited to ${autopilot ? 'the workspace' : 'those folders'}`);
+    const real = realCanonical(p, rootC);
+    if (protectedPath(real)) return deny(`${what} (${raw}) is a protected path; the config, hooks, CI, settings and key material are never written during ${runKind}`);
+    if (!inArea(real)) deny(`${what} (${raw}) is outside ${areaText}; shell writes during ${runKind} are limited to ${autopilot ? 'the workspace' : 'those folders'}`);
+  };
+
+  // A word spelled with an 8.3 alias that resolves to key material, whatever reads it (issue #31).
+  const checkAlias = (w, dir) => {
+    const raw = resolveWord(w);
+    if (raw === null || !SHORT_SEG.test(raw)) return;
+    let p = normPath(raw);
+    if (!p.startsWith('/')) p = `${dir === null ? rootC : dir}/${p.replace(/^\.\//, '')}`;
+    const real = realCanonical(p, rootC);
+    const inner = rel(real, rootC, ignoreCase);
+    const l = (inner === null ? real : inner).toLowerCase().replace(/\.env\.example/g, '');
+    if (KEY_RE.test(l)) deny(`key material (${raw}) is never read, searched, uploaded or written during ${runKind}`);
   };
 
   const walk = (src, startDir, container, depth) => {
@@ -193,13 +377,25 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa' }) {
     let cmd = [];
     const flush = () => { if (cmd.length) simple(cmd); cmd = []; };
     const simple = (items) => {
+      for (const t of items) if (t.k === 'w') checkAlias(t, dir);
       // redirections first; they apply whatever the program is
       const words = [];
+      // True when standard output of this command goes to the null device: only then is a
+      // variable check (`printenv NAME >/dev/null`) free of its value. A stderr-only redirect
+      // (`2>/dev/null`) leaves the value on the terminal.
+      let nullOut = false;
       for (let k = 0; k < items.length; k++) {
         const t = items[k];
         if (t.k === 'op') {
           const next = items[k + 1];
-          if (['>', '>>', '>|', '&>', '&>>', '<>'].includes(t.v)) { if (next && next.k === 'w') { checkTarget(next, dir, 'redirect target', container); k++; } }
+          if (['>', '>>', '>|', '&>', '&>>', '<>'].includes(t.v)) {
+            if (next && next.k === 'w') {
+              const target = resolveWord(next);
+              if (target !== null && ['/dev/null', 'nul'].includes(target.toLowerCase()) && (t.v.startsWith('&') || t.fd === null || t.fd === '1')) nullOut = true;
+              checkTarget(next, dir, 'redirect target', container);
+              k++;
+            }
+          }
           else if (t.v === '>&') { if (next && next.k === 'w') { const v = resolveWord(next); if (v === null || !/^[0-9-]+$/.test(v)) checkTarget(next, dir, 'redirect target', container); k++; } }
           else if (['<', '<<', '<<<', '<&'].includes(t.v)) { if (next && next.k === 'w') k++; }
           continue;
@@ -217,6 +413,20 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa' }) {
         assigns.push([m[1], resolveWord(rest)]);
         a++;
       }
+      // The PGUSER given to this command (a leading assignment, an env wrapper or a docker -e):
+      // undefined when none, null when built from a variable.
+      let pgUser = walkEnv.pgUser;
+      for (const [n, v] of assigns) if (n === 'PGUSER') pgUser = v;
+      // A word for analyzePsql: its value, PSQL_VAR + NAME for a pure $NAME, else PSQL_DYN.
+      const psqlWord = (x) => {
+        if (x.v !== null) return x.v;
+        const only = x.w.parts.length === 1 && x.w.parts[0].t === 'var' ? x.w.parts[0].v : null;
+        return only ? `${PSQL_VAR}${only}` : PSQL_DYN;
+      };
+      const psqlCheck = (words) => {
+        const reason = analyzePsql(words.map(psqlWord), { roRole, pgUser });
+        if (reason) deny(reason);
+      };
       let args = words.slice(a).map((w) => ({ w, v: resolveWord(w) }));
       if (args.length === 0) { for (const [n, v] of assigns) { if (v === null) vars.delete(n); else vars.set(n, v); } return; }
       let prog = (args[0].v || '').replace(/\\/g, '/').split('/').pop().toLowerCase().replace(/\.exe$/, '');
@@ -228,14 +438,44 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa' }) {
           return;
         }
         args = args.slice(1);
-        if (prog === 'env') while (args.length && args[0].v && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(args[0].v) || args[0].v.startsWith('-'))) args = args.slice(1);
+        if (prog === 'env') {
+          while (args.length && args[0].v && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(args[0].v) || args[0].v.startsWith('-'))) {
+            if (args[0].v.startsWith('PGUSER=')) pgUser = args[0].v.slice('PGUSER='.length);
+            args = args.slice(1);
+          }
+        }
         if (prog === 'timeout') { while (args.length && args[0].v && args[0].v.startsWith('-')) args = args.slice(1); args = args.slice(1); }
-        if (!args.length) return;
+        if (!args.length) { if (prog === 'env' && !nullOut) deny(ENV_DUMP); return; }
         prog = (args[0].v || '').replace(/\\/g, '/').split('/').pop().toLowerCase().replace(/\.exe$/, '');
       }
       const rest = args.slice(1);
       const plain = rest.filter((x) => !(x.v || '').startsWith('-'));
-      if (prog === 'export' || prog === 'local' || prog === 'declare' || prog === 'readonly') {
+      if (prog === 'psql') {
+        psqlCheck(rest);
+        // -o and -L write a file: the same area rule as a redirect.
+        for (const target of psqlOutputs(rest.map(psqlWord))) {
+          const part = target === PSQL_DYN || target.startsWith(PSQL_VAR) ? { t: 'dyn' } : { t: 'lit', v: target };
+          checkTarget({ k: 'w', parts: [part] }, dir, 'psql output file', container);
+        }
+        return;
+      }
+      if (prog === 'printenv') {
+        const names = rest.filter((x) => x.v === null || !x.v.startsWith('-'));
+        if (nullOut) return;
+        if (names.length === 0) return deny(ENV_DUMP);
+        for (const x of names) {
+          if (x.v === null) return deny('printenv names a variable built from a substitution; it cannot be verified');
+          if (!autopilot && !roleVars.includes(x.v)) return deny(`printenv ${x.v} reads a variable that is not a configured role variable; during a QA run only the role variables (qa.roles[].userEnv and passwordEnv) are read, and any other is checked with \${NAME:+set}`);
+          if (autopilot && (TRACKER_VARS.test(x.v) || SECRET_VARS.test(x.v))) return deny(`printenv ${x.v} would print a credential or secret; an autopilot stage never reads one out, check it with \${NAME:+set}`);
+        }
+        return;
+      }
+      // Commands that print the whole environment: set and compgen -e, and export, declare,
+      // typeset and readonly when they name nothing to set.
+      if (prog === 'set') { if (rest.length === 0 && !nullOut) deny(ENV_DUMP); return; }
+      if (prog === 'compgen') { if (rest.some((x) => /^-[a-z]*e/.test(x.v || '')) && !nullOut) deny(ENV_DUMP); return; }
+      if (['export', 'declare', 'typeset', 'readonly'].includes(prog) && plain.length === 0 && !nullOut) deny(ENV_DUMP);
+      if (prog === 'export' || prog === 'local' || prog === 'declare' || prog === 'typeset' || prog === 'readonly') {
         for (const x of rest) { const m = x.v ? /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s.exec(x.v) : null; if (m) vars.set(m[1], m[2]); }
         return;
       }
@@ -252,17 +492,27 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa' }) {
         const ci = rest.findIndex((x) => x.v === '-c');
         if (ci !== -1 && rest[ci + 1]) {
           if (rest[ci + 1].v === null) return deny(`${prog} -c runs a command built from a variable; it cannot be verified`);
-          walk(rest[ci + 1].v, dir, container, depth + 1);
+          walkNested(rest[ci + 1].v, dir, container, depth + 1, pgUser);
         }
         return;
       }
-      if (prog === 'docker') {
-        const sub = plain[0] ? plain[0].v : '';
-        if (sub === 'exec') {
+      if (prog === 'docker' || prog === 'docker-compose') {
+        const ei = rest.findIndex((x) => x.v === 'exec' || x.v === 'run');
+        if (ei === -1) return;
+        const after = rest.slice(ei + 1);
+        // -e PGUSER=... / --env PGUSER=... name the database user of what runs in the container.
+        for (let k = 0; k < after.length; k++) {
+          const v = after[k].v || '';
+          const nv = (v === '-e' || v === '--env') && after[k + 1] ? after[k + 1].v : v.startsWith('--env=') ? v.slice('--env='.length) : null;
+          if (nv !== null && nv !== undefined && nv.startsWith('PGUSER=')) pgUser = nv.slice('PGUSER='.length);
+        }
+        const pi = after.findIndex((x) => x.v && x.v.replace(/\\/g, '/').split('/').pop().toLowerCase().replace(/\.exe$/, '') === 'psql');
+        if (pi !== -1) { psqlCheck(after.slice(pi + 1)); return; }
+        if (rest[ei].v === 'exec') {
           const si = rest.findIndex((x) => x.v && SHELLS.has(x.v.split('/').pop()));
           if (si !== -1 && rest[si + 1] && rest[si + 1].v === '-c' && rest[si + 2]) {
             if (rest[si + 2].v === null) return deny('docker exec runs a shell command built from a variable; it cannot be verified');
-            walk(rest[si + 2].v, '/', true, depth + 1);
+            walkNested(rest[si + 2].v, '/', true, depth + 1, pgUser);
           }
         }
         return;
@@ -412,7 +662,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa' }) {
   try {
     walk(String(command), normPath(cwd), false, 0);
   } catch (error) {
-    return `the command could not be analysed for writes (${error.message}); it is refused during a QA run`;
+    return `the command could not be analysed for writes (${error.message}); it is refused during ${runKind}`;
   }
   return reason;
 }
@@ -420,9 +670,9 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa' }) {
 function main() {
   let input = '';
   try { input = readFileSync(0, 'utf8'); } catch { input = ''; }
-  const [cwd = '', root = '', ticket = '', ...cmdParts] = input.split('\0');
+  const [cwd = '', root = '', ticket = '', ignoreCaseFlag = '', roleVarsField = '', roRoleField = '', ...cmdParts] = input.split('\0');
   const profile = process.env.ULTRAPOWERS_GUARD_PROFILE === 'autopilot' ? 'autopilot' : 'qa';
-  const out = analyze(cmdParts.join('\0'), { cwd, root, ticket, profile });
+  const out = analyze(cmdParts.join('\0'), { cwd, root, ticket, profile, ignoreCase: ignoreCaseFlag === '1', roleVars: roleVarsField.split(',').filter(Boolean), roRole: roRoleField || 'qa_agent_ro' });
   if (out) process.stdout.write(out);
 }
 

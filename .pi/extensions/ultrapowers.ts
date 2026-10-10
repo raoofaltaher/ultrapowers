@@ -2,7 +2,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { runGuardrail } from "../../hooks/lib/guardrail-bridge.mjs";
+import { denyText, runGuardrail } from "../../hooks/lib/guardrail-bridge.mjs";
 
 const EXTREMELY_IMPORTANT_MARKER = "<EXTREMELY_IMPORTANT>";
 const BOOTSTRAP_MARKER = "ultrapowers:using-ultrapowers bootstrap for pi";
@@ -156,7 +156,7 @@ export default function ultrapowersPiExtension(pi: ExtensionAPI) {
 	// without a run marker under the cwd, a blocked call with the hook's reason when it denies.
 	pi.on("tool_call", async (event, ctx) => {
 		const verdict = runGuardrail({ toolName: event.toolName, input: event.input, cwd: cwdOf(ctx) });
-		if (verdict.deny) return { block: true, reason: `ultrapowers guardrail: ${verdict.reason}` };
+		if (verdict.deny) return { block: true, reason: denyText(verdict) };
 		return undefined;
 	});
 

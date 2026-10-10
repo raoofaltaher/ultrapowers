@@ -268,19 +268,20 @@ def _guardrail_verdict(skills_dir, tool_name, args, cwd):
     node = shutil.which("node")
     if not cli or not node:
         return {"action": "block", "message": "the ultrapowers guardrail could not run (node or the hook is missing); a tool call during a run is refused without it"}
-    event = json.dumps({"hook_event_name": "PreToolUse", "tool_name": tool_name, "tool_input": args if isinstance(args, dict) else {}, "cwd": cwd})
+    event = json.dumps({"hook_event_name": "PreToolUse", "tool_name": tool_name, "tool_input": {} if args is None else args, "cwd": cwd})
     try:
         proc = subprocess.run([node, cli], input=event, capture_output=True, text=True, timeout=20, cwd=cwd)
     except (OSError, subprocess.SubprocessError) as exc:
         return {"action": "block", "message": f"the ultrapowers guardrail could not run ({exc}); a tool call during a run is refused without it"}
     if proc.returncode == 0:
         return None
-    reason = ""
+    deny_line = ""
     for line in (proc.stderr or "").splitlines():
         if "GUARDRAIL DENY: " in line:
-            reason = line.split("GUARDRAIL DENY: ", 1)[1].strip()
+            deny_line = line.strip()
     if proc.returncode == 2:
-        return {"action": "block", "message": f"ultrapowers guardrail: {reason or 'denied'}"}
+        # The hook's own line, with the profile's prefix: QA-GUARDRAIL DENY or AUTOPILOT-GUARDRAIL DENY.
+        return {"action": "block", "message": deny_line or "ultrapowers guardrail: denied"}
     return {"action": "block", "message": f"the ultrapowers guardrail could not run (exit {proc.returncode}); a tool call during a run is refused without it"}
 
 

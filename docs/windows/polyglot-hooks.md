@@ -93,7 +93,10 @@ afterward.
    the final `exit /b %ERRORLEVEL%` sits outside any parenthesised block, because
    inside one CMD expands `%ERRORLEVEL%` before bash has run.
 4. If no bash is found, the dispatcher exits `0` silently — the plugin
-   continues working, it just skips the hook.
+   continues working, it just skips the hook. The one exception is `qa-guardrail`: it is the
+   brake of a QA run or an autopilot stage, so while `.ultrapowers\qa-active` or
+   `.ultrapowers\autopilot-active` exists at or above the working directory (or
+   `ULTRAPOWERS_AUTOPILOT_INSIDE=1` is set) it exits `2` with the deny line instead.
 5. `exit /b` stops CMD before it reaches the Unix section.
 
 ### How it works on Unix (bash/sh)
@@ -151,7 +154,7 @@ escape_for_json() {
 
 ### "bash is not recognized"
 
-CMD couldn't find bash in any of the four locations the dispatcher tries. The dispatcher exits silently (0) rather than erroring, so the hook is skipped. Install Git for Windows (system-wide or per-user) or ensure a non-WSL `bash` is on `PATH`.
+CMD couldn't find bash in any of the four locations the dispatcher tries. The dispatcher exits silently (0) rather than erroring, so the hook is skipped (the guardrail instead exits 2 while a run marker exists). Install Git for Windows (system-wide or per-user) or ensure a non-WSL `bash` is on `PATH`.
 
 ### Hook runs on Unix but does nothing on Windows
 

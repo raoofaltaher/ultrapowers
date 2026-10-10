@@ -52,3 +52,10 @@ ORDER BY nspname \gexec
 --   psql -U <ro_role> -d <database> -c "CREATE TABLE nope(x int);"
 --     -> ERROR: permission denied for schema public            (PostgreSQL 15 and newer)
 --     -> ERROR: cannot execute CREATE TABLE in a read-only transaction   (older versions)
+
+-- Optional hardening (a decision for the database owner, so it is commented out). PostgreSQL lets
+-- every role EXECUTE every function by default, and a function can write data even though the role
+-- holds SELECT only. The guardrail hook refuses the write-capable built-ins and every statement
+-- that is not a read, but it cannot see inside a function of your own schema. To close that, run
+-- once as the owner, then GRANT EXECUTE on the functions the application's reads need:
+--   REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;

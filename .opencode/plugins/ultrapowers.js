@@ -29,26 +29,29 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BRIDGE = path.resolve(__dirname, '../../hooks/lib/guardrail-bridge.mjs');
 let bridgePromise;
 const loadBridge = () => {
-  if (!bridgePromise) bridgePromise = import(pathToFileURL(BRIDGE).href).then((m) => m.runGuardrail, () => null);
+  if (!bridgePromise) bridgePromise = import(pathToFileURL(BRIDGE).href).then((m) => m, () => null);
   return bridgePromise;
 };
-const runActive = (startDir) => {
+// The deny prefix of the run marker at or above startDir (the QA profile wins), or null.
+const runPrefix = (startDir) => {
   let dir = path.resolve(startDir || process.cwd());
   for (;;) {
-    if (fs.existsSync(path.join(dir, '.ultrapowers', 'qa-active')) || fs.existsSync(path.join(dir, '.ultrapowers', 'autopilot-active'))) return true;
+    if (fs.existsSync(path.join(dir, '.ultrapowers', 'qa-active'))) return 'QA-GUARDRAIL';
+    if (fs.existsSync(path.join(dir, '.ultrapowers', 'autopilot-active'))) return 'AUTOPILOT-GUARDRAIL';
     const parent = path.dirname(dir);
-    if (parent === dir) return false;
+    if (parent === dir) return null;
     dir = parent;
   }
 };
 export const guardTool = (directory) => async (input, output) => {
-  const runGuardrail = await loadBridge();
-  if (!runGuardrail) {
-    if (runActive(directory)) throw new Error('ultrapowers guardrail: the guardrail bridge (hooks/lib/guardrail-bridge.mjs) is missing from this install; a tool call during a run is refused without it');
+  const bridge = await loadBridge();
+  if (!bridge) {
+    const prefix = runPrefix(directory);
+    if (prefix) throw new Error(prefix + ' DENY: the guardrail bridge (hooks/lib/guardrail-bridge.mjs) is missing from this install; a tool call during a run is refused without it');
     return;
   }
-  const verdict = runGuardrail({ toolName: input?.tool, input: output?.args, cwd: directory });
-  if (verdict.deny) throw new Error(`ultrapowers guardrail: ${verdict.reason}`);
+  const verdict = bridge.runGuardrail({ toolName: input?.tool, input: output?.args, cwd: directory });
+  if (verdict.deny) throw new Error(bridge.denyText(verdict));
 };
 
 // Skills directory shared by V1 (config hook) and V2 (setup/ctx.skill.transform)

@@ -37,7 +37,10 @@ REM Linux distro is installed.
 if not defined BASH_EXE if defined SystemRoot for /f "delims=" %%B in ('"%SystemRoot%\System32\where.exe" $PATH:bash 2^>nul') do if not defined BASH_EXE if not "%%~xB"=="" if /i not "%%~dpB"=="%SystemRoot%\System32\" if /i not "%%~dpB"=="%SystemRoot%\Sysnative\" if /i not "%%~dpB"=="%LOCALAPPDATA%\Microsoft\WindowsApps\" set "BASH_EXE=%%B"
 
 REM No bash found - exit silently rather than error
-REM (plugin still works, just without SessionStart context injection)
+REM (plugin still works, just without SessionStart context injection).
+REM The one exception is the guardrail: it is the brake of a QA run or an autopilot stage, and a
+REM brake that silently vanishes lets every call through. With a run active it fails closed.
+if not defined BASH_EXE if /i "%~1"=="qa-guardrail" goto :guard_closed
 if not defined BASH_EXE exit /b 0
 
 REM Run bash outside any parenthesized block: cmd expands %ERRORLEVEL%
@@ -45,6 +48,29 @@ REM inside a block when it parses the block, which would lose the hook's
 REM exit code.
 "%BASH_EXE%" "%HOOK_DIR%%~1" %2 %3 %4 %5 %6 %7 %8 %9
 exit /b %ERRORLEVEL%
+
+REM Fail closed for the guardrail: walk up from the working directory looking for a run marker
+REM (the QA marker first, as in the hook), then the watcher stage's environment flag.
+:guard_closed
+set "GUARD_DIR=%CD%"
+:guard_walk
+if exist "%GUARD_DIR%\.ultrapowers\qa-active" goto :guard_qa
+if exist "%GUARD_DIR%\.ultrapowers\autopilot-active" goto :guard_autopilot
+set "GUARD_PARENT="
+for %%P in ("%GUARD_DIR%\..") do set "GUARD_PARENT=%%~fP"
+if not defined GUARD_PARENT goto :guard_none
+if /i "%GUARD_PARENT%"=="%GUARD_DIR%" goto :guard_none
+set "GUARD_DIR=%GUARD_PARENT%"
+goto :guard_walk
+:guard_none
+if "%ULTRAPOWERS_AUTOPILOT_INSIDE%"=="1" goto :guard_autopilot
+exit /b 0
+:guard_qa
+echo QA-GUARDRAIL DENY: no bash found; a tool call during a QA run is refused without the guardrail 1>&2
+exit /b 2
+:guard_autopilot
+echo AUTOPILOT-GUARDRAIL DENY: no bash found; a tool call during an autopilot stage is refused without the guardrail 1>&2
+exit /b 2
 CMDBLOCK
 
 # Unix: run the named script directly

@@ -13,7 +13,10 @@ Structure, in order:
 1. **Header table** — Ticket, Date (UTC), Frontend URL, Change set (repo: branch, n files),
    Roles covered, Languages covered, Session note (harness, forked or inline), Partner note
    (the invocation text after the ticket, or `none`, and anything in it the run declined, with
-   the rule that required declining it).
+   the rule that required declining it). Directly under the table, one line:
+   `Guardrail: active` when the STEP 4 probe was denied, or `Guardrail: not active on this harness`
+   when it went through. A run that ended as PRECONDITION-FAILED before STEP 4 writes
+   `Guardrail: not probed — <why>`.
 2. **Verdict line — exactly one, exactly this shape:**
    `Verdict: PASS` | `Verdict: PASS-WITH-ISSUES` | `Verdict: FAIL` | `Verdict: INCOMPLETE` |
    `Verdict: PRECONDITION-FAILED`, followed on the same line by ` — ` and one sentence of

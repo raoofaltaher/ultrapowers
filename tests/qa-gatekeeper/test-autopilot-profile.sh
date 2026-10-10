@@ -5,7 +5,9 @@
 # Pass 2: both markers present -> the QA profile wins: `git commit` is denied with the QA prefix.
 # Pass 3: no marker -> every case exits 0 and prints nothing.
 # Cases live in fixtures/autopilot/cases.json: [{ name, event }], with {{ROOT}} (POSIX path of
-# the temp project) and {{ELSEWHERE}} (a sibling directory outside it) substituted.
+# the temp project) and {{ELSEWHERE}} (a sibling directory outside it) substituted, plus
+# {{WINSHORT}}, {{WINSHORT_SETTINGS}} and {{WINSHORT_MARKER}} (8.3 short forms of the project, of
+# .claude/settings.json and of the autopilot marker) for the cases ending in _winshort.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -26,7 +28,8 @@ trap cleanup EXIT
 
 ROOT="$TEST_ROOT/project"
 ELSEWHERE="$TEST_ROOT/elsewhere"
-mkdir -p "$ROOT/.agents" "$ROOT/.ultrapowers" "$ROOT/tasks/GH-16" "$ROOT/specs/GH-16" "$ROOT/repo-a/src" "$ROOT/.github/workflows" "$ELSEWHERE"
+mkdir -p "$ROOT/.agents" "$ROOT/.ultrapowers" "$ROOT/.claude" "$ROOT/tasks/GH-16" "$ROOT/specs/GH-16" "$ROOT/repo-a/src" "$ROOT/.github/workflows" "$ELSEWHERE"
+echo '{}' > "$ROOT/.claude/settings.json"
 cat > "$ROOT/.agents/ultrapowers.json" <<'JSON'
 {
   "name": "sample",
@@ -45,6 +48,20 @@ MARKER="$ROOT/.ultrapowers/autopilot-active"
 QA_MARKER="$ROOT/.ultrapowers/qa-active"
 printf '%s' '{"ticket":"GH-16","branch":"GH-16-x","scope":["repo-a"]}' > "$MARKER"
 
+# 8.3 short forms (Windows volumes that generate them); cases ending in _winshort run only there.
+FIXTURE_PATHS="$SCRIPT_DIR/fixture-paths.mjs"
+if command -v cygpath >/dev/null 2>&1; then FIXTURE_PATHS="$(cygpath -m "$FIXTURE_PATHS")"; fi
+node_path() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
+WINSHORT=""; WINSHORT_SETTINGS=""; WINSHORT_MARKER=""
+if command -v cygpath >/dev/null 2>&1; then
+  WINSHORT="$(node "$FIXTURE_PATHS" short "$(node_path "$ROOT")")"
+  WINSHORT_SETTINGS="$(node "$FIXTURE_PATHS" short "$(node_path "$ROOT/.claude/settings.json")")"
+  WINSHORT_MARKER="$(node "$FIXTURE_PATHS" short "$(node_path "$MARKER")")"
+  if [[ "$WINSHORT" == "$(node_path "$ROOT")" || "$WINSHORT_SETTINGS" == "$(node_path "$ROOT/.claude/settings.json")" ]]; then
+    WINSHORT=""; WINSHORT_SETTINGS=""; WINSHORT_MARKER=""
+  fi
+fi
+
 # Node on Windows needs a mixed path for the cases file; the events keep the POSIX root.
 CASES_NODE="$CASES"
 if command -v cygpath >/dev/null 2>&1; then CASES_NODE="$(cygpath -m "$CASES" 2>/dev/null || printf '%s' "$CASES")"; fi
@@ -53,11 +70,13 @@ if command -v cygpath >/dev/null 2>&1; then CASES_NODE="$(cygpath -m "$CASES" 2>
 case_lines() {
   node -e '
 const fs = require("node:fs");
-const [file, root, elsewhere] = process.argv.slice(1);
+const [file, root, elsewhere, short, shortSettings, shortMarker] = process.argv.slice(1);
 for (const c of JSON.parse(fs.readFileSync(file, "utf8"))) {
-  const text = JSON.stringify(c.event).split("{{ROOT}}").join(root).split("{{ELSEWHERE}}").join(elsewhere);
+  if (c.name.endsWith("_winshort") && !short) continue;
+  const text = JSON.stringify(c.event).split("{{ROOT}}").join(root).split("{{ELSEWHERE}}").join(elsewhere)
+    .split("{{WINSHORT_SETTINGS}}").join(shortSettings).split("{{WINSHORT_MARKER}}").join(shortMarker).split("{{WINSHORT}}").join(short);
   process.stdout.write(`${c.name}\t${text}\n`);
-}' "$CASES_NODE" "$ROOT" "$ELSEWHERE"
+}' "$CASES_NODE" "$ROOT" "$ELSEWHERE" "$WINSHORT" "$WINSHORT_SETTINGS" "$WINSHORT_MARKER"
 }
 
 run_hook() {
@@ -97,6 +116,16 @@ done < <(case_lines)
 if [[ "$count" -lt 30 ]]; then
   fail "expected at least 30 cases, found $count"
 fi
+
+echo "autopilot profile: every deny names the stage marker, the ticket and who can end the stage"
+result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"git push origin GH-16-x"}}' "$ROOT")"
+err="${result#*|}"; err="${err%%|*}"
+for want in ".ultrapowers/autopilot-active" "GH-16" "autopilot.mjs end" "your human partner"; do
+  if [[ "$err" == *"$want"* ]]; then pass "an autopilot deny names '$want'"; else fail "an autopilot deny names '$want' (stderr: $err)"; fi
+done
+result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"Set-Content x.txt hello"}}' "$ROOT")"
+err="${result#*|}"; err="${err%%|*}"
+if [[ "$err" == *"AUTOPILOT-GUARDRAIL DENY: "* && "$err" != *"QA run"* ]]; then pass "a PowerShell deny under autopilot does not speak of a QA run"; else fail "a PowerShell deny under autopilot does not speak of a QA run (stderr: $err)"; fi
 
 echo "autopilot profile: both markers present, the QA profile wins"
 printf '%s' "GH-16" > "$QA_MARKER"

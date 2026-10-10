@@ -1,0 +1,1 @@
+{"toolName":"Bash","toolArgs":"{\"command\":\"echo \\\"hi\\\" && git push origin qa\"}"}

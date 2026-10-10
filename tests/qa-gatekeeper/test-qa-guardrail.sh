@@ -4,7 +4,11 @@
 # Pass 2: marker absent -> every fixture exits 0 and prints nothing.
 # Pass 3: registration files name the hook.
 # Fixtures may contain {{ROOT}} (POSIX path of the temp project), {{WINROOT}} (its Windows
-# form, JSON-escaped; fixtures ending in _winpath run only where cygpath exists).
+# form, JSON-escaped; fixtures ending in _winpath run only where cygpath exists), {{WINSHORT}}
+# (the 8.3 short form of the project, forward slashes) and {{WINSHORT_SECRETS}} (the short form of
+# .agents/mcp-secrets.env); fixtures ending in _winshort run only where the volume has short names.
+# Fixtures ending in _casesens run in a second project whose folder is case-sensitive ({{ROOT}} is
+# then that project); they skip where no case-sensitive folder can be made.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -28,18 +32,42 @@ trap cleanup EXIT
 
 ROOT="$TEST_ROOT/project"
 mkdir -p "$ROOT/.agents" "$ROOT/.ultrapowers" "$ROOT/reviews/1234/artifacts" "$ROOT/repo-a/src" "$TEST_ROOT/elsewhere"
+: > "$ROOT/.agents/mcp-secrets.env"
 cat > "$ROOT/.agents/ultrapowers.json" <<'JSON'
 {
   "name": "sample",
   "pluginVersion": "1.0.0",
   "repos": [ { "name": "repo-a", "path": "repo-a", "defaultBranch": "main" } ],
   "qa": {
+    "roles": [ { "name": "user", "userEnv": "QA_USER", "passwordEnv": "QA_PW_USER", "required": true } ],
     "urls": { "frontend": "http://localhost:3000", "backendHealth": "http://localhost:8080/health", "idp": "https://idp.example.com", "observability": "" },
     "hosts": { "allowed": ["localhost", "127.0.0.1", "app.example.com", "backend-container"], "forbidden": ["prod.example.com", "192.0.2.10"] }
   }
 }
 JSON
 printf '%s' "1234" > "$ROOT/.ultrapowers/qa-active"
+
+# A second project in a case-sensitive folder, for the _casesens fixtures.
+FIXTURE_PATHS="$SCRIPT_DIR/fixture-paths.mjs"
+if command -v cygpath >/dev/null 2>&1; then FIXTURE_PATHS="$(cygpath -m "$FIXTURE_PATHS")"; fi
+node_path() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
+CSROOT="$TEST_ROOT/csproject"
+CS_OK="$(node "$FIXTURE_PATHS" casesens "$(node_path "$CSROOT")" 2>/dev/null || printf 0)"
+if [[ "$CS_OK" == "1" ]]; then
+  mkdir -p "$CSROOT/.agents" "$CSROOT/.ultrapowers" "$CSROOT/reviews/1234/artifacts"
+  cp "$ROOT/.agents/ultrapowers.json" "$CSROOT/.agents/ultrapowers.json"
+  printf '%s' "1234" > "$CSROOT/.ultrapowers/qa-active"
+fi
+
+# 8.3 short forms (Windows volumes that generate them).
+WINSHORT=""; WINSHORT_SECRETS=""
+if command -v cygpath >/dev/null 2>&1; then
+  WINSHORT="$(node "$FIXTURE_PATHS" short "$(node_path "$ROOT")")"
+  WINSHORT_SECRETS="$(node "$FIXTURE_PATHS" short "$(node_path "$ROOT/.agents/mcp-secrets.env")")"
+  if [[ "$WINSHORT" == "$(node_path "$ROOT")" || "$WINSHORT_SECRETS" == "$(node_path "$ROOT/.agents/mcp-secrets.env")" ]]; then
+    WINSHORT=""; WINSHORT_SECRETS=""
+  fi
+fi
 
 WINROOT_JSON=""
 if command -v cygpath >/dev/null 2>&1; then
@@ -50,11 +78,25 @@ fi
 render() {
   # $1 fixture path -> stdout with placeholders substituted. Bash substitution, not sed:
   # sed would treat the JSON-escaped backslashes in WINROOT_JSON as escapes and halve them.
-  local text
+  # A _casesens fixture is rendered against the case-sensitive project.
+  local ROOT="$ROOT" text
+  case "$1" in *_casesens.json) ROOT="$CSROOT" ;; esac
   text="$(cat "$1")"
   text="${text//\{\{ROOT\}\}/$ROOT}"
   text="${text//\{\{WINROOT\}\}/$WINROOT_JSON}"
+  text="${text//\{\{WINSHORT_SECRETS\}\}/$WINSHORT_SECRETS}"
+  text="${text//\{\{WINSHORT\}\}/$WINSHORT}"
   printf '%s' "$text"
+}
+
+skip_fixture() {
+  # prints a reason when this fixture cannot run on this machine
+  case "$1" in
+    *_winpath) [[ -z "$WINROOT_JSON" ]] && echo "no cygpath on this platform" ;;
+    *_winshort) [[ -z "$WINSHORT" ]] && echo "no 8.3 short names on this volume" ;;
+    *_casesens) [[ "$CS_OK" != "1" ]] && echo "no case-sensitive folder can be made here" ;;
+  esac
+  return 0
 }
 
 run_hook() {
@@ -70,16 +112,16 @@ echo "qa-guardrail fixture tests (marker present)"
 count=0
 for f in "$FIXTURES"/*.json; do
   name="$(basename "$f" .json)"
-  case "$name" in
-    *_winpath)
-      if [[ -z "$WINROOT_JSON" ]]; then
-        echo "  [SKIP] $name (no cygpath on this platform)"
-        continue
-      fi ;;
-  esac
+  reason="$(skip_fixture "$name")"
+  if [[ -n "$reason" ]]; then
+    echo "  [SKIP] $name ($reason)"
+    continue
+  fi
   count=$((count + 1))
   event="$(render "$f")"
-  result="$(run_hook "$event" "$ROOT")"
+  run_root="$ROOT"
+  case "$name" in *_casesens) run_root="$CSROOT" ;; esac
+  result="$(run_hook "$event" "$run_root")"
   code="${result%%|*}"
   rest="${result#*|}"
   err="${rest%%|*}"
@@ -193,6 +235,20 @@ if command -v cmd.exe >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; the
   fi
 fi
 
+echo "qa-guardrail: every deny names the run marker, the ticket and who can end the run"
+result="$(run_hook "$(render "$FIXTURES/deny_git_push.json")" "$ROOT")"
+err="${result#*|}"; err="${err%%|*}"
+for want in ".ultrapowers/qa-active" "1234" " old" "your human partner"; do
+  if [[ "$err" == *"$want"* ]]; then pass "a QA deny names '$want'"; else fail "a QA deny names '$want' (stderr: $err)"; fi
+done
+if [[ "$err" != *"autopilot"* ]]; then pass "a QA deny never speaks of the autopilot engine"; else fail "a QA deny never speaks of the autopilot engine (stderr: $err)"; fi
+# The wording follows the profile: a PowerShell write under a QA run says so.
+result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"Set-Content x.txt hello"}}' "$ROOT")"
+err="${result#*|}"; err="${err%%|*}"
+if [[ "$err" == *"during a QA run"* ]]; then pass "the PowerShell deny names a QA run"; else fail "the PowerShell deny names a QA run (stderr: $err)"; fi
+# The suffix never tells the agent to remove the marker itself: the advice is for the human partner.
+if [[ "$err" == *"your human partner can"* && "$err" != *"you can remove"* ]]; then pass "the removal advice is addressed to the human partner"; else fail "the removal advice is addressed to the human partner (stderr: $err)"; fi
+
 echo "qa-guardrail: Cursor shape adds a permission JSON on stdout"
 result="$(cd "$ROOT" && render "$FIXTURES/deny_git_push.json" | CURSOR_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK" 2>/dev/null)"
 if printf '%s' "$result" | grep -q '"permission":"deny"'; then
@@ -205,7 +261,7 @@ echo "qa-guardrail fixture tests (marker absent)"
 rm -f "$ROOT/.ultrapowers/qa-active"
 for f in "$FIXTURES"/*.json; do
   name="$(basename "$f" .json)"
-  case "$name" in *_winpath) [[ -z "$WINROOT_JSON" ]] && continue ;; esac
+  [[ -n "$(skip_fixture "$name")" ]] && continue
   event="$(render "$f")"
   result="$(run_hook "$event" "$ROOT")"
   code="${result%%|*}"
