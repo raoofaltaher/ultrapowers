@@ -5,8 +5,10 @@ import process from 'node:process';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { effectiveTransport, serverId as ticketServerId, validateTickets, resolveTicket } from '../../new-task/scripts/ticket-sources.mjs';
-import { validateAutopilot, DEFAULTS as AUTOPILOT_DEFAULTS, ODOO_EVENTS, loadSecretsFile } from '../../autopilot/scripts/autopilot-lib.mjs';
+import { validateAutopilot, odooApproverErrors, DEFAULTS as AUTOPILOT_DEFAULTS, ODOO_EVENTS, loadSecretsFile } from '../../autopilot/scripts/autopilot-lib.mjs';
 import { trackerFor } from '../../autopilot/scripts/tracker.mjs';
+import { forgeFor } from '../../autopilot/scripts/repos.mjs';
+import { transportOnThisMachine } from '../../new-task/scripts/fetch-ticket.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const PLUGIN_ROOT = path.resolve(SCRIPT_DIR, '..', '..', '..');
@@ -20,7 +22,7 @@ export const BLOCK_START = '# >>> ultrapowers';
 export const BLOCK_END = '# <<< ultrapowers';
 const SPECIAL_DIRS = new Set(['_blocks', '_nested']);
 const NON_TEMPLATE_FILES = new Set(['.mcp.json', 'CHANGES.json']);
-const MODES = ['scaffold', 'join', 'upgrade', 'detect', 'tickets', 'autopilot'];
+const MODES = ['scaffold', 'join', 'upgrade', 'detect', 'tickets', 'autopilot', 'check'];
 const SECRETS_EXAMPLE = '.agents/mcp-secrets.env.example';
 
 export const ALL_HARNESSES = [
@@ -29,7 +31,7 @@ export const ALL_HARNESSES = [
 ];
 export const KB_FOLDERS = [
   'tasks', 'specs', 'plans', 'reviews', 'evals', 'handbooks',
-  'brand-book', 'business', 'playbooks', 'release-notes',
+  'brandbook', 'business', 'playbooks', 'release-notes',
 ];
 export const BEST_EFFORT_TARGETS = ['.factory/mcp.json', '.kimi/mcp.json'];
 
@@ -417,6 +419,38 @@ export function applyBlock(existing, body, target = 'the file') {
   return { content: next, action };
 }
 
+// The keys the plugin depends on in a settings file that already exists, compared with what init
+// would render. Strict JSON only: a file with comments or a trailing comma is reported unreadable,
+// never complete.
+const GUARDRAIL_LAUNCHER = 'ultrapowers-guardrail.mjs';
+
+export function missingContent(target, existingText, renderedText) {
+  if (target !== '.claude/settings.json' && target !== '.gemini/settings.json') return { missing: [] };
+  let existing;
+  try {
+    existing = JSON.parse(lf(existingText).replace(/^﻿/, ''));
+  } catch (err) {
+    return { missing: [], unreadable: err.message };
+  }
+  if (!existing || typeof existing !== 'object' || Array.isArray(existing)) {
+    return { missing: [], unreadable: 'the file does not hold a JSON object' };
+  }
+  const missing = [];
+  if (target === '.claude/settings.json') {
+    const rendered = JSON.parse(renderedText);
+    if (existing.outputStyle !== rendered.outputStyle) missing.push('outputStyle');
+    const have = Array.isArray(existing.permissions?.allow) ? existing.permissions.allow : [];
+    for (const entry of rendered.permissions?.allow ?? []) {
+      if (/^Skill\(ultrapowers:/.test(entry) && !have.includes(entry)) missing.push(entry);
+    }
+  } else {
+    const entries = Array.isArray(existing.hooks?.BeforeTool) ? existing.hooks.BeforeTool : [];
+    const names = (entry) => (Array.isArray(entry?.hooks) ? entry.hooks : []).some((h) => typeof h?.command === 'string' && h.command.includes(GUARDRAIL_LAUNCHER));
+    if (!entries.some(names)) missing.push('hooks.BeforeTool');
+  }
+  return { missing };
+}
+
 // The remote's default branch (origin/HEAD) when the clone knows it, else the branch checked out.
 function defaultBranchOf(repoDir) {
   try {
@@ -498,6 +532,8 @@ export function ticketServers(tickets) {
   const servers = {};
   for (const source of tickets?.sources ?? []) {
     if (effectiveTransport(tickets, source) === 'cli') continue;
+    // A source that names the server the team already runs needs none of its own.
+    if (typeof source.server === 'string' && source.server !== '') continue;
     const id = ticketServerId(source.prefix);
     if (source.provider === 'github') {
       servers[id] = {
@@ -548,6 +584,108 @@ export function generateMcpFiles(harnesses, { extra = {}, canonical = true } = {
     files.push({ target, content: generator(servers) });
   }
   return files;
+}
+
+const MCP_CONTAINER = { opencode: 'mcp', vscode: 'servers' };
+
+const normalUrl = (url) => (typeof url === 'string' ? url.trim().replace(/\/+$/, '').toLowerCase() : null);
+const entryUrl = (entry) => normalUrl(entry?.url ?? entry?.httpUrl ?? entry?.serverUrl);
+
+// [[ticket id, existing server id]] for each added id whose URL an existing server already uses.
+function sameUrls(added, wantedUrlOf, existingUrls) {
+  const out = [];
+  for (const id of added) {
+    const url = wantedUrlOf(id);
+    if (!url) continue;
+    const other = Object.keys(existingUrls).find((existingId) => existingId !== id && existingUrls[existingId] === url);
+    if (other) out.push([id, other]);
+  }
+  return out;
+}
+
+function tomlTableUrls(text) {
+  const urls = {};
+  let current = null;
+  for (const line of text.split('\n')) {
+    const head = /^\[([^\]]+)\]/.exec(line);
+    if (head) {
+      const table = /^mcp_servers\.(?:"([^"]+)"|([A-Za-z0-9_-]+))$/.exec(head[1]);
+      current = table ? (table[1] ?? table[2]) : null;
+      continue;
+    }
+    const url = current ? /^url\s*=\s*"([^"]*)"/.exec(line.trim()) : null;
+    if (url) urls[current] = normalUrl(url[1]);
+  }
+  return urls;
+}
+
+function tomlTableIds(text) {
+  const ids = [];
+  for (const m of text.matchAll(/^\[mcp_servers\.(?:"([^"]+)"|([A-Za-z0-9_-]+))\][ \t]*$/gm)) ids.push(m[1] ?? m[2]);
+  return ids;
+}
+
+// The ticket servers an existing harness MCP file lacks, added to a copy of that file: the other
+// entries, and a leading provenance line of .vscode/mcp.json, stay as they are. `aloneText` is the
+// generator's rendering of the ticket servers alone. JSON targets are parsed strictly; the Codex
+// TOML file gets the missing tables appended as text (no TOML parser, rule 1).
+export function mergeMcpFile(target, existingText, aloneText) {
+  const schema = MCP_TARGETS[target];
+  const existingLf = lf(existingText).replace(/^﻿/, '');
+  if (schema === 'codex') {
+    const have = new Set(tomlTableIds(existingLf));
+    const tables = new Map();
+    let current = null;
+    for (const line of aloneText.split('\n')) {
+      const head = /^\[mcp_servers\.(?:"([^"]+)"|([A-Za-z0-9_-]+))(?:\.[^\]]+)?\]/.exec(line);
+      if (head) {
+        current = head[1] ?? head[2];
+        if (!tables.has(current)) tables.set(current, []);
+      }
+      if (current) tables.get(current).push(line);
+    }
+    const added = [...tables.keys()].filter((id) => !have.has(id));
+    if (!added.length) return { content: existingText, added: [], sameUrl: [] };
+    const sameUrl = sameUrls(added, (id) => tomlTableUrls(tables.get(id).join('\n'))[id], tomlTableUrls(existingLf));
+    let content = existingLf;
+    if (content.length > 0 && !content.endsWith('\n')) content += '\n';
+    for (const id of added) content += `\n${tables.get(id).join('\n').replace(/\n+$/, '')}\n`;
+    return { content, added, sameUrl };
+  }
+  let header = '';
+  let body = existingLf;
+  if (schema === 'vscode') {
+    const m = /^[ \t]*\/\/[^\n]*\n/.exec(existingLf);
+    if (m) {
+      header = m[0];
+      body = existingLf.slice(header.length);
+    }
+  }
+  let existing;
+  try {
+    existing = JSON.parse(body);
+  } catch (err) {
+    return { unreadable: err.message };
+  }
+  if (!existing || typeof existing !== 'object' || Array.isArray(existing)) return { unreadable: 'the file does not hold a JSON object' };
+  const alone = JSON.parse(aloneText);
+  const key = MCP_CONTAINER[schema] ?? 'mcpServers';
+  const wanted = alone[key] ?? {};
+  const container = existing[key] && typeof existing[key] === 'object' && !Array.isArray(existing[key]) ? existing[key] : {};
+  const added = Object.keys(wanted).filter((id) => !(id in container));
+  if (!added.length) return { content: existingText, added: [], sameUrl: [] };
+  const existingUrls = Object.fromEntries(Object.entries(container).map(([id, entry]) => [id, entryUrl(entry)]));
+  const sameUrl = sameUrls(added, (id) => entryUrl(wanted[id]), existingUrls);
+  for (const id of added) container[id] = wanted[id];
+  existing[key] = container;
+  if (schema === 'vscode' && Array.isArray(alone.inputs)) {
+    const inputs = Array.isArray(existing.inputs) ? existing.inputs : [];
+    for (const input of alone.inputs) {
+      if (!inputs.some((i) => i && i.id === input.id)) inputs.push(input);
+    }
+    existing.inputs = inputs;
+  }
+  return { content: `${header}${toJson(existing)}`, added, sameUrl };
 }
 
 export function listTemplates() {
@@ -615,7 +753,9 @@ function emptyReport(mode, opts) {
     repos: [],
     newRepos: [],
     changed: [],
-    missingSecrets: [],
+    missingSecrets: { required: [], optional: [] },
+    incomplete: [],
+    warnings: [],
     hooksPath: 'skipped',
     nextSteps: [],
   };
@@ -703,6 +843,26 @@ function writeFile(root, target, content, executable, dryRun, flag = 'w') {
   }
 }
 
+// An existing settings file that lacks what the plugin needs: init never overwrites it, so the
+// report names the missing keys for a hand merge.
+export function incompleteFiles(root, plan) {
+  const out = [];
+  for (const file of plan.files) {
+    const full = path.join(root, file.target);
+    if (!fs.existsSync(full)) continue;
+    const { missing, unreadable } = missingContent(file.target, fs.readFileSync(full, 'utf8'), file.content);
+    if (unreadable !== undefined) out.push({ path: file.target, missing, unreadable });
+    else if (missing.length) out.push({ path: file.target, missing });
+  }
+  return out;
+}
+
+function incompleteSteps(report) {
+  return report.incomplete.map((i) => (i.unreadable !== undefined
+    ? `${i.path} is not strict JSON (${i.unreadable}), so init cannot tell what it lacks; compare it with the template by hand (init never overwrites)`
+    : `${i.path} lacks: ${i.missing.join(', ')}; merge them by hand (init never overwrites)`));
+}
+
 export function applyPlan(root, plan, report, dryRun) {
   // Merge the blocks and check every target first, so a failure comes before any write.
   const blocks = plan.blocks.map((block) => planBlock(root, block.target, block.body));
@@ -722,6 +882,7 @@ export function applyPlan(root, plan, report, dryRun) {
     writeBlock(root, block, report, dryRun);
   }
   report.omitted.push(...plan.omitted);
+  report.incomplete = incompleteFiles(root, { files: plan.files.filter((f) => !creates.includes(f)) });
 }
 
 export function writeMarker(root, opts, repos, harnesses, written, dryRun, report) {
@@ -780,6 +941,12 @@ export function loadAutopilot(file) {
   return block;
 }
 
+// An Odoo source that autopilot runs needs human approvers (the engine enforces the same rule).
+function requireOdooApprovers(tickets, block) {
+  const errors = odooApproverErrors(tickets, block);
+  if (errors.length) throw new InitError('bad-tickets', errors.join('; '), { errors });
+}
+
 // The --sources file holds the tickets object. No sources means local only.
 export function loadTickets(file) {
   let tickets;
@@ -822,18 +989,53 @@ export function secretNames(root) {
     .map((m) => m[1]);
 }
 
-export function missingSecrets(root, env = process.env) {
-  return secretNames(root).filter((name) => !env[name]);
+// Variables the project's configuration makes optional: the user and password of a QA role that is
+// not required, and the GitLab token or Odoo key of a source that is only read through a browser
+// sign-in and that autopilot does not run.
+function optionalSecrets(marker) {
+  const optional = new Set();
+  if (!marker || typeof marker !== 'object') return optional;
+  const roles = Array.isArray(marker.qa?.roles) ? marker.qa.roles : [];
+  for (const role of roles) {
+    if (!role || role.required === true) continue;
+    for (const name of [role.userEnv, role.passwordEnv]) if (typeof name === 'string' && name) optional.add(name);
+  }
+  const tickets = marker.tickets && validateTickets(marker.tickets).length === 0 ? marker.tickets : null;
+  const autopilotOn = Boolean(marker.autopilot?.mode) && marker.autopilot.mode !== 'off';
+  const notRun = (tickets?.sources ?? []).filter((s) => !(autopilotOn && s.autopilot !== false));
+  const all = tickets?.sources ?? [];
+  const browserOnly = (s) => (s.provider === 'gitlab' ? effectiveTransport(tickets, s) === 'mcp' : s.provider === 'odoo' && !s.mcpHeader && !s.login);
+  for (const [name, provider] of [['GITLAB_TOKEN', 'gitlab'], ['ODOO_API_KEY', 'odoo']]) {
+    const mine = all.filter((s) => s.provider === provider);
+    if (mine.length && mine.every((s) => browserOnly(s) && notRun.includes(s))) optional.add(name);
+  }
+  return optional;
+}
+
+// The variables of .agents/mcp-secrets.env.example that are not defined, split into the ones the
+// project needs and the ones only an optional QA role or sign-in uses.
+export function missingSecrets(root, env = process.env, marker = null) {
+  const optional = optionalSecrets(marker);
+  const missing = secretNames(root).filter((name) => !env[name]);
+  return { required: missing.filter((n) => !optional.has(n)), optional: missing.filter((n) => optional.has(n)) };
+}
+
+function secretSteps(secrets) {
+  const steps = [];
+  if (secrets.required.length) {
+    steps.push(`Define these variables in your user environment (see .agents/mcp-secrets.env.example): ${secrets.required.join(', ')}`);
+  }
+  if (secrets.optional.length) {
+    steps.push(`Optional, only for the QA roles or sign-ins you use: ${secrets.optional.join(', ')}`);
+  }
+  return steps;
 }
 
 function scaffoldNextSteps(opts, report, repos) {
   const steps = [
     'Run once per clone: git config core.hooksPath .githooks',
   ];
-  const secrets = missingSecrets(opts.root);
-  if (secrets.length) {
-    steps.push(`Define these variables in your user environment (see .agents/mcp-secrets.env.example): ${secrets.join(', ')}`);
-  }
+  steps.push(...secretSteps(missingSecrets(opts.root, process.env, { tickets: opts.tickets, autopilot: opts.autopilot })));
   steps.push('Approve the project MCP servers when your harness prompts for them.');
   if (opts.platform === 'win32') {
     steps.push('After the first git add, run: git update-index --chmod=+x .githooks/pre-commit');
@@ -850,6 +1052,10 @@ function scaffoldNextSteps(opts, report, repos) {
   const bestEffort = BEST_EFFORT_TARGETS.filter((t) => report.written.includes(t));
   if (bestEffort.length) {
     steps.push(`Best-effort files, verify against the vendor docs: ${bestEffort.join(', ')}`);
+  }
+  steps.push(...incompleteSteps(report));
+  if (report.nearFolders?.length) {
+    steps.push(`Folders near a knowledge-base name already exist: ${report.nearFolders.map((n) => `${n.existing} (near ${n.kb}/)`).join(', ')}. Decide with your human partner which one the project uses; init wrote the standard names beside them.`);
   }
   steps.push('Review the written files, then commit the scaffold.');
   return steps;
@@ -871,8 +1077,10 @@ export function runScaffold(opts) {
   if (!opts.name && existingMarker?.name) opts.name = existingMarker.name;
   const repos = detectRepos(opts.root);
   report.repos = repos;
+  report.nearFolders = nearFolders(opts.root);
   if (opts.sources) opts.tickets = loadTickets(opts.sources);
   if (opts.autopilotFile) opts.autopilot = loadAutopilot(opts.autopilotFile);
+  if (opts.tickets && opts.autopilot) requireOdooApprovers(opts.tickets, opts.autopilot);
   const plan = planPayload(opts, repos, harnesses);
   applyPlan(opts.root, plan, report, opts.dryRun);
   writeMarker(opts.root, opts, repos, harnesses, report.written, opts.dryRun, report);
@@ -1011,17 +1219,19 @@ function localNextSteps(report) {
   } else if (hooks[report.hooksPath]) {
     steps.push(hooks[report.hooksPath]);
   }
-  if (report.missingSecrets.length) {
-    steps.push(`Define these variables in your user environment (see .agents/mcp-secrets.env.example): ${report.missingSecrets.join(', ')}`);
-  }
+  steps.push(...secretSteps(report.missingSecrets));
+  steps.push(...incompleteSteps(report));
   steps.push('Approve the project MCP servers when your harness prompts for them.');
   return steps;
 }
 
-function repoNextSteps(report, recorded) {
+function repoNextSteps(report, recorded, how = 'run') {
   if (!report.newRepos.length) return [];
   const names = report.newRepos.map((r) => r.name).join(', ');
   if (recorded) return [`Recorded ${names} in ${MARKER_PATH} and the managed .gitignore block; commit both files.`];
+  if (how === 'upgrade') {
+    return [`New nested clones not recorded in ${MARKER_PATH}: ${names}. Run upgrade with --apply <target,target> or --apply none, together with --record-repos, to record them and add them to the managed .gitignore block.`];
+  }
   return [`New nested clones not recorded in ${MARKER_PATH}: ${names}. Run again with --record-repos to record them and add them to the managed .gitignore block.`];
 }
 
@@ -1029,7 +1239,8 @@ export function runJoin(opts) {
   const report = emptyReport('join', opts);
   const marker = requireMarker(opts);
   report.hooksPath = ensureHooksPath(opts);
-  report.missingSecrets = missingSecrets(opts.root);
+  report.missingSecrets = missingSecrets(opts.root, process.env, marker);
+  report.incomplete = incompleteFiles(opts.root, planPayload(markerOpts(opts, marker), marker.repos ?? [], markerHarnesses(marker)));
   const recorded = reconcileRepos(opts, marker, report);
   if (recorded) {
     for (const target of ['.gitignore', MARKER_PATH]) guardTarget(opts.root, target);
@@ -1054,29 +1265,42 @@ function changedTargets(opts, plan, from) {
 function upgradeNextSteps(report, from, version, applied) {
   if (!applied) {
     if (!report.changed.length) {
-      return [`No template changed since ${from}. Run upgrade with --apply none to record version ${version} in ${MARKER_PATH}.`];
+      return [`No template changed since ${from}. Run upgrade with --apply none to record version ${version} in ${MARKER_PATH}.`, ...incompleteSteps(report)];
     }
     return [
       'Choose the targets to apply, then run upgrade with --apply <target,target> or --apply none.',
       `An existing file is never overwritten: its new version is written next to it as <target>${PROPOSAL_SUFFIX}.`,
+      ...incompleteSteps(report),
     ];
   }
   const steps = report.written
     .filter((p) => p.endsWith(PROPOSAL_SUFFIX))
     .map((p) => `Compare ${p} with ${p.slice(0, -PROPOSAL_SUFFIX.length)}, merge what you want by hand, then delete ${p}.`);
+  steps.push(...incompleteSteps(report));
   steps.push(`${MARKER_PATH} records version ${version}.`);
   steps.push('Review the changes, then commit them.');
   return steps;
 }
 
+// The knowledge-base folder was brand-book/ before 1.4.0. Init never moves it; the rename is the
+// project's own git mv, and every reader accepts both names until 2.0.
+function legacyFolderSteps(root) {
+  const legacy = fs.existsSync(path.join(root, 'brand-book')) && !fs.existsSync(path.join(root, 'brandbook'));
+  return legacy ? ['The knowledge-base folder is brandbook/ from 1.4.0. Rename yours when you are ready: git mv brand-book brandbook, and do not apply brandbook/README.md first, or the folder will already exist (init never moves it; both names are read until 2.0).'] : [];
+}
+
 export function runUpgrade(opts) {
-  const report = emptyReport('upgrade', opts);
+  const report = { ...emptyReport('upgrade', opts), preview: opts.apply === null };
   const marker = requireMarker(opts);
+  if (opts.apply === null && opts.recordRepos) {
+    throw new InitError('bad-args', '--record-repos writes the marker and .gitignore, so upgrade takes it only together with --apply (use --apply none to record nothing else)');
+  }
   const version = pluginVersion();
   const from = typeof marker.pluginVersion === 'string' ? marker.pluginVersion : '0.0.0';
   const recorded = reconcileRepos(opts, marker, report);
   const plan = planPayload(markerOpts(opts, marker), marker.repos ?? [], markerHarnesses(marker));
   report.changed = changedTargets(opts, plan, from);
+  report.incomplete = incompleteFiles(opts.root, plan);
   // Everything is checked before the first write, so an error leaves the project untouched.
   if (opts.apply !== null) {
     const changedPaths = new Set(report.changed.map((c) => c.path));
@@ -1134,39 +1358,86 @@ export function runUpgrade(opts) {
   }
   report.written.sort();
   report.skipped.sort();
-  report.nextSteps = [...upgradeNextSteps(report, from, version, opts.apply !== null), ...repoNextSteps(report, recorded)];
+  report.nextSteps = [...upgradeNextSteps(report, from, version, opts.apply !== null), ...legacyFolderSteps(opts.root), ...repoNextSteps(report, recorded, opts.apply === null ? 'upgrade' : 'run')];
   return report;
+}
+
+// The `projects` map a source needs for the clones whose provider path is not
+// `<owner or namespace>/<clone name>`, read from each clone's origin remote (parsed as the
+// autopilot engine does). A proposal only: the developer confirms it before it goes in the file.
+export function proposeProjects(root, repos, source, warnings = []) {
+  const proposed = {};
+  if (!['github', 'gitlab'].includes(source.provider)) return proposed;
+  const base = source.provider === 'github' ? source.owner : source.namespace;
+  for (const repo of repos) {
+    if (source.projects && typeof source.projects[repo.name] === 'string') continue;
+    const forge = forgeFor(path.join(root, repo.path), { provider: source.provider, host: source.host });
+    if (!forge) {
+      const warning = `${repo.name} has no origin remote, so its provider path cannot be proposed; add "projects" for it by hand when it is not ${base}/${repo.name}`;
+      if (!warnings.includes(warning)) warnings.push(warning);
+      continue;
+    }
+    if (forge.provider !== source.provider) continue;
+    if (forge.path !== `${base}/${repo.name}`) proposed[repo.name] = forge.path;
+  }
+  return proposed;
 }
 
 // Configure ticket sources in a scaffolded project. Only the marker's tickets
 // key changes; an existing harness MCP file gets a proposal beside it, a
 // missing one is created with the ticket servers alone, and the secret names
 // go in a managed block of .agents/mcp-secrets.env.example.
-export function runTickets(opts) {
+export async function runTickets(opts) {
   const report = { ...emptyReport('tickets', opts), marker: null, mcp: [], secrets: [] };
   const marker = requireMarker(opts);
   if (!opts.sources) throw new InitError('bad-args', 'tickets needs --sources <file>');
   const tickets = loadTickets(opts.sources);
   report.marker = { before: marker.tickets ?? null, after: tickets };
+  loadSecretsFile(opts.root, process.env);
+  report.transportOnThisMachine = {};
+  for (const source of tickets?.sources ?? []) {
+    report.transportOnThisMachine[source.prefix] = await transportOnThisMachine({
+      provider: source.provider,
+      host: source.provider === 'github' ? 'github.com' : (source.host ?? 'gitlab.com'),
+      transport: effectiveTransport(tickets, source),
+      login: source.login ?? null,
+    });
+  }
+  const clones = detectRepos(opts.root);
+  report.proposedProjects = Object.fromEntries((tickets?.sources ?? [])
+    .filter((source) => ['github', 'gitlab'].includes(source.provider))
+    .map((source) => [source.prefix, proposeProjects(opts.root, clones, source, report.warnings)]));
   const harnesses = markerHarnesses(marker);
   const servers = ticketServers(tickets);
   const vars = buildVars(markerOpts(opts, marker), marker.repos ?? [], harnesses, []);
   const writes = [];
   if (Object.keys(servers).length) {
-    const full = generateMcpFiles(harnesses, { extra: servers });
-    const alone = Object.fromEntries(generateMcpFiles(harnesses, { extra: servers, canonical: false }).map((f) => [f.target, f.content]));
-    for (const { target, content } of full) {
-      if (fs.existsSync(path.join(opts.root, target))) {
-        const proposal = `${target}${PROPOSAL_SUFFIX}`;
-        if (fs.existsSync(path.join(opts.root, proposal))) {
-          throw new InitError('proposal-exists', `an earlier proposal is still there: ${proposal}; merge or delete it, then run init tickets again`, { paths: [proposal] });
-        }
-        writes.push({ target: proposal, content: provenance(target, content, vars) });
-        report.mcp.push({ path: target, action: 'proposal' });
-      } else {
-        writes.push({ target, content: provenance(target, alone[target], vars) });
-        report.mcp.push({ path: target, action: 'created' });
+    for (const { target, content } of generateMcpFiles(harnesses, { extra: servers, canonical: false })) {
+      const full = path.join(opts.root, target);
+      if (!fs.existsSync(full)) {
+        writes.push({ target, content: provenance(target, content, vars) });
+        report.mcp.push({ path: target, action: 'created', added: Object.keys(servers) });
+        continue;
       }
+      const merged = mergeMcpFile(target, fs.readFileSync(full, 'utf8'), content);
+      if (merged.unreadable !== undefined) {
+        report.mcp.push({ path: target, action: 'unreadable', added: [], message: merged.unreadable });
+        continue;
+      }
+      for (const [id, other] of merged.sameUrl ?? []) {
+        const warning = `${id} has the same URL as ${other}; set "server": "${other}" to reuse it`;
+        if (!report.warnings.includes(warning)) report.warnings.push(warning);
+      }
+      if (!merged.added.length) {
+        report.mcp.push({ path: target, action: 'unchanged', added: [] });
+        continue;
+      }
+      const proposal = `${target}${PROPOSAL_SUFFIX}`;
+      if (fs.existsSync(path.join(opts.root, proposal))) {
+        throw new InitError('proposal-exists', `an earlier proposal is still there: ${proposal}; merge or delete it, then run init tickets again`, { paths: [proposal] });
+      }
+      writes.push({ target: proposal, content: merged.content });
+      report.mcp.push({ path: target, action: 'proposal', added: merged.added });
     }
   }
   const secretLines = ticketSecretLines(tickets);
@@ -1187,9 +1458,124 @@ export function runTickets(opts) {
   report.written.push(MARKER_PATH);
   report.written.sort();
   const proposals = report.mcp.filter((m) => m.action === 'proposal').map((m) => m.path);
+  const unreadable = report.mcp.filter((m) => m.action === 'unreadable');
+  const ids = Object.keys(servers).join(', ');
   report.nextSteps = [
     ...ticketNextSteps(tickets),
     ...proposals.map((p) => `Merge ${p}${PROPOSAL_SUFFIX} into ${p} (git diff --no-index ${p} ${p}${PROPOSAL_SUFFIX}), then delete the proposal.`),
+    ...unreadable.map((m) => `${m.path} is not strict JSON (${m.message}), so no proposal was written; add ${ids} by hand.`),
+  ];
+  return report;
+}
+
+const nearKey = (name) => name.toLowerCase().replace(/[-_]/g, '');
+
+// Folders whose names are near a knowledge-base folder without being it (`brand-book` for
+// `brandbook`, `Specs` for `specs`), and knowledge-base folders nested under docs/.
+export function nearFolders(root) {
+  const out = [];
+  const dirs = (dir) => (fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name) : []);
+  for (const kb of KB_FOLDERS) {
+    for (const name of dirs(root)) {
+      if (!name.startsWith('.') && name !== kb && nearKey(name) === nearKey(kb)) out.push({ kb, existing: name });
+    }
+    for (const name of dirs(path.join(root, 'docs'))) {
+      if (nearKey(name) === nearKey(kb)) out.push({ kb, existing: `docs/${name}` });
+    }
+  }
+  return out;
+}
+
+function findProposals(root, dir = root, depth = 0, out = []) {
+  if (depth > 4) return out;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === '.git' || entry.name === 'node_modules') continue;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (!fs.existsSync(path.join(full, '.git'))) findProposals(root, full, depth + 1, out);
+    } else if (entry.name.endsWith(PROPOSAL_SUFFIX)) {
+      out.push(path.relative(root, full).split(path.sep).join('/'));
+    }
+  }
+  return out.sort();
+}
+
+// Audit a scaffold without writing anything: the settings files and hooks the plugin needs, the
+// ticket servers in each harness file, proposals still waiting, undefined variables, near-named
+// folders. Every finding is { kind, path, detail }.
+export function runCheck(opts) {
+  const report = { ...emptyReport('check', opts), findings: [], next: null, ticketsConfigured: false, autopilotMode: 'off' };
+  if (!fs.existsSync(opts.root) || !fs.statSync(opts.root).isDirectory()) {
+    throw new InitError('bad-root', `${opts.root} is not a directory`);
+  }
+  const add = (kind, file, detail) => {
+    if (!report.findings.some((f) => f.kind === kind && f.path === file)) report.findings.push({ kind, path: file, detail });
+  };
+  let marker = null;
+  try {
+    marker = readMarker(opts.root);
+  } catch (err) {
+    if (!(err instanceof InitError && err.code === 'marker-corrupt')) throw err;
+    add('marker-corrupt', MARKER_PATH, err.message);
+    report.next = 'repair';
+  }
+  if (marker === null && report.next === null) {
+    const workspaceRoot = findMarkerAbove(opts.root);
+    if (workspaceRoot) add('nested-clone', workspaceRoot, `${opts.root} sits inside the ultrapowers workspace; run init from that root`);
+    else report.next = 'scaffold';
+  }
+  if (marker && typeof marker === 'object' && !Array.isArray(marker)) {
+    const version = pluginVersion();
+    const from = typeof marker.pluginVersion === 'string' ? marker.pluginVersion : '0.0.0';
+    report.next = compareVersions(from, version) < 0 ? 'upgrade' : 'join';
+    if (report.next === 'upgrade') add('upgrade-available', MARKER_PATH, `the scaffold is from ${from} and the plugin is ${version}`);
+    const harnesses = markerHarnesses(marker);
+    const plan = planPayload(markerOpts(opts, marker), marker.repos ?? [], harnesses);
+    for (const item of incompleteFiles(opts.root, plan)) {
+      if (item.unreadable !== undefined) {
+        add('unreadable', item.path, `not strict JSON (${item.unreadable}); compare it with the template by hand`);
+        continue;
+      }
+      const rest = item.missing.filter((m) => m !== 'hooks.BeforeTool');
+      if (rest.length !== item.missing.length) {
+        add('hook-missing', item.path, 'no BeforeTool hook names ultrapowers-guardrail.mjs, so the guardrail does not run on Gemini CLI; add the hook of the template by hand');
+      }
+      if (rest.length) add('settings-incomplete', item.path, `lacks: ${rest.join(', ')}; merge them by hand`);
+    }
+    const launcher = '.gemini/hooks/ultrapowers-guardrail.mjs';
+    if (harnesses.includes('gemini') && !fs.existsSync(path.join(opts.root, launcher))) {
+      add('missing-file', launcher, 'the guardrail launcher is missing; upgrade lists it, or copy it from the plugin templates');
+    }
+    const tickets = marker.tickets && validateTickets(marker.tickets).length === 0 ? marker.tickets : null;
+    report.ticketsConfigured = Boolean(marker.tickets);
+    if (marker.autopilot && typeof marker.autopilot.mode === 'string') report.autopilotMode = marker.autopilot.mode;
+    const servers = ticketServers(tickets);
+    if (Object.keys(servers).length) {
+      for (const { target, content } of generateMcpFiles(harnesses, { extra: servers, canonical: false })) {
+        const full = path.join(opts.root, target);
+        if (!fs.existsSync(full)) {
+          add('server-missing', target, `the file does not exist; it lacks ${Object.keys(servers).join(', ')}`);
+          continue;
+        }
+        const merged = mergeMcpFile(target, fs.readFileSync(full, 'utf8'), content);
+        if (merged.unreadable !== undefined) add('unreadable', target, `not strict JSON (${merged.unreadable}); add ${Object.keys(servers).join(', ')} by hand`);
+        else if (merged.added.length) add('server-missing', target, `lacks ${merged.added.join(', ')}; run init tickets for a proposal`);
+      }
+    }
+    const secrets = missingSecrets(opts.root, process.env, marker);
+    if (secrets.required.length) add('secrets', SECRETS_EXAMPLE, `not defined: ${secrets.required.join(', ')}`);
+    if (secrets.optional.length) add('secrets-optional', SECRETS_EXAMPLE, `not defined, optional: ${secrets.optional.join(', ')}`);
+  }
+  for (const proposal of findProposals(opts.root)) add('stale-proposal', proposal, `merge it into ${proposal.slice(0, -PROPOSAL_SUFFIX.length)} with your human partner, then delete it`);
+  for (const near of nearFolders(opts.root)) {
+    const legacy = near.existing === 'brand-book' && near.kb === 'brandbook';
+    add('near-folder', near.existing, legacy
+      ? 'the knowledge-base folder is brandbook/ from 1.4.0; rename it with: git mv brand-book brandbook (both names are read until 2.0)'
+      : `near the knowledge-base folder ${near.kb}/; decide with your human partner which one the project uses`);
+  }
+  report.nextSteps = [
+    ...report.findings.map((f) => `${f.kind}: ${f.path}: ${f.detail}`),
+    ...(report.next ? [`init mode for this project: ${report.next}`] : []),
   ];
   return report;
 }
@@ -1216,19 +1602,20 @@ export async function runAutopilot(opts) {
     throw new InitError('no-source', 'autopilot needs a GitHub, GitLab or Odoo ticket source; run init tickets first');
   }
   if (block) {
-    const noLogin = (marker.tickets?.sources ?? []).findIndex((s) => s && s.provider === 'odoo' && !(typeof s.login === 'string' && s.login.trim()));
+    const noLogin = (marker.tickets?.sources ?? []).findIndex((s) => s && s.provider === 'odoo' && s.autopilot !== false && !(typeof s.login === 'string' && s.login.trim()));
     if (noLogin >= 0) {
-      throw new InitError('bad-tickets', `tickets.sources[${noLogin}].login is required for autopilot: the engine signs in to Odoo as a technical user; run init tickets and name it`);
+      throw new InitError('bad-tickets', `tickets.sources[${noLogin}].login is required for autopilot: the engine signs in to Odoo as a technical user; run init tickets and name it, or set "autopilot": false on that source when autopilot must not run its tickets`);
     }
+    requireOdooApprovers(marker.tickets, block);
     // An Odoo-only project gets the readable tag names (spec 2026-10-05 D9) unless the answers chose.
-    const watched = sources.filter((s) => s.defaultProject);
+    const watched = sources.filter((s) => s.defaultProject && s.autopilot !== false);
     if (!block.events && watched.length && watched.every((s) => s.provider === 'odoo')) block.events = { ...ODOO_EVENTS };
     loadSecretsFile(opts.root, process.env);
   }
   const events = { ...AUTOPILOT_DEFAULTS.events, ...(block?.events ?? {}) };
   const failed = [];
   if (block) {
-    for (const source of sources) {
+    for (const source of sources.filter((s) => s.autopilot !== false)) {
       let resolution = null;
       try {
         resolution = source.defaultProject ? resolveTicket(marker, `${source.prefix}-1`) : null;
@@ -1276,7 +1663,7 @@ export async function runAutopilot(opts) {
 export async function main(argv) {
   try {
     const opts = parseArgs(argv);
-    const runners = { scaffold: runScaffold, detect: runDetect, join: runJoin, upgrade: runUpgrade, tickets: runTickets, autopilot: runAutopilot };
+    const runners = { scaffold: runScaffold, detect: runDetect, join: runJoin, upgrade: runUpgrade, tickets: runTickets, autopilot: runAutopilot, check: runCheck };
     const report = await runners[opts.mode](opts);
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     return 0;

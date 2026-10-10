@@ -197,3 +197,30 @@ test('serverId lowercases the prefix', () => {
   assert.equal(serverId('GL'), 'tickets-gl');
   assert.equal(serverId('ODOO'), 'tickets-odoo');
 });
+
+test('a source may name the MCP server to use: it validates and resolve reports it', () => {
+  const t = specExample();
+  t.sources[0].server = 'gitlab-company';
+  assert.deepEqual(validateTickets(t), []);
+  assert.equal(resolveTicket(marker(t), 'GL-billing-api-42').server, 'gitlab-company');
+  assert.equal(resolveTicket(marker(t), 'GH-web-7').server, 'tickets-gh', 'a source without the field keeps the default');
+});
+
+test('a server name must be a plain non-empty id', () => {
+  for (const bad of ['', '  ', 7, 'has space', 'a/b']) {
+    const t = specExample();
+    t.sources[0].server = bad;
+    assert.ok(validateTickets(t).some((e) => e.includes('tickets.sources[0].server')), JSON.stringify(bad));
+  }
+});
+
+test('a source may set autopilot to a boolean; anything else is refused', () => {
+  const t = specExample();
+  t.sources[2].autopilot = false;
+  assert.deepEqual(validateTickets(t), []);
+  for (const bad of ['no', 0, null]) {
+    const u = specExample();
+    u.sources[2].autopilot = bad;
+    assert.ok(validateTickets(u).some((e) => e.includes('tickets.sources[2].autopilot')), JSON.stringify(bad));
+  }
+});

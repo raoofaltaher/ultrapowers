@@ -9,7 +9,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SKILL_DIR="$REPO_ROOT/skills/init"
 SKILL_MD="$SKILL_DIR/SKILL.md"
 ENGINE="$SKILL_DIR/scripts/init.mjs"
-WORD_BUDGET=1800
+WORD_BUDGET=1900
 
 PASSES=0
 FAILURES=0
@@ -83,7 +83,7 @@ fi
 
 for mode in $(printf '%s\n' "$engine_lines" | grep -oE 'init\.mjs" [a-z]+' | awk '{print $2}' | sort -u); do
   case "$mode" in
-    scaffold | join | upgrade | detect | tickets | autopilot) pass "engine mode '$mode' exists" ;;
+    scaffold | join | upgrade | detect | tickets | autopilot | check) pass "engine mode '$mode' exists" ;;
     *) fail "engine mode '$mode' exists" ;;
   esac
 done

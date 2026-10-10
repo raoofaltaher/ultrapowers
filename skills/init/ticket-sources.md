@@ -8,10 +8,10 @@ One question per message; use multiple choice where the harness has it.
 
 1. Providers: any of GitHub, GitLab, Odoo; or none, which keeps local tickets only.
 2. Per provider: its prefix (default `GH`, `GL`, `ODOO`); where its tickets live (GitHub owner; GitLab host, default `gitlab.com`, and group path; Odoo URL); a default project, optional.
-3. Only when `repos` is not empty: any clone whose provider path is not `<owner or group>/<clone name>`, for `projects`.
-4. Transport: `auto` (default: the CLI when installed and signed in, else the MCP server), `cli` or `mcp`.
+3. Only when `repos` is not empty: any clone whose provider path is not `<owner or group>/<clone name>`, for `projects`. The dry run's `proposedProjects` lists what each clone's origin remote suggests; confirm or correct it with your human partner and put the agreed map in the sources file. A clone with no remote appears in `warnings`: ask for its path.
+4. Transport: `auto` (default: the CLI when installed and signed in, else the MCP server), `cli` or `mcp`. It applies to reading tickets only: autopilot always uses `gh`, `glab`, or Odoo's JSON-RPC with a login and `ODOO_API_KEY`, whatever the transport.
 5. Odoo only, always: the team's MCP server URL. Propose `https://<Odoo host>/mcp` from its URL and let your human partner confirm or replace it. Then how it signs in: a token header (`Authorization: Bearer`, the default, or a header that carries the key alone, such as `X-Api-Key`) or browser sign-in.
-6. Odoo only, when autopilot will run tickets from it: the technical user's `login` (an internal user in the Project User group; its API key goes in `ODOO_API_KEY`, never in this file) and, optionally, the database name `db` (leave it out when the server lists a single database).
+6. Odoo only, when autopilot will run tickets from it: the technical user's `login` (an internal user in the Project User group; its API key goes in `ODOO_API_KEY`, never in this file) and, optionally, the database name `db` (leave it out when the server lists a single database). When autopilot will not run this source, ask for no login and set `"autopilot": false` on it; autopilot setup and the watcher then leave it alone.
 
 ## The sources file
 
@@ -25,7 +25,9 @@ Write the answers as one JSON object to a file outside the project (your temp or
     "login": "ultrapowers-bot@example.com", "db": "erp", "defaultProject": "34" } ] }
 ```
 
-Leave out every field your human partner did not give; `mcpHeader` only for a token header; `login` and `db` only for Odoo. `{ "sources": [] }` removes configured sources.
+Leave out every field your human partner did not give; `mcpHeader` only for a token header; `login` and `db` only for Odoo; `autopilot: false` only for a source autopilot must not run. `{ "sources": [] }` removes configured sources.
+
+`server` names an MCP server the team already runs for that tracker, and init then renders none for the source. Add it only when the dry run's `warnings` shows an existing server with the same URL and your human partner agrees to reuse it.
 
 ## Writing it
 

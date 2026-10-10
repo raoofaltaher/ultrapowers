@@ -439,3 +439,41 @@ test('an INCOMPLETE QA verdict stops the run like a FAIL', () => {
   assert.deepEqual(nextStage(finished('qa', { qa: { verdict: 'INCOMPLETE' } }), FACTS), { action: 'stop', reason: 'qa-INCOMPLETE' });
   assert.deepEqual(nextStage(finished('qa', { qa: { verdict: 'PASS-WITH-ISSUES' } }), FACTS), { action: 'run', stage: 'pr', reason: 'qa-finished' });
 });
+
+// An Odoo source that autopilot runs holds the engine's technical-user key: approvers must be people (#32).
+const ODOO_SRC = { prefix: 'ODOO', provider: 'odoo', url: 'https://erp.example.com', mcpUrl: 'https://erp.example.com/mcp', login: 'bot@example.com', defaultProject: '34' };
+const odooMarker = (autopilot, source = ODOO_SRC) => ({ tickets: { sources: [source] }, autopilot });
+
+test('effectiveAutopilot refuses an Odoo source that autopilot runs when approvers is empty or absent', () => {
+  for (const approvers of [undefined, []]) {
+    assert.throws(
+      () => effectiveAutopilot(odooMarker({ mode: 'gated', ...(approvers ? { approvers } : {}) })),
+      (e) => e instanceof AutopilotError && e.code === 'bad-autopilot' && /autopilot\.approvers/.test(e.message),
+    );
+  }
+});
+
+test('effectiveAutopilot refuses the technical user as an approver, in any spelling', () => {
+  for (const approvers of [['bot@example.com'], ['alice', 'BOT@example.com'], [' bot@example.com ']]) {
+    assert.throws(
+      () => effectiveAutopilot(odooMarker({ mode: 'gated', approvers })),
+      (e) => e instanceof AutopilotError && /cannot be its own approver/.test(e.message),
+      JSON.stringify(approvers),
+    );
+  }
+});
+
+test('effectiveAutopilot accepts a human approver, an opted-out Odoo source, and projects without Odoo', () => {
+  assert.deepEqual(effectiveAutopilot(odooMarker({ mode: 'gated', approvers: ['ana'] })).approvers, ['ana']);
+  assert.equal(effectiveAutopilot(odooMarker({ mode: 'gated' }, { ...ODOO_SRC, autopilot: false })).mode, 'gated');
+  assert.equal(effectiveAutopilot({ tickets: { sources: [{ prefix: 'GH', provider: 'github', owner: 'o' }] }, autopilot: { mode: 'gated' } }).mode, 'gated');
+  assert.deepEqual(effectiveAutopilot(odooMarker({ mode: 'off' })), { mode: 'off' });
+});
+
+test('verifyApproval refuses the technical user when the list names a person', async () => {
+  const verdict = await verifyApproval({
+    approveLabel: 'up:approve', approvers: ['ana'], packet: PACKET, tips: TIPS_SAME,
+    events: [EV('bot@example.com', AFTER)], permissionOf: async () => 'write',
+  });
+  assert.equal(verdict.reason, 'not-approver');
+});

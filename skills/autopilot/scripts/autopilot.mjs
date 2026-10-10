@@ -1096,6 +1096,10 @@ async function watchCycle(root, marker, settings, opts, previousSleepMs) {
   const queue = [];
   let failed = false;
   for (const source of sources) {
+    if (source.autopilot === false) {
+      events.push({ event: 'unwatched', source: source.prefix, reason: 'autopilot: false' });
+      continue;
+    }
     if (!source.defaultProject) {
       events.push({ event: 'unwatched', source: source.prefix, reason: `${source.prefix} has no defaultProject; run its tickets from a session with /ultrapowers:autopilot <ID>` });
       continue;

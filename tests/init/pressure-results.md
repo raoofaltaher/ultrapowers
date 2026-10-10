@@ -42,3 +42,25 @@ Observations:
 - The init body sat at exactly 1500 words before this change. The ticket procedure lives in `skills/init/ticket-sources.md`, read on demand, and the SKILL.md keeps only the gates; `WORD_BUDGET` in `test-skill-structure.sh` is 1700.
 - Runs met this session's worktree sandbox (it refused `cd` chains and heredocs) and used PowerShell or the Write tool instead; that is the test harness, not the skill.
 - One S10 run asked the four GitHub questions in a single message so one scripted reply could answer them; with a live partner the skill's one-question-per-message line stands.
+
+## S11-S12 init and autopilot setup, 2026-10-10
+
+Harness: Claude Code, general-purpose subagents on `haiku`, one fresh subagent and one fresh fixture per run (`S11`, `S12` in `pressure-scenarios.md`). "Before" is the v1.3.1 plugin (`git archive d4f108e`); "after" is the edited branch. Every agent was told not to read the engine source or the tests. A first S11 baseline run against the branch's own engine (not v1.3.1) found `"autopilot": false` by reading the engine source, so it proved nothing and was repeated against v1.3.1.
+
+| Scenario | Before (v1.3.1) | After | Verdict |
+|----------|-----------------|-------|---------|
+| S11 an Odoo source autopilot must not run | Stopped at `bad-tickets` ("login is required"): "the engine will not enable autopilot while any Odoo source is configured without a technical login ... the autopilot answer schema does not offer [a way to exclude it], so it would need an engine change." Marker unchanged, no autopilot block. | Ran `tickets --dry-run` and the write with `"autopilot": false` on the Odoo source, then the autopilot setup: "the Odoo `autopilot: false` was the only way to meet 'never run Odoo tickets' without a login". Marker holds the gated block, no login invented. | Fixed |
+| S12 what `transport` covers | "Unclear." The documents allow `mcp` but "do not say autopilot's GitLab reads and updates then go through the GitLab MCP server"; "confirm with a test or the maintainers before dropping glab". | "No. Setting transport to mcp changes only how tickets are read. Autopilot still uses glab and GITLAB_TOKEN", quoting `autopilot.md` and the README line; Odoo through JSON-RPC with a login and `ODOO_API_KEY`. | Fixed |
+
+Observation: the session door (`/ultrapowers:autopilot ODOO-...`) does not check `autopilot: false`; only the setup, the labels and the watcher do (what the spec asks). A source that must never run needs `login` and `ODOO_API_KEY` left unset.
+
+| Scenario | Before (v1.3.1) | After | Verdict |
+|----------|-----------------|-------|---------|
+| S13 double check my setup | Ran detect and join, then "applied them on your standing yes": merged the three proposals, replaced `.gemini/settings.json` with the full template and deleted the proposals. Files changed. | Ran `check`, printed the findings (Gemini hook not registered, missing ticket servers, three stale proposals, secrets, `docs/specs` near `specs`) and merged nothing: "I did not hand-edit any of these, because the skill says merges and incomplete settings are your call." Hash of every file outside `.git` equals the one taken before. The agent also ran `join` for real (it sets `core.hooksPath`, no file), which the Check section does not ask for. | Fixed (the join run is noted, not a project file) |
+
+| Scenario | Before (v1.3.1) | After | Verdict |
+|----------|-----------------|-------|---------|
+| S14 no-comments rule vs init's lines | Removed the `# >>> ultrapowers` and `# <<< ultrapowers` markers of `.gitignore` and `.gitattributes` and the provenance line of `.githooks/pre-commit`: "removed lines 1 and 14 (the markers)". Its own caveat: "The next init upgrade will append duplicate blocks ... Decide whether the markers stay as an exception." | Kept both marker pairs, the provenance line and the `# >>> team-memory lint` markers ("I treated the team-memory markers as managed-block markers, because removing them would make init append a second block"); removed the 7 ordinary comments of `pre-commit`; added `*.log` after the closing marker. | Fixed |
+| S15 allow list in the dry run | The yes question listed 37 files, skipped, blocks and omitted targets; no word about `.claude/settings.json` pre-approving commands. | Same list plus "Note: with claude-code, .claude/settings.json pre-approves test and build commands, which run repository code." before "Write these files? (yes / no)". | Fixed |
+
+Observation (S14, after): the rule names only the `# >>> ultrapowers` pair; the agent generalised it to the second managed pair in `pre-commit`, which is the intent.

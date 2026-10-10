@@ -142,7 +142,7 @@ test('join does not set core.hooksPath over hooks already in .git/hooks and name
 test('join reports the secret variables from the example file that are not defined', () => {
   const root = scaffolded();
   const report = run(['join', '--root', root]);
-  assert.deepEqual(report.missingSecrets, ['FIRECRAWL_API_KEY', 'BRAVE_API_KEY']);
+  assert.deepEqual(report.missingSecrets, { required: ['FIRECRAWL_API_KEY', 'BRAVE_API_KEY'], optional: [] });
   assert.ok(report.nextSteps.some((s) => s.includes('FIRECRAWL_API_KEY, BRAVE_API_KEY')));
   assert.ok(report.nextSteps.some((s) => /Approve the project MCP servers/.test(s)));
 });
@@ -271,9 +271,9 @@ test('upgrade --apply writes a missing target directly and records it', () => {
 test('upgrade --apply refuses a target that did not change and writes nothing', () => {
   const root = scaffolded();
   const before = snapshot(root);
-  const report = run(['upgrade', '--root', root, '--apply', 'AGENTS.md'], { expectExit: 2 });
+  const report = run(['upgrade', '--root', root, '--apply', 'tasks/README.md'], { expectExit: 2 });
   assert.equal(report.error.code, 'bad-args');
-  assert.deepEqual(report.error.unknown, ['AGENTS.md']);
+  assert.deepEqual(report.error.unknown, ['tasks/README.md']);
   assert.deepEqual(changedFiles(before, snapshot(root)), []);
 });
 
@@ -651,4 +651,449 @@ test('upgrade --apply .gitignore replaces only the managed block', () => {
   assert.ok(text.startsWith('node_modules/\n# >>> ultrapowers\n'));
   assert.ok(text.endsWith('# <<< ultrapowers\ndist/\n'));
   assert.match(text, /^\.temp\/$/m);
+});
+
+test('scaffold over an existing .claude/settings.json that lacks the plugin keys reports it incomplete', () => {
+  const root = tmpWorkspace();
+  fs.mkdirSync(path.join(root, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude', 'settings.json'), '{}\n');
+  const report = run(['scaffold', '--root', root, '--name', 'WS', '--platform', 'linux']);
+  const entry = report.incomplete.find((i) => i.path === '.claude/settings.json');
+  assert.ok(entry, JSON.stringify(report.incomplete));
+  assert.ok(entry.missing.includes('outputStyle'));
+  assert.ok(entry.missing.includes('Skill(ultrapowers:task)'));
+  assert.ok(report.nextSteps.some((s) => s.startsWith('.claude/settings.json lacks: outputStyle') && s.includes('merge them by hand (init never overwrites)')));
+  assert.equal(fs.readFileSync(path.join(root, '.claude', 'settings.json'), 'utf8'), '{}\n');
+});
+
+test('scaffold reports a settings file with comments as unreadable, not complete', () => {
+  const root = tmpWorkspace();
+  fs.mkdirSync(path.join(root, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude', 'settings.json'), '// ours\n{ "outputStyle": "STE Explanatory" }\n');
+  const report = run(['scaffold', '--root', root, '--name', 'WS', '--platform', 'linux']);
+  const entry = report.incomplete.find((i) => i.path === '.claude/settings.json');
+  assert.ok(entry && typeof entry.unreadable === 'string');
+  assert.ok(report.nextSteps.some((s) => s.startsWith('.claude/settings.json') && /not strict JSON/.test(s)));
+});
+
+test('scaffold of a fresh project reports nothing incomplete', () => {
+  assert.deepEqual(run(['scaffold', '--root', tmpWorkspace(), '--name', 'WS', '--platform', 'linux']).incomplete, []);
+});
+
+test('upgrade from 1.1.0 lists .gemini/settings.json as changed', () => {
+  const root = scaffolded();
+  setMarkerVersion(root, '1.1.0');
+  const report = run(['upgrade', '--root', root]);
+  assert.ok(report.changed.some((c) => c.path === '.gemini/settings.json'), JSON.stringify(report.changed));
+});
+
+test('join reports a .gemini/settings.json that lacks the guardrail hook', () => {
+  const root = scaffolded();
+  fs.writeFileSync(path.join(root, '.gemini', 'settings.json'), '{ "mcpServers": {} }\n');
+  const report = run(['join', '--root', root]);
+  assert.deepEqual(report.incomplete, [{ path: '.gemini/settings.json', missing: ['hooks.BeforeTool'] }]);
+  assert.ok(report.nextSteps.some((s) => s.startsWith('.gemini/settings.json lacks: hooks.BeforeTool')));
+  assert.equal(run(['join', '--root', scaffolded('ws3')]).incomplete.length, 0);
+});
+
+test('upgrade reports an incomplete settings file too', () => {
+  const root = scaffolded();
+  fs.writeFileSync(path.join(root, '.claude', 'settings.json'), '{}\n');
+  setMarkerVersion(root, '0.0.1');
+  const report = run(['upgrade', '--root', root]);
+  assert.ok(report.incomplete.some((i) => i.path === '.claude/settings.json' && i.missing.includes('outputStyle')));
+  assert.ok(report.nextSteps.some((s) => s.includes('.claude/settings.json lacks:')));
+});
+
+// Task 3: ticket proposals add only the new servers (#28 A3).
+function twoSources() {
+  return {
+    transport: 'auto',
+    sources: [
+      { prefix: 'GL', provider: 'gitlab', host: 'gitlab.com', namespace: 'acme/platform', defaultProject: 'tracker' },
+      { prefix: 'GH', provider: 'github', owner: 'acme' },
+    ],
+  };
+}
+
+test('tickets proposes the existing .mcp.json plus only the new ticket servers', () => {
+  const root = scaffolded();
+  const team = {
+    mcpServers: {
+      context7: { type: 'stdio', command: 'node', args: ['pinned-elsewhere.js'] },
+      'team-db': { type: 'http', url: 'https://db.example.com/mcp' },
+      'team-ci': { type: 'http', url: 'https://ci.example.com/mcp', headers: { Authorization: 'Bearer ${CI_TOKEN}' } },
+    },
+  };
+  fs.writeFileSync(path.join(root, '.mcp.json'), `${JSON.stringify(team, null, 2)}\n`);
+  const report = run(['tickets', '--root', root, '--sources', sourcesFile(twoSources())]);
+  const entry = report.mcp.find((m) => m.path === '.mcp.json');
+  assert.equal(entry.action, 'proposal');
+  assert.deepEqual(entry.added, ['tickets-gl', 'tickets-gh']);
+  const proposal = JSON.parse(fs.readFileSync(path.join(root, `.mcp.json${PROPOSAL_SUFFIX}`), 'utf8'));
+  assert.deepEqual(Object.keys(proposal.mcpServers), ['context7', 'team-db', 'team-ci', 'tickets-gl', 'tickets-gh']);
+  for (const id of Object.keys(team.mcpServers)) assert.deepEqual(proposal.mcpServers[id], team.mcpServers[id]);
+  // Merge it by hand, and a second run has nothing to add and writes no proposal.
+  fs.renameSync(path.join(root, `.mcp.json${PROPOSAL_SUFFIX}`), path.join(root, '.mcp.json'));
+  for (const rel of Object.keys(snapshot(root)).filter((p) => p.endsWith(PROPOSAL_SUFFIX))) fs.rmSync(path.join(root, rel));
+  const again = run(['tickets', '--root', root, '--sources', sourcesFile(twoSources())]);
+  const second = again.mcp.find((m) => m.path === '.mcp.json');
+  assert.equal(second.action, 'unchanged');
+  assert.deepEqual(second.added, []);
+  assert.equal(fs.existsSync(path.join(root, `.mcp.json${PROPOSAL_SUFFIX}`)), false);
+});
+
+test('tickets keeps the first provenance line of .vscode/mcp.json and merges inputs by id', () => {
+  const root = scaffolded();
+  const file = path.join(root, '.vscode', 'mcp.json');
+  const mine = {
+    inputs: [{ type: 'promptString', id: 'gh-token', description: 'mine', password: true }, { type: 'promptString', id: 'team-key', description: 'team', password: true }],
+    servers: { 'team-db': { type: 'http', url: 'https://db.example.com/mcp' } },
+  };
+  fs.writeFileSync(file, `// our own header\n${JSON.stringify(mine, null, 2)}\n`);
+  run(['tickets', '--root', root, '--sources', sourcesFile(twoSources())]);
+  const text = fs.readFileSync(`${file}${PROPOSAL_SUFFIX}`, 'utf8');
+  assert.ok(text.startsWith('// our own header\n'), text.slice(0, 80));
+  const parsed = JSON.parse(text.replace(/^\/\/.*\n/, ''));
+  assert.deepEqual(Object.keys(parsed.servers), ['team-db', 'tickets-gl', 'tickets-gh']);
+  assert.deepEqual(parsed.inputs.map((i) => i.id), ['gh-token', 'team-key']);
+  assert.equal(parsed.inputs[0].description, 'mine', 'an existing input is kept as it is');
+});
+
+test('tickets merges into opencode.json under mcp and into .gemini/settings.json under mcpServers', () => {
+  const root = scaffolded();
+  fs.writeFileSync(path.join(root, 'opencode.json'), `${JSON.stringify({ $schema: 'https://opencode.ai/config.json', theme: 'x', mcp: { team: { type: 'remote', url: 'https://t.example.com', enabled: true } } }, null, 2)}\n`);
+  run(['tickets', '--root', root, '--sources', sourcesFile(twoSources())]);
+  const oc = JSON.parse(fs.readFileSync(path.join(root, `opencode.json${PROPOSAL_SUFFIX}`), 'utf8'));
+  assert.equal(oc.theme, 'x');
+  assert.deepEqual(Object.keys(oc.mcp), ['team', 'tickets-gl', 'tickets-gh']);
+  const gm = JSON.parse(fs.readFileSync(path.join(root, `.gemini/settings.json${PROPOSAL_SUFFIX}`), 'utf8'));
+  assert.ok(gm.hooks.BeforeTool, 'the existing hook stays');
+  assert.ok('tickets-gl' in gm.mcpServers && 'tickets-gh' in gm.mcpServers);
+});
+
+test('tickets appends the missing tables to .codex/config.toml and keeps its header', () => {
+  const root = scaffolded();
+  const file = path.join(root, '.codex', 'config.toml');
+  fs.writeFileSync(file, '# ours\napproval_policy = "never"\n\n[mcp_servers.team]\nurl = "https://t.example.com"\n');
+  const report = run(['tickets', '--root', root, '--sources', sourcesFile(twoSources())]);
+  assert.deepEqual(report.mcp.find((m) => m.path === '.codex/config.toml').added, ['tickets-gl', 'tickets-gh']);
+  const text = fs.readFileSync(`${file}${PROPOSAL_SUFFIX}`, 'utf8');
+  assert.ok(text.startsWith('# ours\napproval_policy = "never"\n\n[mcp_servers.team]'));
+  assert.match(text, /\[mcp_servers\.tickets-gl\]\nurl = "https:\/\/gitlab\.com\/api\/v4\/mcp"/);
+  assert.match(text, /\[mcp_servers\.tickets-gh\]/);
+  assert.equal((text.match(/approval_policy/g) ?? []).length, 1, 'the defaults are not repeated');
+});
+
+test('tickets reports a harness file it cannot parse and writes no proposal for it', () => {
+  const root = scaffolded();
+  fs.writeFileSync(path.join(root, '.cursor', 'mcp.json'), '{ "mcpServers": {}, }\n');
+  const report = run(['tickets', '--root', root, '--sources', sourcesFile(twoSources())]);
+  const entry = report.mcp.find((m) => m.path === '.cursor/mcp.json');
+  assert.equal(entry.action, 'unreadable');
+  assert.equal(fs.existsSync(path.join(root, `.cursor/mcp.json${PROPOSAL_SUFFIX}`)), false);
+  assert.ok(report.nextSteps.some((s) => s.includes('.cursor/mcp.json') && /by hand/.test(s)));
+});
+
+test('the tickets dry run warns when an existing server has the URL of a ticket server', () => {
+  const root = scaffolded();
+  const team = { mcpServers: { 'gitlab-company': { type: 'http', url: 'https://gitlab.com/api/v4/mcp/' } } };
+  fs.writeFileSync(path.join(root, '.mcp.json'), `${JSON.stringify(team, null, 2)}\n`);
+  const report = run(['tickets', '--root', root, '--sources', sourcesFile(twoSources()), '--dry-run']);
+  assert.deepEqual(report.warnings, ['tickets-gl has the same URL as gitlab-company; set "server": "gitlab-company" to reuse it']);
+  const named = twoSources();
+  named.sources[0].server = 'gitlab-company';
+  const after = run(['tickets', '--root', root, '--sources', sourcesFile(named), '--dry-run']);
+  assert.deepEqual(after.warnings, []);
+  const proposal = after.mcp.find((m) => m.path === '.mcp.json');
+  assert.deepEqual(proposal.added, ['tickets-gh']);
+});
+
+test('the duplicate-URL warning also reads a Codex config', () => {
+  const root = scaffolded();
+  fs.writeFileSync(path.join(root, '.codex', 'config.toml'), '[mcp_servers.gl-corp]\nurl = "https://gitlab.com/api/v4/mcp"\n');
+  const report = run(['tickets', '--root', root, '--sources', sourcesFile(twoSources()), '--dry-run']);
+  assert.ok(report.warnings.includes('tickets-gl has the same URL as gl-corp; set "server": "gl-corp" to reuse it'), JSON.stringify(report.warnings));
+});
+
+// Task 5: projects proposed from the clones' remotes (#28 A5).
+function workspaceWithClone(origin, name = 'app-api') {
+  const root = tmpWorkspace();
+  const clone = gitRepo(path.join(root, name));
+  if (origin) git(clone, 'remote', 'add', 'origin', origin);
+  run(['scaffold', '--root', root, '--name', 'WS', '--platform', 'linux', '--harnesses', 'claude-code']);
+  return root;
+}
+
+function gitlabSources() {
+  return { sources: [{ prefix: 'GL', provider: 'gitlab', host: 'gitlab.com', namespace: 'acme/platform', defaultProject: 'tracker' }] };
+}
+
+for (const [label, origin] of [['https', 'https://gitlab.com/acme/backend/app-api.git'], ['ssh', 'git@gitlab.com:acme/backend/app-api.git']]) {
+  test(`tickets proposes projects from a clone's ${label} origin when its path is not namespace/clone`, () => {
+    const root = workspaceWithClone(origin);
+    const before = snapshot(root);
+    const report = run(['tickets', '--root', root, '--sources', sourcesFile(gitlabSources()), '--dry-run']);
+    assert.deepEqual(report.proposedProjects, { GL: { 'app-api': 'acme/backend/app-api' } });
+    assert.deepEqual(changedFiles(before, snapshot(root)), []);
+  });
+}
+
+test('tickets proposes nothing for a clone whose origin path is namespace/clone', () => {
+  const root = workspaceWithClone('https://gitlab.com/acme/platform/app-api.git');
+  assert.deepEqual(run(['tickets', '--root', root, '--sources', sourcesFile(gitlabSources()), '--dry-run']).proposedProjects, { GL: {} });
+});
+
+test('tickets proposes nothing for a clone with no remote and lists it under warnings', () => {
+  const root = workspaceWithClone(null);
+  const report = run(['tickets', '--root', root, '--sources', sourcesFile(gitlabSources()), '--dry-run']);
+  assert.deepEqual(report.proposedProjects, { GL: {} });
+  assert.ok(report.warnings.some((w) => w.startsWith('app-api has no origin remote')), JSON.stringify(report.warnings));
+});
+
+test('tickets keeps a projects entry the source already has', () => {
+  const root = workspaceWithClone('https://gitlab.com/acme/backend/app-api.git');
+  const sources = gitlabSources();
+  sources.sources[0].projects = { 'app-api': 'acme/other/app-api' };
+  assert.deepEqual(run(['tickets', '--root', root, '--sources', sourcesFile(sources), '--dry-run']).proposedProjects, { GL: {} });
+});
+
+test('an Odoo source with autopilot false needs no login for the autopilot setup', () => {
+  const root = scaffolded();
+  run(['tickets', '--root', root, '--sources', sourcesFile(odooOnly('https://erp.example.com', { login: undefined, autopilot: false }))]);
+  const report = run(['autopilot', '--root', root, '--answers', answersFile(autopilotExample()), '--dry-run']);
+  assert.equal(report.marker.after.mode, 'gated');
+  assert.deepEqual(report.labels, [], 'an opted-out source gets no labels');
+});
+
+test('an Odoo source that autopilot runs still needs its login', () => {
+  const root = scaffolded();
+  run(['tickets', '--root', root, '--sources', sourcesFile(odooOnly('https://erp.example.com', { login: undefined, autopilot: true }))]);
+  assert.equal(run(['autopilot', '--root', root, '--answers', answersFile(autopilotExample()), '--dry-run'], { expectExit: 2 }).error.code, 'bad-tickets');
+});
+
+// Task 7 (#28 B3, B4, C3).
+const CLI_STUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'task-lifecycle', 'fixtures', 'cli-stub.mjs');
+
+test('the tickets dry run shows the transport each source would use on this machine', () => {
+  const root = scaffolded();
+  const sources = ticketsExample();
+  const signedIn = run(['tickets', '--root', root, '--sources', sourcesFile(sources), '--dry-run'], { env: { ULTRAPOWERS_GLAB: CLI_STUB, ULTRAPOWERS_GH: CLI_STUB, STUB_AUTH_EXIT: '0', ODOO_API_KEY: '' } });
+  assert.deepEqual(signedIn.transportOnThisMachine, { GL: 'cli', GH: 'cli', ODOO: 'mcp' });
+  const signedOut = run(['tickets', '--root', root, '--sources', sourcesFile(sources), '--dry-run'], { env: { ULTRAPOWERS_GLAB: CLI_STUB, ULTRAPOWERS_GH: CLI_STUB, STUB_AUTH_EXIT: '1', ODOO_API_KEY: '' } });
+  assert.deepEqual(signedOut.transportOnThisMachine, { GL: 'mcp', GH: 'mcp', ODOO: 'mcp' });
+});
+
+test('an Odoo source with a login and ODOO_API_KEY is reported as json-rpc', () => {
+  const root = scaffolded();
+  const report = run(['tickets', '--root', root, '--sources', sourcesFile(odooOnly('https://erp.example.com')), '--dry-run'], { env: { ODOO_API_KEY: 'k1' } });
+  assert.deepEqual(report.transportOnThisMachine, { ODOO: 'json-rpc' });
+});
+
+test('upgrade reports preview: true without --apply and false with it', () => {
+  const root = scaffolded();
+  setMarkerVersion(root, '0.0.1');
+  assert.equal(run(['upgrade', '--root', root]).preview, true);
+  assert.equal(run(['upgrade', '--root', root, '--apply', 'none']).preview, false);
+});
+
+test('upgrade --record-repos without --apply is bad-args and writes nothing', () => {
+  const root = scaffolded();
+  gitRepo(path.join(root, 'svc-new'));
+  setMarkerVersion(root, '0.0.1');
+  const before = snapshot(root);
+  const report = run(['upgrade', '--root', root, '--record-repos'], { expectExit: 2 });
+  assert.equal(report.error.code, 'bad-args');
+  assert.match(report.error.message, /--apply/);
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
+});
+
+test('join lists the variable of an optional QA role under optional, not under missing', () => {
+  const root = scaffolded();
+  const data = marker(root);
+  data.qa.roles = [
+    { name: 'user', userEnv: 'QA_USER_USER', passwordEnv: 'QA_PW_USER', required: true },
+    { name: 'visitor', userEnv: 'QA_USER_VISITOR', passwordEnv: 'QA_PW_VISITOR', required: false },
+  ];
+  fs.writeFileSync(path.join(root, '.agents', 'ultrapowers.json'), `${JSON.stringify(data, null, 2)}\n`);
+  fs.appendFileSync(path.join(root, '.agents', 'mcp-secrets.env.example'), 'QA_PW_USER=         # QA role user\nQA_PW_VISITOR=      # QA role visitor\n');
+  const report = run(['join', '--root', root]);
+  assert.ok(report.missingSecrets.required.includes('QA_PW_USER'));
+  assert.ok(!report.missingSecrets.required.includes('QA_PW_VISITOR'));
+  assert.deepEqual(report.missingSecrets.optional, ['QA_PW_VISITOR']);
+  assert.ok(report.nextSteps.some((s) => s.startsWith('Define these variables') && !s.includes('QA_PW_VISITOR')));
+  assert.ok(report.nextSteps.some((s) => s.startsWith('Optional') && s.includes('QA_PW_VISITOR')));
+});
+
+test('GITLAB_TOKEN is optional for a GitLab source read through the browser-signed-in MCP server and not run by autopilot', () => {
+  const root = scaffolded();
+  run(['tickets', '--root', root, '--sources', sourcesFile({ transport: 'mcp', sources: [{ prefix: 'GL', provider: 'gitlab', namespace: 'acme' }] })]);
+  const report = run(['join', '--root', root], { env: { GITLAB_TOKEN: '' } });
+  assert.ok(report.missingSecrets.optional.includes('GITLAB_TOKEN'), JSON.stringify(report.missingSecrets));
+  assert.ok(!report.missingSecrets.required.includes('GITLAB_TOKEN'));
+  const data = marker(root);
+  data.tickets.transport = 'auto';
+  fs.writeFileSync(path.join(root, '.agents', 'ultrapowers.json'), `${JSON.stringify(data, null, 2)}\n`);
+  const auto = run(['join', '--root', root], { env: { GITLAB_TOKEN: '' } });
+  assert.ok(auto.missingSecrets.required.includes('GITLAB_TOKEN'), JSON.stringify(auto.missingSecrets));
+});
+
+// Task 8: init check (#28 C1).
+const ALL_SET = { FIRECRAWL_API_KEY: 'x', BRAVE_API_KEY: 'x', CONTEXT7_API_KEY: 'x' };
+
+function setMarker(root, change) {
+  const data = marker(root);
+  change(data);
+  fs.writeFileSync(path.join(root, '.agents', 'ultrapowers.json'), `${JSON.stringify(data, null, 2)}\n`);
+}
+
+test('check on a clean scaffold reports no finding and writes nothing', () => {
+  const root = scaffolded();
+  const before = snapshot(root);
+  const report = run(['check', '--root', root], { env: ALL_SET });
+  assert.equal(report.mode, 'check');
+  assert.deepEqual(report.findings, []);
+  assert.equal(report.next, 'join');
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
+});
+
+test('check reports each defect of a scaffold and writes nothing', () => {
+  const root = scaffolded();
+  fs.writeFileSync(path.join(root, '.gemini', 'settings.json'), '{ "mcpServers": {} }\n');
+  fs.writeFileSync(path.join(root, '.mcp.json.ultrapowers-new'), '{}\n');
+  fs.mkdirSync(path.join(root, 'docs', 'specs'), { recursive: true });
+  setMarker(root, (data) => { data.tickets = twoSources(); });
+  const before = snapshot(root);
+  const report = run(['check', '--root', root], { env: { ...ALL_SET, FIRECRAWL_API_KEY: '' } });
+  const has = (kind, p) => report.findings.find((f) => f.kind === kind && (p === undefined || f.path === p));
+  assert.ok(has('hook-missing', '.gemini/settings.json'), JSON.stringify(report.findings));
+  assert.ok(has('stale-proposal', '.mcp.json.ultrapowers-new'));
+  const server = has('server-missing', '.cursor/mcp.json');
+  assert.ok(server && server.detail.includes('tickets-gl') && server.detail.includes('tickets-gh'));
+  assert.ok(has('near-folder', 'docs/specs'));
+  const secrets = has('secrets');
+  assert.ok(secrets && secrets.detail.includes('FIRECRAWL_API_KEY'));
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
+  assert.ok(report.nextSteps.length > 0);
+});
+
+test('check reports an incomplete settings file and an unreadable MCP file', () => {
+  const root = scaffolded();
+  fs.writeFileSync(path.join(root, '.claude', 'settings.json'), '{}\n');
+  fs.writeFileSync(path.join(root, '.cursor', 'mcp.json'), '{ "mcpServers": {}, }\n');
+  setMarker(root, (data) => { data.tickets = twoSources(); });
+  const report = run(['check', '--root', root], { env: ALL_SET });
+  assert.ok(report.findings.some((f) => f.kind === 'settings-incomplete' && f.path === '.claude/settings.json' && f.detail.includes('outputStyle')));
+  assert.ok(report.findings.some((f) => f.kind === 'unreadable' && f.path === '.cursor/mcp.json'));
+});
+
+test('check with no marker says scaffold is next and writes nothing', () => {
+  const root = tmpWorkspace('bare');
+  const before = snapshot(root);
+  const report = run(['check', '--root', root]);
+  assert.equal(report.next, 'scaffold');
+  assert.deepEqual(report.findings, []);
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
+});
+
+test('check tells an older scaffold to upgrade', () => {
+  const root = scaffolded();
+  setMarkerVersion(root, '0.0.1');
+  const report = run(['check', '--root', root], { env: ALL_SET });
+  assert.equal(report.next, 'upgrade');
+  assert.ok(report.findings.some((f) => f.kind === 'upgrade-available'));
+});
+
+test('check reports the ticket sources and the autopilot mode it found', () => {
+  const root = scaffolded();
+  setMarker(root, (data) => { data.tickets = twoSources(); data.autopilot = { mode: 'gated' }; });
+  const report = run(['check', '--root', root], { env: ALL_SET });
+  assert.equal(report.ticketsConfigured, true);
+  assert.equal(report.autopilotMode, 'gated');
+});
+
+// Task 9: brandbook/ and near-named folders (#28 C2, D7).
+test('a new scaffold writes brandbook/README.md and no brand-book/', () => {
+  const root = scaffolded();
+  assert.ok(fs.existsSync(path.join(root, 'brandbook', 'README.md')));
+  assert.ok(fs.existsSync(path.join(root, 'brandbook', '.gitkeep')));
+  assert.equal(fs.existsSync(path.join(root, 'brand-book')), false);
+  assert.ok(marker(root).kb.includes('brandbook'));
+  assert.ok(!marker(root).kb.includes('brand-book'));
+});
+
+test('upgrade on a project with brand-book/ prints the git mv step and moves nothing', () => {
+  const root = scaffolded();
+  fs.renameSync(path.join(root, 'brandbook'), path.join(root, 'brand-book'));
+  setMarkerVersion(root, '1.3.1');
+  const before = snapshot(root);
+  const preview = run(['upgrade', '--root', root]);
+  assert.ok(preview.nextSteps.some((s) => s.includes('git mv brand-book brandbook')), JSON.stringify(preview.nextSteps));
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
+  const applied = run(['upgrade', '--root', root, '--apply', 'none']);
+  assert.ok(applied.nextSteps.some((s) => s.includes('git mv brand-book brandbook')));
+  assert.ok(fs.existsSync(path.join(root, 'brand-book')));
+  assert.equal(fs.existsSync(path.join(root, 'brandbook')), false, 'upgrade never moves the folder');
+});
+
+test('upgrade prints no git mv step once the folder is brandbook/', () => {
+  const root = scaffolded();
+  setMarkerVersion(root, '1.3.1');
+  assert.ok(!run(['upgrade', '--root', root]).nextSteps.some((s) => s.includes('git mv')));
+});
+
+test('the scaffold dry run reports near-named folders and writes nothing', () => {
+  const root = tmpWorkspace();
+  fs.mkdirSync(path.join(root, 'brandbook'));
+  fs.mkdirSync(path.join(root, 'docs', 'specs'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'Plans'));
+  const before = snapshot(root);
+  const report = run(['scaffold', '--root', root, '--name', 'WS', '--platform', 'linux', '--dry-run']);
+  assert.deepEqual(report.nearFolders.map((n) => n.existing).sort(), ['Plans', 'docs/specs']);
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
+  assert.ok(report.nextSteps.some((s) => s.includes('docs/specs') && s.includes('Plans')));
+});
+
+test('check names a legacy brand-book/ folder and the git mv that fixes it', () => {
+  const root = scaffolded();
+  fs.renameSync(path.join(root, 'brandbook'), path.join(root, 'brand-book'));
+  const report = run(['check', '--root', root], { env: ALL_SET });
+  const finding = report.findings.find((f) => f.kind === 'near-folder' && f.path === 'brand-book');
+  assert.ok(finding && finding.detail.includes('git mv brand-book brandbook'), JSON.stringify(report.findings));
+});
+
+// Task 10 (#32): an Odoo source that autopilot runs needs human approvers.
+test('autopilot refuses an Odoo source with no approvers and names autopilot.approvers', () => {
+  const root = scaffolded();
+  run(['tickets', '--root', root, '--sources', sourcesFile(odooOnly('https://erp.example.com'))]);
+  const before = snapshot(root);
+  const report = run(['autopilot', '--root', root, '--answers', answersFile({ mode: 'gated' })], { expectExit: 2 });
+  assert.equal(report.error.code, 'bad-tickets');
+  assert.match(report.error.message, /autopilot\.approvers/);
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
+});
+
+test('autopilot refuses the technical user as its own approver', () => {
+  const root = scaffolded();
+  run(['tickets', '--root', root, '--sources', sourcesFile(odooOnly('https://erp.example.com', { login: 'bot@example.com' }))]);
+  const report = run(['autopilot', '--root', root, '--answers', answersFile({ mode: 'gated', approvers: ['bot@example.com'] })], { expectExit: 2 });
+  assert.equal(report.error.code, 'bad-tickets');
+  assert.match(report.error.message, /the technical user cannot be its own approver/);
+});
+
+test('autopilot accepts an Odoo source with a human approver, and an opted-out one with none', () => {
+  const root = scaffolded();
+  run(['tickets', '--root', root, '--sources', sourcesFile(odooOnly('https://erp.example.com', { login: 'bot@example.com' }))]);
+  assert.equal(run(['autopilot', '--root', root, '--answers', answersFile({ mode: 'gated', approvers: ['ana'] }), '--dry-run']).marker.after.approvers[0], 'ana');
+  const other = scaffolded('ws2');
+  run(['tickets', '--root', other, '--sources', sourcesFile(odooOnly('https://erp.example.com', { autopilot: false }))]);
+  assert.equal(run(['autopilot', '--root', other, '--answers', answersFile({ mode: 'gated' }), '--dry-run']).marker.after.mode, 'gated');
+});
+
+test('scaffold with --sources and --autopilot applies the same approver rule before writing', () => {
+  const root = tmpWorkspace();
+  const before = snapshot(root);
+  const report = run(['scaffold', '--root', root, '--name', 'WS', '--platform', 'linux', '--sources', sourcesFile(odooOnly('https://erp.example.com')), '--autopilot', answersFile({ mode: 'gated' })], { expectExit: 2 });
+  assert.equal(report.error.code, 'bad-tickets');
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
 });

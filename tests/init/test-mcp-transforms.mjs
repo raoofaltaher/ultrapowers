@@ -12,7 +12,7 @@ const repoRoot = path.resolve(__dirname, '../..');
 const ENGINE = path.join(repoRoot, 'skills', 'init', 'scripts', 'init.mjs');
 const {
   MCP_GENERATORS, MCP_TARGETS, ALL_HARNESSES, InitError, NPX_LAUNCHER, generateMcpFiles,
-  ticketServers, ticketSecretLines,
+  ticketServers, ticketSecretLines, mergeMcpFile,
 } = await import(pathToFileURL(ENGINE).href);
 
 const canonical = JSON.parse(fs.readFileSync(path.join(repoRoot, 'templates', '.mcp.json'), 'utf8'));
@@ -309,4 +309,41 @@ test('toml-mini parses what the codex generator emits and rejects malformed inpu
   assert.throws(() => parseToml('a = "open\n'), /unterminated string/);
   assert.throws(() => parseToml('a = "1"\na = "2"\n'), /duplicate key a/);
   assert.throws(() => parseToml('a = { b = "c" }\n'), /unsupported value/);
+});
+
+test('mergeMcpFile adds the missing ids under each schema container and leaves the rest alone', () => {
+  const servers = { 'tickets-gl': { type: 'http', url: 'https://gitlab.com/api/v4/mcp' } };
+  const aloneOf = (harness) => Object.fromEntries(generateMcpFiles([harness], { extra: servers, canonical: false }).map((f) => [f.target, f.content]));
+  const cases = [
+    ['claude-code', '.mcp.json', 'mcpServers'],
+    ['cursor', '.cursor/mcp.json', 'mcpServers'],
+    ['opencode', 'opencode.json', 'mcp'],
+    ['copilot', '.vscode/mcp.json', 'servers'],
+  ];
+  for (const [harness, target, key] of cases) {
+    const existingText = JSON.stringify({ [key]: { team: { url: 'https://t.example.com' } }, extra: 1 });
+    const out = mergeMcpFile(target, existingText, aloneOf(harness)[target]);
+    assert.deepEqual(out.added, ['tickets-gl'], target);
+    const parsed = JSON.parse(out.content);
+    assert.deepEqual(Object.keys(parsed[key]), ['team', 'tickets-gl'], target);
+    assert.equal(parsed.extra, 1);
+    assert.deepEqual(mergeMcpFile(target, out.content, aloneOf(harness)[target]).added, [], `${target}: idempotent`);
+  }
+});
+
+test('mergeMcpFile reports JSON it cannot parse and a leading // line only for .vscode/mcp.json', () => {
+  const alone = generateMcpFiles(['claude-code'], { extra: { x: { type: 'http', url: 'https://x.example.com' } }, canonical: false })[0].content;
+  assert.equal(typeof mergeMcpFile('.mcp.json', '// c\n{}', alone).unreadable, 'string');
+  assert.equal(typeof mergeMcpFile('.mcp.json', '{"mcpServers":{},}', alone).unreadable, 'string');
+  const vs = generateMcpFiles(['copilot'], { extra: { x: { type: 'http', url: 'https://x.example.com' } }, canonical: false }).find((f) => f.target === '.vscode/mcp.json').content;
+  const out = mergeMcpFile('.vscode/mcp.json', '// c\n{"servers":{}}', vs);
+  assert.ok(out.content.startsWith('// c\n'));
+  assert.deepEqual(out.added, ['x']);
+});
+
+test('a source that names its server renders no ticket server of its own', () => {
+  const t = ticketsExample();
+  t.sources[0].server = 'gitlab-company';
+  assert.equal('tickets-gl' in ticketServers(t), false);
+  assert.ok('tickets-gh' in ticketServers(t));
 });

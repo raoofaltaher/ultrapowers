@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { resolveTicket, TicketError } from './ticket-sources.mjs';
 import { createOdooClient, discoverDb, htmlToText, odooIso } from '../../autopilot/scripts/odoo.mjs';
 import { loadSecretsFile, AutopilotError } from '../../autopilot/scripts/autopilot-lib.mjs';
@@ -78,6 +79,16 @@ function runCli(resolution, args) {
 async function cliReady(resolution) {
   const result = await runCli(resolution, ['auth', 'status', '--hostname', resolution.host]);
   return result.ok;
+}
+
+// What fetch would use for this source on this machine, without fetching: 'cli' when the signed-in
+// CLI is there, 'mcp' when the agent goes to the MCP server, 'json-rpc' for an Odoo source with a
+// login and ODOO_API_KEY, 'unavailable' when the source insists on a CLI that is not signed in.
+export async function transportOnThisMachine(resolution) {
+  if (resolution.provider === 'odoo') return process.env.ODOO_API_KEY && resolution.login ? 'json-rpc' : 'mcp';
+  if (resolution.transport === 'mcp') return 'mcp';
+  if (await cliReady(resolution)) return 'cli';
+  return resolution.transport === 'cli' ? 'unavailable' : 'mcp';
 }
 
 function firstLine(text) {
@@ -498,7 +509,7 @@ export async function main(argv) {
     const id = resolution.id ?? opts.id;
     if (isUrl && resolution.provider === 'local') throw new FetchError('bad-ticket', `${opts.id} matches no configured ticket source`);
     let result;
-    if (opts.command === 'resolve') result = resolution;
+    if (opts.command === 'resolve') result = resolution.provider === 'local' ? resolution : { ...resolution, transportOnThisMachine: await transportOnThisMachine(resolution) };
     else if (opts.command === 'fetch') result = await fetchTicket(resolution);
     else if (opts.command === 'attachments') result = await downloadAttachments(root, resolution, id, { ...opts, from: path.resolve(opts.from) });
     else result = writeSource(root, resolution, id, { ...opts, from: path.resolve(opts.from) });
@@ -514,4 +525,13 @@ export async function main(argv) {
   }
 }
 
-process.exitCode = await main(process.argv.slice(2));
+function invokedDirectly() {
+  if (!process.argv[1]) return false;
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (invokedDirectly()) process.exitCode = await main(process.argv.slice(2));

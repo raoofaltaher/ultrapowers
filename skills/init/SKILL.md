@@ -1,6 +1,6 @@
 ---
 name: init
-description: Use when a project has no .agents/ultrapowers.json, when the session context says the ultrapowers scaffold is missing, older than the plugin or unreadable, or when your human partner asks to set up, join or upgrade an ultrapowers project
+description: Use when a project has no .agents/ultrapowers.json, when the session context says the ultrapowers scaffold is missing, older than the plugin or unreadable, or when your human partner asks to set up, join, upgrade or check an ultrapowers project
 ---
 
 # Init
@@ -15,7 +15,7 @@ Set up, join or upgrade an ultrapowers project. A bundled engine renders the tem
 
 ## Arguments
 
-`name` (optional): the project name for scaffold mode. Your argument, as passed: `$ARGUMENTS`; that is the name. Empty, or still the unreplaced placeholder (a dollar sign and the word ARGUMENTS): read the trailing `ARGUMENTS:` line of the invocation. An argument starting with `tickets` is not a name: run Detect, then Ticket sources. `autopilot`: Detect, then Autopilot.
+`name` (optional): the project name for scaffold mode. Your argument, as passed: `$ARGUMENTS`; that is the name. Empty, or still the unreplaced placeholder (a dollar sign and the word ARGUMENTS): read the trailing `ARGUMENTS:` line of the invocation. An argument starting with `tickets` is not a name: run Detect, then Ticket sources. `autopilot`: Detect, then Autopilot. `check`: Check.
 
 ## Before running anything
 
@@ -51,7 +51,7 @@ node "<SKILL_DIR>/scripts/init.mjs" detect --root "<ROOT>"
    node "<SKILL_DIR>/scripts/init.mjs" scaffold --root "<ROOT>" --name "<NAME>" --dry-run
    ```
 
-3. Show the report: `written` (created); `skipped` (exist, stay byte-identical); each `blocks` entry (`created`, `appended` or `replaced` between the `# >>> ultrapowers` markers); `omitted` (harnesses not chosen). Ask: "Write these files? (yes / no)".
+3. Show the report: `written` (created); `skipped` (exist, stay byte-identical); each `blocks` entry (`created`, `appended` or `replaced` between the `# >>> ultrapowers` markers); `omitted` (harnesses not chosen); `incomplete` and `nearFolders` when present. Say that, with `claude-code`, `.claude/settings.json` pre-approves test and build commands, which run repository code. Ask: "Write these files? (yes / no)".
 4. Only an explicit yes continues. "Looks good?", a question or a change request is not a yes: answer it, adjust the flags, show a new dry run.
 5. Run the same command without `--dry-run`. Report `written` and `skipped` from the real report, then `nextSteps` as a numbered list, verbatim.
 6. Continue with join mode for this clone.
@@ -59,7 +59,7 @@ node "<SKILL_DIR>/scripts/init.mjs" detect --root "<ROOT>"
 ## Join mode
 
 1. Dry run: `node "<SKILL_DIR>/scripts/init.mjs" join --root "<ROOT>" --dry-run`
-2. Read `hooksPath` (`would-set`, `already-set`, `kept:<value>`, `existing-hooks:<names>`, `no-git`), `missingSecrets` and `newRepos`. `existing-hooks` means setting core.hooksPath would stop those hooks, so join leaves it unset: name them.
+2. Read `hooksPath` (`would-set`, `already-set`, `kept:<value>`, `existing-hooks:<names>`, `no-git`), `missingSecrets` (`required`, `optional`), `incomplete` (name them, never edit them) and `newRepos`. `existing-hooks` means setting core.hooksPath would stop those hooks, so join leaves it unset: name them.
 3. When `hooksPath` is `would-set` or `newRepos` is not empty, ask one question naming exactly what changes: "Set core.hooksPath to .githooks for this clone?" and, for new clones, "Record <names> in .agents/ultrapowers.json and the .gitignore block?" Nothing would change: skip the question.
 4. Run join without `--dry-run`; add `--record-repos` only after a yes to recording. Join writes no other shared file.
 5. Relay `nextSteps`: the variable names to define (never ask for or repeat a value) and the MCP approval prompt to expect.
@@ -72,6 +72,10 @@ node "<SKILL_DIR>/scripts/init.mjs" detect --root "<ROOT>"
 4. Run with `--apply <path,path>`, or `--apply none` when every answer was no. Both record the plugin version so the upgrade line stops. `changed` empty: say so and offer `--apply none`.
 5. For each `.ultrapowers-new` path in `written`, offer `git diff --no-index <path> <path>.ultrapowers-new`, merge only the parts your human partner picks, then delete the proposal.
 6. Continue with join mode for this clone.
+
+## Check
+
+Run `node "<SKILL_DIR>/scripts/init.mjs" check --root "<ROOT>"`. It writes nothing and needs no yes. Print each finding's `kind`, `path` and `detail`, then `next`, the mode that fits. Never fix a finding by hand or run a mode unasked: offer the matching mode and wait.
 
 ## Ticket sources
 
@@ -114,6 +118,7 @@ Print `markerError`. Run `git diff -- .agents/ultrapowers.json`; a merge leaves 
 | Marker current | `join --dry-run`, then `join` |
 | Marker older | `upgrade`, then `upgrade --apply <paths>` or `--apply none`, then join |
 | Marker unreadable | Repair; no engine write |
+| Audit, "double check my setup" | `check`; it writes nothing |
 | Ticket sources | `tickets --sources <file> --dry-run`, then without `--dry-run` after the yes |
 | Autopilot | `autopilot --answers <file> --dry-run`, then without it after the yes |
 
@@ -128,6 +133,7 @@ Print `markerError`. Run `git diff -- .agents/ultrapowers.json`; a merge leaves 
 7. Repair: show the error, hand the fix to your human partner, Detect again
 8. Ticket sources: `ticket-sources.md`, dry run, explicit yes
 9. Autopilot: `autopilot.md`, dry run, explicit yes
+10. Check: run it, print the findings, offer the matching mode
 
 ## Red Flags
 

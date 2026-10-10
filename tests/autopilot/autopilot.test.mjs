@@ -1332,3 +1332,17 @@ test('watchSelfApproval counts only when the stages hold their own read-only tok
   const withToken = run(ws, ['next', 'GH-16', '--door', 'watch'], { ULTRAPOWERS_STAGE_GH_TOKEN: 'ghs_ro' });
   assert.equal(withToken.json.reason, 'approved', withToken.stdout);
 });
+
+test('a source with autopilot false is reported as unwatched and never polled', () => {
+  const ws = workspace({ map: READY([]) });
+  const markerPath = path.join(ws.root, '.agents', 'ultrapowers.json');
+  const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
+  marker.tickets.sources.push({ prefix: 'GX', provider: 'github', owner: 'o', defaultProject: 'x', autopilot: false });
+  fs.writeFileSync(markerPath, JSON.stringify(marker, null, 2));
+  const r = run(ws, ['watch', '--once'], headless(ws));
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const unwatched = r.json.events.find((e) => e.event === 'unwatched' && e.source === 'GX');
+  assert.ok(unwatched, JSON.stringify(r.json.events));
+  assert.equal(unwatched.reason, 'autopilot: false');
+  assert.ok(!ws.calls().some((a) => a.includes('o/x')), 'the opted-out source is never listed');
+});
