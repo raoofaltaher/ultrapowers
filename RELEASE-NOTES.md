@@ -1,5 +1,15 @@
 # Ultrapowers Release Notes
 
+## Unreleased
+
+### `/ultrapowers:task-review` (closes #29)
+
+A new skill reviews a ticket's finished work end to end: `/ultrapowers:task-review <ID> [repos...] [--post] [--draft-pr]`. For each repository the ticket touched, a reviewer on the most capable model reads the whole range against that repository's own base, every changed file in full and its callers, judges the tests against test-driven development (a test exists, it was written first, it tests behavior) and traces every failing test and every Critical or Important finding to its root cause. The QA gate runs after the reviewers. One verdict (`PASS`, `PASS-WITH-ISSUES`, `FAIL` or `BLOCKED`) and the findings are written to `reviews/<ID>/TASK-REVIEW.md`. The skill never edits code and never merges.
+
+With `--post` the full review and QA reports, screenshots included, are commented on the ticket and on the ticket's open pull or merge request (found by branch name), as numbered parts when a report is long. `--draft-pr` pushes the ticket branch through the guarded push and opens a draft pull or merge request when none is open. On Odoo the screenshots are attached to the chatter message. A local ticket is refused.
+
+Under the skill: `qa-preflight.mjs --change-set-only`; `review-preflight.sh`, `assemble-review.mjs` and `post-review.mjs`; and in the autopilot tracker clients, `createPr` gains `draft`, a new `findOpenPr(branch)`, and `OdooTracker` gains `attach` and a `comment` that takes `{ attachments }`.
+
 ## v1.3.1 (2026-10-05)
 
 A resumed QA stage's report reaches the ticket.

@@ -48,6 +48,10 @@ jobs:
       - run: bash tests/task-lifecycle/test-task-lifecycle.sh
       - run: node --test tests/task-lifecycle/ticket-sources.test.mjs
       - run: node --test tests/task-lifecycle/fetch-ticket.test.mjs
+      - run: bash tests/task-lifecycle/test-task-review.sh
+      - run: bash tests/task-lifecycle/test-skill-structure.sh
+      - run: node --test tests/task-lifecycle/assemble-review.test.mjs
+      - run: node --test tests/task-lifecycle/post-review.test.mjs
       - run: bash tests/autopilot/run-tests.sh
       - run: bash tests/autopilot/test-adapters.sh
       - run: bash tests/qa-gatekeeper/run-tests.sh
