@@ -704,3 +704,93 @@ test('upgrade reports an incomplete settings file too', () => {
   assert.ok(report.incomplete.some((i) => i.path === '.claude/settings.json' && i.missing.includes('outputStyle')));
   assert.ok(report.nextSteps.some((s) => s.includes('.claude/settings.json lacks:')));
 });
+
+// Task 3: ticket proposals add only the new servers (#28 A3).
+function twoSources() {
+  return {
+    transport: 'auto',
+    sources: [
+      { prefix: 'GL', provider: 'gitlab', host: 'gitlab.com', namespace: 'acme/platform', defaultProject: 'tracker' },
+      { prefix: 'GH', provider: 'github', owner: 'acme' },
+    ],
+  };
+}
+
+test('tickets proposes the existing .mcp.json plus only the new ticket servers', () => {
+  const root = scaffolded();
+  const team = {
+    mcpServers: {
+      context7: { type: 'stdio', command: 'node', args: ['pinned-elsewhere.js'] },
+      'team-db': { type: 'http', url: 'https://db.example.com/mcp' },
+      'team-ci': { type: 'http', url: 'https://ci.example.com/mcp', headers: { Authorization: 'Bearer ${CI_TOKEN}' } },
+    },
+  };
+  fs.writeFileSync(path.join(root, '.mcp.json'), `${JSON.stringify(team, null, 2)}\n`);
+  const report = run(['tickets', '--root', root, '--sources', sourcesFile(twoSources())]);
+  const entry = report.mcp.find((m) => m.path === '.mcp.json');
+  assert.equal(entry.action, 'proposal');
+  assert.deepEqual(entry.added, ['tickets-gl', 'tickets-gh']);
+  const proposal = JSON.parse(fs.readFileSync(path.join(root, `.mcp.json${PROPOSAL_SUFFIX}`), 'utf8'));
+  assert.deepEqual(Object.keys(proposal.mcpServers), ['context7', 'team-db', 'team-ci', 'tickets-gl', 'tickets-gh']);
+  for (const id of Object.keys(team.mcpServers)) assert.deepEqual(proposal.mcpServers[id], team.mcpServers[id]);
+  // Merge it by hand, and a second run has nothing to add and writes no proposal.
+  fs.renameSync(path.join(root, `.mcp.json${PROPOSAL_SUFFIX}`), path.join(root, '.mcp.json'));
+  for (const rel of Object.keys(snapshot(root)).filter((p) => p.endsWith(PROPOSAL_SUFFIX))) fs.rmSync(path.join(root, rel));
+  const again = run(['tickets', '--root', root, '--sources', sourcesFile(twoSources())]);
+  const second = again.mcp.find((m) => m.path === '.mcp.json');
+  assert.equal(second.action, 'unchanged');
+  assert.deepEqual(second.added, []);
+  assert.equal(fs.existsSync(path.join(root, `.mcp.json${PROPOSAL_SUFFIX}`)), false);
+});
+
+test('tickets keeps the first provenance line of .vscode/mcp.json and merges inputs by id', () => {
+  const root = scaffolded();
+  const file = path.join(root, '.vscode', 'mcp.json');
+  const mine = {
+    inputs: [{ type: 'promptString', id: 'gh-token', description: 'mine', password: true }, { type: 'promptString', id: 'team-key', description: 'team', password: true }],
+    servers: { 'team-db': { type: 'http', url: 'https://db.example.com/mcp' } },
+  };
+  fs.writeFileSync(file, `// our own header\n${JSON.stringify(mine, null, 2)}\n`);
+  run(['tickets', '--root', root, '--sources', sourcesFile(twoSources())]);
+  const text = fs.readFileSync(`${file}${PROPOSAL_SUFFIX}`, 'utf8');
+  assert.ok(text.startsWith('// our own header\n'), text.slice(0, 80));
+  const parsed = JSON.parse(text.replace(/^\/\/.*\n/, ''));
+  assert.deepEqual(Object.keys(parsed.servers), ['team-db', 'tickets-gl', 'tickets-gh']);
+  assert.deepEqual(parsed.inputs.map((i) => i.id), ['gh-token', 'team-key']);
+  assert.equal(parsed.inputs[0].description, 'mine', 'an existing input is kept as it is');
+});
+
+test('tickets merges into opencode.json under mcp and into .gemini/settings.json under mcpServers', () => {
+  const root = scaffolded();
+  fs.writeFileSync(path.join(root, 'opencode.json'), `${JSON.stringify({ $schema: 'https://opencode.ai/config.json', theme: 'x', mcp: { team: { type: 'remote', url: 'https://t.example.com', enabled: true } } }, null, 2)}\n`);
+  run(['tickets', '--root', root, '--sources', sourcesFile(twoSources())]);
+  const oc = JSON.parse(fs.readFileSync(path.join(root, `opencode.json${PROPOSAL_SUFFIX}`), 'utf8'));
+  assert.equal(oc.theme, 'x');
+  assert.deepEqual(Object.keys(oc.mcp), ['team', 'tickets-gl', 'tickets-gh']);
+  const gm = JSON.parse(fs.readFileSync(path.join(root, `.gemini/settings.json${PROPOSAL_SUFFIX}`), 'utf8'));
+  assert.ok(gm.hooks.BeforeTool, 'the existing hook stays');
+  assert.ok('tickets-gl' in gm.mcpServers && 'tickets-gh' in gm.mcpServers);
+});
+
+test('tickets appends the missing tables to .codex/config.toml and keeps its header', () => {
+  const root = scaffolded();
+  const file = path.join(root, '.codex', 'config.toml');
+  fs.writeFileSync(file, '# ours\napproval_policy = "never"\n\n[mcp_servers.team]\nurl = "https://t.example.com"\n');
+  const report = run(['tickets', '--root', root, '--sources', sourcesFile(twoSources())]);
+  assert.deepEqual(report.mcp.find((m) => m.path === '.codex/config.toml').added, ['tickets-gl', 'tickets-gh']);
+  const text = fs.readFileSync(`${file}${PROPOSAL_SUFFIX}`, 'utf8');
+  assert.ok(text.startsWith('# ours\napproval_policy = "never"\n\n[mcp_servers.team]'));
+  assert.match(text, /\[mcp_servers\.tickets-gl\]\nurl = "https:\/\/gitlab\.com\/api\/v4\/mcp"/);
+  assert.match(text, /\[mcp_servers\.tickets-gh\]/);
+  assert.equal((text.match(/approval_policy/g) ?? []).length, 1, 'the defaults are not repeated');
+});
+
+test('tickets reports a harness file it cannot parse and writes no proposal for it', () => {
+  const root = scaffolded();
+  fs.writeFileSync(path.join(root, '.cursor', 'mcp.json'), '{ "mcpServers": {}, }\n');
+  const report = run(['tickets', '--root', root, '--sources', sourcesFile(twoSources())]);
+  const entry = report.mcp.find((m) => m.path === '.cursor/mcp.json');
+  assert.equal(entry.action, 'unreadable');
+  assert.equal(fs.existsSync(path.join(root, `.cursor/mcp.json${PROPOSAL_SUFFIX}`)), false);
+  assert.ok(report.nextSteps.some((s) => s.includes('.cursor/mcp.json') && /by hand/.test(s)));
+});

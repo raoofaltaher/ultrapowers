@@ -582,6 +582,74 @@ export function generateMcpFiles(harnesses, { extra = {}, canonical = true } = {
   return files;
 }
 
+const MCP_CONTAINER = { opencode: 'mcp', vscode: 'servers' };
+
+function tomlTableIds(text) {
+  const ids = [];
+  for (const m of text.matchAll(/^\[mcp_servers\.(?:"([^"]+)"|([A-Za-z0-9_-]+))\][ \t]*$/gm)) ids.push(m[1] ?? m[2]);
+  return ids;
+}
+
+// The ticket servers an existing harness MCP file lacks, added to a copy of that file: the other
+// entries, and a leading provenance line of .vscode/mcp.json, stay as they are. `aloneText` is the
+// generator's rendering of the ticket servers alone. JSON targets are parsed strictly; the Codex
+// TOML file gets the missing tables appended as text (no TOML parser, rule 1).
+export function mergeMcpFile(target, existingText, aloneText) {
+  const schema = MCP_TARGETS[target];
+  const existingLf = lf(existingText).replace(/^﻿/, '');
+  if (schema === 'codex') {
+    const have = new Set(tomlTableIds(existingLf));
+    const tables = new Map();
+    let current = null;
+    for (const line of aloneText.split('\n')) {
+      const head = /^\[mcp_servers\.(?:"([^"]+)"|([A-Za-z0-9_-]+))(?:\.[^\]]+)?\]/.exec(line);
+      if (head) {
+        current = head[1] ?? head[2];
+        if (!tables.has(current)) tables.set(current, []);
+      }
+      if (current) tables.get(current).push(line);
+    }
+    const added = [...tables.keys()].filter((id) => !have.has(id));
+    if (!added.length) return { content: existingText, added: [] };
+    let content = existingLf;
+    if (content.length > 0 && !content.endsWith('\n')) content += '\n';
+    for (const id of added) content += `\n${tables.get(id).join('\n').replace(/\n+$/, '')}\n`;
+    return { content, added };
+  }
+  let header = '';
+  let body = existingLf;
+  if (schema === 'vscode') {
+    const m = /^[ \t]*\/\/[^\n]*\n/.exec(existingLf);
+    if (m) {
+      header = m[0];
+      body = existingLf.slice(header.length);
+    }
+  }
+  let existing;
+  try {
+    existing = JSON.parse(body);
+  } catch (err) {
+    return { unreadable: err.message };
+  }
+  if (!existing || typeof existing !== 'object' || Array.isArray(existing)) return { unreadable: 'the file does not hold a JSON object' };
+  const alone = JSON.parse(aloneText);
+  const key = MCP_CONTAINER[schema] ?? 'mcpServers';
+  const wanted = alone[key] ?? {};
+  const container = existing[key] && typeof existing[key] === 'object' && !Array.isArray(existing[key]) ? existing[key] : {};
+  const added = Object.keys(wanted).filter((id) => !(id in container));
+  if (!added.length) return { content: existingText, added: [] };
+  for (const id of added) container[id] = wanted[id];
+  existing[key] = container;
+  if (schema === 'vscode' && Array.isArray(alone.inputs)) {
+    const inputs = Array.isArray(existing.inputs) ? existing.inputs : [];
+    for (const input of alone.inputs) {
+      if (!inputs.some((i) => i && i.id === input.id)) inputs.push(input);
+    }
+    existing.inputs = inputs;
+  }
+  return { content: `${header}${toJson(existing)}`, added };
+}
+
 export function listTemplates() {
   const out = [];
   const walk = (dir, rel) => {
@@ -1213,20 +1281,28 @@ export function runTickets(opts) {
   const vars = buildVars(markerOpts(opts, marker), marker.repos ?? [], harnesses, []);
   const writes = [];
   if (Object.keys(servers).length) {
-    const full = generateMcpFiles(harnesses, { extra: servers });
-    const alone = Object.fromEntries(generateMcpFiles(harnesses, { extra: servers, canonical: false }).map((f) => [f.target, f.content]));
-    for (const { target, content } of full) {
-      if (fs.existsSync(path.join(opts.root, target))) {
-        const proposal = `${target}${PROPOSAL_SUFFIX}`;
-        if (fs.existsSync(path.join(opts.root, proposal))) {
-          throw new InitError('proposal-exists', `an earlier proposal is still there: ${proposal}; merge or delete it, then run init tickets again`, { paths: [proposal] });
-        }
-        writes.push({ target: proposal, content: provenance(target, content, vars) });
-        report.mcp.push({ path: target, action: 'proposal' });
-      } else {
-        writes.push({ target, content: provenance(target, alone[target], vars) });
-        report.mcp.push({ path: target, action: 'created' });
+    for (const { target, content } of generateMcpFiles(harnesses, { extra: servers, canonical: false })) {
+      const full = path.join(opts.root, target);
+      if (!fs.existsSync(full)) {
+        writes.push({ target, content: provenance(target, content, vars) });
+        report.mcp.push({ path: target, action: 'created', added: Object.keys(servers) });
+        continue;
       }
+      const merged = mergeMcpFile(target, fs.readFileSync(full, 'utf8'), content);
+      if (merged.unreadable !== undefined) {
+        report.mcp.push({ path: target, action: 'unreadable', added: [], message: merged.unreadable });
+        continue;
+      }
+      if (!merged.added.length) {
+        report.mcp.push({ path: target, action: 'unchanged', added: [] });
+        continue;
+      }
+      const proposal = `${target}${PROPOSAL_SUFFIX}`;
+      if (fs.existsSync(path.join(opts.root, proposal))) {
+        throw new InitError('proposal-exists', `an earlier proposal is still there: ${proposal}; merge or delete it, then run init tickets again`, { paths: [proposal] });
+      }
+      writes.push({ target: proposal, content: merged.content });
+      report.mcp.push({ path: target, action: 'proposal', added: merged.added });
     }
   }
   const secretLines = ticketSecretLines(tickets);
@@ -1247,9 +1323,12 @@ export function runTickets(opts) {
   report.written.push(MARKER_PATH);
   report.written.sort();
   const proposals = report.mcp.filter((m) => m.action === 'proposal').map((m) => m.path);
+  const unreadable = report.mcp.filter((m) => m.action === 'unreadable');
+  const ids = Object.keys(servers).join(', ');
   report.nextSteps = [
     ...ticketNextSteps(tickets),
     ...proposals.map((p) => `Merge ${p}${PROPOSAL_SUFFIX} into ${p} (git diff --no-index ${p} ${p}${PROPOSAL_SUFFIX}), then delete the proposal.`),
+    ...unreadable.map((m) => `${m.path} is not strict JSON (${m.message}), so no proposal was written; add ${ids} by hand.`),
   ];
   return report;
 }
