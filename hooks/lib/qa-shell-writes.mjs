@@ -207,7 +207,8 @@ function stripLiterals(sql) {
       // PostgreSQL lexes `a$b$` as an identifier, not as a dollar quote, so a `$` that continues an
       // identifier, a bare `$`, or a `$1` parameter is not a quote the stripper can follow: the
       // statement is unverifiable (fail closed) rather than mis-stripped.
-      if (/[A-Za-z0-9_$]/.test(sql[i - 1] || '')) return null;
+      const prev = sql[i - 1] || '';
+      if (/[A-Za-z0-9_$]/.test(prev) || prev.charCodeAt(0) > 0x7f) return null;
       const m = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i));
       if (!m) return null;
       const end = sql.indexOf(m[0], i + m[0].length);

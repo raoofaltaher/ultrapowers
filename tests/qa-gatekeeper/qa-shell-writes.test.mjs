@@ -424,7 +424,7 @@ test('a dollar sign is only a standalone dollar quote; anywhere else the SQL can
   // The shell strings are single-quoted: in double quotes `$$` is the shell's PID, a substitution.
   assert.equal(analyze("psql -U qa_agent_ro -c 'select $$a; drop table t$$'", c), '', 'a dollar-quoted literal is text');
   assert.equal(analyze("psql -U qa_agent_ro -c 'select $q$it is$q$'", c), '', 'a tagged dollar quote is text');
-  for (const sql of ['select a$b$; drop table t; $ from t', 'select x$$ from t; delete from t; select $$', 'select $1', 'select 1 -- $']) {
+  for (const sql of ['select a$b$; drop table t; $ from t', 'select x$$ from t; delete from t; select $$', 'select $1', 'select 1 -- $', 'select é$b$; drop table t; $ from t']) {
     assert.match(analyze(`psql -U qa_agent_ro -c '${sql}'`, c), /cannot be verified/, sql);
   }
 });
