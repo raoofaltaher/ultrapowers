@@ -410,7 +410,7 @@ esac
 if [ "$PROFILE" = "autopilot" ]; then
   case "$tool_lc" in
     mcp__*)
-      if printf '%s' "$tool_lc" | grep -Eq 'github|gitlab|glab|jira|linear|odoo|bitbucket|azure_?devops' \
+      if printf '%s' "$tool_lc" | grep -Eq 'github|gitlab|glab|jira|linear|odoo|bitbucket|azure_?devops|^mcp__tickets-' \
         && ! printf '%s' "$tool_lc" | grep -Eq '(^|_)(get|list|search|read|view|fetch|show|describe|find|query|resolve)(_|$)' \
         && printf '%s' "$tool_lc" | grep -Eq '(create|update|edit|add|remove|delete|merge|comment|note|label|close|reopen|post|save|accept|push|fork|assign|transfer|lock|approve|submit|publish|manage|link|call|execute|write|unlink|method)'; then
         deny "tracker writes through MCP tools are never run by an autopilot stage; the engine writes back between stages"

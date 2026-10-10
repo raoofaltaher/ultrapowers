@@ -134,5 +134,10 @@
   {"name":"deny_wget_tracker_host","event":{"tool_name":"Bash","tool_input":{"command":"wget -q -O - https://erp.example.com/jsonrpc"}}},
   {"name":"deny_write_settings_winshort","event":{"tool_name":"Write","tool_input":{"file_path":"{{WINSHORT_SETTINGS}}","content":"{}"}}},
   {"name":"deny_write_marker_winshort","event":{"tool_name":"Write","tool_input":{"file_path":"{{WINSHORT_MARKER}}","content":"{}"}}},
-  {"name":"allow_write_src_winshort","event":{"tool_name":"Write","tool_input":{"file_path":"{{WINSHORT}}/repo-a/src/x.ts","content":"x"}}}
+  {"name":"allow_write_src_winshort","event":{"tool_name":"Write","tool_input":{"file_path":"{{WINSHORT}}/repo-a/src/x.ts","content":"x"}}},
+  {"name":"deny_mcp_tickets_gl_create_note","event":{"tool_name":"mcp__tickets-gl__create_issue_note","tool_input":{"body":"x"}}},
+  {"name":"deny_mcp_tickets_gl_create_mr","event":{"tool_name":"mcp__tickets-gl__create_merge_request","tool_input":{"title":"x"}}},
+  {"name":"deny_mcp_tickets_erp_post_message","event":{"tool_name":"mcp__tickets-erp__post_message","tool_input":{"body":"x"}}},
+  {"name":"allow_mcp_tickets_gl_get_issue","event":{"tool_name":"mcp__tickets-gl__get_issue","tool_input":{"id":"1"}}},
+  {"name":"allow_mcp_tickets_gh_list_issues","event":{"tool_name":"mcp__tickets-gh__list_issues","tool_input":{}}}
 ]
