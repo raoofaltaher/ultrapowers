@@ -235,6 +235,20 @@ if command -v cmd.exe >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; the
   fi
 fi
 
+echo "qa-guardrail: every deny names the run marker, the ticket and who can end the run"
+result="$(run_hook "$(render "$FIXTURES/deny_git_push.json")" "$ROOT")"
+err="${result#*|}"; err="${err%%|*}"
+for want in ".ultrapowers/qa-active" "1234" " old" "your human partner"; do
+  if [[ "$err" == *"$want"* ]]; then pass "a QA deny names '$want'"; else fail "a QA deny names '$want' (stderr: $err)"; fi
+done
+if [[ "$err" != *"autopilot"* ]]; then pass "a QA deny never speaks of the autopilot engine"; else fail "a QA deny never speaks of the autopilot engine (stderr: $err)"; fi
+# The wording follows the profile: a PowerShell write under a QA run says so.
+result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"Set-Content x.txt hello"}}' "$ROOT")"
+err="${result#*|}"; err="${err%%|*}"
+if [[ "$err" == *"during a QA run"* ]]; then pass "the PowerShell deny names a QA run"; else fail "the PowerShell deny names a QA run (stderr: $err)"; fi
+# The suffix never tells the agent to remove the marker itself: the advice is for the human partner.
+if [[ "$err" == *"your human partner can"* && "$err" != *"you can remove"* ]]; then pass "the removal advice is addressed to the human partner"; else fail "the removal advice is addressed to the human partner (stderr: $err)"; fi
+
 echo "qa-guardrail: Cursor shape adds a permission JSON on stdout"
 result="$(cd "$ROOT" && render "$FIXTURES/deny_git_push.json" | CURSOR_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK" 2>/dev/null)"
 if printf '%s' "$result" | grep -q '"permission":"deny"'; then

@@ -644,7 +644,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
   try {
     walk(String(command), normPath(cwd), false, 0);
   } catch (error) {
-    return `the command could not be analysed for writes (${error.message}); it is refused during a QA run`;
+    return `the command could not be analysed for writes (${error.message}); it is refused during ${runKind}`;
   }
   return reason;
 }

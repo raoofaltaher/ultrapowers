@@ -140,3 +140,25 @@ test('guardrail-cli refuses an array event and a payload without a tool name whi
   const copilot = runIn({ toolName: 'Bash', toolArgs: JSON.stringify({ command: 'git status' }), cwd: root });
   assert.equal(copilot.status, 0, copilot.stderr);
 });
+
+// ---- the deny names the profile that denied (issue 7.4) ----
+test('the bridge verdict and every entry point keep the profile prefix: QA for a QA run, AUTOPILOT for a stage', () => {
+  const qa = project({ marker: 'qa' });
+  const qaVerdict = runGuardrail({ toolName: 'bash', input: { command: 'git push origin qa' }, cwd: qa });
+  assert.equal(qaVerdict.deny, true);
+  assert.equal(qaVerdict.prefix, 'QA-GUARDRAIL');
+  assert.match(qaVerdict.reason, /\.ultrapowers\/qa-active/);
+  const stage = project({ marker: 'autopilot' });
+  assert.equal(runGuardrail({ toolName: 'bash', input: { command: 'git push origin x' }, cwd: stage }).prefix, 'AUTOPILOT-GUARDRAIL');
+  // the fail-closed verdict (hook missing) names the marker's profile too
+  assert.equal(runGuardrail({ toolName: 'bash', input: { command: 'ls' }, cwd: qa, hookDir: path.join(qa, 'no-hooks-here') }).prefix, 'QA-GUARDRAIL');
+  assert.equal(runGuardrail({ toolName: 'bash', input: { command: 'ls' }, cwd: stage, hookDir: path.join(stage, 'no-hooks-here') }).prefix, 'AUTOPILOT-GUARDRAIL');
+
+  const qaCli = runCli({ tool_name: 'Bash', tool_input: { command: 'git push origin qa' }, cwd: qa });
+  assert.equal(qaCli.status, 2);
+  assert.match(qaCli.stderr, /^QA-GUARDRAIL DENY: /);
+  const apCli = runCli({ tool_name: 'Bash', tool_input: { command: 'git push origin x' }, cwd: stage });
+  assert.match(apCli.stderr, /^AUTOPILOT-GUARDRAIL DENY: /);
+  const ag = runCli({ toolCall: { name: 'run_command', args: { CommandLine: 'git push origin qa', Cwd: qa } }, workspacePaths: [qa], cwd: qa }, ['--antigravity']);
+  assert.match(JSON.parse(ag.stdout).reason, /^QA-GUARDRAIL DENY: /);
+});

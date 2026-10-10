@@ -117,6 +117,16 @@ if [[ "$count" -lt 30 ]]; then
   fail "expected at least 30 cases, found $count"
 fi
 
+echo "autopilot profile: every deny names the stage marker, the ticket and who can end the stage"
+result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"git push origin GH-16-x"}}' "$ROOT")"
+err="${result#*|}"; err="${err%%|*}"
+for want in ".ultrapowers/autopilot-active" "GH-16" "autopilot.mjs end" "your human partner"; do
+  if [[ "$err" == *"$want"* ]]; then pass "an autopilot deny names '$want'"; else fail "an autopilot deny names '$want' (stderr: $err)"; fi
+done
+result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"Set-Content x.txt hello"}}' "$ROOT")"
+err="${result#*|}"; err="${err%%|*}"
+if [[ "$err" == *"AUTOPILOT-GUARDRAIL DENY: "* && "$err" != *"QA run"* ]]; then pass "a PowerShell deny under autopilot does not speak of a QA run"; else fail "a PowerShell deny under autopilot does not speak of a QA run (stderr: $err)"; fi
+
 echo "autopilot profile: both markers present, the QA profile wins"
 printf '%s' "GH-16" > "$QA_MARKER"
 result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' "$ROOT")"

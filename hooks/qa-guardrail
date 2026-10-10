@@ -22,7 +22,8 @@ GUARD_PREFIX="QA-GUARDRAIL"
 # JSON verdict on stdout, in their own shapes; the others get no stdout at all (Gemini CLI
 # allows the call when stdout holds anything but JSON).
 deny() {
-  local msg="$GUARD_PREFIX DENY: $1"
+  marker_suffix_r
+  local msg="$GUARD_PREFIX DENY: $1$REPLY"
   printf '%s\n' "$msg" >&2
   local escaped
   escaped="$(printf '%s' "$msg" | sed 's/["\\]/\\&/g')"
@@ -35,6 +36,27 @@ deny() {
 }
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+# The run marker as a fact in every deny: where it is, whose run it is, how old it is, and who can
+# end it. A marker can outlive its run; the advice to end it is addressed to the human partner and
+# never to the agent (an agent told to remove its own guardrail would do it). Shell builtins only.
+# Result in REPLY; empty before a run is known.
+marker_suffix_r() {
+  REPLY=""
+  [ -n "${root:-}" ] || return 0
+  local f ticket_id="${ticket:-}" age="${marker_age:-}" stage="${marker_stage:-}"
+  if [ "${PROFILE:-}" = "autopilot" ]; then
+    f="$root/.ultrapowers/autopilot-active"
+    if [ -f "$f" ]; then
+      REPLY=" (autopilot stage${stage:+ $stage}${ticket_id:+ for ticket $ticket_id}: $f${age:+, $age old}. If no stage is running, your human partner can end it with autopilot.mjs end ${ticket_id:-<ID>} ${stage:-<stage>} or remove that file.)"
+    else
+      REPLY=" (autopilot stage${ticket_id:+ for ticket $ticket_id}: ULTRAPOWERS_AUTOPILOT_INSIDE is set and the marker $f is gone. If no stage is running, your human partner can end it with autopilot.mjs end ${ticket_id:-<ID>} ${stage:-<stage>} or unset that variable.)"
+    fi
+  else
+    f="$root/.ultrapowers/qa-active"
+    REPLY=" (QA run${ticket_id:+ for ticket $ticket_id}: $f${age:+, $age old}. If no QA run is in progress, your human partner can end it with /ultrapowers:qa-specialist ${ticket_id:-<id>} or remove that file.)"
+  fi
+}
 
 # The inert path below runs on every tool call of every session with the plugin installed,
 # so everything up to the marker check uses shell builtins only: no process is started.
@@ -131,7 +153,7 @@ command -v node >/dev/null 2>&1 || deny "node is required to inspect tool calls 
 # The rules below are grep, sed and tr pipelines: a missing tool would make every rule
 # "not match" and allow the call.
 for tool in grep sed tr; do
-  command -v "$tool" >/dev/null 2>&1 || deny "$tool is required to inspect tool calls during a QA run and is not on PATH"
+  command -v "$tool" >/dev/null 2>&1 || deny "$tool is required to inspect tool calls during $run_kind and is not on PATH"
 done
 
 # Node on Windows reads `/c/x` as `C:\c\x` unless Git Bash converts the argument, and a
@@ -151,7 +173,7 @@ hook_dir_node="$hook_dir"
 if command -v cygpath >/dev/null 2>&1; then hook_dir_node="$(cygpath -m "$hook_dir" 2>/dev/null || printf '%s' "$hook_dir")"; fi
 
 parse_status=""; tool=""; cmd=""; wpath=""; url=""; event_cwd=""; allowed=""; forbidden=""; ticket=""; keypaths=""; tracker_hosts=""; ignore_case="0"
-wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""; role_vars=""; ro_role=""
+wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""; role_vars=""; ro_role=""; marker_age=""; marker_stage=""
 {
   IFS= read -r -d '' parse_status || true
   IFS= read -r -d '' tool || true
@@ -171,6 +193,8 @@ wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""; role_vars=""; ro_r
   IFS= read -r -d '' patch_recs || true
   IFS= read -r -d '' role_vars || true
   IFS= read -r -d '' ro_role || true
+  IFS= read -r -d '' marker_age || true
+  IFS= read -r -d '' marker_stage || true
 } < <(printf '%s' "$event" | node -e '
 const fs = require("node:fs");
 const path = require("node:path");
@@ -243,6 +267,17 @@ if (!ticket) {
   // The autopilot marker is JSON: { ticket, branch, scope }. Its ticket id serves the same role.
   try { ticket = str(JSON.parse(fs.readFileSync(path.join(root, ".ultrapowers", "autopilot-active"), "utf8")).ticket).trim(); } catch (e) { ticket = ""; }
 }
+// Facts about the run marker for every deny message: how long ago it was written, and the stage
+// an autopilot marker records. A marker that outlived its run is for the human partner to end.
+let markerAge = "";
+let markerStage = "";
+try {
+  const qaMarker = path.join(root, ".ultrapowers", "qa-active");
+  const marker = fs.existsSync(qaMarker) ? qaMarker : path.join(root, ".ultrapowers", "autopilot-active");
+  const seconds = Math.max(0, Math.round((Date.now() - fs.statSync(marker).mtimeMs) / 1000));
+  markerAge = seconds < 60 ? "<1m" : seconds < 3600 ? Math.floor(seconds / 60) + "m" : seconds < 172800 ? Math.floor(seconds / 3600) + "h" : Math.floor(seconds / 86400) + "d";
+  if (marker !== qaMarker) markerStage = str(JSON.parse(fs.readFileSync(marker, "utf8")).stage).trim();
+} catch (e) { /* no facts: the deny message omits them */ }
 // Every path-shaped field any tool carries (a read, a search, an upload), for the
 // key-material check that applies to all tools, not only to file writes.
 const pathFields = [];
@@ -290,6 +325,7 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
     pathFields.join("\n"), trackerHosts.join(","), ignoreCase ? "1" : "0",
     w.real, w.rel, keyReal.join("\n"), patchRecs.join("\n"), roleVars.join(","),
     str((qa.db && typeof qa.db === "object" ? qa.db : {}).roRole).trim() || "qa_agent_ro",
+    markerAge, markerStage,
   ].join("\0") + "\0");
 }, (e) => {
   process.stdout.write(["noresolver:" + String(e.message).split("\n")[0], "", "", "", "", "", "", "", ""].join("\0") + "\0");
@@ -481,10 +517,12 @@ B="(^|[;&|[:space:]\"'(\`/\\\\])"
 
 # Never push. Fail closed on any git command segment carrying a push token, `git stash push`
 # excepted: it stores work locally and is the autopilot stage's way to set work aside.
+push_why="the QA gate reads and reports, it never publishes"
+[ "$PROFILE" = "autopilot" ] && push_why="the autopilot engine pushes between stages"
 while IFS= read -r seg; do
   printf '%s' "$seg" | grep -Eq '\bgit\b.*\bpush\b' || continue
   printf '%s' "$seg" | grep -Eq '\bgit\b[^;&|]*\bstash[[:space:]]+push\b' && ! printf '%s' "$seg" | grep -Eq '\bpush\b.*\bpush\b' && continue
-  deny "git push is never allowed during $run_kind; the autopilot engine pushes between stages"
+  deny "git push is never allowed during $run_kind; $push_why"
 done < <(printf '%s\n' "$lc" | tr ';&|' '\n')
 
 if [ "$PROFILE" = "autopilot" ]; then
@@ -552,7 +590,7 @@ printf '%s' "$lc" | grep -Eq "${B}rm[[:space:]]+-[a-z]*[rf]|${B}rm[[:space:]]+--
 # PowerShell file cmdlets write, move or delete files; the file tools are gated to
 # reviews/<id>/ and .ultrapowers/, these are not.
 printf '%s' "$lc" | grep -Eq '(^|[^a-z-])(set-content|add-content|out-file|new-item|copy-item|move-item|remove-item|rename-item|clear-content|set-item)([^a-z-]|$)' \
-  && deny "PowerShell file cmdlets are blocked during a QA run; write reports and evidence with the file tools"
+  && deny "PowerShell file cmdlets are blocked during $run_kind; write files with the file tools"
 
 # Git working-tree destruction.
 printf '%s' "$lc" | grep -Eq '\bgit\b[^;&|]*\b(reset[[:space:]]+--hard|clean[[:space:]]+-[a-z]*f|checkout[[:space:]]+--[[:space:]]|restore[[:space:]]|stash[[:space:]]+drop|branch[[:space:]]+-d)' \

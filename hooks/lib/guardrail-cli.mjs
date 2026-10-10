@@ -5,7 +5,7 @@
 // harness understands: exit 2 with the reason on stderr for a deny, exit 0 for an allow. With
 // --antigravity the event is Antigravity's ({ toolCall: { name, args }, workspacePaths }) and the
 // answer is its JSON ({ decision, reason }) on stdout. Node built-ins only.
-import { runGuardrail } from './guardrail-bridge.mjs';
+import { denyText, runGuardrail } from './guardrail-bridge.mjs';
 
 const args = process.argv.slice(2);
 const antigravity = args.includes('--antigravity');
@@ -48,15 +48,14 @@ export function eventFrom(text, { antigravity: ag = false } = {}) {
 if (process.argv[1] && /guardrail-cli\.mjs$/.test(process.argv[1].replace(/\\/g, '/'))) {
   const ev = eventFrom(raw, { antigravity });
   // An event that cannot be read is refused only while a run is active; the bridge decides that.
-  const verdict = ev ? runGuardrail(ev) : runGuardrail({ toolName: '', input: {}, cwd: process.cwd() }).deny
-    ? { deny: true, reason: 'the tool event could not be parsed; an uninspectable call is refused during a run' }
-    : { deny: false };
+  // (an event that is not JSON reaches the hook as a call with no tool name, which it refuses)
+  const verdict = ev ? runGuardrail(ev) : runGuardrail({ toolName: '', input: {}, cwd: process.cwd() });
   if (antigravity) {
-    process.stdout.write(`${JSON.stringify(verdict.deny ? { decision: 'deny', reason: `ultrapowers guardrail: ${verdict.reason}` } : { decision: 'allow' })}\n`);
+    process.stdout.write(`${JSON.stringify(verdict.deny ? { decision: 'deny', reason: denyText(verdict) } : { decision: 'allow' })}\n`);
     process.exit(0);
   }
   if (verdict.deny) {
-    process.stderr.write(`AUTOPILOT-GUARDRAIL DENY: ${verdict.reason}\n`);
+    process.stderr.write(`${denyText(verdict)}\n`);
     process.exit(2);
   }
   process.exit(0);

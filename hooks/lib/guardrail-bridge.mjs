@@ -10,7 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const HOOK_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const DENY_RE = /(?:QA|AUTOPILOT)-GUARDRAIL DENY: (.*)/;
+const DENY_RE = /((?:QA|AUTOPILOT)-GUARDRAIL) DENY: (.*)/;
 
 // The directory holding a run marker at or above `startDir`, or null.
 export function markerRoot(startDir) {
@@ -27,6 +27,17 @@ export function markerRoot(startDir) {
     dir = parent;
   }
 }
+
+// The deny prefix of the run marker found at or above `startDir`: the QA profile when a QA marker
+// exists (it wins when both do, as in the hook), else the autopilot profile.
+export function markerPrefix(startDir) {
+  const root = markerRoot(startDir);
+  if (!root) return null;
+  return fs.existsSync(path.join(root, '.ultrapowers', 'qa-active')) ? 'QA-GUARDRAIL' : 'AUTOPILOT-GUARDRAIL';
+}
+
+// The text every harness shows for a deny: the profile's prefix, then the reason.
+export const denyText = (verdict) => `${verdict.prefix || 'QA-GUARDRAIL'} DENY: ${verdict.reason}`;
 
 // The shell-hook event for a harness tool call. OpenCode spells the file as `filePath`, Pi as
 // `path`; the hook reads `file_path`, `command` and `url`, so those are filled from the spellings
@@ -77,11 +88,12 @@ function bashBinary() {
 // (no bash, no hook file): an active run without its brake fails closed, as the hook itself does.
 export function runGuardrail({ toolName, input, cwd, hookDir = HOOK_DIR, timeoutMs = 15000 }) {
   const startDir = cwd && String(cwd) ? String(cwd) : process.cwd();
-  if (!markerRoot(startDir)) return { deny: false };
+  const prefix = markerPrefix(startDir);
+  if (!prefix) return { deny: false };
   const hook = path.join(hookDir, 'qa-guardrail');
   const bash = bashBinary();
   if (!bash || !fs.existsSync(hook)) {
-    return { deny: true, reason: `the ultrapowers guardrail could not run (${!bash ? 'no bash' : 'hook missing'}); a tool call during a run is refused without it` };
+    return { deny: true, prefix, reason: `the ultrapowers guardrail could not run (${!bash ? 'no bash' : 'hook missing'}); a tool call during a run is refused without it` };
   }
   const event = guardrailEvent({ toolName, input, cwd: startDir });
   const env = { ...process.env };
@@ -89,6 +101,6 @@ export function runGuardrail({ toolName, input, cwd, hookDir = HOOK_DIR, timeout
   const res = spawnSync(bash, [hook], { input: `${JSON.stringify(event)}\0`, cwd: fs.existsSync(startDir) ? startDir : undefined, env, encoding: 'utf8', timeout: timeoutMs, windowsHide: true });
   if (res.status === 0) return { deny: false };
   const line = String(res.stderr ?? '').split('\n').map((l) => DENY_RE.exec(l)).find(Boolean);
-  if (res.status === 2) return { deny: true, reason: line ? line[1].trim() : 'denied by the ultrapowers guardrail' };
-  return { deny: true, reason: `the ultrapowers guardrail could not run (${res.error ? res.error.message : `exit ${res.status}`}); a tool call during a run is refused without it` };
+  if (res.status === 2) return { deny: true, prefix: line ? line[1] : prefix, reason: line ? line[2].trim() : 'denied by the ultrapowers guardrail' };
+  return { deny: true, prefix, reason: `the ultrapowers guardrail could not run (${res.error ? res.error.message : `exit ${res.status}`}); a tool call during a run is refused without it` };
 }
