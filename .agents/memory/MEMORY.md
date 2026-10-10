@@ -19,6 +19,8 @@ Index line format: `- [<name as title>](<dir>/<file>.md) — <one-line hook> (<Y
 
 ## Gotchas
 
+- [Guardrail suites run time on Windows](gotchas/guardrail-suites-run-time-windows.md) — the two fixture suites take 10+ min each and run-tests.sh reruns them; run the combined runner once, at the gate (2026-10)
+
 ## Decisions
 
 ## Subsystems
