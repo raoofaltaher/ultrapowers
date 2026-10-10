@@ -303,8 +303,10 @@ test('analyze counts the psql invocations it inspected, so the hook can refuse o
   assert.equal(count('docker compose exec -T db psql -U qa_agent_ro -c "select 1"'), 1);
   assert.equal(count('psql -U qa_agent_ro -c "select 1" | psql -U qa_agent_ro -c "select 2"'), 2);
   assert.equal(count('ls'), 0);
+  // Constructs the analyzer walks into: the psql inside is inspected and judged.
   for (const cmd of [
     'xargs psql -U postgres -c "drop table t"',
+    'echo db | xargs -I{} psql -U postgres -d {} -c "drop table t"',
     'find . -name x -exec psql -U postgres -c "drop table t" \\;',
     "eval 'psql -U postgres -c \"drop table t\"'",
     '{ psql -U postgres -c "drop table t"; }',
@@ -312,5 +314,82 @@ test('analyze counts the psql invocations it inspected, so the hook can refuse o
     'su postgres -c "psql -c \'drop table t\'"',
     'kubectl exec db -- psql -U postgres -c "drop table t"',
     'nice -n 5 psql -U postgres -c "drop table t"',
-  ]) assert.equal(count(cmd), 0, cmd);
+    "P=psql; xargs $P -U postgres -c 'drop table t'",
+    "xargs ps''ql -U postgres -c 'drop table t'",
+  ]) {
+    assert.equal(count(cmd), 1, cmd);
+    assert.match(analyze(cmd, c), /superuser|not a read/, cmd);
+  }
+  // The same constructs with a read-only psql pass.
+  for (const cmd of [
+    'xargs -n1 psql -U qa_agent_ro -c "select 1"',
+    'find . -name x -exec psql -U qa_agent_ro -c "select 1" \\;',
+    "eval 'psql -U qa_agent_ro -c \"select 1\"'",
+    '{ psql -U qa_agent_ro -c "select 1"; }',
+    'sudo -u app psql -U qa_agent_ro -c "select 1"',
+    'kubectl exec db -- psql -U qa_agent_ro -c "select 1"',
+    'nice -n 5 psql -U qa_agent_ro -c "select 1"',
+    'find . -name x -exec cat {} \\;',
+    'xargs -n1 echo',
+  ]) assert.equal(analyze(cmd, c), '', cmd);
+  // A shell fed by stdin or a bundled -c flag is walked or refused, never passed.
+  assert.match(analyze('echo "psql -U postgres -c \'drop table t\'" | sh', c), /reads its commands from stdin|did not inspect/);
+  assert.match(analyze('sh -lc "psql -U postgres -c \'drop table t\'"', c), /superuser/);
+  assert.match(analyze('bash -ec "psql -U postgres -c \'drop table t\'"', c), /superuser/);
+  assert.match(analyze('bash -s', c), /reads its commands from stdin/);
+  assert.match(analyze('cat run.sh | bash -', c), /reads its commands from stdin/);
+  assert.equal(analyze('bash scripts/run-tests.sh', c), '', 'a script file stays allowed');
+  // A placeholder program (the found file itself) cannot be inspected.
+  assert.match(analyze('find . -type f -exec {} \\;', c), /placeholder/);
+  assert.match(analyze('ls | xargs -I{} {}', c), /placeholder/);
+  // Any bare psql word that was not inspected is refused, even in a lookup (fail closed, no exemption);
+  // a word with whitespace is text (an SQL statement, a sentence), not a program.
+  assert.match(analyze('which psql', c), /did not inspect/);
+  assert.match(analyze("echo 'psql' > reviews/1234/x.txt", c), /did not inspect/);
+  assert.equal(analyze('echo "checked via psql" > reviews/1234/x.txt', c), '');
+  assert.equal(analyze("psql -U qa_agent_ro -c \"select * from pg_stat_activity where application_name='psql'\"", c), '');
+  assert.equal(analyze('bash --version', c), '');
+  // The reviewer's findings: identity spellings, psql's own environment, other client tools, SQL holes.
+  for (const cmd of [
+    'export PGUSER=postgres; psql -c "select 1"',
+    'PGUSER=postgres; export PGUSER; psql -c "select 1"',
+    'docker exec -u postgres db psql -c "select 1"',
+    'docker exec --user=postgres db psql -c "select 1"',
+    'docker exec db gosu postgres psql -c "select 1"',
+    'docker exec -ePGUSER=postgres db psql -c "select 1"',
+    'sudo -upostgres psql -c "select 1"',
+    'su -c "psql -c \'select 1\'" postgres',
+    'su -s /bin/sh postgres -c "psql -c \'select 1\'"',
+    'psql "postgresql://qa_agent_ro@h/db?user=postgres" -c "select 1"',
+    'psql "user=qa_agent_ro user=postgres" -c "select 1"',
+  ]) assert.match(analyze(cmd, c), /superuser|not the read-only role|must be the read-only role|must name the read-only role/, cmd);
+  for (const cmd of [
+    'PSQLRC=reviews/1234/rc psql -U qa_agent_ro -c "select 1"',
+    'export PGSERVICE=su; psql -U qa_agent_ro -c "select 1"',
+    'PGSERVICEFILE=reviews/1234/svc PGSERVICE=su psql -U qa_agent_ro -c "select 1"',
+    'docker exec --env-file x.env db psql -U qa_agent_ro -c "select 1"',
+  ]) assert.match(analyze(cmd, c), /cannot see|cannot be inspected|reads a file/, cmd);
+  for (const cmd of ['dropdb -U postgres db', 'createdb x', 'pg_restore -U postgres -d db x', 'docker exec db dropdb -U postgres app', 'pgcli -U qa_agent_ro', 'usql postgres://x@h/db -c "select 1"']) {
+    assert.match(analyze(cmd, c), /is not run during/, cmd);
+  }
+  for (const sql of [
+    'with a as (select 1) update t x set c=1',
+    'with a as (update t x set c=1 returning 1) select * from a',
+    'select "setval"(\'s\',1)',
+    'select pg_catalog."set_config"(\'a\',\'b\',false)',
+    'select "lo_import"(\'/etc/passwd\')',
+    'select pg_stat_reset()',
+    'select pg_wal_replay_pause()',
+    'select pg_backup_start(\'x\')',
+    'select pg_notify(\'c\',\'p\')',
+    'select pg_ls_waldir()',
+  ]) assert.notEqual(analyze(`psql -U qa_agent_ro -c "${sql}"`, c), '', sql);
+  assert.equal(analyze('psql -U qa_agent_ro -c "select \'setval\' as label"', c), '', 'a function name inside a string literal is text');
+  // What it cannot inspect is refused: a program from a variable, pgcli, su without -c, kubectl exec without --.
+  assert.match(analyze('$P -U postgres -c "drop table t"', c), /built from a variable/);
+  assert.match(analyze('xargs $P -U postgres -c "drop table t"', c), /built from a variable/);
+  assert.match(analyze('pgcli -U postgres -c "drop table t"', c), /is not run during/);
+  assert.match(analyze('su postgres', c), /su without -c/);
+  assert.match(analyze('kubectl exec db psql -U postgres -c "drop table t"', c), /kubectl exec without --/);
+  assert.match(analyze("eval \"$CMD\"", c), /built from a variable/);
 });
