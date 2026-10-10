@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"psql -U qa_agent_ro -c \"select 1\"; xargs psql -U postgres -c \"drop table t\""}}

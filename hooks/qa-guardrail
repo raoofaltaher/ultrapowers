@@ -629,9 +629,20 @@ printf '%s' "$lc" | grep -Eq '(curl|wget)[^;&|]*(-t |--upload-file|--data-binary
 # operands, in-place editors and git subcommands, checked by the quote-aware analyzer. Its
 # inputs travel on stdin so Git Bash's argument conversion cannot rewrite the paths.
 writes_js="$hook_dir_node/lib/qa-shell-writes.mjs"
-wreason="$(printf '%s\0%s\0%s\0%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$ignore_case" "$role_vars" "$ro_role" "$cmd" | ULTRAPOWERS_GUARD_PROFILE="$PROFILE" node "$writes_js" 2>&1)" \
-  || wreason="the command could not be analysed for writes; it is refused during $run_kind"
+wout="$(printf '%s\0%s\0%s\0%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$ignore_case" "$role_vars" "$ro_role" "$cmd" | ULTRAPOWERS_GUARD_PROFILE="$PROFILE" node "$writes_js" 2>&1)" \
+  || wout="-
+the command could not be analysed for writes; it is refused during $run_kind"
+# Line 1 of the analyzer's answer counts the psql invocations it inspected; the rest is a reason.
+wpsql="${wout%%$'\n'*}"
+if [ "$wpsql" = "$wout" ]; then wreason=""; else wreason="${wout#*$'\n'}"; fi
 [ -z "$wreason" ] || deny "$wreason"
+# Backstop for lane 4: every psql (or pgcli) word in the command must be one the analyzer
+# inspected. One it did not see (after xargs, find -exec, eval, in a brace group, after sudo -u,
+# su -c or kubectl exec) is refused rather than parsed a second time here.
+npsql="$(printf '%s' "$lc" | grep -oE "${B}(psql|pgcli)(\\.exe)?([[:space:]\"']|\$)" | wc -l | tr -d ' ')"
+if [ "$npsql" -gt 0 ] 2>/dev/null && [ "$wpsql" != "$npsql" ]; then
+  deny "psql appears where the analyzer cannot inspect it (after xargs, find -exec, eval, sudo -u, su, kubectl, or in a brace group); lane 4 runs psql directly, with -c"
+fi
 
 # The ticket tracker's hosts (tickets.sources[].url, .mcpUrl), autopilot profile: a shell call
 # to the tracker is an engine step (a label, a note, a packet), never a stage's. This holds

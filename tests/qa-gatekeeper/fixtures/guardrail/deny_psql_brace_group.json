@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"{ psql -U postgres -c \"drop table t\"; }"}}

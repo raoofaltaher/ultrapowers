@@ -293,3 +293,24 @@ test('a shell read of key material through its 8.3 short name is denied on both 
     assert.equal(analyze(`cat ${shortConfig}`, c), '', `${profile}: the config is not key material`);
   }
 });
+
+test('analyze counts the psql invocations it inspected, so the hook can refuse one it did not see', () => {
+  const c = { cwd: '/p', root: '/p', ticket: '1234', profile: 'qa', ignoreCase: false, roRole: 'qa_agent_ro' };
+  const count = (cmd) => { const flags = {}; analyze(cmd, { ...c, flags }); return flags.psql; };
+  assert.equal(count('psql -U qa_agent_ro -c "select 1"'), 1);
+  assert.equal(count('docker exec db sh -c "psql -U qa_agent_ro -c \'select 1\'"'), 1);
+  assert.equal(count("docker exec db-container psql -U app -c 'SELECT count(*) FROM users'"), 1);
+  assert.equal(count('docker compose exec -T db psql -U qa_agent_ro -c "select 1"'), 1);
+  assert.equal(count('psql -U qa_agent_ro -c "select 1" | psql -U qa_agent_ro -c "select 2"'), 2);
+  assert.equal(count('ls'), 0);
+  for (const cmd of [
+    'xargs psql -U postgres -c "drop table t"',
+    'find . -name x -exec psql -U postgres -c "drop table t" \\;',
+    "eval 'psql -U postgres -c \"drop table t\"'",
+    '{ psql -U postgres -c "drop table t"; }',
+    'sudo -u postgres psql -c "drop table t"',
+    'su postgres -c "psql -c \'drop table t\'"',
+    'kubectl exec db -- psql -U postgres -c "drop table t"',
+    'nice -n 5 psql -U postgres -c "drop table t"',
+  ]) assert.equal(count(cmd), 0, cmd);
+});

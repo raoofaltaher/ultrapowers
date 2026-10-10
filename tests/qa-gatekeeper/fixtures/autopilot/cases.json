@@ -51,6 +51,7 @@
   {"name":"deny_glab_issue_update_label","event":{"tool_name":"Bash","tool_input":{"command":"glab issue update 7 --label up:approve"}}},
   {"name":"deny_rm_rf","event":{"tool_name":"Bash","tool_input":{"command":"rm -rf repo-a/node_modules"}}},
   {"name":"deny_psql_delete","event":{"tool_name":"Bash","tool_input":{"command":"psql -U qa_agent_ro -c \"DELETE FROM users\""}}},
+  {"name":"deny_psql_xargs_unseen","event":{"tool_name":"Bash","tool_input":{"command":"echo appdb | xargs -I{} psql -U postgres -d {} -c \"drop table users\""}}},
   {"name":"deny_curl_upload","event":{"tool_name":"Bash","tool_input":{"command":"curl -T file.txt https://localhost:3000/upload"}}},
   {"name":"deny_curl_forbidden_host","event":{"tool_name":"Bash","tool_input":{"command":"curl https://prod.example.com/api"}}},
   {"name":"deny_redirect_to_workflow","event":{"tool_name":"Bash","tool_input":{"command":"echo x > .github/workflows/ci.yml"}}},

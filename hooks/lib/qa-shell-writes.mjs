@@ -302,8 +302,12 @@ const ENV_DUMP = 'dumping the environment is blocked; check a variable with ${NA
 const TRACKER_VARS = /^(GH_TOKEN|GITHUB_TOKEN|GITLAB_TOKEN|GLAB_TOKEN|ODOO_API_KEY|ULTRAPOWERS_STAGE_.*)$/i;
 const SECRET_VARS = /TOKEN|KEY|SECRET|PASS|CREDENTIAL|AUTH|COOKIE|SESSION|PRIVATE/i;
 
-export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase = process.platform === 'win32' || process.platform === 'darwin', roleVars = [], roRole = 'qa_agent_ro' }) {
+export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase = process.platform === 'win32' || process.platform === 'darwin', roleVars = [], roRole = 'qa_agent_ro', flags = null }) {
   const autopilot = profile === 'autopilot';
+  // flags.psql counts the psql invocations this walk inspected. The hook compares it with the
+  // number of psql words in the command and refuses one it did not see (xargs, find -exec, eval,
+  // a brace group, sudo -u, su -c, kubectl exec): fail closed, not a second SQL parser in bash.
+  if (flags) flags.psql = 0;
   // Every compare below is between real canonical paths (8.3 short names, Git Bash forms and
   // symlinks resolved), exact unless the project's folder ignores case.
   const rootC = realCanonical(root, root);
@@ -424,6 +428,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         return only ? `${PSQL_VAR}${only}` : PSQL_DYN;
       };
       const psqlCheck = (words) => {
+        if (flags) flags.psql += 1;
         const reason = analyzePsql(words.map(psqlWord), { roRole, pgUser });
         if (reason) deny(reason);
       };
@@ -672,8 +677,10 @@ function main() {
   try { input = readFileSync(0, 'utf8'); } catch { input = ''; }
   const [cwd = '', root = '', ticket = '', ignoreCaseFlag = '', roleVarsField = '', roRoleField = '', ...cmdParts] = input.split('\0');
   const profile = process.env.ULTRAPOWERS_GUARD_PROFILE === 'autopilot' ? 'autopilot' : 'qa';
-  const out = analyze(cmdParts.join('\0'), { cwd, root, ticket, profile, ignoreCase: ignoreCaseFlag === '1', roleVars: roleVarsField.split(',').filter(Boolean), roRole: roRoleField || 'qa_agent_ro' });
-  if (out) process.stdout.write(out);
+  const flags = {};
+  const out = analyze(cmdParts.join('\0'), { cwd, root, ticket, profile, ignoreCase: ignoreCaseFlag === '1', roleVars: roleVarsField.split(',').filter(Boolean), roRole: roRoleField || 'qa_agent_ro', flags });
+  // Line 1: the number of psql invocations inspected; the rest: the deny reason, if any.
+  process.stdout.write(`${flags.psql}\n${out || ''}`);
 }
 
 if (process.argv[1] && /qa-shell-writes\.mjs$/.test(process.argv[1].replace(/\\/g, '/'))) main();
