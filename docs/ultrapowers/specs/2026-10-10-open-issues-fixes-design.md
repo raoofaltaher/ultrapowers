@@ -94,16 +94,34 @@ A helper `missingContent(target, existingText, renderedText)` in `init.mjs` comp
 
 ## 8. Workstream 5: `/ultrapowers:task-review`
 
-A new skill, `skills/task-review/`, invoked as `/ultrapowers:task-review <ID> [repos...] [--post]`. It reviews; it never edits code. It writes only `reviews/<ID>/`, and with `--post` pushes the ticket branch and comments on the tracker.
+A new skill, `skills/task-review/`, invoked as `/ultrapowers:task-review <ID> [repos...] [--post]`, shaped like `brainstorm-task` (preflight, repository selection, then the work). It acts as a senior full-stack developer and a senior QA tester together. It reviews; it never edits code. It writes only `reviews/<ID>/`, and with `--post` pushes branches and comments on the tracker.
 
-1. **Ticket.** The `task` skill's loader (`skills/task/scripts/manifest.sh`) reads the brief, specs, plans and existing reviews; an absent brief and spec with no ticket branch stops with the same message the QA gate uses.
-2. **Change set.** The QA preflight's `changeSet` gives each repository's branch, files, commits and diff; `[repos...]` narrows it to named repositories.
-3. **Code review.** One `requesting-code-review` subagent per repository diff, in parallel, on the most capable model, with the existing `code-reviewer.md` template plus two lenses: the TDD lens (does every changed behavior have a test, written first) and the systematic-debugging lens (for every failing test or finding, a root-cause note; diagnosis only).
-4. **QA gate.** The existing `qa-specialist`, unchanged, writes `reviews/<ID>/QA-REPORT.md` with its screenshots.
-5. **Report.** `reviews/<ID>/TASK-REVIEW.md`: one verdict combining the review severities and the QA verdict (any Critical finding or a QA FAIL fails the review), the findings by repository, and a link to `QA-REPORT.md`.
-6. **`--post`.** Through the autopilot tracker clients (`trackerFor`): a comment with the verdict and the top findings on the ticket (GitHub, GitLab, Odoo) and on the ticket's open PR/MR; with none open, push the ticket branch through autopilot's guarded push and open a draft PR/MR whose first comment is the review. It never merges. On a local ticket `--post` is refused. Network access stays within rule 5.
+1. **Ticket context: `ultrapowers:task`.** The skill invokes `ultrapowers:task <ID>`, which reads every document of the ticket (the brief `tasks/<ID>/<ID>.md`, `source.md`, `specs/<ID>/`, `plans/<ID>/`, `reviews/<ID>/`) and reports its position. An absent brief and spec with no ticket branch stops with the same message the QA gate uses.
+2. **All the code of the ticket.** The QA preflight's `changeSet` lists each repository with a ticket branch, its base, commits and changed files, in a single-repository project (the root) and in a workspace with nested clones alike. Repository selection follows `brainstorm-task`'s selector: `[repos...]` focus words, the brief's `Repository:` line, then ticket branches; the set is confirmed with the human partner. For each selected repository the reviewer reads `git diff <base>...<ticket branch>` and every changed file in full on the ticket branch, plus the files those files depend on (callers, tests, schemas), as `brainstorm-task` grounds.
+3. **The four skills.** Per repository, one review subagent invokes:
+   - `ultrapowers:requesting-code-review`, with its `code-reviewer.md` template, on that repository's range;
+   - `ultrapowers:test-driven-development` as the review standard: does every changed behavior have a test, was the test written before the code (commit order), does it test behavior rather than mocks;
+   - `ultrapowers:systematic-debugging`, Phases 1 to 3 only, on every failing test and every Critical or Important finding: the root cause traced to its source, as a note in the review (no fix).
+   Then the `qa-specialist` agent runs the QA gate, unchanged: every lane the project configures (lane 1 always; lanes 2 to 7 as `qa.*` and the change set enable them), and writes `reviews/<ID>/QA-REPORT.md` with every screenshot embedded.
+4. **Subagents and models.**
 
-The skill is developed with writing-skills: pressure scenarios for "fix the finding while you are here" (refused: review only), "post without --post" (refused), "merge the draft" (refused), and a run with no ticket branch.
+   | Subagent | Model | Why |
+   |---|---|---|
+   | Code review, one per repository, in parallel | the most capable available model | judgment over a whole range |
+   | Root-cause investigation, one per failing test or Critical finding, when the reviewer cannot settle it inline | the most capable available model | the Iron Law needs evidence, not guesses |
+   | QA gate | the `qa-specialist` agent as defined in `agents/qa-specialist.md` | its contract, lanes and guardrail |
+   | Loading, selection, report assembly, posting | the session itself | mechanical steps |
+
+   The skill names the model on every dispatch; an omitted model would inherit the session's.
+5. **Report.** `reviews/<ID>/TASK-REVIEW.md`: one verdict combining the review severities and the QA verdict (any Critical finding or a QA FAIL fails the review), the findings by repository with their root-cause notes, the TDD assessment, and `QA-REPORT.md` with its screenshots, linked and summarized. Screenshots of every step come from the QA gate's lane 1 on a frontend or full-stack ticket.
+6. **`--post`.** The full `TASK-REVIEW.md` and `QA-REPORT.md`, screenshots included, are posted as comments on the ticket (GitHub issue, GitLab issue, Odoo task) and on the ticket's open PR/MR, through the autopilot tracker clients (`trackerFor`):
+   - `reviews/<ID>/` is committed to the documents branch and pushed, as autopilot's gate stage does; on GitHub and GitLab each screenshot is embedded from its URL on that pushed branch;
+   - on Odoo, which has no repository, the screenshots are attached to the chatter message (a new `attach` call on the Odoo tracker client, JSON-RPC `ir.attachment`);
+   - a report longer than the tracker's comment limit (GitHub: 65,536 characters) is posted as numbered parts;
+   - with no PR/MR open, the ticket branch is pushed through autopilot's guarded push and a draft PR/MR is opened whose first comments are the review. It never merges.
+   On a local ticket `--post` is refused. Network access stays within rule 5.
+
+The skill is developed with writing-skills: pressure scenarios for "fix the finding while you are here" (refused: review only), "post without --post" (refused), "merge the draft" (refused), a reviewer that skips reading whole files and reviews the diff only (refused), a run on a multi-repository ticket, and a run with no ticket branch.
 
 ## 9. Testing and release
 
