@@ -183,6 +183,10 @@ export function judge(outDir, baselinePath) {
     }
     if (reasons.length === 0) reasons.push('suite failed to run: (no command recorded)');
   }
+  // A suite the runner stopped (timeout, or the close of the run) did not finish, whatever results
+  // it left behind: a reporter that writes per class leaves a partial file that reads as green.
+  const stoppedMarker = join(outDir, 'stopped-at');
+  if (existsSync(stoppedMarker)) reasons.push(`suite was stopped before it finished (${readFileSync(stoppedMarker, 'utf8').trim() || 'no reason recorded'}); its results are partial`);
   const collected = collectFailing(outDir);
   if (!collected.hadResults) reasons.push(`no .trx, vitest JSON or JUnit XML under ${outDir}; nothing was collected`);
   reasons.push(...collected.incomplete);

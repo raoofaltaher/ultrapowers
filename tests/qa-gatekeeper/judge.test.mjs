@@ -194,3 +194,13 @@ test('a JUnit suite-level error with no failing testcase is INCOMPLETE', () => {
   assert.ok(r.reasons.some((x) => /suite-level/.test(x)), r.reasons.join('; '));
   rmSync(dir, { recursive: true, force: true });
 });
+
+test('a stopped-at marker forces INCOMPLETE even when a partial results file reads green', () => {
+  const dir = tempDir('sample.trx');
+  writeFileSync(join(dir, 'stopped-at'), '2026-10-10T12:00:00Z close\n');
+  const result = judge(dir, baseline);
+  const text = formatReport(result, dir, baseline);
+  rmSync(dir, { recursive: true, force: true });
+  assert.equal(result.status, 'INCOMPLETE');
+  assert.match(text, /stopped before it finished \(2026-10-10T12:00:00Z close\)/);
+});
