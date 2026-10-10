@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { effectiveTransport, serverId as ticketServerId, validateTickets, resolveTicket } from '../../new-task/scripts/ticket-sources.mjs';
 import { validateAutopilot, DEFAULTS as AUTOPILOT_DEFAULTS, ODOO_EVENTS, loadSecretsFile } from '../../autopilot/scripts/autopilot-lib.mjs';
 import { trackerFor } from '../../autopilot/scripts/tracker.mjs';
+import { forgeFor } from '../../autopilot/scripts/repos.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const PLUGIN_ROOT = path.resolve(SCRIPT_DIR, '..', '..', '..');
@@ -1303,6 +1304,27 @@ export function runUpgrade(opts) {
   return report;
 }
 
+// The `projects` map a source needs for the clones whose provider path is not
+// `<owner or namespace>/<clone name>`, read from each clone's origin remote (parsed as the
+// autopilot engine does). A proposal only: the developer confirms it before it goes in the file.
+export function proposeProjects(root, repos, source, warnings = []) {
+  const proposed = {};
+  if (!['github', 'gitlab'].includes(source.provider)) return proposed;
+  const base = source.provider === 'github' ? source.owner : source.namespace;
+  for (const repo of repos) {
+    if (source.projects && typeof source.projects[repo.name] === 'string') continue;
+    const forge = forgeFor(path.join(root, repo.path), { provider: source.provider, host: source.host });
+    if (!forge) {
+      const warning = `${repo.name} has no origin remote, so its provider path cannot be proposed; add "projects" for it by hand when it is not ${base}/${repo.name}`;
+      if (!warnings.includes(warning)) warnings.push(warning);
+      continue;
+    }
+    if (forge.provider !== source.provider) continue;
+    if (forge.path !== `${base}/${repo.name}`) proposed[repo.name] = forge.path;
+  }
+  return proposed;
+}
+
 // Configure ticket sources in a scaffolded project. Only the marker's tickets
 // key changes; an existing harness MCP file gets a proposal beside it, a
 // missing one is created with the ticket servers alone, and the secret names
@@ -1313,6 +1335,10 @@ export function runTickets(opts) {
   if (!opts.sources) throw new InitError('bad-args', 'tickets needs --sources <file>');
   const tickets = loadTickets(opts.sources);
   report.marker = { before: marker.tickets ?? null, after: tickets };
+  const clones = detectRepos(opts.root);
+  report.proposedProjects = Object.fromEntries((tickets?.sources ?? [])
+    .filter((source) => ['github', 'gitlab'].includes(source.provider))
+    .map((source) => [source.prefix, proposeProjects(opts.root, clones, source, report.warnings)]));
   const harnesses = markerHarnesses(marker);
   const servers = ticketServers(tickets);
   const vars = buildVars(markerOpts(opts, marker), marker.repos ?? [], harnesses, []);

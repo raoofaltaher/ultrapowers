@@ -815,3 +815,45 @@ test('the duplicate-URL warning also reads a Codex config', () => {
   const report = run(['tickets', '--root', root, '--sources', sourcesFile(twoSources()), '--dry-run']);
   assert.ok(report.warnings.includes('tickets-gl has the same URL as gl-corp; set "server": "gl-corp" to reuse it'), JSON.stringify(report.warnings));
 });
+
+// Task 5: projects proposed from the clones' remotes (#28 A5).
+function workspaceWithClone(origin, name = 'app-api') {
+  const root = tmpWorkspace();
+  const clone = gitRepo(path.join(root, name));
+  if (origin) git(clone, 'remote', 'add', 'origin', origin);
+  run(['scaffold', '--root', root, '--name', 'WS', '--platform', 'linux', '--harnesses', 'claude-code']);
+  return root;
+}
+
+function gitlabSources() {
+  return { sources: [{ prefix: 'GL', provider: 'gitlab', host: 'gitlab.com', namespace: 'acme/platform', defaultProject: 'tracker' }] };
+}
+
+for (const [label, origin] of [['https', 'https://gitlab.com/acme/backend/app-api.git'], ['ssh', 'git@gitlab.com:acme/backend/app-api.git']]) {
+  test(`tickets proposes projects from a clone's ${label} origin when its path is not namespace/clone`, () => {
+    const root = workspaceWithClone(origin);
+    const before = snapshot(root);
+    const report = run(['tickets', '--root', root, '--sources', sourcesFile(gitlabSources()), '--dry-run']);
+    assert.deepEqual(report.proposedProjects, { GL: { 'app-api': 'acme/backend/app-api' } });
+    assert.deepEqual(changedFiles(before, snapshot(root)), []);
+  });
+}
+
+test('tickets proposes nothing for a clone whose origin path is namespace/clone', () => {
+  const root = workspaceWithClone('https://gitlab.com/acme/platform/app-api.git');
+  assert.deepEqual(run(['tickets', '--root', root, '--sources', sourcesFile(gitlabSources()), '--dry-run']).proposedProjects, { GL: {} });
+});
+
+test('tickets proposes nothing for a clone with no remote and lists it under warnings', () => {
+  const root = workspaceWithClone(null);
+  const report = run(['tickets', '--root', root, '--sources', sourcesFile(gitlabSources()), '--dry-run']);
+  assert.deepEqual(report.proposedProjects, { GL: {} });
+  assert.ok(report.warnings.some((w) => w.startsWith('app-api has no origin remote')), JSON.stringify(report.warnings));
+});
+
+test('tickets keeps a projects entry the source already has', () => {
+  const root = workspaceWithClone('https://gitlab.com/acme/backend/app-api.git');
+  const sources = gitlabSources();
+  sources.sources[0].projects = { 'app-api': 'acme/other/app-api' };
+  assert.deepEqual(run(['tickets', '--root', root, '--sources', sourcesFile(sources), '--dry-run']).proposedProjects, { GL: {} });
+});
