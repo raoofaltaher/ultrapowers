@@ -14,7 +14,8 @@ const assert = require('assert');
 
 const REPO_ROOT = path.join(__dirname, '../..');
 const SERVER_PATH = path.join(REPO_ROOT, 'skills/brainstorming/scripts/server.cjs');
-const LOGO_PATH = path.join(REPO_ROOT, 'assets/ultrapowers-small.svg');
+const LOGO_PATH = path.join(REPO_ROOT, 'assets/ultrapowers-mark.svg');
+const LOGO_MAX_BYTES = 20480;
 const PACKAGE_VERSION = JSON.parse(
   fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf-8')
 ).version;
@@ -189,10 +190,44 @@ async function assertLogoServed(port) {
   assert.strictEqual(res.status, 200, 'authorized logo request should succeed');
   assert.strictEqual(res.headers['content-type'], 'image/svg+xml', 'logo should be served as SVG');
   assert(res.body.equals(fs.readFileSync(LOGO_PATH)), 'served logo should be the bundled asset, byte for byte');
+  assert.strictEqual(res.headers['cache-control'], 'public, max-age=86400', 'served logo should be cacheable for a day');
 }
 
 async function main() {
   console.log('\n--- Visual Companion Branding ---');
+
+  await test('the bundled mark is a small SVG under 20 KB', async () => {
+    const size = fs.statSync(LOGO_PATH).size;
+    assert(size < LOGO_MAX_BYTES, `mark is ${size} bytes, limit ${LOGO_MAX_BYTES}`);
+    assert(fs.readFileSync(LOGO_PATH, 'utf-8').trimStart().startsWith('<svg'), 'mark should be an SVG document');
+  });
+
+  await test('the logo is read once at start and served from memory', async () => {
+    const port = 3462;
+    const dir = '/tmp/brainstorm-branding-memory';
+    const root = fs.mkdtempSync(path.join('/tmp', 'ultrapowers-logo-memory-'));
+    const scriptDir = path.join(root, 'skills/brainstorming/scripts');
+    fs.cpSync(path.join(REPO_ROOT, 'skills/brainstorming/scripts'), scriptDir, { recursive: true });
+    fs.mkdirSync(path.join(root, '.codex-plugin'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.codex-plugin/plugin.json'), JSON.stringify({ name: 'ultrapowers', version: PACKAGE_VERSION }));
+    fs.mkdirSync(path.join(root, 'assets'));
+    const asset = path.join(root, 'assets/ultrapowers-mark.svg');
+    fs.copyFileSync(LOGO_PATH, asset);
+    try {
+      await withServer({ port, dir, serverPath: path.join(scriptDir, 'server.cjs') }, async () => {
+        writeFragment(dir);
+        await sleep(300);
+        const first = await fetchPath(port, '/brand-logo.svg');
+        assert.strictEqual(first.status, 200, 'first logo request should succeed');
+        fs.rmSync(asset);
+        const second = await fetchPath(port, '/brand-logo.svg');
+        assert.strictEqual(second.status, 200, 'the logo should come from memory after its file is removed');
+        assert(second.body.equals(first.body), 'both responses should carry the same bytes');
+      });
+    } finally {
+      cleanup(root);
+    }
+  });
 
   await test('framed screens render the bundled logo and Ultrapowers version text', async () => {
     const port = 3451;
