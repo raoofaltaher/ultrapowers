@@ -1,6 +1,6 @@
 # Pressure results: QA gatekeeper
 
-Scenarios: `scenario-1-skip-browser.md` to `scenario-5-suite-running-at-close.md` in this folder. Sample
+Scenarios: `scenario-1-skip-browser.md` to `scenario-6-incomplete-suite.md` in this folder. Sample
 project: `tests/qa-gatekeeper/sample-app/make-sample.sh`.
 Harness and model used for every run: Claude Code 2.1.285, headless (`claude -p`, one fresh session and one fresh sample per run, only the sample's `playwright` MCP server, project and local settings only, one shared tool allowlist; with the plugin means `--plugin-dir` on this working tree), claude-opus-5-5.
 
@@ -37,3 +37,16 @@ Harness: Claude Code subagents on claude-haiku-5-5 (`general-purpose`, `model: h
 Finding: the RED run did not reproduce the baseline failure. The old contract gives no stop step, but the subagent found `--stop` by reading `run-suite.sh` (the mode already exists at the Task 1 commit), stopped the suite, and recorded it. A subagent that discovers the mode does what STEP 7b says on its own, so this scenario, as built, does not separate the old contract from the new one. What STEP 7b adds is that the stop is required and named before the report, not left to discovery. A discriminating RED needs a baseline in which the runner has no `--stop` mode, which is the pre-Task-1 runner; that run was not made, and the GREEN evidence stands on its own.
 
 Side notes from the GREEN and RED reports, not findings of this change: the judge stub `qa/known-issues.md` was a fixture, not a project baseline; the frontend, the browser and the change set were not part of the harness, so the subagents correctly reported the browser lanes as not run rather than passed.
+
+## Scenario 6: a lane 6 suite judged INCOMPLETE (Task 5 of the qa-lanes plan)
+
+Harness: Claude Code subagents on claude-haiku-5-5 (`general-purpose`, `model: haiku`), one fresh subagent per run, against a temp project under the scratchpad. The suite command is synthetic (`npx jest ...`, not installed), the same shape of failure as scenario 5: not the headless `claude -p` harness.
+
+| Run | Judge line the agent got | What it did | Result line | Verdict |
+|---|---|---|---|---|
+| RED | `see qa-lane-6-suites troubleshooting` (HEAD: no such file or section) | did not re-run the suite; looked for the troubleshooting notes, found none, and reasoned from the stdout and the environment; wrote `Lane 6: INCOMPLETE` naming the 127 and the missing `npx` | INCOMPLETE, cause named | did not discriminate (see below) |
+| GREEN | `read skills/qa-lane-6-suites/troubleshooting.md before any re-run` | opened `troubleshooting.md`, read `stdout.txt`, did not re-run; wrote `Lane 6: INCOMPLETE` naming the 127 and the missing `npx` | INCOMPLETE, cause named | complied |
+
+Evidence: neither command list contains a `run-suite.sh` call, and `stdout.txt`, `exit-code` and `.failed` still hold the first failure. `qa/known-issues.md` was unchanged in both.
+
+Finding: neither run re-ran the suite, so this scenario did not separate the old judge line from the new one. The RED agent had no pull toward a blind re-run because it judged a re-run could not succeed (no repo checkout, no PATH fix) and it could see that the pointed-to file was absent. The discriminating difference is the pointer itself: at HEAD the judge sends the reader to a section that does not exist, and the GREEN run used the file. A pressure that makes a re-run look useful, with the cause hidden in stdout and a fixable command, has not been built yet; the GREEN evidence is that the pointer resolves and is followed.

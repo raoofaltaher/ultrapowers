@@ -36,6 +36,14 @@ if [[ -f "$out2/.failed" ]] && grep -q 'exit 3' "$out2/.failed"; then pass ".fai
 if grep -q booting "$out2/stdout.txt"; then pass "stdout captured"; else fail "stdout captured"; fi
 if node "$JUDGE" "$out2" "$BASELINE" | grep -q '^INCOMPLETE  suite failed to run: '; then pass "judge reports INCOMPLETE for the crashed suite"; else fail "judge reports INCOMPLETE for the crashed suite"; fi
 
+out_tpl="$TEST_ROOT/out-failed-template"
+bash "$RUNNER" "$TEST_ROOT/repo" "$out_tpl" "echo partial > {{out}}/x.txt; exit 4"
+if grep -qF '{{out}}/x.txt' "$out_tpl/.failed" 2>/dev/null && ! grep -qF "$out_tpl" "$out_tpl/.failed" 2>/dev/null; then
+  pass ".failed keeps the command template, {{out}} unexpanded"
+else
+  fail ".failed keeps the command template, {{out}} unexpanded (got: $(cat "$out_tpl/.failed" 2>/dev/null))"
+fi
+
 out3="$TEST_ROOT/out-nonzero-with-results"
 bash "$RUNNER" "$TEST_ROOT/repo" "$out3" "printf '%s' '{\"testResults\":[]}' > {{out}}/vitest.json; exit 1"
 if [[ ! -f "$out3/.failed" ]]; then pass "non-zero exit with results is not marked .failed (failing tests are results)"; else fail "non-zero exit with results is not marked .failed"; fi

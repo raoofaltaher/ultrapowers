@@ -71,6 +71,9 @@ done
 q="'"
 bs='\'
 lit="${out_abs//"$q"/"$q$bs$q$q"}"
+# The command as configured, before {{out}} is replaced: the .failed marker keeps it so the
+# reader sees the template, not one run's absolute path.
+template="$cmd"
 res=""
 state=""
 i=0
@@ -142,7 +145,7 @@ for f in "$out_abs"/*.trx "$out_abs"/*.xml "$out_abs"/*.json; do
   fi
 done
 if [ "$code" -ne 0 ] && [ "$has_results" -eq 0 ]; then
-  printf '%s\n' "$cmd" > "$out_abs/.failed"
+  printf '%s\n' "$template" > "$out_abs/.failed"
 fi
 if [ ! -f "$out_abs/stopped-at" ]; then
   date -u +%Y-%m-%dT%H:%M:%SZ > "$out_abs/finished-at"
