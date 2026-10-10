@@ -219,3 +219,60 @@ test('during an autopilot stage printenv refuses tracker credentials and secret-
   assert.equal(analyze('printenv NODE_ENV', apEnv), '');
   assert.equal(analyze('printenv GH_TOKEN >/dev/null', apEnv), '');
 });
+
+// ---- SQL during a run is an allow-list of reads (issue 3) ----
+const viaDocker = (sql, extra = '-U qa_agent_ro -d appdb') => `docker exec db psql ${extra} -c "${sql}"`;
+
+test('psql statements that are not reads are denied, whatever they start with', () => {
+  for (const sql of [
+    'CALL archive()', 'VACUUM', 'REINDEX TABLE t', 'REFRESH MATERIALIZED VIEW v', 'LOCK TABLE t',
+    "SELECT setval('s', 1)", 'SELECT nextval(1)', 'SELECT pg_terminate_backend(1)', "SELECT lo_unlink(1)", "SELECT dblink_exec('c', 'DELETE FROM t')",
+    'EXPLAIN ANALYZE DELETE FROM t', 'EXPLAIN (ANALYZE) DELETE FROM t', 'PREPARE p AS DELETE FROM t', 'EXECUTE p',
+    'SELECT 1; DELETE FROM t', 'SET default_transaction_read_only = off', 'BEGIN', 'COPY t TO PROGRAM \'id\'',
+    'WITH g AS (DELETE FROM t RETURNING id) SELECT 1', 'SELECT * INTO backup FROM t',
+    'SELECT 1 \\gexec', '\\! touch x', '\\ir x.sql', 'SELECT :x',
+  ]) {
+    assert.ok(denied(viaDocker(sql)), sql);
+  }
+});
+
+test('psql reads pass, including a literal that holds a semicolon or a verb', () => {
+  for (const sql of [
+    "SELECT * FROM t WHERE note = 'x; delete'", "SELECT id FROM logs WHERE msg = 'user signed into portal'", 'SELECT count(*) FROM users',
+    'EXPLAIN SELECT 1', 'SHOW server_version', 'TABLE users', 'VALUES (1), (2)', 'WITH x AS (SELECT 1) SELECT * FROM x', 'SELECT a::int FROM t',
+    'SELECT * FROM t FOR UPDATE', 'SELECT 1;',
+  ]) {
+    assert.ok(allowed(viaDocker(sql)), sql);
+  }
+  assert.ok(allowed('psql -Atc "SELECT 1" -U qa_agent_ro'));
+  assert.ok(allowed('psql -Uroot -hlocalhost -c "SELECT 1"'));
+  assert.ok(allowed('docker exec db sh -c \'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT count(*) FROM users"\''));
+});
+
+test('psql names its user: no superuser in any spelling, and a URI or PGUSER must be the read-only role', () => {
+  for (const cmd of [
+    'psql -U postgres -c "SELECT 1"', 'psql -Upostgres -c "SELECT 1"', 'psql --username=postgres -c "SELECT 1"', 'psql --username POSTGRES -c "SELECT 1"', "psql -U 'postgres' -c \"SELECT 1\"",
+    'psql postgres://postgres:pw@h/db -c "SELECT 1"', 'psql postgresql://other:pw@h/db -c "SELECT 1"', 'psql postgres://h/db -c "SELECT 1"', 'psql "host=h user=postgres" -c "SELECT 1"', 'psql -d "host=h dbname=x user=app" -c "SELECT 1"',
+    'PGUSER=postgres psql -c "SELECT 1"', 'PGUSER=app psql -c "SELECT 1"', 'env PGUSER=postgres psql -c "SELECT 1"', 'docker exec -e PGUSER=postgres db psql -c "SELECT 1"', 'docker exec -e PGUSER=postgres db sh -c \'psql -c "SELECT 1"\'',
+    'docker compose exec db psql -U postgres -c "SELECT 1"', 'psql appdb postgres -c "SELECT 1"', 'psql -U "$SOMEONE" -c "SELECT 1"',
+  ]) {
+    assert.ok(denied(cmd), cmd);
+  }
+  for (const cmd of ['psql postgres://qa_agent_ro:pw@h/db -c "SELECT 1"', 'psql "host=h user=qa_agent_ro" -c "SELECT 1"', 'PGUSER=qa_agent_ro psql -c "SELECT 1"', 'docker exec -e PGUSER=qa_agent_ro db psql -c "SELECT 1"']) {
+    assert.ok(allowed(cmd), cmd);
+  }
+  assert.ok(allowed('psql postgres://reader:pw@h/db -c "SELECT 1"', { ...ctx, roRole: 'reader' }));
+  assert.ok(denied('psql postgres://qa_agent_ro:pw@h/db -c "SELECT 1"', { ...ctx, roRole: 'reader' }));
+});
+
+test('psql takes its SQL only from -c, and only the psql word counts', () => {
+  for (const cmd of [
+    "sh -c 'psql -U qa_agent_ro -d app < /tmp/x.sql'", 'psql -U qa_agent_ro -d app < /tmp/x.sql', 'psql -f x.sql', 'psql --file=x.sql', 'psql -U qa_agent_ro -c "$SQL"', 'echo "DELETE FROM t" | psql -U qa_agent_ro',
+    'psql -U qa_agent_ro -c "SELECT 1" -o repo-a/out.txt',
+  ]) {
+    assert.ok(denied(cmd), cmd);
+  }
+  assert.ok(allowed('psql -U qa_agent_ro -c "SELECT 1" -o /p/reviews/1234/artifacts/out.txt'));
+  // an `sh -c` elsewhere in the line does not satisfy the -c requirement of a psql with no statement
+  assert.ok(denied('sh -c "echo hi" && psql -U qa_agent_ro'));
+});

@@ -156,5 +156,14 @@
   {"name":"deny_env_zero","event":{"tool_name":"Bash","tool_input":{"command":"env -0"}}},
   {"name":"deny_export_p","event":{"tool_name":"Bash","tool_input":{"command":"export -p"}}},
   {"name":"deny_proc_environ","event":{"tool_name":"Bash","tool_input":{"command":"cat /proc/self/environ"}}},
-  {"name":"deny_node_print_env","event":{"tool_name":"Bash","tool_input":{"command":"node -p process.env"}}}
+  {"name":"deny_node_print_env","event":{"tool_name":"Bash","tool_input":{"command":"node -p process.env"}}},
+  {"name":"deny_psql_call","event":{"tool_name":"Bash","tool_input":{"command":"docker exec db-container psql -U qa_agent_ro -d appdb -c \"CALL archive()\""}}},
+  {"name":"deny_psql_explain_analyze_delete","event":{"tool_name":"Bash","tool_input":{"command":"docker exec db-container psql -U qa_agent_ro -d appdb -c \"EXPLAIN ANALYZE DELETE FROM users\""}}},
+  {"name":"deny_psql_uri_superuser","event":{"tool_name":"Bash","tool_input":{"command":"psql postgres://postgres:pw@db-container/appdb -c \"SELECT 1\""}}},
+  {"name":"deny_sh_c_psql_stdin_file","event":{"tool_name":"Bash","tool_input":{"command":"docker exec -i db-container sh -c \"psql -U qa_agent_ro -d appdb < /tmp/x.sql\""}}},
+  {"name":"deny_psql_meta_shell","event":{"tool_name":"Bash","tool_input":{"command":"docker exec db-container psql -U qa_agent_ro -d appdb -c \"SELECT 1 \\gexec\""}}},
+  {"name":"deny_psql_setval","event":{"tool_name":"Bash","tool_input":{"command":"docker exec db-container psql -U qa_agent_ro -d appdb -c \"SELECT setval(chr(115), 1)\""}}},
+  {"name":"deny_psql_pguser_env_superuser","event":{"tool_name":"Bash","tool_input":{"command":"docker exec -e PGUSER=postgres db-container psql -d appdb -c \"SELECT 1\""}}},
+  {"name":"allow_psql_literal_semicolon_delete","event":{"tool_name":"Bash","tool_input":{"command":"docker exec db-container psql -U qa_agent_ro -d appdb -c \"SELECT * FROM t WHERE note = 'x; delete'\""}}},
+  {"name":"allow_psql_explain_select","event":{"tool_name":"Bash","tool_input":{"command":"docker exec db-container psql -U qa_agent_ro -d appdb -c \"EXPLAIN SELECT 1\""}}}
 ]

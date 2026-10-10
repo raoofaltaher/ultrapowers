@@ -151,7 +151,7 @@ hook_dir_node="$hook_dir"
 if command -v cygpath >/dev/null 2>&1; then hook_dir_node="$(cygpath -m "$hook_dir" 2>/dev/null || printf '%s' "$hook_dir")"; fi
 
 parse_status=""; tool=""; cmd=""; wpath=""; url=""; event_cwd=""; allowed=""; forbidden=""; ticket=""; keypaths=""; tracker_hosts=""; ignore_case="0"
-wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""; role_vars=""
+wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""; role_vars=""; ro_role=""
 {
   IFS= read -r -d '' parse_status || true
   IFS= read -r -d '' tool || true
@@ -170,6 +170,7 @@ wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""; role_vars=""
   IFS= read -r -d '' keypaths_real || true
   IFS= read -r -d '' patch_recs || true
   IFS= read -r -d '' role_vars || true
+  IFS= read -r -d '' ro_role || true
 } < <(printf '%s' "$event" | node -e '
 const fs = require("node:fs");
 const path = require("node:path");
@@ -288,6 +289,7 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
     str(inp.url), str(ev.cwd), allowed.join(","), norm(hosts.forbidden).join(","), ticket,
     pathFields.join("\n"), trackerHosts.join(","), ignoreCase ? "1" : "0",
     w.real, w.rel, keyReal.join("\n"), patchRecs.join("\n"), roleVars.join(","),
+    str((qa.db && typeof qa.db === "object" ? qa.db : {}).roRole).trim() || "qa_agent_ro",
   ].join("\0") + "\0");
 }, (e) => {
   process.stdout.write(["noresolver:" + String(e.message).split("\n")[0], "", "", "", "", "", "", "", ""].join("\0") + "\0");
@@ -531,27 +533,15 @@ printf '%s' "$lc" | grep -Eq 'docker[-[:space:]]compose[^;&|]*[[:space:]](up|bui
 printf '%s' "$lc" | grep -Eq "${B}(pkill|killall|taskkill)([[:space:]]|\$)|stop-process([[:space:]]|\$)" \
   && deny "killing processes by name is blocked; the stack stays as found"
 
-# Database read-only. A mutating verb is blocked when it LEADS a psql statement (right after
-# the -c quote or a `;`), so column names and filter literals like action='delete' pass.
+# Database read-only. The SQL itself (statement starts, functions, meta-commands, the user a
+# connection string names) is judged by the write analyzer below, which tokenizes the command and
+# follows `sh -c` and `docker exec`; what stays here is what only a text match can see: a
+# substitution inside the command and a comment that could hide a verb.
 if printf '%s' "$lc" | grep -Eq '\bpsql\b'; then
-  printf '%s' "$lc" | grep -Eq '(-u[[:space:]=]?|--username[[:space:]=])postgres([^a-z0-9_]|$)' \
-    && deny "psql as the database superuser is blocked; use the configured read-only role (qa.db.roRole)"
   printf '%s' "$cmd" | grep -Eq '\$\(|`' \
     && deny "command substitution inside a psql command is blocked; the SQL must be literal and inspectable"
   printf '%s' "$cmd" | grep -Eq '/\*|\*/|--[[:space:]]|--$' \
     && deny "SQL comments inside inline psql are blocked; they only serve to hide a write verb"
-  printf '%s' "$lc" | grep -Eq '(^|[[:space:]])-c[[:space:]=]?|(^|[[:space:]])--command[[:space:]=]' \
-    || deny "psql without an inline -c statement is blocked; lane 4 runs single inline statements only"
-  printf '%s' "$lc" | grep -Eq '(^|[[:space:]])(-f|--file)([[:space:]=])|\\i[[:space:]]|<<' \
-    && deny "psql from a script file or heredoc is blocked; the SQL is not inspectable"
-  printf '%s' "$lc" | grep -Eq "(['\"]|;)[[:space:]]*(insert|update|delete|merge|drop|truncate|alter|grant|revoke|create|copy)[[:space:]]" \
-    && deny "mutating SQL is blocked; lane 4 is read-only"
-  printf '%s' "$lc" | grep -Eq '\([[:space:]]*(insert|update|delete|merge)[[:space:]]' \
-    && deny "a write inside a CTE or subquery is blocked; lane 4 is read-only"
-  printf '%s' "$lc" | grep -Eq '\bdo[[:space:]]*\$' \
-    && deny "a psql DO block is blocked; lane 4 is read-only"
-  printf '%s' "$lc" | grep -Eq '\bselect\b[^;]*[[:space:]]into[[:space:]]+[a-z0-9_."]+[[:space:]]+from\b' \
-    && deny "SELECT ... INTO <table> creates a table and is blocked; lane 4 is read-only"
 fi
 
 # Destructive filesystem: short and long rm options, find -delete, disk tools, device writes.
@@ -599,7 +589,7 @@ printf '%s' "$lc" | grep -Eq '(curl|wget)[^;&|]*(-t |--upload-file|--data-binary
 # operands, in-place editors and git subcommands, checked by the quote-aware analyzer. Its
 # inputs travel on stdin so Git Bash's argument conversion cannot rewrite the paths.
 writes_js="$hook_dir_node/lib/qa-shell-writes.mjs"
-wreason="$(printf '%s\0%s\0%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$ignore_case" "$role_vars" "$cmd" | ULTRAPOWERS_GUARD_PROFILE="$PROFILE" node "$writes_js" 2>&1)" \
+wreason="$(printf '%s\0%s\0%s\0%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$ignore_case" "$role_vars" "$ro_role" "$cmd" | ULTRAPOWERS_GUARD_PROFILE="$PROFILE" node "$writes_js" 2>&1)" \
   || wreason="the command could not be analysed for writes; it is refused during $run_kind"
 [ -z "$wreason" ] || deny "$wreason"
 
