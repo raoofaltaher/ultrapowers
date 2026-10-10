@@ -417,6 +417,38 @@ export function applyBlock(existing, body, target = 'the file') {
   return { content: next, action };
 }
 
+// The keys the plugin depends on in a settings file that already exists, compared with what init
+// would render. Strict JSON only: a file with comments or a trailing comma is reported unreadable,
+// never complete.
+const GUARDRAIL_LAUNCHER = 'ultrapowers-guardrail.mjs';
+
+export function missingContent(target, existingText, renderedText) {
+  if (target !== '.claude/settings.json' && target !== '.gemini/settings.json') return { missing: [] };
+  let existing;
+  try {
+    existing = JSON.parse(lf(existingText).replace(/^﻿/, ''));
+  } catch (err) {
+    return { missing: [], unreadable: err.message };
+  }
+  if (!existing || typeof existing !== 'object' || Array.isArray(existing)) {
+    return { missing: [], unreadable: 'the file does not hold a JSON object' };
+  }
+  const missing = [];
+  if (target === '.claude/settings.json') {
+    const rendered = JSON.parse(renderedText);
+    if (existing.outputStyle !== rendered.outputStyle) missing.push('outputStyle');
+    const have = Array.isArray(existing.permissions?.allow) ? existing.permissions.allow : [];
+    for (const entry of rendered.permissions?.allow ?? []) {
+      if (/^Skill\(ultrapowers:/.test(entry) && !have.includes(entry)) missing.push(entry);
+    }
+  } else {
+    const entries = Array.isArray(existing.hooks?.BeforeTool) ? existing.hooks.BeforeTool : [];
+    const names = (entry) => (Array.isArray(entry?.hooks) ? entry.hooks : []).some((h) => typeof h?.command === 'string' && h.command.includes(GUARDRAIL_LAUNCHER));
+    if (!entries.some(names)) missing.push('hooks.BeforeTool');
+  }
+  return { missing };
+}
+
 // The remote's default branch (origin/HEAD) when the clone knows it, else the branch checked out.
 function defaultBranchOf(repoDir) {
   try {

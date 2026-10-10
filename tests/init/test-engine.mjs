@@ -489,3 +489,48 @@ test('the scaffolded AGENTS.md keeps tests in git, as test-driven development co
   assert.doesNotMatch(agents, /delete them before the commit/i);
   assert.match(agents, /failing test first/i);
 });
+
+const SKILL_ALLOW = ['Skill(ultrapowers:task)', 'Skill(ultrapowers:init)'];
+const claudeRendered = JSON.stringify({ outputStyle: 'STE Explanatory', permissions: { allow: ['Read', ...SKILL_ALLOW] } });
+
+test('missingContent: an empty .claude/settings.json lacks outputStyle and every skill entry', () => {
+  const out = engine.missingContent('.claude/settings.json', '{}', claudeRendered);
+  assert.deepEqual(out.missing, ['outputStyle', ...SKILL_ALLOW]);
+  assert.equal(out.unreadable, undefined);
+});
+
+test('missingContent: names only the skill entry the file lacks', () => {
+  const existing = JSON.stringify({ outputStyle: 'STE Explanatory', permissions: { allow: ['Read', 'Skill(ultrapowers:init)', 'Bash(make:*)'] } });
+  assert.deepEqual(engine.missingContent('.claude/settings.json', existing, claudeRendered).missing, ['Skill(ultrapowers:task)']);
+});
+
+test('missingContent: an outputStyle that differs from the rendered one is missing', () => {
+  const existing = JSON.stringify({ outputStyle: 'Other', permissions: { allow: SKILL_ALLOW } });
+  assert.deepEqual(engine.missingContent('.claude/settings.json', existing, claudeRendered).missing, ['outputStyle']);
+});
+
+test('missingContent: a complete .claude/settings.json reports nothing', () => {
+  assert.deepEqual(engine.missingContent('.claude/settings.json', claudeRendered, claudeRendered), { missing: [] });
+});
+
+test('missingContent: .gemini/settings.json without the guardrail hook lacks hooks.BeforeTool', () => {
+  const rendered = JSON.stringify({ hooks: { BeforeTool: [{ hooks: [{ command: 'node "$GEMINI_PROJECT_DIR/.gemini/hooks/ultrapowers-guardrail.mjs"' }] }] } });
+  assert.deepEqual(engine.missingContent('.gemini/settings.json', '{"mcpServers":{}}', rendered).missing, ['hooks.BeforeTool']);
+  assert.deepEqual(engine.missingContent('.gemini/settings.json', rendered, rendered).missing, []);
+  const other = JSON.stringify({ hooks: { BeforeTool: [{ hooks: [{ command: 'node other.mjs' }] }] } });
+  assert.deepEqual(engine.missingContent('.gemini/settings.json', other, rendered).missing, ['hooks.BeforeTool']);
+});
+
+test('missingContent: JSON with a comment or a trailing comma is unreadable, never complete', () => {
+  for (const text of ['// mine\n{"outputStyle":"STE Explanatory"}', '{"outputStyle":"STE Explanatory",}']) {
+    const out = engine.missingContent('.claude/settings.json', text, claudeRendered);
+    assert.deepEqual(out.missing, []);
+    assert.equal(typeof out.unreadable, 'string');
+    assert.ok(out.unreadable.length > 0);
+  }
+});
+
+test('missingContent: any other target reports nothing', () => {
+  assert.deepEqual(engine.missingContent('AGENTS.md', 'x', 'y'), { missing: [] });
+  assert.deepEqual(engine.missingContent('.mcp.json', 'not json', '{}'), { missing: [] });
+});
