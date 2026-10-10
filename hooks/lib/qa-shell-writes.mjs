@@ -204,14 +204,17 @@ function stripLiterals(sql) {
       continue;
     }
     if (c === '$') {
+      // PostgreSQL lexes `a$b$` as an identifier, not as a dollar quote, so a `$` that continues an
+      // identifier, a bare `$`, or a `$1` parameter is not a quote the stripper can follow: the
+      // statement is unverifiable (fail closed) rather than mis-stripped.
+      if (/[A-Za-z0-9_$]/.test(sql[i - 1] || '')) return null;
       const m = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i));
-      if (m) {
-        const end = sql.indexOf(m[0], i + m[0].length);
-        if (end === -1) return null;
-        out += "''";
-        i = end + m[0].length;
-        continue;
-      }
+      if (!m) return null;
+      const end = sql.indexOf(m[0], i + m[0].length);
+      if (end === -1) return null;
+      out += "''";
+      i = end + m[0].length;
+      continue;
     }
     out += c;
     i++;
@@ -221,7 +224,7 @@ function stripLiterals(sql) {
 
 function analyzeSql(sql) {
   const text = stripLiterals(sql);
-  if (text === null) return 'an unterminated quote in the SQL cannot be verified; lane 4 is read-only';
+  if (text === null) return 'an unterminated quote, or a dollar sign outside a standalone dollar quote, in the SQL cannot be verified; lane 4 is read-only';
   if (/\\[A-Za-z!]/.test(text)) return 'a psql meta-command (a backslash command) is blocked; it can run a shell, read a file or repeat a statement';
   if (/(^|[^:]):[A-Za-z_]/.test(text)) return 'psql variable interpolation (:name) is blocked; the SQL must be literal and inspectable';
   for (const piece of text.split(';')) {
