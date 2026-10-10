@@ -454,3 +454,27 @@ test('write-source refuses input without title, body or url', () => {
   assert.equal(r.code, 2);
   assert.equal(r.json.error.code, 'bad-input');
 });
+
+// Task 7 (#28 B3): resolve names the transport this machine would use.
+test('resolve reports cli for a source whose signed-in CLI is there, mcp when it is not', () => {
+  const root = project();
+  assert.equal(run(root, ['resolve', 'GL-billing-api-42'], { STUB_AUTH_EXIT: '0' }).json.transportOnThisMachine, 'cli');
+  assert.equal(run(root, ['resolve', 'GL-billing-api-42'], { STUB_AUTH_EXIT: '1' }).json.transportOnThisMachine, 'mcp');
+  assert.equal(run(root, ['resolve', 'GH-web-7'], { STUB_AUTH_EXIT: '0' }).json.transportOnThisMachine, 'cli');
+});
+
+test('resolve follows a configured transport: mcp stays mcp, cli without a sign-in is unavailable', () => {
+  assert.equal(run(project(tickets({ GL: { transport: 'mcp' } })), ['resolve', 'GL-42'], { STUB_AUTH_EXIT: '0' }).json.transportOnThisMachine, 'mcp');
+  assert.equal(run(project(tickets({ GL: { transport: 'cli' } })), ['resolve', 'GL-42'], { STUB_AUTH_EXIT: '1' }).json.transportOnThisMachine, 'unavailable');
+});
+
+test('resolve reports json-rpc for an Odoo source with a login and a key, mcp otherwise', () => {
+  const withLogin = project(tickets({ ODOO: { login: 'bot@example.com' } }));
+  assert.equal(run(withLogin, ['resolve', 'ODOO-12-5'], { ODOO_API_KEY: 'k' }).json.transportOnThisMachine, 'json-rpc');
+  assert.equal(run(withLogin, ['resolve', 'ODOO-12-5'], { ODOO_API_KEY: '' }).json.transportOnThisMachine, 'mcp');
+  assert.equal(run(project(), ['resolve', 'ODOO-12-5'], { ODOO_API_KEY: 'k' }).json.transportOnThisMachine, 'mcp');
+});
+
+test('resolve of a local id has no transport', () => {
+  assert.deepEqual(run(project(), ['resolve', 'PROJ-88']).json, { provider: 'local' });
+});

@@ -8,6 +8,7 @@ import { effectiveTransport, serverId as ticketServerId, validateTickets, resolv
 import { validateAutopilot, DEFAULTS as AUTOPILOT_DEFAULTS, ODOO_EVENTS, loadSecretsFile } from '../../autopilot/scripts/autopilot-lib.mjs';
 import { trackerFor } from '../../autopilot/scripts/tracker.mjs';
 import { forgeFor } from '../../autopilot/scripts/repos.mjs';
+import { transportOnThisMachine } from '../../new-task/scripts/fetch-ticket.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const PLUGIN_ROOT = path.resolve(SCRIPT_DIR, '..', '..', '..');
@@ -752,7 +753,7 @@ function emptyReport(mode, opts) {
     repos: [],
     newRepos: [],
     changed: [],
-    missingSecrets: [],
+    missingSecrets: { required: [], optional: [] },
     incomplete: [],
     warnings: [],
     hooksPath: 'skipped',
@@ -982,18 +983,53 @@ export function secretNames(root) {
     .map((m) => m[1]);
 }
 
-export function missingSecrets(root, env = process.env) {
-  return secretNames(root).filter((name) => !env[name]);
+// Variables the project's configuration makes optional: the user and password of a QA role that is
+// not required, and the GitLab token or Odoo key of a source that is only read through a browser
+// sign-in and that autopilot does not run.
+function optionalSecrets(marker) {
+  const optional = new Set();
+  if (!marker || typeof marker !== 'object') return optional;
+  const roles = Array.isArray(marker.qa?.roles) ? marker.qa.roles : [];
+  for (const role of roles) {
+    if (!role || role.required === true) continue;
+    for (const name of [role.userEnv, role.passwordEnv]) if (typeof name === 'string' && name) optional.add(name);
+  }
+  const tickets = marker.tickets && validateTickets(marker.tickets).length === 0 ? marker.tickets : null;
+  const autopilotOn = Boolean(marker.autopilot?.mode) && marker.autopilot.mode !== 'off';
+  const notRun = (tickets?.sources ?? []).filter((s) => !(autopilotOn && s.autopilot !== false));
+  const all = tickets?.sources ?? [];
+  const browserOnly = (s) => (s.provider === 'gitlab' ? effectiveTransport(tickets, s) === 'mcp' : s.provider === 'odoo' && !s.mcpHeader && !s.login);
+  for (const [name, provider] of [['GITLAB_TOKEN', 'gitlab'], ['ODOO_API_KEY', 'odoo']]) {
+    const mine = all.filter((s) => s.provider === provider);
+    if (mine.length && mine.every((s) => browserOnly(s) && notRun.includes(s))) optional.add(name);
+  }
+  return optional;
+}
+
+// The variables of .agents/mcp-secrets.env.example that are not defined, split into the ones the
+// project needs and the ones only an optional QA role or sign-in uses.
+export function missingSecrets(root, env = process.env, marker = null) {
+  const optional = optionalSecrets(marker);
+  const missing = secretNames(root).filter((name) => !env[name]);
+  return { required: missing.filter((n) => !optional.has(n)), optional: missing.filter((n) => optional.has(n)) };
+}
+
+function secretSteps(secrets) {
+  const steps = [];
+  if (secrets.required.length) {
+    steps.push(`Define these variables in your user environment (see .agents/mcp-secrets.env.example): ${secrets.required.join(', ')}`);
+  }
+  if (secrets.optional.length) {
+    steps.push(`Optional, only for the QA roles or sign-ins you use: ${secrets.optional.join(', ')}`);
+  }
+  return steps;
 }
 
 function scaffoldNextSteps(opts, report, repos) {
   const steps = [
     'Run once per clone: git config core.hooksPath .githooks',
   ];
-  const secrets = missingSecrets(opts.root);
-  if (secrets.length) {
-    steps.push(`Define these variables in your user environment (see .agents/mcp-secrets.env.example): ${secrets.join(', ')}`);
-  }
+  steps.push(...secretSteps(missingSecrets(opts.root, process.env, { tickets: opts.tickets, autopilot: opts.autopilot })));
   steps.push('Approve the project MCP servers when your harness prompts for them.');
   if (opts.platform === 'win32') {
     steps.push('After the first git add, run: git update-index --chmod=+x .githooks/pre-commit');
@@ -1172,18 +1208,19 @@ function localNextSteps(report) {
   } else if (hooks[report.hooksPath]) {
     steps.push(hooks[report.hooksPath]);
   }
-  if (report.missingSecrets.length) {
-    steps.push(`Define these variables in your user environment (see .agents/mcp-secrets.env.example): ${report.missingSecrets.join(', ')}`);
-  }
+  steps.push(...secretSteps(report.missingSecrets));
   steps.push(...incompleteSteps(report));
   steps.push('Approve the project MCP servers when your harness prompts for them.');
   return steps;
 }
 
-function repoNextSteps(report, recorded) {
+function repoNextSteps(report, recorded, how = 'run') {
   if (!report.newRepos.length) return [];
   const names = report.newRepos.map((r) => r.name).join(', ');
   if (recorded) return [`Recorded ${names} in ${MARKER_PATH} and the managed .gitignore block; commit both files.`];
+  if (how === 'upgrade') {
+    return [`New nested clones not recorded in ${MARKER_PATH}: ${names}. Run upgrade with --apply <target,target> or --apply none, together with --record-repos, to record them and add them to the managed .gitignore block.`];
+  }
   return [`New nested clones not recorded in ${MARKER_PATH}: ${names}. Run again with --record-repos to record them and add them to the managed .gitignore block.`];
 }
 
@@ -1191,7 +1228,7 @@ export function runJoin(opts) {
   const report = emptyReport('join', opts);
   const marker = requireMarker(opts);
   report.hooksPath = ensureHooksPath(opts);
-  report.missingSecrets = missingSecrets(opts.root);
+  report.missingSecrets = missingSecrets(opts.root, process.env, marker);
   report.incomplete = incompleteFiles(opts.root, planPayload(markerOpts(opts, marker), marker.repos ?? [], markerHarnesses(marker)));
   const recorded = reconcileRepos(opts, marker, report);
   if (recorded) {
@@ -1235,8 +1272,11 @@ function upgradeNextSteps(report, from, version, applied) {
 }
 
 export function runUpgrade(opts) {
-  const report = emptyReport('upgrade', opts);
+  const report = { ...emptyReport('upgrade', opts), preview: opts.apply === null };
   const marker = requireMarker(opts);
+  if (opts.apply === null && opts.recordRepos) {
+    throw new InitError('bad-args', '--record-repos writes the marker and .gitignore, so upgrade takes it only together with --apply (use --apply none to record nothing else)');
+  }
   const version = pluginVersion();
   const from = typeof marker.pluginVersion === 'string' ? marker.pluginVersion : '0.0.0';
   const recorded = reconcileRepos(opts, marker, report);
@@ -1300,7 +1340,7 @@ export function runUpgrade(opts) {
   }
   report.written.sort();
   report.skipped.sort();
-  report.nextSteps = [...upgradeNextSteps(report, from, version, opts.apply !== null), ...repoNextSteps(report, recorded)];
+  report.nextSteps = [...upgradeNextSteps(report, from, version, opts.apply !== null), ...repoNextSteps(report, recorded, opts.apply === null ? 'upgrade' : 'run')];
   return report;
 }
 
@@ -1329,12 +1369,22 @@ export function proposeProjects(root, repos, source, warnings = []) {
 // key changes; an existing harness MCP file gets a proposal beside it, a
 // missing one is created with the ticket servers alone, and the secret names
 // go in a managed block of .agents/mcp-secrets.env.example.
-export function runTickets(opts) {
+export async function runTickets(opts) {
   const report = { ...emptyReport('tickets', opts), marker: null, mcp: [], secrets: [] };
   const marker = requireMarker(opts);
   if (!opts.sources) throw new InitError('bad-args', 'tickets needs --sources <file>');
   const tickets = loadTickets(opts.sources);
   report.marker = { before: marker.tickets ?? null, after: tickets };
+  loadSecretsFile(opts.root, process.env);
+  report.transportOnThisMachine = {};
+  for (const source of tickets?.sources ?? []) {
+    report.transportOnThisMachine[source.prefix] = await transportOnThisMachine({
+      provider: source.provider,
+      host: source.provider === 'github' ? 'github.com' : (source.host ?? 'gitlab.com'),
+      transport: effectiveTransport(tickets, source),
+      login: source.login ?? null,
+    });
+  }
   const clones = detectRepos(opts.root);
   report.proposedProjects = Object.fromEntries((tickets?.sources ?? [])
     .filter((source) => ['github', 'gitlab'].includes(source.provider))

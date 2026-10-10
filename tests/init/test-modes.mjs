@@ -142,7 +142,7 @@ test('join does not set core.hooksPath over hooks already in .git/hooks and name
 test('join reports the secret variables from the example file that are not defined', () => {
   const root = scaffolded();
   const report = run(['join', '--root', root]);
-  assert.deepEqual(report.missingSecrets, ['FIRECRAWL_API_KEY', 'BRAVE_API_KEY']);
+  assert.deepEqual(report.missingSecrets, { required: ['FIRECRAWL_API_KEY', 'BRAVE_API_KEY'], optional: [] });
   assert.ok(report.nextSteps.some((s) => s.includes('FIRECRAWL_API_KEY, BRAVE_API_KEY')));
   assert.ok(report.nextSteps.some((s) => /Approve the project MCP servers/.test(s)));
 });
@@ -870,4 +870,70 @@ test('an Odoo source that autopilot runs still needs its login', () => {
   const root = scaffolded();
   run(['tickets', '--root', root, '--sources', sourcesFile(odooOnly('https://erp.example.com', { login: undefined, autopilot: true }))]);
   assert.equal(run(['autopilot', '--root', root, '--answers', answersFile(autopilotExample()), '--dry-run'], { expectExit: 2 }).error.code, 'bad-tickets');
+});
+
+// Task 7 (#28 B3, B4, C3).
+const CLI_STUB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'task-lifecycle', 'fixtures', 'cli-stub.mjs');
+
+test('the tickets dry run shows the transport each source would use on this machine', () => {
+  const root = scaffolded();
+  const sources = ticketsExample();
+  const signedIn = run(['tickets', '--root', root, '--sources', sourcesFile(sources), '--dry-run'], { env: { ULTRAPOWERS_GLAB: CLI_STUB, ULTRAPOWERS_GH: CLI_STUB, STUB_AUTH_EXIT: '0', ODOO_API_KEY: '' } });
+  assert.deepEqual(signedIn.transportOnThisMachine, { GL: 'cli', GH: 'cli', ODOO: 'mcp' });
+  const signedOut = run(['tickets', '--root', root, '--sources', sourcesFile(sources), '--dry-run'], { env: { ULTRAPOWERS_GLAB: CLI_STUB, ULTRAPOWERS_GH: CLI_STUB, STUB_AUTH_EXIT: '1', ODOO_API_KEY: '' } });
+  assert.deepEqual(signedOut.transportOnThisMachine, { GL: 'mcp', GH: 'mcp', ODOO: 'mcp' });
+});
+
+test('an Odoo source with a login and ODOO_API_KEY is reported as json-rpc', () => {
+  const root = scaffolded();
+  const report = run(['tickets', '--root', root, '--sources', sourcesFile(odooOnly('https://erp.example.com')), '--dry-run'], { env: { ODOO_API_KEY: 'k1' } });
+  assert.deepEqual(report.transportOnThisMachine, { ODOO: 'json-rpc' });
+});
+
+test('upgrade reports preview: true without --apply and false with it', () => {
+  const root = scaffolded();
+  setMarkerVersion(root, '0.0.1');
+  assert.equal(run(['upgrade', '--root', root]).preview, true);
+  assert.equal(run(['upgrade', '--root', root, '--apply', 'none']).preview, false);
+});
+
+test('upgrade --record-repos without --apply is bad-args and writes nothing', () => {
+  const root = scaffolded();
+  gitRepo(path.join(root, 'svc-new'));
+  setMarkerVersion(root, '0.0.1');
+  const before = snapshot(root);
+  const report = run(['upgrade', '--root', root, '--record-repos'], { expectExit: 2 });
+  assert.equal(report.error.code, 'bad-args');
+  assert.match(report.error.message, /--apply/);
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
+});
+
+test('join lists the variable of an optional QA role under optional, not under missing', () => {
+  const root = scaffolded();
+  const data = marker(root);
+  data.qa.roles = [
+    { name: 'user', userEnv: 'QA_USER_USER', passwordEnv: 'QA_PW_USER', required: true },
+    { name: 'visitor', userEnv: 'QA_USER_VISITOR', passwordEnv: 'QA_PW_VISITOR', required: false },
+  ];
+  fs.writeFileSync(path.join(root, '.agents', 'ultrapowers.json'), `${JSON.stringify(data, null, 2)}\n`);
+  fs.appendFileSync(path.join(root, '.agents', 'mcp-secrets.env.example'), 'QA_PW_USER=         # QA role user\nQA_PW_VISITOR=      # QA role visitor\n');
+  const report = run(['join', '--root', root]);
+  assert.ok(report.missingSecrets.required.includes('QA_PW_USER'));
+  assert.ok(!report.missingSecrets.required.includes('QA_PW_VISITOR'));
+  assert.deepEqual(report.missingSecrets.optional, ['QA_PW_VISITOR']);
+  assert.ok(report.nextSteps.some((s) => s.startsWith('Define these variables') && !s.includes('QA_PW_VISITOR')));
+  assert.ok(report.nextSteps.some((s) => s.startsWith('Optional') && s.includes('QA_PW_VISITOR')));
+});
+
+test('GITLAB_TOKEN is optional for a GitLab source read through the browser-signed-in MCP server and not run by autopilot', () => {
+  const root = scaffolded();
+  run(['tickets', '--root', root, '--sources', sourcesFile({ transport: 'mcp', sources: [{ prefix: 'GL', provider: 'gitlab', namespace: 'acme' }] })]);
+  const report = run(['join', '--root', root], { env: { GITLAB_TOKEN: '' } });
+  assert.ok(report.missingSecrets.optional.includes('GITLAB_TOKEN'), JSON.stringify(report.missingSecrets));
+  assert.ok(!report.missingSecrets.required.includes('GITLAB_TOKEN'));
+  const data = marker(root);
+  data.tickets.transport = 'auto';
+  fs.writeFileSync(path.join(root, '.agents', 'ultrapowers.json'), `${JSON.stringify(data, null, 2)}\n`);
+  const auto = run(['join', '--root', root], { env: { GITLAB_TOKEN: '' } });
+  assert.ok(auto.missingSecrets.required.includes('GITLAB_TOKEN'), JSON.stringify(auto.missingSecrets));
 });
