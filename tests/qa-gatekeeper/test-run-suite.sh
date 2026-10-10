@@ -66,6 +66,52 @@ if [[ ! -f "$out6/.failed" ]]; then pass "a clean re-run clears the previous .fa
 if [[ "$(cat "$out6/probe.txt" 2>/dev/null)" == "fresh" ]]; then pass "the previous finished-at is gone while the new run is going"; else fail "the previous finished-at is gone while the new run is going"; fi
 if [[ ! -f "$out6/old.xml" ]]; then pass "results from the previous run are not judged again"; else fail "results from the previous run are not judged again"; fi
 
+# --- process group, pid file and --stop (#4). Each child would write late.json after 8 s
+# unless the group is stopped; the wrapper returns only once its child has ended, so the
+# absence of late.json is checked after the wrapper is reaped.
+snap() { (cd "$1" && find . -type f | sort | while read -r f; do cksum "$f"; done); }
+stop_repo="$TEST_ROOT/stop-repo"
+mkdir -p "$stop_repo"
+
+out_sh="$TEST_ROOT/out-stop-sh"
+bash "$RUNNER" "$stop_repo" "$out_sh" 'sh -c "sleep 8; echo x > {{out}}/late.json"' &
+runner_pid=$!
+sleep 1
+if [[ -s "$out_sh/pid" ]]; then pass "pid file written while the suite runs"; else fail "pid file written while the suite runs"; fi
+rc=0
+bash "$RUNNER" --stop "$out_sh" >/dev/null 2>&1 || rc=$?
+wait "$runner_pid" 2>/dev/null
+if [[ "$rc" -eq 0 ]]; then pass "--stop exits 0 on a live suite"; else fail "--stop exits 0 on a live suite (got $rc)"; fi
+if [[ -f "$out_sh/stopped-at" && ! -f "$out_sh/late.json" ]]; then pass "--stop ends a Git Bash sh child: stopped-at written, late write never happens"; else fail "--stop ends a Git Bash sh child: stopped-at written, late write never happens"; fi
+
+out_node="$TEST_ROOT/out-stop-node"
+bash "$RUNNER" "$stop_repo" "$out_node" 'node -e "setTimeout(()=>require(\"fs\").writeFileSync(process.env.QA_SUITE_OUT+\"/late.json\",\"x\"),8000)"' &
+runner_pid=$!
+sleep 2
+bash "$RUNNER" --stop "$out_node" >/dev/null 2>&1
+wait "$runner_pid" 2>/dev/null
+if [[ -f "$out_node/stopped-at" && ! -f "$out_node/late.json" ]]; then pass "--stop ends a native node child"; else fail "--stop ends a native node child"; fi
+
+out_to="$TEST_ROOT/out-timeout"
+QA_SUITE_TIMEOUT_SEC=1 bash "$RUNNER" "$stop_repo" "$out_to" 'sleep 8; echo x > {{out}}/late.json' &
+runner_pid=$!
+wait "$runner_pid" 2>/dev/null
+if grep -q timeout "$out_to/stopped-at" 2>/dev/null && [[ ! -f "$out_to/late.json" ]]; then pass "QA_SUITE_TIMEOUT_SEC stops the suite and writes stopped-at with the reason timeout"; else fail "QA_SUITE_TIMEOUT_SEC stops the suite and writes stopped-at with the reason timeout"; fi
+
+out_done="$TEST_ROOT/out-finished"
+bash "$RUNNER" "$stop_repo" "$out_done" "echo done > {{out}}/done.txt"
+before="$(snap "$out_done")"
+rc=0
+bash "$RUNNER" --stop "$out_done" >/dev/null 2>&1 || rc=$?
+after="$(snap "$out_done")"
+if [[ "$rc" -eq 0 && "$before" == "$after" ]]; then pass "--stop on a finished suite exits 0 and leaves the out dir untouched"; else fail "--stop on a finished suite exits 0 and leaves the out dir untouched (rc $rc)"; fi
+
+out_idle="$TEST_ROOT/out-idle"
+mkdir -p "$out_idle"
+rc=0
+bash "$RUNNER" --stop "$out_idle" >/dev/null 2>&1 || rc=$?
+if [[ "$rc" -eq 0 && -f "$out_idle/stopped-at" ]]; then pass "--stop exits 0 when nothing is alive"; else fail "--stop exits 0 when nothing is alive (rc $rc)"; fi
+
 rc=0
 bash "$RUNNER" "$TEST_ROOT/repo" >/dev/null 2>&1 || rc=$?
 if [[ "$rc" -ne 0 ]]; then pass "missing arguments exit non-zero"; else fail "missing arguments exit non-zero"; fi
