@@ -179,8 +179,27 @@ if (!ev || typeof ev !== "object") {
   process.exit(0);
 }
 const root = process.argv[1];
-const inp = ev.tool_input && typeof ev.tool_input === "object" ? ev.tool_input : {};
 const str = (v) => (typeof v === "string" ? v : "");
+// The harnesses spell the event differently: tool_name / toolName, tool_input / toolArgs / input
+// (Copilot CLI sends toolArgs as a JSON string). Normalize the documented shapes, then refuse
+// what is left: an event with no readable tool name or no object as input is not "nothing to
+// check", it is a call that cannot be judged.
+const shapeless = () => {
+  process.stdout.write(["shapeless", "", "", "", "", "", "", "", ""].join("\0") + "\0");
+  process.exit(0);
+};
+if (Array.isArray(ev)) shapeless();
+const toolName = typeof ev.tool_name === "string" && ev.tool_name ? ev.tool_name : ev.toolName;
+if (typeof toolName !== "string" || !toolName) shapeless();
+let toolInput = [ev.tool_input, ev.toolArgs, ev.input].find((v) => v !== undefined && v !== null);
+if (typeof toolInput === "string") { try { toolInput = JSON.parse(toolInput); } catch (e) { shapeless(); } }
+if (!toolInput || typeof toolInput !== "object" || Array.isArray(toolInput)) shapeless();
+const inp = { ...toolInput };
+// A shell command given as an argv array runs as the words joined.
+if (Array.isArray(inp.command)) {
+  if (!inp.command.every((w) => typeof w === "string")) shapeless();
+  inp.command = inp.command.join(" ");
+}
 let qa = {};
 let sources = [];
 try {
@@ -227,7 +246,7 @@ for (const key of ["paths", "files"]) {
 }
 // A patch tool may carry its patch under another field than command (Codex, Hermes); only a
 // patch tool reads those fields, so free text of another tool is never taken for a command.
-const isPatchTool = /patch/i.test(str(ev.tool_name));
+const isPatchTool = /patch/i.test(toolName);
 const command = str(inp.command) || (isPatchTool ? (str(inp.patch) || str(inp.patchText) || str(inp.input) || str(inp.diff)) : "");
 // The path resolver is an ES module: import() works on every node this plugin supports (18+).
 import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guard-paths.mjs")).href).then((guard) => {
@@ -249,7 +268,7 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
   const keyReal = pathFields.map((p) => { const r = resolve(p); return r.rel ? r.rel.slice(2) : r.real; }).filter(Boolean);
   // The files a patch names (Codex apply_patch, Droid ApplyPatch), each as raw, rel and real.
   const patchRecs = [];
-  if (/^(apply_?patch)$/i.test(str(ev.tool_name))) {
+  if (/^(apply_?patch)$/i.test(toolName)) {
     for (const line of command.split("\n")) {
       const m = /^\*\*\* (?:Add|Update|Delete) File: *(.+)$/.exec(line) || /^\*\*\* Move to: *(.+)$/.exec(line);
       if (!m) continue;
@@ -258,7 +277,7 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
     }
   }
   process.stdout.write([
-    "ok", str(ev.tool_name), command, writeRaw,
+    "ok", toolName, command, writeRaw,
     str(inp.url), str(ev.cwd), allowed.join(","), norm(hosts.forbidden).join(","), ticket,
     pathFields.join("\n"), trackerHosts.join(","), ignoreCase ? "1" : "0",
     w.real, w.rel, keyReal.join("\n"), patchRecs.join("\n"),
@@ -270,6 +289,7 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
 case "$parse_status" in
   noresolver:*) deny "the path resolver hooks/lib/guard-paths.mjs cannot be loaded (${parse_status#noresolver:}); every call is refused during $run_kind" ;;
   badconfig:*) deny "the project config .agents/ultrapowers.json cannot be read (${parse_status#badconfig:}); every call is refused while a run marker exists under .ultrapowers/" ;;
+  shapeless) deny "the tool event has no readable tool name or input; an uninspectable call is refused during $run_kind" ;;
 esac
 [ "$parse_status" = "ok" ] || deny "the tool event could not be parsed; an uninspectable call is refused during $run_kind"
 
@@ -366,6 +386,8 @@ case "$tool_lc" in
 esac
 
 if [ "$is_write_tool" -eq 1 ]; then
+  # A write tool whose path the hook cannot read (an unknown key) is a write that cannot be judged.
+  [ -n "$wpath" ] || deny "a write tool without a readable path cannot be verified during $run_kind"
   # The protected-name rules judge the path inside the project (or the full canonical path when
   # it lies outside); both come from the node block, resolved to the real spelling.
   wcheck="${wpath_rel:-$wpath_real}"

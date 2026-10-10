@@ -32,7 +32,18 @@ export function markerRoot(startDir) {
 // `path`; the hook reads `file_path`, `command` and `url`, so those are filled from the spellings
 // the harness used. Everything else travels as it came, for the hook's key-material scan.
 export function guardrailEvent({ toolName, input, cwd }) {
-  const inp = input && typeof input === 'object' ? { ...input } : {};
+  // Copilot CLI sends the arguments as a JSON string: parse it. Anything else that is not an
+  // object travels unchanged, so the hook refuses it; only a missing input is an empty one.
+  let raw = input;
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) raw = parsed;
+    } catch { /* kept as written */ }
+  }
+  if (raw === undefined || raw === null) raw = {};
+  if (typeof raw !== 'object' || Array.isArray(raw)) return { tool_name: String(toolName ?? ''), tool_input: raw, cwd: String(cwd ?? '') };
+  const inp = { ...raw };
   const first = (...keys) => keys.map((k) => inp[k]).find((v) => typeof v === 'string' && v !== '');
   const filePath = first('file_path', 'filePath', 'path', 'notebook_path', 'file');
   const command = first('command', 'cmd');

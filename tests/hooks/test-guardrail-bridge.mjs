@@ -101,3 +101,42 @@ test('guardrail-cli outside a run allows everything, whatever the payload', () =
   assert.equal(runCli({ tool_name: 'Bash', tool_input: { command: 'git push origin main' }, cwd: idle }).status, 0);
   assert.equal(runCli({ cwd: idle, garbage: true }).status, 0);
 });
+
+// ---- shapeless events (issue 2) ----
+test('guardrailEvent parses a string input as JSON and passes any other non-object input through unchanged', () => {
+  const parsed = guardrailEvent({ toolName: 'bash', input: JSON.stringify({ command: 'git status' }), cwd: '/p' });
+  assert.deepEqual(parsed.tool_input, { command: 'git status' });
+  assert.equal(guardrailEvent({ toolName: 'bash', input: 'not json', cwd: '/p' }).tool_input, 'not json');
+  assert.deepEqual(guardrailEvent({ toolName: 'bash', input: ['git', 'push'], cwd: '/p' }).tool_input, ['git', 'push']);
+  assert.deepEqual(guardrailEvent({ toolName: 'bash', input: undefined, cwd: '/p' }).tool_input, {});
+});
+
+test('a Copilot-shaped call, its toolArgs a JSON string with escaped quotes, is judged like the object form', () => {
+  const root = project();
+  const push = runGuardrail({ toolName: 'bash', input: JSON.stringify({ command: 'echo "hi" && git push origin GH-16-x' }), cwd: root });
+  assert.equal(push.deny, true, JSON.stringify(push));
+  assert.match(push.reason, /git push is never allowed/);
+  const status = runGuardrail({ toolName: 'bash', input: JSON.stringify({ command: 'echo "hi" && git status' }), cwd: root });
+  assert.deepEqual(status, { deny: false });
+});
+
+test('an input that is not an object or a JSON object string is refused during a run', () => {
+  const root = project();
+  for (const input of ['not json', ['git', 'push'], '"a string"']) {
+    const r = runGuardrail({ toolName: 'bash', input, cwd: root });
+    assert.equal(r.deny, true, JSON.stringify(input));
+    assert.match(r.reason, /no readable tool name or input/);
+  }
+});
+
+test('guardrail-cli refuses an array event and a payload without a tool name while a run is active', () => {
+  const root = project();
+  const runIn = (payload) => spawnSync(process.execPath, [CLI], { input: JSON.stringify(payload), encoding: 'utf8', cwd: root });
+  for (const payload of [[{ tool_name: 'Bash', tool_input: { command: 'git status' } }], { command: 'git push origin GH-16-x' }]) {
+    const r = runIn(payload);
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /no readable tool name or input|could not be parsed/);
+  }
+  const copilot = runIn({ toolName: 'Bash', toolArgs: JSON.stringify({ command: 'git status' }), cwd: root });
+  assert.equal(copilot.status, 0, copilot.stderr);
+});

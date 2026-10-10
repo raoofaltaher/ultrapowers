@@ -268,7 +268,7 @@ def _guardrail_verdict(skills_dir, tool_name, args, cwd):
     node = shutil.which("node")
     if not cli or not node:
         return {"action": "block", "message": "the ultrapowers guardrail could not run (node or the hook is missing); a tool call during a run is refused without it"}
-    event = json.dumps({"hook_event_name": "PreToolUse", "tool_name": tool_name, "tool_input": args if isinstance(args, dict) else {}, "cwd": cwd})
+    event = json.dumps({"hook_event_name": "PreToolUse", "tool_name": tool_name, "tool_input": {} if args is None else args, "cwd": cwd})
     try:
         proc = subprocess.run([node, cli], input=event, capture_output=True, text=True, timeout=20, cwd=cwd)
     except (OSError, subprocess.SubprocessError) as exc:

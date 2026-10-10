@@ -28,6 +28,9 @@ export function eventFrom(text, { antigravity: ag = false } = {}) {
     return null;
   }
   if (!ev || typeof ev !== 'object') return null;
+  // An array has no tool name and no input: it goes to the hook as written, which refuses it
+  // while a run is active.
+  if (Array.isArray(ev)) return { toolName: '', input: ev, cwd: process.cwd() };
   if (ag) {
     const call = ev.toolCall ?? {};
     const name = String(call.name ?? '');
@@ -39,7 +42,7 @@ export function eventFrom(text, { antigravity: ag = false } = {}) {
     const cwd = typeof argsIn.Cwd === 'string' ? argsIn.Cwd : Array.isArray(ev.workspacePaths) && ev.workspacePaths[0] ? ev.workspacePaths[0] : process.cwd();
     return { toolName: AG_TOOLS[name] ?? name, input, cwd };
   }
-  return { toolName: ev.tool_name ?? ev.toolName ?? '', input: ev.tool_input ?? ev.toolArgs ?? ev.input ?? {}, cwd: ev.cwd ?? process.cwd() };
+  return { toolName: ev.tool_name ?? ev.toolName ?? '', input: ev.tool_input ?? ev.toolArgs ?? ev.input, cwd: ev.cwd ?? process.cwd() };
 }
 
 if (process.argv[1] && /guardrail-cli\.mjs$/.test(process.argv[1].replace(/\\/g, '/'))) {

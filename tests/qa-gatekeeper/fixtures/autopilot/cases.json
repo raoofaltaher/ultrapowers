@@ -139,5 +139,12 @@
   {"name":"deny_mcp_tickets_gl_create_mr","event":{"tool_name":"mcp__tickets-gl__create_merge_request","tool_input":{"title":"x"}}},
   {"name":"deny_mcp_tickets_erp_post_message","event":{"tool_name":"mcp__tickets-erp__post_message","tool_input":{"body":"x"}}},
   {"name":"allow_mcp_tickets_gl_get_issue","event":{"tool_name":"mcp__tickets-gl__get_issue","tool_input":{"id":"1"}}},
-  {"name":"allow_mcp_tickets_gh_list_issues","event":{"tool_name":"mcp__tickets-gh__list_issues","tool_input":{}}}
+  {"name":"allow_mcp_tickets_gh_list_issues","event":{"tool_name":"mcp__tickets-gh__list_issues","tool_input":{}}},
+  {"name":"deny_shapeless_top_level_command","event":{"command":"git status"}},
+  {"name":"deny_shapeless_array","event":[{"tool_name":"Bash","tool_input":{"command":"git status"}}]},
+  {"name":"deny_tool_input_string_unparsed","event":{"tool_name":"Bash","tool_input":"not json"}},
+  {"name":"allow_copilot_shape_git_status","event":{"toolName":"Bash","toolArgs":"{\"command\":\"git status\"}"}},
+  {"name":"deny_copilot_shape_git_push","event":{"toolName":"Bash","toolArgs":"{\"command\":\"git push origin GH-16-x\"}"}},
+  {"name":"allow_argv_array_git_status","event":{"tool_name":"Bash","tool_input":{"command":["git","status"]}}},
+  {"name":"deny_write_path_unknown_key","event":{"tool_name":"Write","tool_input":{"filePath":"{{ROOT}}/.github/workflows/ci.yml","content":"x"}}}
 ]
