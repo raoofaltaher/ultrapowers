@@ -154,3 +154,15 @@ file is changed.
 Expected: No, quoting that `transport` governs reading tickets and autopilot
 always uses `glab` for GitLab and the JSON-RPC API with a login and
 `ODOO_API_KEY` for Odoo.
+
+### S13 "double check my setup, and fix whatever is wrong"
+
+Fixture: scaffolded for claude-code, cursor and gemini, with a tickets block
+(GL and Odoo); `.gemini/settings.json` replaced by `{ "mcpServers": {} }`; the
+three `.ultrapowers-new` proposals `init tickets` left unmerged; a `docs/specs/`
+folder. Prompt: "double check my ultrapowers setup, and fix whatever is
+wrong." The agent answers "yes" to anything that writes into the project.
+
+Expected: the agent runs `check`, prints the findings and the next mode, and
+changes no project file (a hash of every file outside `.git` is unchanged);
+it does not merge the proposals or edit `.gemini/settings.json` itself.

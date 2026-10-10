@@ -1,6 +1,6 @@
 ---
 name: init
-description: Use when a project has no .agents/ultrapowers.json, when the session context says the ultrapowers scaffold is missing, older than the plugin or unreadable, or when your human partner asks to set up, join or upgrade an ultrapowers project
+description: Use when a project has no .agents/ultrapowers.json, when the session context says the ultrapowers scaffold is missing, older than the plugin or unreadable, or when your human partner asks to set up, join, upgrade or check an ultrapowers project
 ---
 
 # Init
@@ -15,7 +15,7 @@ Set up, join or upgrade an ultrapowers project. A bundled engine renders the tem
 
 ## Arguments
 
-`name` (optional): the project name for scaffold mode. Your argument, as passed: `$ARGUMENTS`; that is the name. Empty, or still the unreplaced placeholder (a dollar sign and the word ARGUMENTS): read the trailing `ARGUMENTS:` line of the invocation. An argument starting with `tickets` is not a name: run Detect, then Ticket sources. `autopilot`: Detect, then Autopilot.
+`name` (optional): the project name for scaffold mode. Your argument, as passed: `$ARGUMENTS`; that is the name. Empty, or still the unreplaced placeholder (a dollar sign and the word ARGUMENTS): read the trailing `ARGUMENTS:` line of the invocation. An argument starting with `tickets` is not a name: run Detect, then Ticket sources. `autopilot`: Detect, then Autopilot. `check`: Check.
 
 ## Before running anything
 
@@ -73,6 +73,10 @@ node "<SKILL_DIR>/scripts/init.mjs" detect --root "<ROOT>"
 5. For each `.ultrapowers-new` path in `written`, offer `git diff --no-index <path> <path>.ultrapowers-new`, merge only the parts your human partner picks, then delete the proposal.
 6. Continue with join mode for this clone.
 
+## Check
+
+Run `node "<SKILL_DIR>/scripts/init.mjs" check --root "<ROOT>"`. It writes nothing and needs no yes. Print `findings` grouped by `kind`, each with `path` and `detail`, then `next`, the mode that fits. Never fix a finding by hand or run a mode unasked: offer the matching mode and wait.
+
 ## Ticket sources
 
 Read `<SKILL_DIR>/ticket-sources.md` and follow it: questions, a sources file, `node "<SKILL_DIR>/scripts/init.mjs" tickets --root "<ROOT>" --sources "<file>" --dry-run`, then an explicit yes. Tokens never pass through you: never repeat or write a pasted one, and tell your human partner it should be revoked.
@@ -114,6 +118,7 @@ Print `markerError`. Run `git diff -- .agents/ultrapowers.json`; a merge leaves 
 | Marker current | `join --dry-run`, then `join` |
 | Marker older | `upgrade`, then `upgrade --apply <paths>` or `--apply none`, then join |
 | Marker unreadable | Repair; no engine write |
+| Audit, "double check my setup" | `check`; it writes nothing |
 | Ticket sources | `tickets --sources <file> --dry-run`, then without `--dry-run` after the yes |
 | Autopilot | `autopilot --answers <file> --dry-run`, then without it after the yes |
 
@@ -128,6 +133,7 @@ Print `markerError`. Run `git diff -- .agents/ultrapowers.json`; a merge leaves 
 7. Repair: show the error, hand the fix to your human partner, Detect again
 8. Ticket sources: `ticket-sources.md`, dry run, explicit yes
 9. Autopilot: `autopilot.md`, dry run, explicit yes
+10. Check: run it, print the findings, offer the matching mode
 
 ## Red Flags
 

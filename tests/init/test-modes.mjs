@@ -937,3 +937,77 @@ test('GITLAB_TOKEN is optional for a GitLab source read through the browser-sign
   const auto = run(['join', '--root', root], { env: { GITLAB_TOKEN: '' } });
   assert.ok(auto.missingSecrets.required.includes('GITLAB_TOKEN'), JSON.stringify(auto.missingSecrets));
 });
+
+// Task 8: init check (#28 C1).
+const ALL_SET = { FIRECRAWL_API_KEY: 'x', BRAVE_API_KEY: 'x', CONTEXT7_API_KEY: 'x' };
+
+function setMarker(root, change) {
+  const data = marker(root);
+  change(data);
+  fs.writeFileSync(path.join(root, '.agents', 'ultrapowers.json'), `${JSON.stringify(data, null, 2)}\n`);
+}
+
+test('check on a clean scaffold reports no finding and writes nothing', () => {
+  const root = scaffolded();
+  const before = snapshot(root);
+  const report = run(['check', '--root', root], { env: ALL_SET });
+  assert.equal(report.mode, 'check');
+  assert.deepEqual(report.findings, []);
+  assert.equal(report.next, 'join');
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
+});
+
+test('check reports each defect of a scaffold and writes nothing', () => {
+  const root = scaffolded();
+  fs.writeFileSync(path.join(root, '.gemini', 'settings.json'), '{ "mcpServers": {} }\n');
+  fs.writeFileSync(path.join(root, '.mcp.json.ultrapowers-new'), '{}\n');
+  fs.mkdirSync(path.join(root, 'docs', 'specs'), { recursive: true });
+  setMarker(root, (data) => { data.tickets = twoSources(); });
+  const before = snapshot(root);
+  const report = run(['check', '--root', root], { env: { ...ALL_SET, FIRECRAWL_API_KEY: '' } });
+  const has = (kind, p) => report.findings.find((f) => f.kind === kind && (p === undefined || f.path === p));
+  assert.ok(has('hook-missing', '.gemini/settings.json'), JSON.stringify(report.findings));
+  assert.ok(has('stale-proposal', '.mcp.json.ultrapowers-new'));
+  const server = has('server-missing', '.cursor/mcp.json');
+  assert.ok(server && server.detail.includes('tickets-gl') && server.detail.includes('tickets-gh'));
+  assert.ok(has('near-folder', 'docs/specs'));
+  const secrets = has('secrets');
+  assert.ok(secrets && secrets.detail.includes('FIRECRAWL_API_KEY'));
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
+  assert.ok(report.nextSteps.length > 0);
+});
+
+test('check reports an incomplete settings file and an unreadable MCP file', () => {
+  const root = scaffolded();
+  fs.writeFileSync(path.join(root, '.claude', 'settings.json'), '{}\n');
+  fs.writeFileSync(path.join(root, '.cursor', 'mcp.json'), '{ "mcpServers": {}, }\n');
+  setMarker(root, (data) => { data.tickets = twoSources(); });
+  const report = run(['check', '--root', root], { env: ALL_SET });
+  assert.ok(report.findings.some((f) => f.kind === 'settings-incomplete' && f.path === '.claude/settings.json' && f.detail.includes('outputStyle')));
+  assert.ok(report.findings.some((f) => f.kind === 'unreadable' && f.path === '.cursor/mcp.json'));
+});
+
+test('check with no marker says scaffold is next and writes nothing', () => {
+  const root = tmpWorkspace('bare');
+  const before = snapshot(root);
+  const report = run(['check', '--root', root]);
+  assert.equal(report.next, 'scaffold');
+  assert.deepEqual(report.findings, []);
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
+});
+
+test('check tells an older scaffold to upgrade', () => {
+  const root = scaffolded();
+  setMarkerVersion(root, '0.0.1');
+  const report = run(['check', '--root', root], { env: ALL_SET });
+  assert.equal(report.next, 'upgrade');
+  assert.ok(report.findings.some((f) => f.kind === 'upgrade-available'));
+});
+
+test('check reports the ticket sources and the autopilot mode it found', () => {
+  const root = scaffolded();
+  setMarker(root, (data) => { data.tickets = twoSources(); data.autopilot = { mode: 'gated' }; });
+  const report = run(['check', '--root', root], { env: ALL_SET });
+  assert.equal(report.ticketsConfigured, true);
+  assert.equal(report.autopilotMode, 'gated');
+});

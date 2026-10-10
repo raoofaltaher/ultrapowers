@@ -83,7 +83,7 @@ fi
 
 for mode in $(printf '%s\n' "$engine_lines" | grep -oE 'init\.mjs" [a-z]+' | awk '{print $2}' | sort -u); do
   case "$mode" in
-    scaffold | join | upgrade | detect | tickets | autopilot) pass "engine mode '$mode' exists" ;;
+    scaffold | join | upgrade | detect | tickets | autopilot | check) pass "engine mode '$mode' exists" ;;
     *) fail "engine mode '$mode' exists" ;;
   esac
 done

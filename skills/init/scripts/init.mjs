@@ -22,7 +22,7 @@ export const BLOCK_START = '# >>> ultrapowers';
 export const BLOCK_END = '# <<< ultrapowers';
 const SPECIAL_DIRS = new Set(['_blocks', '_nested']);
 const NON_TEMPLATE_FILES = new Set(['.mcp.json', 'CHANGES.json']);
-const MODES = ['scaffold', 'join', 'upgrade', 'detect', 'tickets', 'autopilot'];
+const MODES = ['scaffold', 'join', 'upgrade', 'detect', 'tickets', 'autopilot', 'check'];
 const SECRETS_EXAMPLE = '.agents/mcp-secrets.env.example';
 
 export const ALL_HARNESSES = [
@@ -1450,6 +1450,113 @@ export async function runTickets(opts) {
   return report;
 }
 
+const nearKey = (name) => name.toLowerCase().replace(/[-_]/g, '');
+
+// Folders whose names are near a knowledge-base folder without being it (`brand-book` for
+// `brandbook`, `Specs` for `specs`), and knowledge-base folders nested under docs/.
+export function nearFolders(root) {
+  const out = [];
+  const dirs = (dir) => (fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name) : []);
+  for (const kb of KB_FOLDERS) {
+    for (const name of dirs(root)) {
+      if (!name.startsWith('.') && name !== kb && nearKey(name) === nearKey(kb)) out.push({ kb, existing: name });
+    }
+    for (const name of dirs(path.join(root, 'docs'))) {
+      if (nearKey(name) === nearKey(kb)) out.push({ kb, existing: `docs/${name}` });
+    }
+  }
+  return out;
+}
+
+function findProposals(root, dir = root, depth = 0, out = []) {
+  if (depth > 4) return out;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === '.git' || entry.name === 'node_modules') continue;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (!fs.existsSync(path.join(full, '.git'))) findProposals(root, full, depth + 1, out);
+    } else if (entry.name.endsWith(PROPOSAL_SUFFIX)) {
+      out.push(path.relative(root, full).split(path.sep).join('/'));
+    }
+  }
+  return out.sort();
+}
+
+// Audit a scaffold without writing anything: the settings files and hooks the plugin needs, the
+// ticket servers in each harness file, proposals still waiting, undefined variables, near-named
+// folders. Every finding is { kind, path, detail }.
+export function runCheck(opts) {
+  const report = { ...emptyReport('check', opts), findings: [], next: null, ticketsConfigured: false, autopilotMode: 'off' };
+  if (!fs.existsSync(opts.root) || !fs.statSync(opts.root).isDirectory()) {
+    throw new InitError('bad-root', `${opts.root} is not a directory`);
+  }
+  const add = (kind, file, detail) => {
+    if (!report.findings.some((f) => f.kind === kind && f.path === file)) report.findings.push({ kind, path: file, detail });
+  };
+  let marker = null;
+  try {
+    marker = readMarker(opts.root);
+  } catch (err) {
+    if (!(err instanceof InitError && err.code === 'marker-corrupt')) throw err;
+    add('marker-corrupt', MARKER_PATH, err.message);
+    report.next = 'repair';
+  }
+  if (marker === null && report.next === null) {
+    const workspaceRoot = findMarkerAbove(opts.root);
+    if (workspaceRoot) add('nested-clone', workspaceRoot, `${opts.root} sits inside the ultrapowers workspace; run init from that root`);
+    else report.next = 'scaffold';
+  }
+  if (marker && typeof marker === 'object' && !Array.isArray(marker)) {
+    const version = pluginVersion();
+    const from = typeof marker.pluginVersion === 'string' ? marker.pluginVersion : '0.0.0';
+    report.next = compareVersions(from, version) < 0 ? 'upgrade' : 'join';
+    if (report.next === 'upgrade') add('upgrade-available', MARKER_PATH, `the scaffold is from ${from} and the plugin is ${version}`);
+    const harnesses = markerHarnesses(marker);
+    const plan = planPayload(markerOpts(opts, marker), marker.repos ?? [], harnesses);
+    for (const item of incompleteFiles(opts.root, plan)) {
+      if (item.unreadable !== undefined) {
+        add('unreadable', item.path, `not strict JSON (${item.unreadable}); compare it with the template by hand`);
+        continue;
+      }
+      const rest = item.missing.filter((m) => m !== 'hooks.BeforeTool');
+      if (rest.length !== item.missing.length) {
+        add('hook-missing', item.path, 'no BeforeTool hook names ultrapowers-guardrail.mjs, so the guardrail does not run on Gemini CLI; add the hook of the template by hand');
+      }
+      if (rest.length) add('settings-incomplete', item.path, `lacks: ${rest.join(', ')}; merge them by hand`);
+    }
+    const launcher = '.gemini/hooks/ultrapowers-guardrail.mjs';
+    if (harnesses.includes('gemini') && !fs.existsSync(path.join(opts.root, launcher))) {
+      add('missing-file', launcher, 'the guardrail launcher is missing; upgrade lists it, or copy it from the plugin templates');
+    }
+    const tickets = marker.tickets && validateTickets(marker.tickets).length === 0 ? marker.tickets : null;
+    report.ticketsConfigured = Boolean(marker.tickets);
+    if (marker.autopilot && typeof marker.autopilot.mode === 'string') report.autopilotMode = marker.autopilot.mode;
+    const servers = ticketServers(tickets);
+    if (Object.keys(servers).length) {
+      for (const { target, content } of generateMcpFiles(harnesses, { extra: servers, canonical: false })) {
+        const full = path.join(opts.root, target);
+        if (!fs.existsSync(full)) {
+          add('server-missing', target, `the file does not exist; it lacks ${Object.keys(servers).join(', ')}`);
+          continue;
+        }
+        const merged = mergeMcpFile(target, fs.readFileSync(full, 'utf8'), content);
+        if (merged.unreadable !== undefined) add('unreadable', target, `not strict JSON (${merged.unreadable}); add ${Object.keys(servers).join(', ')} by hand`);
+        else if (merged.added.length) add('server-missing', target, `lacks ${merged.added.join(', ')}; run init tickets for a proposal`);
+      }
+    }
+    const secrets = missingSecrets(opts.root, process.env, marker);
+    if (secrets.required.length) add('secrets', SECRETS_EXAMPLE, `not defined: ${secrets.required.join(', ')}`);
+    if (secrets.optional.length) add('secrets-optional', SECRETS_EXAMPLE, `not defined, optional: ${secrets.optional.join(', ')}`);
+  }
+  for (const proposal of findProposals(opts.root)) add('stale-proposal', proposal, `merge it into ${proposal.slice(0, -PROPOSAL_SUFFIX.length)} with your human partner, then delete it`);
+  for (const near of nearFolders(opts.root)) add('near-folder', near.existing, `near the knowledge-base folder ${near.kb}/; decide with your human partner which one the project uses`);
+  report.nextSteps = [
+    ...report.findings.map((f) => `${f.kind}: ${f.path}: ${f.detail}`),
+    ...(report.next ? [`init mode for this project: ${report.next}`] : []),
+  ];
+  return report;
+}
+
 const LABEL_STYLE = {
   ready: ['0e8a16', 'autopilot: take this ticket'],
   approve: ['1d76db', 'autopilot: the packet is approved'],
@@ -1532,7 +1639,7 @@ export async function runAutopilot(opts) {
 export async function main(argv) {
   try {
     const opts = parseArgs(argv);
-    const runners = { scaffold: runScaffold, detect: runDetect, join: runJoin, upgrade: runUpgrade, tickets: runTickets, autopilot: runAutopilot };
+    const runners = { scaffold: runScaffold, detect: runDetect, join: runJoin, upgrade: runUpgrade, tickets: runTickets, autopilot: runAutopilot, check: runCheck };
     const report = await runners[opts.mode](opts);
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     return 0;
