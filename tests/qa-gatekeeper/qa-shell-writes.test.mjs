@@ -102,7 +102,9 @@ test('the lanes\' own commands still pass', () => {
   }
 });
 
-test('Windows paths and a root with a space compare as the same place', () => {
+// A Windows-shaped scenario: the Git Bash root and the C:\ spelling resolve to one real place only
+// on a Windows host, which is where such paths occur (the Windows CI job runs this suite).
+test('Windows paths and a root with a space compare as the same place', { skip: process.platform !== 'win32' }, () => {
   const win = { cwd: '/c/users/msi 18/proj', root: '/c/users/msi 18/proj', ticket: '1234' };
   assert.ok(allowed("printf x > 'C:\\Users\\MSI 18\\proj\\reviews\\1234\\a.txt'", win));
   assert.ok(allowed('printf x > "C:/Users/MSI 18/proj/.ultrapowers/x"', win));
