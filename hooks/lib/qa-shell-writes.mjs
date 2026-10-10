@@ -137,6 +137,11 @@ function normPath(p) {
 // switches, written by the engine outside the stage. The QA marker stays writable: the QA skill
 // writes and removes it itself inside the session.
 const PROTECTED_RE = /(^|\/)\.ssh\/|authorized_keys|id_rsa|id_ed25519|(^|\/)\.aws\/|mcp-secrets\.env|\.local\.(sh|env|json)$|hooks\/qa-guardrail|\.agents\/ultrapowers\.json|(^|\/)\.claude\/|(^|\/)\.git\/|(^|\/)\.githooks\/|(^|\/)\.[a-z0-9_-]+\/settings(\.local)?\.json$|(^|\/)tasks\/[^/]+\/(autopilot\.json|stage-log\.jsonl)$|(^|\/)\.ultrapowers\/(autopilot-active|autopilot-stop)$|(^|\/)\.ultrapowers\/autopilot(\/|$)|(^|\/)\.ultrapowers$/;
+// Key material no stage may read through a shell (the same list as the hook's shell rule). The
+// hook tests the typed command; an 8.3 short name (MCP-SE~1.ENV) hides the name from it, so any
+// word with an alias-shaped segment is resolved here and its real name is tested.
+const KEY_RE = /(^|\/)\.ssh\/|authorized_keys|id_rsa|id_ed25519|\.aws\/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|\/)\.env($|\.)/;
+const SHORT_SEG = /[^\\/]~[0-9]/;
 const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)hooks\/(qa-guardrail|session-start|team-memory-[a-z]+|lib\/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|\/)\.gemini\/hooks\/|(^|\/)\.husky\/|(^|\/)\.pre-commit-config\.ya?ml$|(^|\/)lefthook\.ya?ml$|(^|\/)\.env($|\.)/;
 // Git subcommands an autopilot stage may run: the read-only set plus the commands that build the
 // ticket branch. Pushing and integrating belong to the engine; nothing discards work; `config` and
@@ -353,6 +358,18 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     if (!inArea(real)) deny(`${what} (${raw}) is outside ${areaText}; shell writes during ${runKind} are limited to ${autopilot ? 'the workspace' : 'those folders'}`);
   };
 
+  // A word spelled with an 8.3 alias that resolves to key material, whatever reads it (issue #31).
+  const checkAlias = (w, dir) => {
+    const raw = resolveWord(w);
+    if (raw === null || !SHORT_SEG.test(raw)) return;
+    let p = normPath(raw);
+    if (!p.startsWith('/')) p = `${dir === null ? rootC : dir}/${p.replace(/^\.\//, '')}`;
+    const real = realCanonical(p, rootC);
+    const inner = rel(real, rootC, ignoreCase);
+    const l = (inner === null ? real : inner).toLowerCase().replace(/\.env\.example/g, '');
+    if (KEY_RE.test(l)) deny(`key material (${raw}) is never read, searched, uploaded or written during ${runKind}`);
+  };
+
   const walk = (src, startDir, container, depth) => {
     if (depth > 4) return deny('the command nests shells too deeply to be verified');
     let dir = startDir;
@@ -360,6 +377,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     let cmd = [];
     const flush = () => { if (cmd.length) simple(cmd); cmd = []; };
     const simple = (items) => {
+      for (const t of items) if (t.k === 'w') checkAlias(t, dir);
       // redirections first; they apply whatever the program is
       const words = [];
       // True when standard output of this command goes to the null device: only then is a

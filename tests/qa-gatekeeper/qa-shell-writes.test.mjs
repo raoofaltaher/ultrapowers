@@ -276,3 +276,20 @@ test('psql takes its SQL only from -c, and only the psql word counts', () => {
   // an `sh -c` elsewhere in the line does not satisfy the -c requirement of a psql with no statement
   assert.ok(denied('sh -c "echo hi" && psql -U qa_agent_ro'));
 });
+
+test('a shell read of key material through its 8.3 short name is denied on both profiles', { skip: !win32 }, (t) => {
+  const root = project(t);
+  writeFileSync(join(root, '.agents', 'mcp-secrets.env'), '');
+  const longFile = join(root, '.agents', 'mcp-secrets.env');
+  const shortFile = shortOf(longFile);
+  if (shortFile.toLowerCase() === fwd(longFile).toLowerCase()) return t.skip('no 8.3 short names on this volume');
+  const shortConfig = shortOf(join(root, '.agents', 'ultrapowers.json'));
+  for (const profile of ['qa', 'autopilot']) {
+    const c = { cwd: fwd(root), root: fwd(root), ticket: 'T-1', profile, ignoreCase: true };
+    assert.match(analyze(`cat ${shortFile}`, c), /key material/, `${profile}: cat`);
+    assert.match(analyze(`grep -i token ${shortFile}`, c), /key material/, `${profile}: grep`);
+    assert.match(analyze(`head -c 100 < ${shortFile}`, c), /key material/, `${profile}: stdin redirect`);
+    assert.match(analyze(`sh -c "cat ${shortFile}"`, c), /key material/, `${profile}: nested shell`);
+    assert.equal(analyze(`cat ${shortConfig}`, c), '', `${profile}: the config is not key material`);
+  }
+});
