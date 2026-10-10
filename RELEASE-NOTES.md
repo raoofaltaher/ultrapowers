@@ -1,14 +1,41 @@
 # Ultrapowers Release Notes
 
-## Unreleased
+## v1.4.0 (2026-10-10)
 
-### `/ultrapowers:task-review` (closes #29)
+Every open issue triaged against 1.3.1 and fixed in one release, plus `/ultrapowers:task-review`.
 
-A new skill reviews a ticket's finished work end to end: `/ultrapowers:task-review <ID> [repos...] [--post] [--draft-pr]`. For each repository the ticket touched, a reviewer on the most capable model reads the whole range against that repository's own base, every changed file in full and its callers, judges the tests against test-driven development (a test exists, it was written first, it tests behavior) and traces every failing test and every Critical or Important finding to its root cause. The QA gate runs after the reviewers. One verdict (`PASS`, `PASS-WITH-ISSUES`, `FAIL` or `BLOCKED`) and the findings are written to `reviews/<ID>/TASK-REVIEW.md`. The skill never edits code and never merges.
+The twenty-two issues open on 2026-10-10 were reproduced one by one on 1.3.1 and traced to their root causes; the design is `docs/ultrapowers/specs/2026-10-10-open-issues-fixes-design.md` and five plans beside it. Three of them were security gaps in the guardrail (#30, #31 and #8): an autopilot stage could write to the tracker through the ticket source's MCP server, read key material through an 8.3 short name on Windows, and print any credential with `printenv`. All three are closed, with fixtures that fail on 1.3.1.
 
-With `--post` the full review and QA reports, screenshots included, are commented on the ticket and on the ticket's open pull or merge request (found by branch name), as numbered parts when a report is long. `--draft-pr` pushes the ticket branch through the guarded push and opens a draft pull or merge request when none is open. On Odoo the screenshots are attached to the chatter message. A local ticket is refused.
+**Heads up:**
 
-Under the skill: `qa-preflight.mjs --change-set-only`; `review-preflight.sh`, `assemble-review.mjs` and `post-review.mjs`; and in the autopilot tracker clients, `createPr` gains `draft`, a new `findOpenPr(branch)`, and `OdooTracker` gains `attach` and a `comment` that takes `{ attachments }`.
+- The knowledge-base folder is `brandbook/`, no longer `brand-book/`. Init never moves a folder: upgrade mode reports the old name and the `git mv brand-book brandbook` to run.
+- An Odoo ticket source that autopilot runs now needs `autopilot.approvers` with at least one human login, and the technical user cannot be its own approver (#32). `init autopilot` asks; an existing config without it stops the run with `bad-autopilot`.
+- Guardrail denies are stricter during a run: an event whose tool or input cannot be read is refused (#2), in-page code tools of the browser MCP servers are refused (#11), and SQL through `psql` is an allow-list of reads under the configured read-only role (#3). `printenv` reads only the configured role variables during a QA run and nothing during an autopilot stage (#8).
+
+### Who it is for
+
+Anyone running the QA gate or autopilot on 1.3.1, Windows users in particular, and teams that want one reviewed verdict on a ticket's work before merge.
+
+### What is new
+
+- **`/ultrapowers:task-review <ID> [repos...] [--post] [--draft-pr]`** (closes #29) reviews a ticket's finished work end to end. For each repository the ticket touched, a reviewer on the most capable model reads the whole range against that repository's own base, every changed file in full and its callers, judges the tests against test-driven development and traces every failing test and every Critical or Important finding to its root cause. The QA gate runs after the reviewers. One verdict (`PASS`, `PASS-WITH-ISSUES`, `FAIL` or `BLOCKED`) and the findings land in `reviews/<ID>/TASK-REVIEW.md`. With `--post` the full reports, screenshots included, go to the ticket and to the ticket's open pull or merge request, found by branch name, in numbered parts when long; `--draft-pr` pushes the ticket branch through the guarded push and opens a draft when none is open; on Odoo the screenshots are attached to the chatter message. The skill never edits code and never merges, and a link in a report that leaves `reviews/<ID>/artifacts/` is never read or posted.
+- **`/ultrapowers:init check`** audits a scaffold and writes nothing (#28). Init also compares the keys the plugin needs in settings files it did not write, proposes ticket servers additively (your other MCP servers and pinned arguments stay), warns on a duplicate ticket server, lets a source name its server, proposes the projects map from the clones' remotes, shows which transport is in use, marks optional secrets as optional, lets an Odoo source opt out of autopilot, and discloses the allow list it writes.
+- **The QA report says whether the guardrail was active** (`Guardrail:` line from a probe, #7), every deny names the run marker and who can end the run (#14), and `run-hook.cmd` fails closed without bash (#12).
+
+### What is fixed
+
+- **Guardrail.** One path resolver behind every gate: 8.3 short names, Git Bash and Windows spellings and symlinks compare as the same place, and a project under a folder like `.claude/worktrees` is no longer protected as a whole (#9, #13, #31). Init's `tickets-<prefix>` servers count as trackers (#30). Compose rules match the subcommand, so `docker compose run --rm` passes and `down` is refused (#1). Every URL of a tool call is checked (#11).
+- **QA lanes.** A suite runs as the leader of its own process group and `run-suite.sh --stop` ends the whole tree; the contract stops live suites before the report (#4). The suppress list keeps `#` inside a test name and accepts a pasted `NEW-FAILING` prefix (#6). The preflight warns on dropped entries and reads placeholders only on enum fields (#10). A crashed suite's `.failed` keeps the configured template, and `skills/qa-lane-6-suites/troubleshooting.md` says what to do with `INCOMPLETE` (#5).
+- **Docs and assets.** The QA skill says where the guardrail applies (#7), the team-memory store path is fixed (#15) and the Cursor note is correct (#17); the brainstorm companion and the Codex icon use a small mark, `assets/ultrapowers-mark.svg`, and the README keeps the full logo (#18).
+
+### What was verified, and how
+
+| | Verified |
+|---|---|
+| Offline suites, every commit | Every suite `AGENTS.md` lists, on Windows, with the two documented OpenCode symlink exceptions; the guardrail fixtures grew from 289 to 362 (QA) and from 154 to 191 (autopilot) |
+| Independent reproduction | The orchestrator's own probe of the three guardrail bypasses against the 1.3.1 hook and the new one: tracker writes, `printenv` of a credential and unreadable events pass on 1.3.1 and are refused now; the 8.3 alias read found during that review is fixed in the same release |
+| Pressure scenarios | Haiku subagents under time and authority pressure for the QA contract (suites at close, an incomplete suite), the guardrail wording, and task-review's six scenarios; rows where the baseline did not fail are recorded as such in `tests/qa-gatekeeper/pressure/pressure-results.md` and `tests/task-lifecycle/pressure-results.md` |
+| Not yet run live | `task-review --post` on GitHub, GitLab and Odoo, and `--draft-pr`; real PreToolUse payloads from each installed harness |
 
 ## v1.3.1 (2026-10-05)
 
