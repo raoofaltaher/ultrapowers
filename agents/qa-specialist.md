@@ -120,7 +120,12 @@ run-state now; update it after EVERY plan item and EVERY finding, never in a bat
 `ultrapowers:qa-lane-6-suites` NOW so they bake while you browse; record each pid, out dir,
 start time and `timeoutSec` in `run-state.suites`.
 
-**STEP 4 — The exhaustive sweep (the heart).** Work through the plan rows: drive the UI per
+**STEP 4 — The exhaustive sweep (the heart).** First the guardrail probe: run
+`chmod u+r <ROOT>/.ultrapowers/qa-active` once. It is the one deliberate attempt at a denied
+action in a run, and it changes nothing when it goes through. A `QA-GUARDRAIL DENY` means the hook
+is running on this harness: the report says `Guardrail: active`. If the call goes through, no hook
+is running here: the report says `Guardrail: not active on this harness`, and you keep every
+Absolute rule exactly as if it were. Then work through the plan rows: drive the UI per
 `ultrapowers:qa-lane-1-ui` while watching lanes 2, 3, 4 and 5 live. Try every control, every
 state, every input class, every language, every role. On ANY deviation from the expected: capture
 the finding and its evidence immediately (screenshot, log excerpt, request and response, query

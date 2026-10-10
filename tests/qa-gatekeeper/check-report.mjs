@@ -53,6 +53,14 @@ export function checkReport(text, { id, roles = [], notCovered = [], verdict = '
   check(VERDICTS.includes(value), `verdict value is one of the five (got "${value}")`);
   if (verdict) check(value === verdict, `verdict is ${verdict}`);
   const precondition = value === 'PRECONDITION-FAILED';
+  // The guardrail probe of STEP 4: the report says whether the hook was running on this harness.
+  // A PRECONDITION-FAILED run ends before STEP 4 and may say it never probed.
+  const guardLines = lines.filter((line) => line.startsWith('Guardrail:'));
+  check(guardLines.length === 1, `exactly one Guardrail: line (found ${guardLines.length})`);
+  const guardOk = precondition
+    ? /^Guardrail: (active|not active on this harness|not probed( — \S.*)?)$/
+    : /^Guardrail: (active|not active on this harness)$/;
+  check(guardOk.test(guardLines[0] || ''), 'Guardrail line says active or not active on this harness');
   inOrder(lines, precondition ? ['## Per-lane coverage'] : SECTIONS, check, 'section');
   inOrder(lines, LANES, check, 'lane heading');
   for (const n of notCovered) {

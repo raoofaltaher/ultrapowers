@@ -176,5 +176,7 @@
   {"name":"allow_compose_exec_npm_start","event":{"tool_name":"Bash","tool_input":{"command":"docker compose exec api npm start"}}},
   {"name":"deny_compose_down","event":{"tool_name":"Bash","tool_input":{"command":"docker compose down"}}},
   {"name":"deny_compose_file_option_down","event":{"tool_name":"Bash","tool_input":{"command":"docker compose -f a.yml --profile p down"}}},
-  {"name":"deny_compose_rm_subcommand","event":{"tool_name":"Bash","tool_input":{"command":"docker compose rm api"}}}
+  {"name":"deny_compose_rm_subcommand","event":{"tool_name":"Bash","tool_input":{"command":"docker compose rm api"}}},
+  {"name":"deny_probe_chmod_marker","event":{"tool_name":"Bash","tool_input":{"command":"chmod u+r {{ROOT}}/.ultrapowers/autopilot-active"}}},
+  {"name":"deny_probe_chmod_qa_marker","event":{"tool_name":"Bash","tool_input":{"command":"chmod u+r {{ROOT}}/.ultrapowers/qa-active"}}}
 ]

@@ -30,6 +30,10 @@ if [[ -f "$AGENT" ]]; then
   if printf '%s\n' "$fm" | grep -Eq '^model:'; then fail "agent leaves model unset (session default)"; else pass "agent leaves model unset (session default)"; fi
   if printf '%s\n' "$fm" | grep -Eq '^disallowedTools: .*run_code_unsafe'; then pass "agent disallows the unsafe browser code tool"; else fail "agent disallows the unsafe browser code tool"; fi
   if printf '%s\n' "$fm" | grep -Eq '^disallowedTools: .*browser_evaluate'; then pass "agent disallows the in-page evaluate tool"; else fail "agent disallows the in-page evaluate tool"; fi
+  for needle in 'chmod u+r' 'Guardrail: active' 'Guardrail: not active on this harness'; do
+    if grep -Fq -- "$needle" "$AGENT"; then pass "agent's guardrail probe mentions '$needle'"; else fail "agent's guardrail probe mentions '$needle'"; fi
+    if grep -Fq -- "$needle" "$REPO_ROOT/skills/qa-report/SKILL.md" || [ "$needle" = 'chmod u+r' ]; then pass "qa-report mentions '$needle'"; else fail "qa-report mentions '$needle'"; fi
+  done
   for section in '## Absolute rules' '## The QA dimensions' '## Inputs' '## Your skills' '## The procedure' '## Triage classes' '## Severity' '## Exit criteria' '## Run-state and resume' '## Completion gate'; do
     if grep -Fq -- "$section" "$AGENT"; then pass "agent has section '$section'"; else fail "agent has section '$section'"; fi
   done
