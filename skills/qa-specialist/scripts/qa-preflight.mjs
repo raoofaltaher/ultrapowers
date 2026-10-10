@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-// qa-preflight.mjs <ticket> [--cwd <dir>]
+// qa-preflight.mjs <ticket> [--cwd <dir>] [--change-set-only]
 //
 // Read-only preflight for the qa-specialist entry skill. Finds the project root by walking up
 // to .agents/ultrapowers.json, validates the `qa` section against spec 3.2 (required keys and
 // placeholder detection), decides which lanes are gated off and why, checks credential
 // PRESENCE by variable name (never values), locates the ticket's brief, spec, plans and
 // review folder, and derives the change set from repos on a branch matching the ticket
-// (diffed against their default branch). Prints one JSON report on stdout.
+// (diffed against their default branch). Prints one JSON report on stdout. With --change-set-only
+// it prints just the changeSet array and needs no qa section (the task-review skill uses it).
 //
 // Exit codes: 0 a report was produced (read `ok`), 2 usage, 3 no project root, 4 invalid ticket.
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -232,32 +233,48 @@ function changeSetFor(root, repos, ticket) {
   });
 }
 
-export function preflight({ cwd, ticket, env }) {
+// Finds the root, reads the config and validates the ticket id. Shared by the full preflight and
+// --change-set-only so the two refuse the same inputs the same way.
+function projectFor(cwd, ticket) {
   const root = findRoot(cwd);
   if (!root) {
-    return { ok: false, root: null, ticket, errors: [`ERROR: no .agents/ultrapowers.json at or above ${resolve(cwd)}; run /ultrapowers:init first`], exitCode: 3 };
+    return { fail: { ok: false, root: null, ticket, errors: [`ERROR: no .agents/ultrapowers.json at or above ${resolve(cwd)}; run /ultrapowers:init first`], exitCode: 3 } };
   }
   let config;
   try {
     config = JSON.parse(readFileSync(join(root, '.agents', 'ultrapowers.json'), 'utf8').replace(/^﻿/, ''));
   } catch (error) {
-    return { ok: false, root, ticket, errors: [`ERROR: .agents/ultrapowers.json is not valid JSON: ${error.message}`], exitCode: 3 };
+    return { fail: { ok: false, root, ticket, errors: [`ERROR: .agents/ultrapowers.json is not valid JSON: ${error.message}`], exitCode: 3 } };
   }
   // The id names the marker content and the reviews/<id>/ folder, so anything that names
   // another path is refused whatever ticketPattern allows (the same rule as ticket-lib.sh).
   if (/^(\.|\.\.|-.*)$/.test(String(ticket)) || /[/\\\s]/.test(String(ticket))) {
-    return { ok: false, root, ticket, errors: [`ERROR: ticket ${JSON.stringify(String(ticket))} is not a plain folder name (no /, backslash, whitespace, leading -, . or ..)`], exitCode: 4 };
+    return { fail: { ok: false, root, ticket, errors: [`ERROR: ticket ${JSON.stringify(String(ticket))} is not a plain folder name (no /, backslash, whitespace, leading -, . or ..)`], exitCode: 4 } };
   }
   const pattern = filledString(config.ticketPattern) ? config.ticketPattern : DEFAULT_TICKET_PATTERN;
   if (!new RegExp(pattern).test(String(ticket))) {
-    return { ok: false, root, ticket, errors: [`ERROR: ticket "${ticket}" does not match ticketPattern ${pattern}`], exitCode: 4 };
+    return { fail: { ok: false, root, ticket, errors: [`ERROR: ticket "${ticket}" does not match ticketPattern ${pattern}`], exitCode: 4 } };
   }
+  const repos = (Array.isArray(config.repos) ? config.repos : []).map(obj).map((r) => ({ name: str(r.name), path: str(r.path), defaultBranch: str(r.defaultBranch) || 'main' })).filter((r) => r.name && r.path);
+  const repoList = repos.length > 0 ? repos : [{ name: basename(root), path: '.', defaultBranch: 'main' }];
+  return { root, config, repoList };
+}
+
+// The change set alone: one entry per configured repo, each diffed against its own default branch.
+export function changeSetOnly({ cwd, ticket }) {
+  const project = projectFor(cwd, ticket);
+  if (project.fail) return project.fail;
+  return { ok: true, changeSet: changeSetFor(project.root, project.repoList, ticket), exitCode: 0 };
+}
+
+export function preflight({ cwd, ticket, env }) {
+  const project = projectFor(cwd, ticket);
+  if (project.fail) return project.fail;
+  const { root, config, repoList } = project;
   if (!config.qa || typeof config.qa !== 'object') {
     return { ok: false, root, ticket, errors: [], missing: ['qa'], preconditions: [], warnings: ['the qa section is absent; run /ultrapowers:init in upgrade mode to add the template, then fill it'], exitCode: 0 };
   }
   const validated = validateConfig(config.qa, env);
-  const repos = (Array.isArray(config.repos) ? config.repos : []).map(obj).map((r) => ({ name: str(r.name), path: str(r.path), defaultBranch: str(r.defaultBranch) || 'main' })).filter((r) => r.name && r.path);
-  const repoList = repos.length > 0 ? repos : [{ name: basename(root), path: '.', defaultBranch: 'main' }];
   for (const suite of validated.suites) {
     const match = repoList.find((r) => r.name === suite.repo);
     suite.path = match ? resolve(root, match.path) : '';
@@ -323,10 +340,21 @@ function main(argv) {
     cwd = args[cwdIndex + 1] || '';
     args.splice(cwdIndex, 2);
   }
+  const onlyIndex = args.indexOf('--change-set-only');
+  if (onlyIndex !== -1) args.splice(onlyIndex, 1);
   const ticket = args[0];
   if (!ticket || !cwd) {
-    process.stderr.write('usage: node qa-preflight.mjs <ticket> [--cwd <dir>]\n');
+    process.stderr.write('usage: node qa-preflight.mjs <ticket> [--cwd <dir>] [--change-set-only]\n');
     return 2;
+  }
+  if (onlyIndex !== -1) {
+    const result = changeSetOnly({ cwd, ticket });
+    if (!result.ok) {
+      process.stderr.write(result.errors.join('\n') + '\n');
+      return result.exitCode;
+    }
+    process.stdout.write(JSON.stringify(result.changeSet, null, 2) + '\n');
+    return 0;
   }
   const report = preflight({ cwd, ticket, env: process.env });
   const { exitCode, ...rest } = report;
