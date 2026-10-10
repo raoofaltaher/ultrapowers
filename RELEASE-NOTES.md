@@ -10,7 +10,7 @@ This is a major version because three things a 1.x project relies on change unde
 
 - The knowledge-base folder is `brandbook/`, no longer `brand-book/`. Init never moves a folder: upgrade mode reports the old name and the `git mv brand-book brandbook` to run.
 - An Odoo ticket source that autopilot runs now needs `autopilot.approvers` with at least one human login, and the technical user cannot be its own approver (#32). `init autopilot` asks; an existing config without it stops the run with `bad-autopilot`.
-- Guardrail denies are stricter during a run: an event whose tool or input cannot be read is refused (#2), in-page code tools of the browser MCP servers are refused (#11), and SQL through `psql` is an allow-list of reads under the configured read-only role (#3). `printenv` reads only the configured role variables during a QA run and nothing during an autopilot stage (#8).
+- Guardrail denies are stricter during a run: an event whose tool or input cannot be read is refused (#2), in-page code tools of the browser MCP servers are refused (#11), and SQL through `psql` is an allow-list of reads under the configured read-only role (#3). `printenv` reads only the configured role variables during a QA run and no credential-shaped name during an autopilot stage, where `echo $GH_TOKEN` is refused too (#8).
 
 ### Who it is for
 
@@ -33,7 +33,7 @@ Anyone running the QA gate or autopilot on 1.3.1, Windows users in particular, a
 
 | | Verified |
 |---|---|
-| Offline suites, every commit | Every suite `AGENTS.md` lists, on Windows, with the two documented OpenCode symlink exceptions; the guardrail fixtures grew from 289 to 362 (QA) and from 154 to 191 (autopilot) |
+| Offline suites, every commit | Every suite `AGENTS.md` lists, on Windows, with the two documented OpenCode symlink exceptions; the guardrail fixture suites grew from 289 to 362 assertions (QA) and from 154 to 191 (autopilot) |
 | Independent reproduction | The orchestrator's own probe of the three guardrail bypasses against the 1.3.1 hook and the new one: tracker writes, `printenv` of a credential and unreadable events pass on 1.3.1 and are refused now; the 8.3 alias read found during that review is fixed in the same release |
 | Pressure scenarios | Haiku subagents under time and authority pressure for the QA contract (suites at close, an incomplete suite), the guardrail wording, and task-review's six scenarios; rows where the baseline did not fail are recorded as such in `tests/qa-gatekeeper/pressure/pressure-results.md` and `tests/task-lifecycle/pressure-results.md` |
 | Not yet run live | `task-review --post` on GitHub, GitLab and Odoo, and `--draft-pr`; real PreToolUse payloads from each installed harness |

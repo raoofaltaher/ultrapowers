@@ -1286,7 +1286,7 @@ function upgradeNextSteps(report, from, version, applied) {
 // project's own git mv, and every reader accepts both names until 2.0.
 function legacyFolderSteps(root) {
   const legacy = fs.existsSync(path.join(root, 'brand-book')) && !fs.existsSync(path.join(root, 'brandbook'));
-  return legacy ? ['The knowledge-base folder is now brandbook/. Rename yours when you are ready: git mv brand-book brandbook, and do not apply brandbook/README.md first, or the folder will already exist (init never moves it; both names are read until 2.0).'] : [];
+  return legacy ? ['The knowledge-base folder is now brandbook/. Rename yours when you are ready: git mv brand-book brandbook, and do not apply brandbook/README.md first, or the folder will already exist (init never moves a folder).'] : [];
 }
 
 export function runUpgrade(opts) {
@@ -1570,7 +1570,7 @@ export function runCheck(opts) {
   for (const near of nearFolders(opts.root)) {
     const legacy = near.existing === 'brand-book' && near.kb === 'brandbook';
     add('near-folder', near.existing, legacy
-      ? 'the knowledge-base folder is now brandbook/; rename it with: git mv brand-book brandbook (both names are read until 2.0)'
+      ? 'the knowledge-base folder is now brandbook/; rename it with: git mv brand-book brandbook'
       : `near the knowledge-base folder ${near.kb}/; decide with your human partner which one the project uses`);
   }
   report.nextSteps = [

@@ -136,3 +136,9 @@ The skill is developed with writing-skills: pressure scenarios for "fix the find
 - An OAuth path for Odoo in the autopilot engine (#28.B2's longer-term suggestion).
 - Full mapping of every knowledge-base folder to a custom path (the rest of #28.C2 beyond D7).
 - Playwright `--allowed-origins` rendered by init (#11's optional third step); the hook-level deny of D4 is the fix.
+
+## As shipped (2.0.0)
+
+- The release is 2.0.0, not 1.4.0: the `brandbook/` rename, the required Odoo approvers and the stricter guardrail change what a 1.x project relies on.
+- `--post` posts and never opens a pull request by itself; opening a draft when none is open is the separate `--draft-pr` flag (D8 and 8.6 described one flag).
+- Lane 4: the shell analyzer walks every construct that can run `psql` and refuses what it cannot inspect; it stays a pattern guard, not a sandbox.

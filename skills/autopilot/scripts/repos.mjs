@@ -178,9 +178,6 @@ export function remotePath(dir) {
   return m[1];
 }
 
-// The forge of a repository, from its configured origin url (not an insteadOf rewrite): github.com
-// is GitHub through gh, any other host is GitLab through glab against that host (spec D5). Null for
-// a local path or no remote.
 // The forge of a repository, from its origin remote (spec D5): github.com is GitHub, any other
 // host name is GitLab at that host. An ssh host alias (`git@github-work:org/repo`, no dot) names
 // no host at all: a GitHub or GitLab ticket then keeps its own forge, as in 1.2.0, and an Odoo
