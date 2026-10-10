@@ -1,10 +1,10 @@
 # Ultrapowers Release Notes
 
-## v1.4.0 (2026-10-10)
+## v2.0.0 (2026-10-10)
 
-Every open issue triaged against 1.3.1 and fixed in one release, plus `/ultrapowers:task-review`.
+Every open issue triaged against 1.3.1 and fixed in one release, a stricter guardrail, and `/ultrapowers:task-review`.
 
-The twenty-two issues open on 2026-10-10 were reproduced one by one on 1.3.1 and traced to their root causes; the design is `docs/ultrapowers/specs/2026-10-10-open-issues-fixes-design.md` and five plans beside it. Three of them were security gaps in the guardrail (#30, #31 and #8): an autopilot stage could write to the tracker through the ticket source's MCP server, read key material through an 8.3 short name on Windows, and print any credential with `printenv`. All three are closed, with fixtures that fail on 1.3.1.
+This is a major version because three things a 1.x project relies on change under it: the knowledge-base folder is renamed, an Odoo source that autopilot runs needs human approvers, and the guardrail refuses commands it allowed before (environment reads, SQL through anything but a literal `psql -c` as the read-only role, and a tool event it cannot read). The twenty-two issues open on 2026-10-10 were reproduced one by one on 1.3.1 and traced to their root causes; the design is `docs/ultrapowers/specs/2026-10-10-open-issues-fixes-design.md` and five plans beside it. Three of them were security gaps in the guardrail (#30, #31 and #8): an autopilot stage could write to the tracker through the ticket source's MCP server, read key material through an 8.3 short name on Windows, and print any credential with `printenv`. All three are closed, with fixtures that fail on 1.3.1.
 
 **Heads up:**
 
@@ -24,7 +24,8 @@ Anyone running the QA gate or autopilot on 1.3.1, Windows users in particular, a
 
 ### What is fixed
 
-- **Guardrail.** A `psql` the analyzer cannot inspect (after `xargs`, `find -exec`, `eval`, `sudo -u`, `su`, `kubectl`, or in a brace group) is refused by a fail-closed count, so the SQL allow-list cannot be bypassed by placement (#3). One path resolver behind every gate: 8.3 short names, Git Bash and Windows spellings and symlinks compare as the same place, and a project under a folder like `.claude/worktrees` is no longer protected as a whole (#9, #13, #31). Init's `tickets-<prefix>` servers count as trackers (#30). Compose rules match the subcommand, so `docker compose run --rm` passes and `down` is refused (#1). Every URL of a tool call is checked (#11).
+- **Guardrail, lane 4.** The shell analyzer walks every construct that can run `psql` (`xargs`, `find -exec`, `eval`, `sudo -u`, `su -c`, `kubectl exec`, a brace group, `sh -lc`), refuses a shell fed on stdin and a program built from a variable, refuses a bare `psql` word it did not inspect, tracks the superuser through `export PGUSER`, `docker exec -u`, `gosu`, `sudo -upostgres` and the last `user=` of a connection string, refuses `PSQLRC`, `PGSERVICE` and `PGOPTIONS`, refuses the other client tools (`dropdb`, `pg_restore`, `pgcli`, ...), and closes SQL holes (an `UPDATE` alias without `AS`, a quoted function name, `pg_stat_reset` and friends) (#3). It remains a pattern guard, not a sandbox: the read-only role's grants are the guarantee behind it.
+- **Guardrail.** One path resolver behind every gate: 8.3 short names, Git Bash and Windows spellings and symlinks compare as the same place, and a project under a folder like `.claude/worktrees` is no longer protected as a whole (#9, #13, #31). Init's `tickets-<prefix>` servers count as trackers (#30). Compose rules match the subcommand, so `docker compose run --rm` passes and `down` is refused (#1). Every URL of a tool call is checked (#11).
 - **QA lanes.** A suite runs as the leader of its own process group and `run-suite.sh --stop` ends the whole tree; the contract stops live suites before the report (#4). The suppress list keeps `#` inside a test name and accepts a pasted `NEW-FAILING` prefix (#6). The preflight warns on dropped entries and reads placeholders only on enum fields (#10). A crashed suite's `.failed` keeps the configured template, and `skills/qa-lane-6-suites/troubleshooting.md` says what to do with `INCOMPLETE` (#5).
 - **Docs and assets.** The QA skill says where the guardrail applies (#7), the team-memory store path is fixed (#15) and the Cursor note is correct (#17); the brainstorm companion and the Codex icon use a small mark, `assets/ultrapowers-mark.svg`, and the README keeps the full logo (#18).
 
