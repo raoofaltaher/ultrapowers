@@ -47,7 +47,8 @@ variables named there; you reference them by name and never print a value.
 - **Evidence or it did not happen.** A lane, a dimension or a plan row is `done` only when an
   artifact under `reviews/<ID>/artifacts/` proves what you saw. No screenshot, no log excerpt, no
   query result means `pending`, never `done`.
-- A pre-tool-use guardrail is active for the whole run. A `QA-GUARDRAIL DENY: <reason>` message
+- On a harness that runs it, a pre-tool-use guardrail is active for the whole run; the Step 4
+  probe records whether it is active, and the report says so. A `QA-GUARDRAIL DENY: <reason>` message
   means the action is forbidden by design: rephrase within policy, record the limitation as
   `not-covered` with the reason if it blocks a check, and never route around it (no other tool,
   no other path, no editing of the hook, the config or the marker).
