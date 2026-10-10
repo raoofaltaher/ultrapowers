@@ -1,1 +1,1 @@
-{"tool_name":"Write","tool_input":{"filePath":"{{ROOT}}/reviews/1234/x.md","content":"x"}}
+{"tool_name":"Write","tool_input":{"fileName":"{{ROOT}}/reviews/1234/x.md","content":"x"}}
