@@ -1282,7 +1282,7 @@ function upgradeNextSteps(report, from, version, applied) {
   return steps;
 }
 
-// The knowledge-base folder was brand-book/ before 1.4.0. Init never moves it; the rename is the
+// The knowledge-base folder was brand-book/ in scaffolds from earlier plugin versions. Init never moves it; the rename is the
 // project's own git mv, and every reader accepts both names until 2.0.
 function legacyFolderSteps(root) {
   const legacy = fs.existsSync(path.join(root, 'brand-book')) && !fs.existsSync(path.join(root, 'brandbook'));
