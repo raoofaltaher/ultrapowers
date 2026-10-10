@@ -171,5 +171,10 @@
   {"name":"deny_chrome_javascript_tool","event":{"tool_name":"mcp__claude-in-chrome__javascript_tool","tool_input":{"action":"javascript_exec","text":"document.cookie"}}},
   {"name":"deny_firecrawl_offlist_url","event":{"tool_name":"mcp__Firecrawl__firecrawl_scrape","tool_input":{"url":"https://evil.example.net/"}}},
   {"name":"allow_firecrawl_onlist_url","event":{"tool_name":"mcp__Firecrawl__firecrawl_scrape","tool_input":{"url":"http://localhost:3000/page"}}},
-  {"name":"allow_browser_snapshot","event":{"tool_name":"mcp__playwright__browser_snapshot","tool_input":{}}}
+  {"name":"allow_browser_snapshot","event":{"tool_name":"mcp__playwright__browser_snapshot","tool_input":{}}},
+  {"name":"allow_compose_run_rm","event":{"tool_name":"Bash","tool_input":{"command":"docker compose run --rm api pytest"}}},
+  {"name":"allow_compose_exec_npm_start","event":{"tool_name":"Bash","tool_input":{"command":"docker compose exec api npm start"}}},
+  {"name":"deny_compose_down","event":{"tool_name":"Bash","tool_input":{"command":"docker compose down"}}},
+  {"name":"deny_compose_file_option_down","event":{"tool_name":"Bash","tool_input":{"command":"docker compose -f a.yml --profile p down"}}},
+  {"name":"deny_compose_rm_subcommand","event":{"tool_name":"Bash","tool_input":{"command":"docker compose rm api"}}}
 ]

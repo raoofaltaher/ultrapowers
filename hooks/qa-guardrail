@@ -521,10 +521,14 @@ done
 
 # No stack teardown: docker[- ]compose down|stop|rm; docker rm|kill|stop; the container,
 # volume, network and image sub-noun forms; any docker ... prune.
-printf '%s' "$lc" | grep -Eq 'docker[-[:space:]]compose[^;&|]*\b(down|stop|rm)\b|docker[[:space:]]+(rm|kill|stop)\b|docker[[:space:]]+(container|volume|network|image)[[:space:]]+(rm|stop|prune)\b|docker[^;&|]*\bprune\b' \
+# The compose rules match the SUBCOMMAND: compose's global options (with or without a value:
+# `-f a.yml`, `--profile p`, `--verbose`) are skipped and the next word is the subcommand, so
+# `docker compose run --rm api` and `docker compose exec api npm start` are not a teardown or a start.
+COMPOSE_SUB='docker[-[:space:]]compose([[:space:]]+-[a-z-]+([[:space:]=][^[:space:]]+)?)*[[:space:]]+'
+printf '%s' "$lc" | grep -Eq "${COMPOSE_SUB}(down|stop|rm)\\b"'|docker[[:space:]]+(rm|kill|stop)\b|docker[[:space:]]+(container|volume|network|image)[[:space:]]+(rm|stop|prune)\b|docker[^;&|]*\bprune\b' \
   && deny "container stop, remove, down or prune is never allowed; the stack stays as found"
 # Nor a restart, start, rebuild or pause: the run observes the stack, it does not change it.
-printf '%s' "$lc" | grep -Eq 'docker[-[:space:]]compose[^;&|]*[[:space:]](up|build|restart|start|kill|pause|unpause|create)\b|docker[[:space:]]+(restart|start|pause|unpause|update)\b|docker[[:space:]]+container[[:space:]]+(restart|start|kill|pause)\b' \
+printf '%s' "$lc" | grep -Eq "${COMPOSE_SUB}(up|build|restart|start|kill|pause|unpause|create)\\b"'|docker[[:space:]]+(restart|start|pause|unpause|update)\b|docker[[:space:]]+container[[:space:]]+(restart|start|kill|pause)\b' \
   && deny "restarting, starting, rebuilding or pausing containers is never allowed; the stack stays as found"
 # Killing processes by name reaches the app under test; a targeted kill <pid> of the run's
 # own background suite stays allowed.
