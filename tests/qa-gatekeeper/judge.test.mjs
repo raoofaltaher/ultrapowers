@@ -34,6 +34,21 @@ test('parseSuppressList reads only the fenced block, strips comments and blanks'
   const list = parseSuppressList(`prose Sample.Tests.ArticlesTests\n\n\`\`\`lane6-suppress\n# c\nA.B.C\n  D.E   # trailing\n\n\`\`\`\nA.After.Block\n`);
   assert.deepEqual(list, ['A.B.C', 'D.E']);
 });
+test('a comment starts at whitespace-#-whitespace, so "Foo #2" stays whole', () => {
+  assert.deepEqual(parseSuppressList('```lane6-suppress\nFoo #2\nCart adds item #2\nD.E   # trailing\n```'), ['Foo #2', 'Cart adds item #2', 'D.E']);
+});
+test('a pasted NEW-FAILING prefix is stripped', () => {
+  assert.deepEqual(parseSuppressList('```lane6-suppress\nNEW-FAILING A.B\n```'), ['A.B']);
+});
+test('"Foo #2" does not suppress a test named "Foo"', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'judge-'));
+  writeFileSync(join(dir, 'junit.xml'), '<testsuite><testcase name="Foo"><failure/></testcase></testsuite>');
+  const base = join(dir, 'baseline.md');
+  writeFileSync(base, '```lane6-suppress\nFoo #2\n```\n');
+  const result = judge(dir, base);
+  rmSync(dir, { recursive: true, force: true });
+  assert.deepEqual(result.newFailing, ['Foo']);
+});
 
 test('failingFromTrx names Failed results in either attribute order and decodes entities', () => {
   const names = failingFromTrx(readFixture('sample.trx'));

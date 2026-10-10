@@ -44,7 +44,9 @@ export function parseSuppressList(markdown) {
       inside = false;
       continue;
     }
-    const line = rawLine.replace(/\s+#.*$/, '').trim();
+    // A comment is whitespace, "#", then whitespace or the end of the line, so "Foo #2" stays
+    // whole. A pasted NEW-FAILING prefix (the judge's own output) is not part of the name.
+    const line = rawLine.replace(/\s+#(\s.*)?$/, '').trim().replace(/^NEW-FAILING\s+/, '');
     if (line === '' || line.startsWith('#')) continue;
     entries.push(line);
   }
