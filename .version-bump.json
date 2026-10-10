@@ -59,6 +59,7 @@
       ".version-bump.json",
       "scripts/bump-version.sh",
       "CHANGES.json",
+      ".opencode/package-lock.json",
       ".agents/ultrapowers.json",
       ".agents/memory",
       ".githooks/pre-commit",

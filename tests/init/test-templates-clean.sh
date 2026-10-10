@@ -129,10 +129,10 @@ fi
 
 changes_at() { node -e 'const c=require(process.argv[1]);process.stdout.write(String(c[process.argv[2]]))' "$TEMPLATES/CHANGES.json" "$1"; }
 for target in AGENTS.md CLAUDE.md; do
-  if [ "$(changes_at "$target")" = "1.4.0" ]; then
-    pass "CHANGES.json records $target at 1.4.0"
+  if [ "$(changes_at "$target")" = "2.0.0" ]; then
+    pass "CHANGES.json records $target at 2.0.0"
   else
-    fail "CHANGES.json records $target at 1.4.0"
+    fail "CHANGES.json records $target at 2.0.0"
   fi
 done
 
