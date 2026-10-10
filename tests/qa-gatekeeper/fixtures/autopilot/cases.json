@@ -146,5 +146,15 @@
   {"name":"allow_copilot_shape_git_status","event":{"toolName":"Bash","toolArgs":"{\"command\":\"git status\"}"}},
   {"name":"deny_copilot_shape_git_push","event":{"toolName":"Bash","toolArgs":"{\"command\":\"git push origin GH-16-x\"}"}},
   {"name":"allow_argv_array_git_status","event":{"tool_name":"Bash","tool_input":{"command":["git","status"]}}},
-  {"name":"deny_write_path_unknown_key","event":{"tool_name":"Write","tool_input":{"filePath":"{{ROOT}}/.github/workflows/ci.yml","content":"x"}}}
+  {"name":"deny_write_path_unknown_key","event":{"tool_name":"Write","tool_input":{"filePath":"{{ROOT}}/.github/workflows/ci.yml","content":"x"}}},
+  {"name":"deny_printenv_gh_token","event":{"tool_name":"Bash","tool_input":{"command":"printenv GH_TOKEN"}}},
+  {"name":"deny_printenv_odoo_key","event":{"tool_name":"Bash","tool_input":{"command":"printenv ODOO_API_KEY"}}},
+  {"name":"deny_printenv_secret_like","event":{"tool_name":"Bash","tool_input":{"command":"printenv MY_API_SECRET"}}},
+  {"name":"allow_printenv_node_env","event":{"tool_name":"Bash","tool_input":{"command":"printenv NODE_ENV"}}},
+  {"name":"allow_printenv_gh_token_presence","event":{"tool_name":"Bash","tool_input":{"command":"printenv GH_TOKEN >/dev/null && echo set"}}},
+  {"name":"deny_printenv_option_dump","event":{"tool_name":"Bash","tool_input":{"command":"printenv -0"}}},
+  {"name":"deny_env_zero","event":{"tool_name":"Bash","tool_input":{"command":"env -0"}}},
+  {"name":"deny_export_p","event":{"tool_name":"Bash","tool_input":{"command":"export -p"}}},
+  {"name":"deny_proc_environ","event":{"tool_name":"Bash","tool_input":{"command":"cat /proc/self/environ"}}},
+  {"name":"deny_node_print_env","event":{"tool_name":"Bash","tool_input":{"command":"node -p process.env"}}}
 ]

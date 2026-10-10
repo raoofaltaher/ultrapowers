@@ -182,3 +182,40 @@ test('a root whose own path holds a hidden tool folder does not make the whole p
   assert.equal(analyze('echo x > src/app.js', c), '');
   assert.match(analyze('echo x > .claude/settings.json', c), /protected path/);
 });
+
+// ---- environment reads (issue 8) ----
+const roles = ['QA_USER', 'QA_PW_USER'];
+const qaEnv = { ...ctx, roleVars: roles };
+const apEnv = { cwd: '/p', root: '/p', ticket: 'GH-16', profile: 'autopilot', roleVars: [] };
+
+test('during a QA run printenv reads only the configured role variables', () => {
+  assert.equal(analyze('printenv QA_PW_USER', qaEnv), '');
+  assert.equal(analyze('printenv QA_USER', qaEnv), '');
+  assert.equal(analyze('printenv GITHUB_TOKEN >/dev/null', qaEnv), '');
+  assert.equal(analyze('printenv GITHUB_TOKEN &>/dev/null && echo set', qaEnv), '');
+  assert.match(analyze('printenv GITHUB_TOKEN', qaEnv), /role variables/);
+  assert.match(analyze('printenv QA_USER GITHUB_TOKEN', qaEnv), /role variables/);
+  assert.match(analyze('printenv GITHUB_TOKEN 2>/dev/null', qaEnv), /role variables/, 'a stderr-only redirect still prints the value');
+  assert.match(analyze('printenv GITHUB_TOKEN | cat', qaEnv), /role variables/);
+  assert.match(analyze('sh -c "printenv GITHUB_TOKEN"', qaEnv), /role variables/);
+  assert.match(analyze('printenv "$NAME"', qaEnv), /cannot be verified/);
+});
+
+test('every spelling of an environment dump is denied in both profiles', () => {
+  for (const env of [qaEnv, apEnv]) {
+    for (const cmd of ['printenv', 'printenv -0', 'env', 'env -0', 'env -i', 'export -p', 'export', 'set', 'declare -x', 'declare -p', 'compgen -e', 'env | sort', 'sh -c "export -p"', 'nohup env']) {
+      assert.match(analyze(cmd, env), /environment/, `${env.profile || 'qa'}: ${cmd}`);
+    }
+    for (const cmd of ['env FOO=1 node app.js', 'export FOO=1', 'set -e', 'declare -x FOO=1', 'echo ${GITHUB_TOKEN:+set}']) {
+      assert.equal(analyze(cmd, env), '', `${env.profile || 'qa'}: ${cmd}`);
+    }
+  }
+});
+
+test('during an autopilot stage printenv refuses tracker credentials and secret-like names', () => {
+  for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'GITLAB_TOKEN', 'GLAB_TOKEN', 'ODOO_API_KEY', 'ULTRAPOWERS_STAGE_PROMPT', 'MY_API_SECRET', 'db_password', 'SESSION_ID']) {
+    assert.match(analyze(`printenv ${name}`, apEnv), /credential|secret/, name);
+  }
+  assert.equal(analyze('printenv NODE_ENV', apEnv), '');
+  assert.equal(analyze('printenv GH_TOKEN >/dev/null', apEnv), '');
+});

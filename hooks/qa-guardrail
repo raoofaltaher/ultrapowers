@@ -151,7 +151,7 @@ hook_dir_node="$hook_dir"
 if command -v cygpath >/dev/null 2>&1; then hook_dir_node="$(cygpath -m "$hook_dir" 2>/dev/null || printf '%s' "$hook_dir")"; fi
 
 parse_status=""; tool=""; cmd=""; wpath=""; url=""; event_cwd=""; allowed=""; forbidden=""; ticket=""; keypaths=""; tracker_hosts=""; ignore_case="0"
-wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""
+wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""; role_vars=""
 {
   IFS= read -r -d '' parse_status || true
   IFS= read -r -d '' tool || true
@@ -169,6 +169,7 @@ wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""
   IFS= read -r -d '' wpath_rel || true
   IFS= read -r -d '' keypaths_real || true
   IFS= read -r -d '' patch_recs || true
+  IFS= read -r -d '' role_vars || true
 } < <(printf '%s' "$event" | node -e '
 const fs = require("node:fs");
 const path = require("node:path");
@@ -222,6 +223,12 @@ for (const value of Object.values(urls)) {
 }
 // The hosts of the ticket trackers (an Odoo source names its server by URL): a stage never
 // calls the tracker from the shell, whatever the egress allow-list says.
+// The variables that hold the logins of the QA roles: the only names a QA run may read with printenv.
+const roleVars = [];
+for (const role of Array.isArray(qa.roles) ? qa.roles : []) {
+  if (!role || typeof role !== "object") continue;
+  for (const key of ["userEnv", "passwordEnv"]) if (str(role[key])) roleVars.push(str(role[key]).trim());
+}
 const trackerHosts = [];
 for (const source of sources) {
   if (!source || typeof source !== "object") continue;
@@ -280,7 +287,7 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
     "ok", toolName, command, writeRaw,
     str(inp.url), str(ev.cwd), allowed.join(","), norm(hosts.forbidden).join(","), ticket,
     pathFields.join("\n"), trackerHosts.join(","), ignoreCase ? "1" : "0",
-    w.real, w.rel, keyReal.join("\n"), patchRecs.join("\n"),
+    w.real, w.rel, keyReal.join("\n"), patchRecs.join("\n"), roleVars.join(","),
   ].join("\0") + "\0");
 }, (e) => {
   process.stdout.write(["noresolver:" + String(e.message).split("\n")[0], "", "", "", "", "", "", "", ""].join("\0") + "\0");
@@ -566,7 +573,7 @@ printf '%s' "$lc" | grep -Eq "${B}(chmod|chown|chgrp|icacls|takeown)[[:space:]]"
 # Remote shells and copies; inline interpreters; raw network redirection.
 printf '%s' "$lc" | grep -Eq "${B}(ssh|scp|sftp|rsync|telnet|nc|ncat|netcat)(\\.exe)?[[:space:]]" \
   && deny "remote shell or copy is blocked"
-printf '%s' "$lc" | grep -Eq "${B}(python3?|node|nodejs|perl|ruby|php|deno|bun)(\\.exe)?[[:space:]]+(-c|-e|-)([[:space:]]|\$)" \
+printf '%s' "$lc" | grep -Eq "${B}(python3?|node|nodejs|perl|ruby|php|deno|bun)(\\.exe)?[[:space:]]+(-c|-e|-p|--print|--eval|-)([[:space:]]|\$)" \
   && deny "inline interpreter code is blocked; it is an unbounded egress and execution bypass"
 printf '%s' "$lc" | grep -Eq '/dev/(tcp|udp)/' \
   && deny "/dev/tcp and /dev/udp network redirection is blocked"
@@ -578,6 +585,9 @@ printf '%s' "$key_lc" | grep -Eq '(^|/)\.ssh/|authorized_keys|id_rsa|id_ed25519|
   && deny "reading or transferring key material is blocked"
 printf '%s' "$lc" | grep -Eq "${B}(printenv|env)[[:space:]]*(\$|[;&|])" \
   && deny "dumping the environment is blocked; check a variable with \${NAME:+set} instead"
+# The process environment is also a file: /proc/<pid>/environ holds every variable.
+printf '%s' "$lc" | grep -Eq '/proc/[^/[:space:]]+/environ' \
+  && deny "reading a process environment (/proc/<pid>/environ) is blocked; check a variable with \${NAME:+set} instead"
 printf '%s' "$lc" | grep -Eq '(curl|wget)[^;&|]*(-t |--upload-file|--data-binary[[:space:]]*@|-d[[:space:]]*@|-f[[:space:]][^;&|]*@)' \
   && deny "outbound file upload is blocked"
 
@@ -589,7 +599,7 @@ printf '%s' "$lc" | grep -Eq '(curl|wget)[^;&|]*(-t |--upload-file|--data-binary
 # operands, in-place editors and git subcommands, checked by the quote-aware analyzer. Its
 # inputs travel on stdin so Git Bash's argument conversion cannot rewrite the paths.
 writes_js="$hook_dir_node/lib/qa-shell-writes.mjs"
-wreason="$(printf '%s\0%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$ignore_case" "$cmd" | ULTRAPOWERS_GUARD_PROFILE="$PROFILE" node "$writes_js" 2>&1)" \
+wreason="$(printf '%s\0%s\0%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$ignore_case" "$role_vars" "$cmd" | ULTRAPOWERS_GUARD_PROFILE="$PROFILE" node "$writes_js" 2>&1)" \
   || wreason="the command could not be analysed for writes; it is refused during $run_kind"
 [ -z "$wreason" ] || deny "$wreason"
 

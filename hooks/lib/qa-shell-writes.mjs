@@ -90,13 +90,15 @@ function tokenize(src) {
     if (c === '`') { const j = src.indexOf('`', i + 1); i = j === -1 ? src.length : j + 1; push({ t: 'dyn' }); continue; }
     // operators; a word made only of digits right before < or > is a file descriptor
     if (c === '>' || c === '<') {
-      if (word && word.length === 1 && word[0].t === 'lit' && /^[0-9]+$/.test(word[0].v)) word = null;
+      let fd = null;
+      if (word && word.length === 1 && word[0].t === 'lit' && /^[0-9]+$/.test(word[0].v)) { fd = word[0].v; word = null; }
       let v = c; i++;
       if (c === '<' && src[i] === '<') { v = '<<'; i++; if (src[i] === '<') { v = '<<<'; i++; } else if (src[i] === '-') { i++; } }
       else if (c === '>' && (src[i] === '>' || src[i] === '|')) { v += src[i]; i++; }
       else if (c === '<' && src[i] === '>') { v = '<>'; i++; }
       if ((v === '>' || v === '<') && src[i] === '&') { v += '&'; i++; }
       op(v);
+      toks[toks.length - 1].fd = fd;
       if (v === '<<') { // remember the delimiter so the body is skipped at the next newline
         let j = i; while (src[j] === ' ' || src[j] === '\t') j++;
         const m = /^(['"]?)([^\s'"<>;&|()]+)\1/.exec(src.slice(j));
@@ -145,7 +147,12 @@ const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)h
 const GIT_AUTOPILOT_ALLOWED = new Set(['add', 'commit', 'mv', 'rm']);
 
 // ---------- analysis ----------
-export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase = process.platform === 'win32' || process.platform === 'darwin' }) {
+const ENV_DUMP = 'dumping the environment is blocked; check a variable with ${NAME:+set} instead';
+// A stage reads no tracker credential and nothing named like a secret out of the environment.
+const TRACKER_VARS = /^(GH_TOKEN|GITHUB_TOKEN|GITLAB_TOKEN|GLAB_TOKEN|ODOO_API_KEY|ULTRAPOWERS_STAGE_.*)$/i;
+const SECRET_VARS = /TOKEN|KEY|SECRET|PASS|CREDENTIAL|AUTH|COOKIE|SESSION|PRIVATE/i;
+
+export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase = process.platform === 'win32' || process.platform === 'darwin', roleVars = [] }) {
   const autopilot = profile === 'autopilot';
   // Every compare below is between real canonical paths (8.3 short names, Git Bash forms and
   // symlinks resolved), exact unless the project's folder ignores case.
@@ -203,11 +210,22 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     const simple = (items) => {
       // redirections first; they apply whatever the program is
       const words = [];
+      // True when standard output of this command goes to the null device: only then is a
+      // variable check (`printenv NAME >/dev/null`) free of its value. A stderr-only redirect
+      // (`2>/dev/null`) leaves the value on the terminal.
+      let nullOut = false;
       for (let k = 0; k < items.length; k++) {
         const t = items[k];
         if (t.k === 'op') {
           const next = items[k + 1];
-          if (['>', '>>', '>|', '&>', '&>>', '<>'].includes(t.v)) { if (next && next.k === 'w') { checkTarget(next, dir, 'redirect target', container); k++; } }
+          if (['>', '>>', '>|', '&>', '&>>', '<>'].includes(t.v)) {
+            if (next && next.k === 'w') {
+              const target = resolveWord(next);
+              if (target !== null && ['/dev/null', 'nul'].includes(target.toLowerCase()) && (t.v.startsWith('&') || t.fd === null || t.fd === '1')) nullOut = true;
+              checkTarget(next, dir, 'redirect target', container);
+              k++;
+            }
+          }
           else if (t.v === '>&') { if (next && next.k === 'w') { const v = resolveWord(next); if (v === null || !/^[0-9-]+$/.test(v)) checkTarget(next, dir, 'redirect target', container); k++; } }
           else if (['<', '<<', '<<<', '<&'].includes(t.v)) { if (next && next.k === 'w') k++; }
           continue;
@@ -238,12 +256,28 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         args = args.slice(1);
         if (prog === 'env') while (args.length && args[0].v && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(args[0].v) || args[0].v.startsWith('-'))) args = args.slice(1);
         if (prog === 'timeout') { while (args.length && args[0].v && args[0].v.startsWith('-')) args = args.slice(1); args = args.slice(1); }
-        if (!args.length) return;
+        if (!args.length) { if (prog === 'env' && !nullOut) deny(ENV_DUMP); return; }
         prog = (args[0].v || '').replace(/\\/g, '/').split('/').pop().toLowerCase().replace(/\.exe$/, '');
       }
       const rest = args.slice(1);
       const plain = rest.filter((x) => !(x.v || '').startsWith('-'));
-      if (prog === 'export' || prog === 'local' || prog === 'declare' || prog === 'readonly') {
+      if (prog === 'printenv') {
+        const names = rest.filter((x) => x.v === null || !x.v.startsWith('-'));
+        if (nullOut) return;
+        if (names.length === 0) return deny(ENV_DUMP);
+        for (const x of names) {
+          if (x.v === null) return deny('printenv names a variable built from a substitution; it cannot be verified');
+          if (!autopilot && !roleVars.includes(x.v)) return deny(`printenv ${x.v} reads a variable that is not a configured role variable; during a QA run only the role variables (qa.roles[].userEnv and passwordEnv) are read, and any other is checked with \${NAME:+set}`);
+          if (autopilot && (TRACKER_VARS.test(x.v) || SECRET_VARS.test(x.v))) return deny(`printenv ${x.v} would print a credential or secret; an autopilot stage never reads one out, check it with \${NAME:+set}`);
+        }
+        return;
+      }
+      // Commands that print the whole environment: set and compgen -e, and export, declare,
+      // typeset and readonly when they name nothing to set.
+      if (prog === 'set') { if (rest.length === 0 && !nullOut) deny(ENV_DUMP); return; }
+      if (prog === 'compgen') { if (rest.some((x) => /^-[a-z]*e/.test(x.v || '')) && !nullOut) deny(ENV_DUMP); return; }
+      if (['export', 'declare', 'typeset', 'readonly'].includes(prog) && plain.length === 0 && !nullOut) deny(ENV_DUMP);
+      if (prog === 'export' || prog === 'local' || prog === 'declare' || prog === 'typeset' || prog === 'readonly') {
         for (const x of rest) { const m = x.v ? /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s.exec(x.v) : null; if (m) vars.set(m[1], m[2]); }
         return;
       }
@@ -428,9 +462,9 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
 function main() {
   let input = '';
   try { input = readFileSync(0, 'utf8'); } catch { input = ''; }
-  const [cwd = '', root = '', ticket = '', ignoreCaseFlag = '', ...cmdParts] = input.split('\0');
+  const [cwd = '', root = '', ticket = '', ignoreCaseFlag = '', roleVarsField = '', ...cmdParts] = input.split('\0');
   const profile = process.env.ULTRAPOWERS_GUARD_PROFILE === 'autopilot' ? 'autopilot' : 'qa';
-  const out = analyze(cmdParts.join('\0'), { cwd, root, ticket, profile, ignoreCase: ignoreCaseFlag === '1' });
+  const out = analyze(cmdParts.join('\0'), { cwd, root, ticket, profile, ignoreCase: ignoreCaseFlag === '1', roleVars: roleVarsField.split(',').filter(Boolean) });
   if (out) process.stdout.write(out);
 }
 

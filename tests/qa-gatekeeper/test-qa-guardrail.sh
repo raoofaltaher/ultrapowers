@@ -39,6 +39,7 @@ cat > "$ROOT/.agents/ultrapowers.json" <<'JSON'
   "pluginVersion": "1.0.0",
   "repos": [ { "name": "repo-a", "path": "repo-a", "defaultBranch": "main" } ],
   "qa": {
+    "roles": [ { "name": "user", "userEnv": "QA_USER", "passwordEnv": "QA_PW_USER", "required": true } ],
     "urls": { "frontend": "http://localhost:3000", "backendHealth": "http://localhost:8080/health", "idp": "https://idp.example.com", "observability": "" },
     "hosts": { "allowed": ["localhost", "127.0.0.1", "app.example.com", "backend-container"], "forbidden": ["prod.example.com", "192.0.2.10"] }
   }
