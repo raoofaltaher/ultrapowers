@@ -39,7 +39,7 @@
     "privacyPolicyURL": "https://github.com/raoofaltaher/ultrapowers",
     "termsOfServiceURL": "https://github.com/raoofaltaher/ultrapowers",
     "brandColor": "#F59E0B",
-    "composerIcon": "./assets/ultrapowers-small.svg",
+    "composerIcon": "./assets/ultrapowers-mark.svg",
     "logo": "./assets/app-icon.png",
     "screenshots": []
   }

@@ -38,5 +38,9 @@ check "promotion reduces metadata to type and never promotes a user-type memory"
 check "Muse manifest lists team-memory" bash -c '
   node -e "const m=JSON.parse(require(\"fs\").readFileSync(process.argv[1],\"utf8\")); process.exit(m.capabilities.skills.some(s=>s.id===\"team-memory\"&&s.path===\"skills/team-memory/SKILL.md\")?0:1)" "$1"' _ "$REPO_ROOT/.muse-plugin/plugin.json"
 
+LOG="$REPO_ROOT/skills/team-memory/CREATION-LOG.md"
+check "CREATION-LOG names no beforeSubmitPrompt (the Cursor nudge is on sessionStart)" bash -c '
+  ! grep -q "beforeSubmitPrompt" "$1" && grep -q "sessionStart" "$1"' _ "$LOG"
+
 if [ "$FAILURES" -gt 0 ]; then echo "STATUS: FAILED ($FAILURES failure(s))"; exit 1; fi
 echo "STATUS: PASSED"

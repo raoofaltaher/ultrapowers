@@ -1103,6 +1103,7 @@ test('the watcher refuses a harness that has no guardrail', () => {
   const r = run(ws, ['run', 'GH-16'], { ULTRAPOWERS_DEVIN: HARNESS_STUB });
   assert.equal(r.code, 2, r.stdout + r.stderr);
   assert.equal(r.json.error.code, 'harness-unguarded');
+  assert.match(r.json.error.message, /run its tickets from a session on a guarded harness/);
   assert.equal(harnessCalls(ws).length, 0);
 });
 

@@ -966,7 +966,7 @@ function spawnHarness(name, prompt, cwd, root = cwd) {
 // the watcher refuses it (harnesses.mjs names them).
 function assertGuardedHarness(settings) {
   if (GUARDED_HARNESSES.includes(settings.harness)) return;
-  throw new AutopilotError('harness-unguarded', `autopilot.harness ${settings.harness} has no guardrail in the watcher door yet; run its tickets from a session with /ultrapowers:autopilot <ID>, or set harness to ${GUARDED_HARNESSES.join(' or ')}`);
+  throw new AutopilotError('harness-unguarded', `autopilot.harness ${settings.harness} has no guardrail in the watcher door yet; run its tickets from a session on a guarded harness with /ultrapowers:autopilot <ID>, or set harness to ${GUARDED_HARNESSES.join(' or ')}`);
 }
 
 // A watcher's stages hold their own read-only tokens (D13). Without them a stage holds the

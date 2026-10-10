@@ -13,7 +13,7 @@ This file is the single instruction source for every coding agent that opens thi
 
 ## Team memory
 
-Shared memory for every coding agent on this project lives in `.agents/memory/` (`memory.path` in `.agents/ultrapowers.json`). `MEMORY.md` is the index; `gotchas/`, `decisions/` and `subsystems/` hold one verified fact per file.
+Shared memory for every coding agent on this project lives in `.agents/memory/`, a fixed path. `MEMORY.md` is the index; `gotchas/`, `decisions/` and `subsystems/` hold one verified fact per file.
 
 - Read `.agents/memory/MEMORY.md` at session start. Open a topic file only when its index line is relevant to the work.
 - Save a learning only when it is ALL of: verified (tested or observed here, not inferred), durable (still true next month), expensive (15 minutes or more to rediscover), not derivable (not already in code, docs, specs or git history). Never store: secrets, tokens, credentials, URLs embedding auth, personal data, customer data.

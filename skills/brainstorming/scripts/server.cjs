@@ -106,7 +106,9 @@ const ULTRAPOWERS_VERSION = readUltrapowersVersion();
 // The brand logo is the bundled SVG, served by this process at BRAND_LOGO_PATH.
 // Nothing about the companion is fetched from, or reported to, a remote host.
 const BRAND_LOGO_PATH = '/brand-logo.svg';
-const BRAND_LOGO_FILE = path.join(__dirname, '../../../assets/ultrapowers-small.svg');
+const BRAND_LOGO_FILE = path.join(__dirname, '../../../assets/ultrapowers-mark.svg');
+// Read once at start and served from memory. A packaged tree without assets/ leaves it null, so the route answers 404.
+const BRAND_LOGO_SVG = (() => { try { return fs.readFileSync(BRAND_LOGO_FILE); } catch (e) { return null; } })();
 let ownerPid = process.env.BRAINSTORM_OWNER_PID ? Number(process.env.BRAINSTORM_OWNER_PID) : null;
 
 // Per-session secret key. The companion is reachable by any local browser tab
@@ -420,15 +422,13 @@ function handleRequest(req, res) {
     // Bundled brand logo. Packaged trees may ship without assets/, so a
     // missing file is a 404 rather than a crash. Authorization was already
     // checked at the top of this function, like every other route.
-    let svg = null;
-    try { svg = fs.readFileSync(BRAND_LOGO_FILE); } catch (e) { /* asset not shipped */ }
-    if (!svg) {
+    if (!BRAND_LOGO_SVG) {
       res.writeHead(404, securityHeaders());
       res.end('Not found');
       return;
     }
-    res.writeHead(200, securityHeaders({ 'Content-Type': 'image/svg+xml' }));
-    res.end(svg);
+    res.writeHead(200, securityHeaders({ 'Content-Type': 'image/svg+xml', 'Cache-Control': 'public, max-age=86400' }));
+    res.end(BRAND_LOGO_SVG);
   } else {
     res.writeHead(404, securityHeaders());
     res.end('Not found');

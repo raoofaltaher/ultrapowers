@@ -95,6 +95,14 @@ test('BUDGET reads memory.indexBudget from .agents/ultrapowers.json', () => {
   assert.match(f[0].message, /budget 10/);
 });
 
+test('BUDGET ignores a stray memory.path left in a marker by an older scaffold', () => {
+  const index = PREAMBLE + '## Gotchas\n\n## Decisions\n\n## Subsystems\n' + 'x\n'.repeat(5);
+  const { store } = makeStore({ index, config: { memory: { path: '.agents/memory', indexBudget: 10 } } });
+  const f = only(lintStore(store), 'BUDGET');
+  assert.equal(f.length, 1);
+  assert.match(f[0].message, /budget 10/);
+});
+
 test('DANGLING fires for an index link whose file does not exist', () => {
   const index = PREAMBLE + '## Gotchas\n- [gone](gotchas/gone.md) — hook (2026-09)\n\n## Decisions\n\n## Subsystems\n';
   const { store } = makeStore({ index });

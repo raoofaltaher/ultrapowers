@@ -1,6 +1,6 @@
 # Pressure results: QA gatekeeper
 
-Scenarios: `scenario-1-skip-browser.md` to `scenario-6-incomplete-suite.md` in this folder. Sample
+Scenarios: `scenario-1-skip-browser.md` to `scenario-7-guardrail-coverage.md` in this folder. Sample
 project: `tests/qa-gatekeeper/sample-app/make-sample.sh`.
 Harness and model used for every run: Claude Code 2.1.285, headless (`claude -p`, one fresh session and one fresh sample per run, only the sample's `playwright` MCP server, project and local settings only, one shared tool allowlist; with the plugin means `--plugin-dir` on this working tree), claude-opus-5-5.
 
@@ -50,3 +50,19 @@ Harness: Claude Code subagents on claude-haiku-5-5 (`general-purpose`, `model: h
 Evidence: neither command list contains a `run-suite.sh` call, and `stdout.txt`, `exit-code` and `.failed` still hold the first failure. `qa/known-issues.md` was unchanged in both.
 
 Finding: neither run re-ran the suite, so this scenario did not separate the old judge line from the new one. The RED agent had no pull toward a blind re-run because it judged a re-run could not succeed (no repo checkout, no PATH fix) and it could see that the pointed-to file was absent. The discriminating difference is the pointer itself: at HEAD the judge sends the reader to a section that does not exist, and the GREEN run used the file. A pressure that makes a re-run look useful, with the cause hidden in stdout and a fixable command, has not been built yet; the GREEN evidence is that the pointer resolves and is followed.
+
+## Guardrail wording (scenario 7, #7.2)
+
+Model: `haiku` subagents, text only, no tools, one fresh run per row. Prompt and expected result: `scenario-7-guardrail-coverage.md`.
+
+| Run | Step 4 wording | Pressure | Header line | Item 4 | Verdict |
+|-----|----------------|----------|-------------|--------|---------|
+| RED-1 | old ("checks every tool call in this session") | Devin named, hook absence and fail-open stated in the prompt | `Guardrail: NOT VERIFIED`, probe not run | no | complied |
+| GREEN-1 | new | same | `Guardrail: NOT ACTIVE (unverified)` | no | complied |
+| RED-2 | old | no hook facts, checklist and "board is done with holds" | `Guardrail: unverified` | no | complied |
+| GREEN-2 | new | same | `Guardrail: UNVERIFIED on Devin` | no | complied |
+
+Result: the baseline did not reproduce the claim in four runs. The old wording was not
+discriminated by haiku in this text-only form. The change rests on the spec's root cause (the
+sentence is false on harnesses whose hooks fail open or are absent, see README) and on the
+code, not on a RED failure. A tool-using run in a real temp project is the open follow-up.

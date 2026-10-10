@@ -287,6 +287,8 @@ hermes plugins install raoofaltaher/ultrapowers --enable
 
 Restart any active Hermes sessions after installing. Hermes has no post-compaction hook, so a very long session that compacts over its first turn loses the bootstrap; start a fresh session if skills stop triggering.
 
+**Team-memory reminder after a compaction.** On Claude Code the reminder returns after a compaction. Cursor gets it at session start only, and Hermes has no post-compaction hook at all. Copilot CLI, Factory Droid, Qwen Code and Devin load the same hooks file as Claude Code, but whether they report a compaction to it is not verified.
+
 ### Muse
 
 Ultrapowers is a native Muse plugin. The `using-ultrapowers` bootstrap is injected via the native `SessionStart` hook.
@@ -387,7 +389,7 @@ At any point, **`/ultrapowers:task <ticket>`** tells you where a ticket stands (
 | `repos` | The nested clones: `name`, `path`, `defaultBranch` | Add `area` (for example `backend`) so `brainstorm-task backend` picks that clone |
 | `harnesses` | The coding agents init writes files for | Any of `claude-code`, `codex`, `cursor`, `copilot`, `gemini`, `qwen`, `opencode`, `factory`, `kimi`, `devin`, `antigravity`, `hermes`, `pi`, `muse` |
 | `kb` | The knowledge base folders | The ten folders init writes |
-| `memory` | Team memory: its folder, the index line budget, the minutes a fact must take to rediscover before it is worth saving, the commit trailer | Raise `indexBudget` for a large team |
+| `memory` | Team memory: the index line budget, the minutes a fact must take to rediscover before it is worth saving, the commit trailer | Raise `indexBudget` for a large team |
 | `tickets` | Where tickets come from; no key means local tickets only | See the next table |
 | `autopilot` | How automated a ticket's run is; no key means the manual workflow | See the second table below; set it with `/ultrapowers:init autopilot` |
 | `qa` | QA gatekeeper settings: `urls`, `hosts`, `auth`, `roles`, `languages`, `containers`, `db`, `suites`, `observability`, `brand`, `regression`, `knownIssues`, `api` | Fill what your app has; the qa-specialist skill lists any missing key before a run |
@@ -444,6 +446,8 @@ Autopilot needs a GitHub, GitLab or Odoo source in `tickets`; an Odoo source nee
 | Hermes Agent | in process, the plugin's `pre_tool_call` (fails closed) | yes | The plugin must be in `plugins.enabled`; the watcher passes `--accept-hooks` |
 | Antigravity | plugin hook `hooks.json` at the plugin root, through `guardrail-cli.mjs --antigravity` | yes (`agy -p`) | From its documentation only: Antigravity runs plugin hooks in its CLI, the IDE surface and its crash behaviour are not confirmed |
 | Devin | `hooks/hooks.json`, which Devin documents as best effort and fail open | refused | A Devin session has no reliable envelope; use the project's own `permissions.deny` rules as the brake |
+
+**Where the QA guardrail applies.** The QA gate's guardrail (`/ultrapowers:qa-specialist`) runs on the hooks above. It is active on Claude Code, Cursor, GitHub Copilot CLI, Factory Droid, Qwen Code, Muse, Kimi Code, OpenCode, Pi, Hermes and Antigravity; on Codex after you trust the plugin's hooks with `/hooks`; on Gemini CLI only when `.gemini/settings.json` registers its hook; and not reliably on Devin, whose hooks fail open. The QA run's Step 4 probe records whether the guardrail is active, and the report's header says so.
 
 On every harness the deny is the same exit code 2 with the reason on stderr, which each of them turns into a blocked call the agent can read. Only Claude Code's session door has been run live; the other rows rest on this repository's offline tests and on each vendor's documentation, and `tests/autopilot/test-adapters.sh` checks the headless flags against the CLIs installed on a machine. The hook matches patterns; it is not a sandbox. A build script a stage runs can execute anything the hook never sees, so the credentials a stage holds and the host it runs on are the boundary that counts: see `docs/autopilot-watcher.md`. On GitLab, "write access" means Maintainer or above.
 

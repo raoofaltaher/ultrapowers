@@ -95,8 +95,9 @@ line. Git history keeps the old one when it was committed.
 mkdir -p "<ROOT>/.ultrapowers" && printf '%s' "<ID>" > "<ROOT>/.ultrapowers/qa-active"
 ```
 
-The ticket id, no trailing newline. From here the guardrail checks every tool call in this
-session, and every path ends in Step 7.
+The ticket id, no trailing newline. From here the guardrail checks every tool call on a harness
+that runs it; Step 4's probe records whether it is active, and the report says so. Every path
+ends in Step 7.
 
 ## Step 5: The contract
 

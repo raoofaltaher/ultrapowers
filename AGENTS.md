@@ -34,7 +34,7 @@ Ultrapowers is a skills plugin for coding agents: a `skills/` library, a session
 | `scripts/` | `bump-version.sh` (version sync and audit), `lint-shell.sh` (ShellCheck plus `bash -n`), `rename-fork.sh` (the parameterised rename used to create this fork). |
 | `tests/` | Offline plugin-infrastructure tests, one directory per subject (see below). `tests/claude-code/` also holds model-driven tests that need a Claude Code login. |
 | `docs/` | Harness guides (`README.opencode.md`, `README.kimi.md`), `porting-to-a-new-harness.md`, `testing.md`, `windows/polyglot-hooks.md`, `autopilot-watcher.md` (the watcher as a service), and the specs/plans under `docs/ultrapowers/`. |
-| `assets/` | `ultrapowers-small.svg` (brand logo, also served by the brainstorm companion) and `app-icon.png`. |
+| `assets/` | `ultrapowers-small.svg` (the README logo), `ultrapowers-mark.svg` (the small mark the brainstorm companion serves and the Codex `composerIcon` uses; under 20 KB) and `app-icon.png` (512 by 512). |
 
 ## Rules
 
