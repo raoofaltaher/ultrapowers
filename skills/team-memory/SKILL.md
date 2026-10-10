@@ -7,7 +7,7 @@ description: Use when you learn a verified, durable, expensive-to-rediscover, no
 
 ## Overview
 
-Git-native shared memory for every coding agent on the project. The store is `.agents/memory/` at the project root (`memory.path` in `.agents/ultrapowers.json`); from a nested clone it is `../.agents/memory/`. `MEMORY.md` is the index, hard budget `memory.indexBudget` lines (default 150). Entries are one fact per file under `gotchas/`, `decisions/`, `subsystems/`. Four modes: remember, recall, prune, lint. Say which mode you are in before acting.
+Git-native shared memory for every coding agent on the project. The store is `.agents/memory/` at the project root, a fixed path that no config key moves; from a nested clone it is `../.agents/memory/`. `MEMORY.md` is the index, hard budget `memory.indexBudget` lines (default 150). Entries are one fact per file under `gotchas/`, `decisions/`, `subsystems/`. Four modes: remember, recall, prune, lint. Say which mode you are in before acting.
 
 ## remember: save a learning
 

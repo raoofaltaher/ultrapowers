@@ -387,7 +387,7 @@ At any point, **`/ultrapowers:task <ticket>`** tells you where a ticket stands (
 | `repos` | The nested clones: `name`, `path`, `defaultBranch` | Add `area` (for example `backend`) so `brainstorm-task backend` picks that clone |
 | `harnesses` | The coding agents init writes files for | Any of `claude-code`, `codex`, `cursor`, `copilot`, `gemini`, `qwen`, `opencode`, `factory`, `kimi`, `devin`, `antigravity`, `hermes`, `pi`, `muse` |
 | `kb` | The knowledge base folders | The ten folders init writes |
-| `memory` | Team memory: its folder, the index line budget, the minutes a fact must take to rediscover before it is worth saving, the commit trailer | Raise `indexBudget` for a large team |
+| `memory` | Team memory: the index line budget, the minutes a fact must take to rediscover before it is worth saving, the commit trailer | Raise `indexBudget` for a large team |
 | `tickets` | Where tickets come from; no key means local tickets only | See the next table |
 | `autopilot` | How automated a ticket's run is; no key means the manual workflow | See the second table below; set it with `/ultrapowers:init autopilot` |
 | `qa` | QA gatekeeper settings: `urls`, `hosts`, `auth`, `roles`, `languages`, `containers`, `db`, `suites`, `observability`, `brand`, `regression`, `knownIssues`, `api` | Fill what your app has; the qa-specialist skill lists any missing key before a run |

@@ -51,8 +51,8 @@ check "README.md.tmpl and AGENTS.md.tmpl describe promotion as reducing metadata
   ! grep -q "promoted by copying it here and adding" "$1" && grep -q "only \`type\`" "$1" &&
   grep -q "reduced to \`type\`" "$2" && grep -qi "never promote" "$1" && grep -qi "never promoted" "$2"' _ "$STORE_TPL/README.md.tmpl" "$TPL/AGENTS.md.tmpl"
 
-check "ultrapowers.json.tmpl has the memory section with the four keys" bash -c '
-  grep -q "\"memory\": {" "$1" && grep -q "\"path\": \".agents/memory\"" "$1" &&
+check "ultrapowers.json.tmpl has the memory section with the three keys (no path)" bash -c '
+  grep -q "\"memory\": {" "$1" && ! grep -q "\"path\"" "$1" &&
   grep -q "\"indexBudget\": 150" "$1" && grep -q "\"rediscoveryMinutes\": 15" "$1" &&
   grep -q "\"trailer\": \"Memory-Ref\"" "$1"' _ "$TPL/.agents/ultrapowers.json.tmpl"
 
@@ -85,7 +85,9 @@ for d in gotchas decisions subsystems; do
   check "rendered store has $d/" test -d "$WORK/.agents/memory/$d"
 done
 check "rendered config has memory.indexBudget 150" bash -c '
-  node -e "const c=JSON.parse(require(\"fs\").readFileSync(process.argv[1],\"utf8\")); process.exit(c.memory && c.memory.indexBudget===150 && c.memory.path===\".agents/memory\" && c.memory.rediscoveryMinutes===15 && c.memory.trailer===\"Memory-Ref\" ? 0 : 1)" "$1"' _ "$WORK/.agents/ultrapowers.json"
+  node -e "const c=JSON.parse(require(\"fs\").readFileSync(process.argv[1],\"utf8\")); process.exit(c.memory && c.memory.indexBudget===150 && c.memory.rediscoveryMinutes===15 && c.memory.trailer===\"Memory-Ref\" ? 0 : 1)" "$1"' _ "$WORK/.agents/ultrapowers.json"
+check "rendered config has no memory.path (the store path is fixed)" bash -c '
+  node -e "const c=JSON.parse(require(\"fs\").readFileSync(process.argv[1],\"utf8\")); process.exit(c.memory && !(\"path\" in c.memory) ? 0 : 1)" "$1"' _ "$WORK/.agents/ultrapowers.json"
 check "rendered MEMORY.md has no unrendered placeholder" bash -c '! grep -q "{{" "$1"' _ "$WORK/.agents/memory/MEMORY.md"
 if [ -f "$LINT" ]; then
   check "fresh rendered store passes memory-lint" node "$LINT" "$WORK/.agents/memory"
