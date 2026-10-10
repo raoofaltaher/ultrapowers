@@ -340,3 +340,10 @@ test('mergeMcpFile reports JSON it cannot parse and a leading // line only for .
   assert.ok(out.content.startsWith('// c\n'));
   assert.deepEqual(out.added, ['x']);
 });
+
+test('a source that names its server renders no ticket server of its own', () => {
+  const t = ticketsExample();
+  t.sources[0].server = 'gitlab-company';
+  assert.equal('tickets-gl' in ticketServers(t), false);
+  assert.ok('tickets-gh' in ticketServers(t));
+});

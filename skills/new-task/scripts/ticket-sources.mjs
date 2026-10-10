@@ -21,6 +21,7 @@ const PREFIX = /^[A-Z][A-Z0-9]{0,9}$/;
 // Codex passes a header secret only whole or as a Bearer token.
 const HEADER = /^(Authorization: Bearer|[A-Za-z0-9-]+)$/;
 const NUMBER = /^[0-9]+$/;
+const SERVER_ID = /^[A-Za-z0-9_-]+$/;
 const REQUIRED = { github: ['owner'], gitlab: ['namespace'], odoo: ['url', 'mcpUrl'] };
 
 function isObject(value) {
@@ -72,6 +73,9 @@ export function validateTickets(tickets) {
       if (isText(source[field]) && !/^https?:\/\/[^/\s]+/.test(source[field])) {
         errors.push(`${at}.${field} must be an http or https URL`);
       }
+    }
+    if ('server' in source && (typeof source.server !== 'string' || !SERVER_ID.test(source.server))) {
+      errors.push(`${at}.server must be the id of an MCP server: letters, digits, "-" and "_"`);
     }
     if ('transport' in source && !TRANSPORTS.includes(source.transport)) {
       errors.push(`${at}.transport must be one of ${TRANSPORTS.join(', ')}`);
@@ -139,7 +143,7 @@ function resolution(marker, tickets, source, prefix, segment, number, id = null)
     number,
     repoHint: repoHintFor(marker, segment, path),
     transport: effectiveTransport(tickets, source),
-    server: serverId(prefix),
+    server: isText(source.server) ? source.server : serverId(prefix),
   };
   if (source.provider === 'odoo') {
     out.url = source.url.replace(/\/+$/, '');

@@ -530,6 +530,8 @@ export function ticketServers(tickets) {
   const servers = {};
   for (const source of tickets?.sources ?? []) {
     if (effectiveTransport(tickets, source) === 'cli') continue;
+    // A source that names the server the team already runs needs none of its own.
+    if (typeof source.server === 'string' && source.server !== '') continue;
     const id = ticketServerId(source.prefix);
     if (source.provider === 'github') {
       servers[id] = {
@@ -584,6 +586,37 @@ export function generateMcpFiles(harnesses, { extra = {}, canonical = true } = {
 
 const MCP_CONTAINER = { opencode: 'mcp', vscode: 'servers' };
 
+const normalUrl = (url) => (typeof url === 'string' ? url.trim().replace(/\/+$/, '').toLowerCase() : null);
+const entryUrl = (entry) => normalUrl(entry?.url ?? entry?.httpUrl ?? entry?.serverUrl);
+
+// [[ticket id, existing server id]] for each added id whose URL an existing server already uses.
+function sameUrls(added, wantedUrlOf, existingUrls) {
+  const out = [];
+  for (const id of added) {
+    const url = wantedUrlOf(id);
+    if (!url) continue;
+    const other = Object.keys(existingUrls).find((existingId) => existingId !== id && existingUrls[existingId] === url);
+    if (other) out.push([id, other]);
+  }
+  return out;
+}
+
+function tomlTableUrls(text) {
+  const urls = {};
+  let current = null;
+  for (const line of text.split('\n')) {
+    const head = /^\[([^\]]+)\]/.exec(line);
+    if (head) {
+      const table = /^mcp_servers\.(?:"([^"]+)"|([A-Za-z0-9_-]+))$/.exec(head[1]);
+      current = table ? (table[1] ?? table[2]) : null;
+      continue;
+    }
+    const url = current ? /^url\s*=\s*"([^"]*)"/.exec(line.trim()) : null;
+    if (url) urls[current] = normalUrl(url[1]);
+  }
+  return urls;
+}
+
 function tomlTableIds(text) {
   const ids = [];
   for (const m of text.matchAll(/^\[mcp_servers\.(?:"([^"]+)"|([A-Za-z0-9_-]+))\][ \t]*$/gm)) ids.push(m[1] ?? m[2]);
@@ -610,11 +643,12 @@ export function mergeMcpFile(target, existingText, aloneText) {
       if (current) tables.get(current).push(line);
     }
     const added = [...tables.keys()].filter((id) => !have.has(id));
-    if (!added.length) return { content: existingText, added: [] };
+    if (!added.length) return { content: existingText, added: [], sameUrl: [] };
+    const sameUrl = sameUrls(added, (id) => tomlTableUrls(tables.get(id).join('\n'))[id], tomlTableUrls(existingLf));
     let content = existingLf;
     if (content.length > 0 && !content.endsWith('\n')) content += '\n';
     for (const id of added) content += `\n${tables.get(id).join('\n').replace(/\n+$/, '')}\n`;
-    return { content, added };
+    return { content, added, sameUrl };
   }
   let header = '';
   let body = existingLf;
@@ -637,7 +671,9 @@ export function mergeMcpFile(target, existingText, aloneText) {
   const wanted = alone[key] ?? {};
   const container = existing[key] && typeof existing[key] === 'object' && !Array.isArray(existing[key]) ? existing[key] : {};
   const added = Object.keys(wanted).filter((id) => !(id in container));
-  if (!added.length) return { content: existingText, added: [] };
+  if (!added.length) return { content: existingText, added: [], sameUrl: [] };
+  const existingUrls = Object.fromEntries(Object.entries(container).map(([id, entry]) => [id, entryUrl(entry)]));
+  const sameUrl = sameUrls(added, (id) => entryUrl(wanted[id]), existingUrls);
   for (const id of added) container[id] = wanted[id];
   existing[key] = container;
   if (schema === 'vscode' && Array.isArray(alone.inputs)) {
@@ -647,7 +683,7 @@ export function mergeMcpFile(target, existingText, aloneText) {
     }
     existing.inputs = inputs;
   }
-  return { content: `${header}${toJson(existing)}`, added };
+  return { content: `${header}${toJson(existing)}`, added, sameUrl };
 }
 
 export function listTemplates() {
@@ -717,6 +753,7 @@ function emptyReport(mode, opts) {
     changed: [],
     missingSecrets: [],
     incomplete: [],
+    warnings: [],
     hooksPath: 'skipped',
     nextSteps: [],
   };
@@ -1292,6 +1329,10 @@ export function runTickets(opts) {
       if (merged.unreadable !== undefined) {
         report.mcp.push({ path: target, action: 'unreadable', added: [], message: merged.unreadable });
         continue;
+      }
+      for (const [id, other] of merged.sameUrl ?? []) {
+        const warning = `${id} has the same URL as ${other}; set "server": "${other}" to reuse it`;
+        if (!report.warnings.includes(warning)) report.warnings.push(warning);
       }
       if (!merged.added.length) {
         report.mcp.push({ path: target, action: 'unchanged', added: [] });

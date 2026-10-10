@@ -794,3 +794,24 @@ test('tickets reports a harness file it cannot parse and writes no proposal for 
   assert.equal(fs.existsSync(path.join(root, `.cursor/mcp.json${PROPOSAL_SUFFIX}`)), false);
   assert.ok(report.nextSteps.some((s) => s.includes('.cursor/mcp.json') && /by hand/.test(s)));
 });
+
+test('the tickets dry run warns when an existing server has the URL of a ticket server', () => {
+  const root = scaffolded();
+  const team = { mcpServers: { 'gitlab-company': { type: 'http', url: 'https://gitlab.com/api/v4/mcp/' } } };
+  fs.writeFileSync(path.join(root, '.mcp.json'), `${JSON.stringify(team, null, 2)}\n`);
+  const report = run(['tickets', '--root', root, '--sources', sourcesFile(twoSources()), '--dry-run']);
+  assert.deepEqual(report.warnings, ['tickets-gl has the same URL as gitlab-company; set "server": "gitlab-company" to reuse it']);
+  const named = twoSources();
+  named.sources[0].server = 'gitlab-company';
+  const after = run(['tickets', '--root', root, '--sources', sourcesFile(named), '--dry-run']);
+  assert.deepEqual(after.warnings, []);
+  const proposal = after.mcp.find((m) => m.path === '.mcp.json');
+  assert.deepEqual(proposal.added, ['tickets-gh']);
+});
+
+test('the duplicate-URL warning also reads a Codex config', () => {
+  const root = scaffolded();
+  fs.writeFileSync(path.join(root, '.codex', 'config.toml'), '[mcp_servers.gl-corp]\nurl = "https://gitlab.com/api/v4/mcp"\n');
+  const report = run(['tickets', '--root', root, '--sources', sourcesFile(twoSources()), '--dry-run']);
+  assert.ok(report.warnings.includes('tickets-gl has the same URL as gl-corp; set "server": "gl-corp" to reuse it'), JSON.stringify(report.warnings));
+});

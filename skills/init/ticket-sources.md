@@ -27,6 +27,8 @@ Write the answers as one JSON object to a file outside the project (your temp or
 
 Leave out every field your human partner did not give; `mcpHeader` only for a token header; `login` and `db` only for Odoo. `{ "sources": [] }` removes configured sources.
 
+`server` names an MCP server the team already runs for that tracker, and init then renders none for the source. Add it only when the dry run's `warnings` shows an existing server with the same URL and your human partner agrees to reuse it.
+
 ## Writing it
 
 In scaffold mode the file goes to the scaffold dry run as `--sources <file>`. In a scaffolded project:
