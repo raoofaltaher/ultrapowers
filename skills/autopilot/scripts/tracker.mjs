@@ -155,9 +155,18 @@ class GitHubTracker {
     await run(this.r, this.env, ['label', 'create', name, '-R', this.path, '--color', color, '--description', description, '--force']);
   }
 
-  async createPr({ head, base, title, body }) {
-    const out = await run(this.r, this.env, ['pr', 'create', '-R', this.path, '--head', head, '--base', base, '--title', title, '--body-file', '-'], body);
+  async createPr({ head, base, title, body, draft = false }) {
+    const args = ['pr', 'create', '-R', this.path, '--head', head, '--base', base, '--title', title, '--body-file', '-'];
+    if (draft) args.push('--draft');
+    const out = await run(this.r, this.env, args, body);
     return lastUrl(out.stdout);
+  }
+
+  // The open pull request whose head is `branch`, by branch name (a ticket number is not a pull
+  // request number); null when none is open.
+  async findOpenPr(branch) {
+    const out = await run(this.r, this.env, ['pr', 'list', '-R', this.path, '--head', branch, '--state', 'open', '--json', 'url', '--limit', '1']);
+    return parseJson(out.stdout, 'gh pr list')[0]?.url ?? null;
   }
 
   async prComment(url, body) {
@@ -276,9 +285,17 @@ class GitLabTracker {
     }
   }
 
-  async createPr({ head, base, title, body }) {
-    const out = await run(this.r, this.env, ['mr', 'create', '-R', this.path, '--source-branch', head, '--target-branch', base, '--title', title, '--description', body, '--yes']);
+  async createPr({ head, base, title, body, draft = false }) {
+    const heading = draft && !/^draft:/i.test(title) ? `Draft: ${title}` : title;
+    const out = await run(this.r, this.env, ['mr', 'create', '-R', this.path, '--source-branch', head, '--target-branch', base, '--title', heading, '--description', body, '--yes']);
     return lastUrl(out.stdout);
+  }
+
+  // The open merge request whose source is `branch`, by branch name; null when none is open.
+  async findOpenPr(branch) {
+    const out = await run(this.r, this.env, ['mr', 'list', '-R', this.path, '--source-branch', branch, '-F', 'json']);
+    const open = parseJson(out.stdout, 'glab mr list').filter((m) => !m.state || m.state === 'opened');
+    return open[0]?.web_url ?? null;
   }
 
   async prComment(url, body) {
@@ -470,9 +487,13 @@ class OdooTracker {
   // packet, whose columns are aligned, asks for `preformatted` and keeps its pre block. Odoo 17
   // and later escape a plain string body, so the markup is sent with body_is_html; an older
   // server that does not know the argument gets the body alone.
-  async comment(number, body, { preformatted = false } = {}) {
+  async comment(number, body, { preformatted = false, attachments = [] } = {}) {
     const html = preformatted ? textToNoteHtml(body) : markdownToNoteHtml(body);
     const kwargs = { body: html, message_type: 'comment', subtype_xmlid: 'mail.mt_note' };
+    if (attachments.length) {
+      kwargs.attachment_ids = [];
+      for (const file of attachments) kwargs.attachment_ids.push(await this.attach(number, file.name, file.bytes));
+    }
     let id;
     try {
       id = await this.call('project.task', 'message_post', [[Number(number)]], { ...kwargs, body_is_html: true });
@@ -481,6 +502,13 @@ class OdooTracker {
       id = await this.call('project.task', 'message_post', [[Number(number)]], kwargs);
     }
     return `${this.r.url.replace(/\/+$/, '')}/web#model=project.task&id=${number}&message=${id}`;
+  }
+
+  // A file on the task, through ir.attachment; the name is kept as given. Returns the attachment id.
+  async attach(number, name, bytes) {
+    const datas = Buffer.from(bytes).toString('base64');
+    const created = await this.call('ir.attachment', 'create', [[{ name, datas, res_model: 'project.task', res_id: Number(number) }]]);
+    return Array.isArray(created) ? created[0] : created;
   }
 
   async commentTime(url) {
@@ -524,6 +552,10 @@ class OdooTracker {
 
   async prComment() {
     throw new AutopilotError('no-forge', 'an Odoo task is not a forge; pull request comments go to the repository\'s forge');
+  }
+
+  async findOpenPr() {
+    throw new AutopilotError('no-forge', 'an Odoo task is not a forge; open pull requests are found on the repository\'s forge');
   }
 }
 

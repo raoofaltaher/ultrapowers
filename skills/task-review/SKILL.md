@@ -68,7 +68,7 @@ It writes `reviews/<ID>/TASK-REVIEW.md` from [templates/TASK-REVIEW.md](template
 node "<SKILL_DIR>/scripts/post-review.mjs" "<ID>" [--draft-pr]
 ```
 
-It refuses a local ticket, commits and pushes `reviews/<ID>/` through the guarded push, and comments the full reports on the ticket and on the open pull request, in numbered parts when long. With `--draft-pr` and no open pull request it opens a draft one. Print what it prints. A refusal is the answer: do not post another way.
+It refuses a local ticket, commits and pushes `reviews/<ID>/` to the documents branch (the branch checked out in the project root, which must start with `<ID>-`) through the guarded push, and comments the full reports on the ticket and on the open pull request, found by branch name, in numbered parts when long. On Odoo the screenshots are attached to the chatter message. With `--draft-pr` and no open pull request it pushes the ticket branch and opens a draft one. Print what it prints. A refusal is the answer: do not post another way.
 
 ## Checklist
 

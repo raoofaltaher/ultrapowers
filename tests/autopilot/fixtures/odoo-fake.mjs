@@ -206,6 +206,13 @@ export function odooSeedWithTask(overrides = {}) {
     'ir.attachment': {
       search_read: searchRead((x) => x.attachments, 'ir.attachment'),
       read: read((x) => x.attachments),
+      create: (args, kwargs, x) => {
+        const vals = Array.isArray(args[0]) ? args[0][0] : args[0];
+        const attachment = { id: x.nextId++, name: vals.name, res_model: vals.res_model, res_id: vals.res_id, datas: vals.datas };
+        x.attachments.push(attachment);
+        x.writes.push({ model: 'ir.attachment', method: 'create', vals });
+        return Array.isArray(args[0]) ? [attachment.id] : attachment.id;
+      },
     },
   };
   return s;

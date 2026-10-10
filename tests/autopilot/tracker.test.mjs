@@ -307,3 +307,77 @@ test('github and gitlab prComment post on the pull request', async () => {
   const g = env({ 'mr note 4 -R acme/platform/web -m report': { stdout: 'https://gitlab.example.com/acme/platform/web/-/merge_requests/4#note_8\n' } });
   assert.equal(await trackerFor(GL, g).prComment('https://gitlab.example.com/acme/platform/web/-/merge_requests/4', 'report'), 'https://gitlab.example.com/acme/platform/web/-/merge_requests/4#note_8');
 });
+
+// --- task-review: draft pull requests, finding an open one by branch, Odoo attachments (#29).
+
+test('github createPr with draft passes --draft; without it the arguments are unchanged', async () => {
+  const e = env({ 'pr create -R o/r --head 501-x --base dev --title 501: x --body-file - --draft': { stdout: 'https://github.com/o/r/pull/12\n' } });
+  const url = await trackerFor(GH, e).createPr({ head: '501-x', base: 'dev', title: '501: x', body: 'review', draft: true });
+  assert.equal(url, 'https://github.com/o/r/pull/12');
+  assert.ok(e.calls()[0].args.includes('--draft'));
+  const plain = env({ 'pr create -R o/r --head 501-x --base dev --title 501: x --body-file -': { stdout: 'https://github.com/o/r/pull/13\n' } });
+  await trackerFor(GH, plain).createPr({ head: '501-x', base: 'dev', title: '501: x', body: 'b' });
+  assert.ok(!plain.calls()[0].args.includes('--draft'));
+});
+
+test('gitlab createPr with draft prefixes the title with Draft: once', async () => {
+  const e = env({ 'mr create -R acme/platform/web --source-branch 501-x --target-branch main --title Draft: 501: x --description review --yes': { stdout: 'https://gitlab.example.com/acme/platform/web/-/merge_requests/8\n' } });
+  assert.equal(await trackerFor(GL, e).createPr({ head: '501-x', base: 'main', title: '501: x', body: 'review', draft: true }), 'https://gitlab.example.com/acme/platform/web/-/merge_requests/8');
+  const already = env({ 'mr create -R acme/platform/web --source-branch 501-x --target-branch main --title Draft: 501: x --description review --yes': { stdout: 'https://gitlab.example.com/acme/platform/web/-/merge_requests/9\n' } });
+  await trackerFor(GL, already).createPr({ head: '501-x', base: 'main', title: 'Draft: 501: x', body: 'review', draft: true });
+  assert.equal(already.calls()[0].args[already.calls()[0].args.indexOf('--title') + 1], 'Draft: 501: x');
+});
+
+test('github findOpenPr searches by branch name, never by number, and returns the url or null', async () => {
+  const e = env({ 'pr list -R o/r --head 501-x --state open --json url --limit 1': { stdout: [{ url: 'https://github.com/o/r/pull/12' }] } });
+  assert.equal(await trackerFor(GH, e).findOpenPr('501-x'), 'https://github.com/o/r/pull/12');
+  assert.deepEqual(e.calls()[0].args.slice(0, 6), ['pr', 'list', '-R', 'o/r', '--head', '501-x']);
+  const none = env({ 'pr list -R o/r --head 501-y --state open --json url --limit 1': { stdout: [] } });
+  assert.equal(await trackerFor(GH, none).findOpenPr('501-y'), null);
+});
+
+test('gitlab findOpenPr lists merge requests by source branch', async () => {
+  const e = env({ 'mr list -R acme/platform/web --source-branch 501-x -F json': { stdout: [{ web_url: 'https://gitlab.example.com/acme/platform/web/-/merge_requests/8', state: 'opened' }] } });
+  assert.equal(await trackerFor(GL, e).findOpenPr('501-x'), 'https://gitlab.example.com/acme/platform/web/-/merge_requests/8');
+  const none = env({ 'mr list -R acme/platform/web --source-branch 501-y -F json': { stdout: [] } });
+  assert.equal(await trackerFor(GL, none).findOpenPr('501-y'), null);
+});
+
+test('odoo findOpenPr is no-forge', async () => {
+  const f = await odooFake();
+  await assert.rejects(trackerFor(ODOO(f), E_ODOO).findOpenPr('501-x'), (e) => e.code === 'no-forge');
+});
+
+test('odoo attach creates an ir.attachment on the task, with the name unchanged, and returns its id', async () => {
+  const f = await odooFake();
+  const t = trackerFor(ODOO(f), E_ODOO);
+  const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
+  const id = await t.attach(13627, 'cart clerk é.png', bytes);
+  assert.equal(typeof id, 'number');
+  const made = f.seed.writes.filter((w) => w.model === 'ir.attachment' && w.method === 'create').at(-1);
+  assert.equal(made.vals.name, 'cart clerk é.png');
+  assert.equal(made.vals.res_model, 'project.task');
+  assert.equal(made.vals.res_id, 13627);
+  assert.equal(made.vals.datas, bytes.toString('base64'));
+});
+
+test('odoo comment with attachments attaches each file then posts one message carrying their ids', async () => {
+  const f = await odooFake();
+  const t = trackerFor(ODOO(f), E_ODOO);
+  const url = await t.comment(13627, '# Report\n\nsee the screenshots', {
+    attachments: [{ name: 'a.png', bytes: Buffer.from('one') }, { name: 'b b.png', bytes: Buffer.from('two') }],
+  });
+  assert.match(url, /message=\d+$/);
+  const creates = f.seed.writes.filter((w) => w.model === 'ir.attachment');
+  assert.deepEqual(creates.map((w) => w.vals.name), ['a.png', 'b b.png']);
+  const post = f.seed.writes.at(-1);
+  assert.equal(post.method, 'message_post');
+  assert.equal(post.kwargs.attachment_ids.length, 2);
+  assert.deepEqual(post.kwargs.attachment_ids, f.seed.attachments.slice(-2).map((a) => a.id));
+});
+
+test('odoo comment without attachments sends no attachment_ids', async () => {
+  const f = await odooFake();
+  await trackerFor(ODOO(f), E_ODOO).comment(13627, 'plain');
+  assert.ok(!('attachment_ids' in f.seed.writes.at(-1).kwargs));
+});

@@ -39,7 +39,7 @@ if ! grep -Eq 'AskUserQuestion|Read tool|Write tool|Edit tool|Bash tool|Glob|Gre
 
 # Every relative path the body links or runs must exist.
 missing=""
-for rel in prompts/review.md templates/TASK-REVIEW.md scripts/review-preflight.sh scripts/assemble-review.mjs; do
+for rel in prompts/review.md templates/TASK-REVIEW.md scripts/review-preflight.sh scripts/assemble-review.mjs scripts/post-review.mjs; do
     [[ -f "$SKILL_DIR/$rel" ]] || missing="$missing $rel"
     grep -q "$rel" "$SKILL_MD" || missing="$missing (unreferenced: $rel)"
 done
