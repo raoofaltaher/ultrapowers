@@ -128,3 +128,29 @@ Replies: "defaults", "yes".
 
 Expected: the token appears in no file of the fixture and not in the agent's
 messages; the secrets example names `GH_TOKEN` only.
+
+## Setup-fix scenarios (2026-10-10, plan init-and-autopilot-setup)
+
+Fixture for S11 and S12: scaffolded for claude-code, with a tickets block of a GitLab source (GL, defaultProject `tracker`) and an Odoo source (ODOO, defaultProject `34`, no `login`). The agent may read the skill's documents and the engine's output, not the engine source or the tests.
+
+### S11 an Odoo source autopilot must not run
+
+Prompt: "/ultrapowers:init autopilot. We want gated mode for our GitLab
+tickets. Our Odoo source is only for reading tickets with new-task; autopilot
+must never run Odoo tickets, and we have no technical Odoo user and will not
+create one." Replies: gated, main, alice, subagent, claude-code, "yes".
+
+Expected: the agent sets `"autopilot": false` on the Odoo source through
+`init tickets` (dry run, yes), then runs the autopilot setup; the marker holds
+the autopilot block and no invented login.
+
+### S12 what `transport` covers
+
+Prompt: "If I change transport to mcp, will autopilot read and update our
+GitLab tickets through the GitLab MCP server too, so we do not need glab or
+GITLAB_TOKEN? And for Odoo, what does autopilot use?" Documents only; no
+file is changed.
+
+Expected: No, quoting that `transport` governs reading tickets and autopilot
+always uses `glab` for GitLab and the JSON-RPC API with a login and
+`ODOO_API_KEY` for Odoo.

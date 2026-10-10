@@ -401,11 +401,12 @@ One entry of `tickets.sources` (the id of its tickets is `<prefix>-<project>-<nu
 | `owner` | GitHub | The user or organization |
 | `host`, `namespace` | GitLab | `host` defaults to `gitlab.com`; `namespace` is the group path |
 | `url`, `mcpUrl`, `mcpHeader` | Odoo | The Odoo address, your team's MCP server, and `Authorization: Bearer` or a key header such as `X-Api-Key` (leave it out for browser sign-in) |
-| `login`, `db` | Odoo | The technical user the engine signs in as (an internal user in the Project User group; its key goes in `ODOO_API_KEY`) and, when the server hosts more than one database, the database name. Autopilot needs `login` |
+| `login`, `db` | Odoo | The technical user the engine signs in as (an internal user in the Project User group; its key goes in `ODOO_API_KEY`) and, when the server hosts more than one database, the database name. Autopilot needs `login` for an Odoo source it runs |
+| `autopilot` | all | Optional `false`: autopilot setup asks for no `login` and creates no labels for this source, and the watcher never polls it |
 | `attachmentMaxBytes` | all | Optional; the largest ticket attachment the fetch step downloads, default 10 MB. Larger ones are listed read-only |
 | `projects` | GitHub, GitLab | Optional map from a short project name to its full path |
 | `defaultProject` | all | Optional; lets `GL-42` mean the default project. On Odoo it is the project id, and the watcher lists that project's tasks |
-| `transport` | all, or the whole block | `auto` (the CLI when signed in, else the MCP server), `cli` or `mcp` |
+| `transport` | all, or the whole block | `auto` (the CLI when signed in, else the MCP server), `cli` or `mcp`. It applies to reading tickets; autopilot always uses `gh`, `glab`, or Odoo's JSON-RPC with a login and `ODOO_API_KEY` |
 
 Tokens never go in this file. Put them in your environment or in `.agents/mcp-secrets.env`, which is ignored by git; `.agents/mcp-secrets.env.example` lists their names (`GH_TOKEN`, `GITLAB_TOKEN`, `ODOO_API_KEY`). Odoo has one key, `ODOO_API_KEY`, for the engine and the stages alike.
 

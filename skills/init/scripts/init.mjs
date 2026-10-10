@@ -1422,19 +1422,19 @@ export async function runAutopilot(opts) {
     throw new InitError('no-source', 'autopilot needs a GitHub, GitLab or Odoo ticket source; run init tickets first');
   }
   if (block) {
-    const noLogin = (marker.tickets?.sources ?? []).findIndex((s) => s && s.provider === 'odoo' && !(typeof s.login === 'string' && s.login.trim()));
+    const noLogin = (marker.tickets?.sources ?? []).findIndex((s) => s && s.provider === 'odoo' && s.autopilot !== false && !(typeof s.login === 'string' && s.login.trim()));
     if (noLogin >= 0) {
-      throw new InitError('bad-tickets', `tickets.sources[${noLogin}].login is required for autopilot: the engine signs in to Odoo as a technical user; run init tickets and name it`);
+      throw new InitError('bad-tickets', `tickets.sources[${noLogin}].login is required for autopilot: the engine signs in to Odoo as a technical user; run init tickets and name it, or set "autopilot": false on that source when autopilot must not run its tickets`);
     }
     // An Odoo-only project gets the readable tag names (spec 2026-10-05 D9) unless the answers chose.
-    const watched = sources.filter((s) => s.defaultProject);
+    const watched = sources.filter((s) => s.defaultProject && s.autopilot !== false);
     if (!block.events && watched.length && watched.every((s) => s.provider === 'odoo')) block.events = { ...ODOO_EVENTS };
     loadSecretsFile(opts.root, process.env);
   }
   const events = { ...AUTOPILOT_DEFAULTS.events, ...(block?.events ?? {}) };
   const failed = [];
   if (block) {
-    for (const source of sources) {
+    for (const source of sources.filter((s) => s.autopilot !== false)) {
       let resolution = null;
       try {
         resolution = source.defaultProject ? resolveTicket(marker, `${source.prefix}-1`) : null;

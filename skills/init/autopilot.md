@@ -1,6 +1,6 @@
 # Autopilot
 
-Read from the init skill's Autopilot section. Autopilot lets `/ultrapowers:autopilot <ID>` run a ticket from a GitHub, GitLab or Odoo source through the workflow, with the human gates on the tracker. It needs a configured ticket source; offer Ticket sources first when `ticketsConfigured` is false. An Odoo source needs its `login` (Ticket sources question 6); the engine refuses `bad-tickets` without it.
+Read from the init skill's Autopilot section. Autopilot lets `/ultrapowers:autopilot <ID>` run a ticket from a GitHub, GitLab or Odoo source through the workflow, with the human gates on the tracker. It needs a configured ticket source; offer Ticket sources first when `ticketsConfigured` is false. An Odoo source that autopilot runs needs its `login` (Ticket sources question 6); the engine refuses `bad-tickets` without it. A source autopilot must not run carries `"autopilot": false` instead, which skips its login, its labels and the watcher. Autopilot always reaches GitHub through `gh`, GitLab through `glab` and Odoo through its JSON-RPC API, whatever `transport` says.
 
 ## Questions
 

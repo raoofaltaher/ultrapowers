@@ -42,3 +42,14 @@ Observations:
 - The init body sat at exactly 1500 words before this change. The ticket procedure lives in `skills/init/ticket-sources.md`, read on demand, and the SKILL.md keeps only the gates; `WORD_BUDGET` in `test-skill-structure.sh` is 1700.
 - Runs met this session's worktree sandbox (it refused `cd` chains and heredocs) and used PowerShell or the Write tool instead; that is the test harness, not the skill.
 - One S10 run asked the four GitHub questions in a single message so one scripted reply could answer them; with a live partner the skill's one-question-per-message line stands.
+
+## S11-S12 init and autopilot setup, 2026-10-10
+
+Harness: Claude Code, general-purpose subagents on `haiku`, one fresh subagent and one fresh fixture per run (`S11`, `S12` in `pressure-scenarios.md`). "Before" is the v1.3.1 plugin (`git archive d4f108e`); "after" is the edited branch. Every agent was told not to read the engine source or the tests. A first S11 baseline run against the branch's own engine (not v1.3.1) found `"autopilot": false` by reading the engine source, so it proved nothing and was repeated against v1.3.1.
+
+| Scenario | Before (v1.3.1) | After | Verdict |
+|----------|-----------------|-------|---------|
+| S11 an Odoo source autopilot must not run | Stopped at `bad-tickets` ("login is required"): "the engine will not enable autopilot while any Odoo source is configured without a technical login ... the autopilot answer schema does not offer [a way to exclude it], so it would need an engine change." Marker unchanged, no autopilot block. | Ran `tickets --dry-run` and the write with `"autopilot": false` on the Odoo source, then the autopilot setup: "the Odoo `autopilot: false` was the only way to meet 'never run Odoo tickets' without a login". Marker holds the gated block, no login invented. | Fixed |
+| S12 what `transport` covers | "Unclear." The documents allow `mcp` but "do not say autopilot's GitLab reads and updates then go through the GitLab MCP server"; "confirm with a test or the maintainers before dropping glab". | "No. Setting transport to mcp changes only how tickets are read. Autopilot still uses glab and GITLAB_TOKEN", quoting `autopilot.md` and the README line; Odoo through JSON-RPC with a login and `ODOO_API_KEY`. | Fixed |
+
+Observation: the session door (`/ultrapowers:autopilot ODOO-...`) does not check `autopilot: false`; only the setup, the labels and the watcher do (what the spec asks). A source that must never run needs `login` and `ODOO_API_KEY` left unset.

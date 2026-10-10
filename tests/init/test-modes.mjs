@@ -857,3 +857,17 @@ test('tickets keeps a projects entry the source already has', () => {
   sources.sources[0].projects = { 'app-api': 'acme/other/app-api' };
   assert.deepEqual(run(['tickets', '--root', root, '--sources', sourcesFile(sources), '--dry-run']).proposedProjects, { GL: {} });
 });
+
+test('an Odoo source with autopilot false needs no login for the autopilot setup', () => {
+  const root = scaffolded();
+  run(['tickets', '--root', root, '--sources', sourcesFile(odooOnly('https://erp.example.com', { login: undefined, autopilot: false }))]);
+  const report = run(['autopilot', '--root', root, '--answers', answersFile(autopilotExample()), '--dry-run']);
+  assert.equal(report.marker.after.mode, 'gated');
+  assert.deepEqual(report.labels, [], 'an opted-out source gets no labels');
+});
+
+test('an Odoo source that autopilot runs still needs its login', () => {
+  const root = scaffolded();
+  run(['tickets', '--root', root, '--sources', sourcesFile(odooOnly('https://erp.example.com', { login: undefined, autopilot: true }))]);
+  assert.equal(run(['autopilot', '--root', root, '--answers', answersFile(autopilotExample()), '--dry-run'], { expectExit: 2 }).error.code, 'bad-tickets');
+});

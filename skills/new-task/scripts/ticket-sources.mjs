@@ -74,6 +74,9 @@ export function validateTickets(tickets) {
         errors.push(`${at}.${field} must be an http or https URL`);
       }
     }
+    if ('autopilot' in source && typeof source.autopilot !== 'boolean') {
+      errors.push(`${at}.autopilot must be true or false`);
+    }
     if ('server' in source && (typeof source.server !== 'string' || !SERVER_ID.test(source.server))) {
       errors.push(`${at}.server must be the id of an MCP server: letters, digits, "-" and "_"`);
     }

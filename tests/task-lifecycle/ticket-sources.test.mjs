@@ -213,3 +213,14 @@ test('a server name must be a plain non-empty id', () => {
     assert.ok(validateTickets(t).some((e) => e.includes('tickets.sources[0].server')), JSON.stringify(bad));
   }
 });
+
+test('a source may set autopilot to a boolean; anything else is refused', () => {
+  const t = specExample();
+  t.sources[2].autopilot = false;
+  assert.deepEqual(validateTickets(t), []);
+  for (const bad of ['no', 0, null]) {
+    const u = specExample();
+    u.sources[2].autopilot = bad;
+    assert.ok(validateTickets(u).some((e) => e.includes('tickets.sources[2].autopilot')), JSON.stringify(bad));
+  }
+});
