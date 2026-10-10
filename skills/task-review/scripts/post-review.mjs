@@ -173,12 +173,20 @@ function numbered(name, parts) {
 function commentsFor(documents, { id, mode, base, limit, root }) {
   const out = [];
   const artifactsDir = path.resolve(root, 'reviews', id, 'artifacts');
+  // The real path must sit under the real artifacts folder: a symlink inside it is not followed out.
   const artifactPath = (name) => {
     const file = path.resolve(artifactsDir, name);
     if (!insideArtifacts(name) || !file.startsWith(`${artifactsDir}${path.sep}`)) throw new AutopilotError('bad-artifact', `artifacts/${name} is not inside reviews/${id}/artifacts/`);
-    return file;
+    let realDir;
+    let realFile;
+    try { realDir = fs.realpathSync(artifactsDir); realFile = fs.realpathSync(file); } catch { return file; }
+    if (!realFile.startsWith(`${realDir}${path.sep}`)) throw new AutopilotError('bad-artifact', `artifacts/${name} resolves outside reviews/${id}/artifacts/`);
+    return realFile;
   };
-  const exists = (name) => insideArtifacts(name) && fs.existsSync(artifactPath(name));
+  const exists = (name) => {
+    if (!insideArtifacts(name)) return false;
+    try { return fs.existsSync(artifactPath(name)); } catch { return false; }
+  };
   for (const doc of documents) {
     const { text, files } = rewriteLinks(doc.text, { id, mode, base, exists });
     const parts = numbered(doc.name, splitParts(text, limit - HEADER_RESERVE));
