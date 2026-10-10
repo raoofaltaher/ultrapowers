@@ -25,7 +25,7 @@
   ".vscode/mcp.json": "1.0.0",
   ".vscode/settings.json": "1.0.0",
   ".github/copilot-instructions.md": "1.0.0",
-  ".claude/settings.json": "1.2.0",
+  ".claude/settings.json": "1.4.0",
   ".claude/output-styles/ste-explanatory.md": "1.0.0",
   ".agents/mcp-secrets.env.example": "1.0.0",
   ".gitleaks.toml": "1.0.0",

@@ -24,6 +24,7 @@ Ultrapowers is a skills plugin for coding agents: a `skills/` library, a session
 | `skills/using-ultrapowers/` | The bootstrap skill injected at session start on every harness; `references/<harness>-tools.md` holds per-harness tool mappings. |
 | `skills/init/scripts/init.mjs` | The scaffold engine behind `ultrapowers:init` (scaffold, join, upgrade and repair modes, `check` to audit a scaffold, and `tickets` for ticket sources). It renders `templates/` and never overwrites a file. |
 | `skills/new-task/scripts/` | `scaffold-task.sh` and `ticket-lib.sh` (ticket folders, shared with brainstorm-task and task); `ticket-sources.mjs` and `fetch-ticket.mjs` (ticket ids, and fetching a ticket through `gh`, `glab` or the source's MCP server). |
+| `skills/task-review/` | The `task-review` skill (`/ultrapowers:task-review <ID> [repos...] [--post] [--draft-pr]`), `prompts/review.md` (the per-repository reviewer's prompt), `templates/TASK-REVIEW.md`, and `scripts/`: `review-preflight.sh` (documents, repository selection, one diff range per repository from `qa-preflight.mjs --change-set-only`), `assemble-review.mjs` (one verdict from the findings and the QA report) and `post-review.mjs` (`--post`: comments, Odoo attachments and a draft PR/MR through the autopilot tracker clients and the guarded push). It never edits code and never merges. |
 | `skills/autopilot/` | The autopilot skill (the session door), `prompts/<stage>.md` (the text both doors follow per stage), `templates/packet.md`, and `scripts/`: `autopilot-lib.mjs` (config, state, hash-chained log, next-stage decision, packet, approval checks, scope), `tracker.mjs` (GitHub through `gh`, GitLab through `glab`), `repos.mjs` (branches, worktrees, commits, the guarded push) and `autopilot.mjs` (the CLI: `next`, `begin`, `end`, `packet`, `pr`, `run`, `watch`). |
 | `templates/` | The project payload init writes: `AGENTS.md` and its importers, the knowledge-base folder READMEs, MCP and harness settings, the repo-hygiene blocks (`_blocks/`), the team-memory store and `qa/known-issues.md`. `CHANGES.json` records the plugin version in which each target last changed, for upgrade mode. |
 | `agents/` | `qa-specialist.md`: the QA gatekeeper's contract, the agent the `qa-specialist` skill forks into (or reads inline). |
@@ -65,6 +66,10 @@ bash tests/team-memory/test-precommit-lint.sh
 bash tests/task-lifecycle/test-task-lifecycle.sh
 node --test tests/task-lifecycle/ticket-sources.test.mjs
 node --test tests/task-lifecycle/fetch-ticket.test.mjs
+bash tests/task-lifecycle/test-task-review.sh
+bash tests/task-lifecycle/test-skill-structure.sh
+node --test tests/task-lifecycle/assemble-review.test.mjs
+node --test tests/task-lifecycle/post-review.test.mjs
 bash tests/autopilot/run-tests.sh
 bash tests/autopilot/test-adapters.sh             # skips a harness CLI that is not installed
 bash tests/qa-gatekeeper/run-tests.sh

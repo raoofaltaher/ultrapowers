@@ -336,9 +336,11 @@ From a ticket to a reviewed, tested branch. The agents do the repeatable work; a
 
 8. **`/ultrapowers:qa-specialist <ticket> [note]`** *(beta)* - The QA gate, which you run before you finish the branch. It tests the running app in a real browser for every configured role and language, across seven lanes: UI, logs, API, database, observability, test suites and content. A guardrail keeps the run read-only. It writes `reviews/<ID>/QA-REPORT.md` with one verdict: PASS, PASS-WITH-ISSUES, FAIL, INCOMPLETE or PRECONDITION-FAILED. It never starts or stops your stack and never commits.
 
-9. **`/ultrapowers:finishing-a-development-branch`** - Activates when tasks complete. Verifies tests, offers to merge, open a pull request or keep the branch, and cleans up the worktree. Discarding the work needs your explicit request and a typed confirmation.
+9. **`/ultrapowers:task-review <ticket> [repos...] [--post] [--draft-pr]`** - The whole-ticket review, which you run after the work is done and before you finish the branch. For each repository the ticket touched, a reviewer on the most capable model reads the whole range and every changed file with its callers, judges the tests against test-driven development (is there a test, was it written first, does it test behavior), and traces every failing test and every Critical or Important finding to its root cause. Then the QA gate runs. One verdict (`PASS`, `PASS-WITH-ISSUES`, `FAIL` or `BLOCKED`) and the findings land in `reviews/<ID>/TASK-REVIEW.md`. It never edits code and never merges. With `--post` it also comments the full review and QA reports, screenshots included, on the ticket and on the ticket's open pull or merge request, and with `--draft-pr` it opens a draft one when none is open; on Odoo the screenshots are attached to the chatter message.
 
-10. **`/ultrapowers:autopilot <ticket> [--mode off|gated|full]`** *(the watcher and `full` mode are beta)* - Runs steps 2 to 9 for one GitHub, GitLab or Odoo ticket (an id, or an Odoo task's URL) with the human gates on the tracker instead of in the chat. It has two doors: the command, which you run in a session, and a watcher, `autopilot.mjs watch`, which runs on the machine that hosts your coding agent and picks up tickets a human labelled. In `gated` mode the run stops twice: at a review packet on the ticket, with links to the brief, the spec with its assumption ledger and the plan, which you approve with a label, and at the pull requests, one per repository in scope. In `full` mode only the pull requests wait for you. The engine keeps a hash-chained stage log per ticket, pushes and writes to the tracker itself, and a guardrail envelope keeps the agent from pushing, merging or writing to the tracker. Set it up with `/ultrapowers:init autopilot`; `docs/autopilot-watcher.md` covers the watcher as a service.
+10. **`/ultrapowers:finishing-a-development-branch`** - Activates when tasks complete. Verifies tests, offers to merge, open a pull request or keep the branch, and cleans up the worktree. Discarding the work needs your explicit request and a typed confirmation.
+
+11. **`/ultrapowers:autopilot <ticket> [--mode off|gated|full]`** *(the watcher and `full` mode are beta)* - Runs steps 2 to 8 and 10 for one GitHub, GitLab or Odoo ticket (an id, or an Odoo task's URL) with the human gates on the tracker instead of in the chat. It has two doors: the command, which you run in a session, and a watcher, `autopilot.mjs watch`, which runs on the machine that hosts your coding agent and picks up tickets a human labelled. In `gated` mode the run stops twice: at a review packet on the ticket, with links to the brief, the spec with its assumption ledger and the plan, which you approve with a label, and at the pull requests, one per repository in scope. In `full` mode only the pull requests wait for you. The engine keeps a hash-chained stage log per ticket, pushes and writes to the tracker itself, and a guardrail envelope keeps the agent from pushing, merging or writing to the tracker. Set it up with `/ultrapowers:init autopilot`; `docs/autopilot-watcher.md` covers the watcher as a service.
 
 At any point, **`/ultrapowers:task <ticket>`** tells you where a ticket stands (brief, spec, plan, reviews, branches) and what comes next, without changing anything. And **team-memory** works alongside every step: when the agent verifies a fact that is durable, expensive to rediscover and not already in the code, it saves it to `.agents/memory/` in git, so every developer, every coding agent and every session on the project can use it.
 
@@ -487,6 +489,7 @@ Everything above the original methodology, built from real daily work across man
 
 **Quality gate** *(beta)*
 - **qa-specialist** - Run the seven-lane QA gate for a ticket and leave one verdict in `reviews/<ID>/QA-REPORT.md`
+- **task-review** - Review a ticket's finished work end to end (code review with the test-first and root-cause lenses, then the QA gate), write `reviews/<ID>/TASK-REVIEW.md`, and with `--post` comment the full reports on the tracker
 - **qa-lane-1-ui**, **qa-lane-2-logs**, **qa-lane-3-api**, **qa-lane-4-db**, **qa-lane-5-observability**, **qa-lane-6-suites**, **qa-lane-7-content**, **qa-report** - The lanes and the report format the QA agent uses; not invoked directly
 
 **Testing**
@@ -618,6 +621,7 @@ The text diagrams below carry what the charts leave out: branch names, the stage
    writing-plans              ─► plans/<ID>/Plan.md           ◄ you review the plan
    executing-plans | subagent-driven-development, TDD, reviews ◄ a branch in each repo you choose
    /ultrapowers:qa-specialist ─► reviews/<ID>/QA-REPORT.md
+   /ultrapowers:task-review   ─► reviews/<ID>/TASK-REVIEW.md   (--post: comments on the ticket and its PR/MR)
    finishing-a-development-branch                             ◄ you pick merge, PR or keep
 ```
 

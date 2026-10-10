@@ -103,6 +103,10 @@
         "path": "skills/task/SKILL.md"
       },
       {
+        "id": "task-review",
+        "path": "skills/task-review/SKILL.md"
+      },
+      {
         "id": "team-memory",
         "path": "skills/team-memory/SKILL.md"
       },
