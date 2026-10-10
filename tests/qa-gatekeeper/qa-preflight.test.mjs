@@ -10,7 +10,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '../..');
 const scriptPath = resolve(repoRoot, 'skills/qa-specialist/scripts/qa-preflight.mjs');
 const mod = await import(pathToFileURL(scriptPath).href);
-const { findRoot, filledString, filledList, ticketBranchRegex, validateConfig, scanContentHint, preflight } = mod;
+const { findRoot, filledString, filledList, isPlaceholderEnum, ticketBranchRegex, validateConfig, scanContentHint, preflight } = mod;
 
 const FULL_QA = {
   urls: { frontend: 'http://localhost:3000', backendHealth: 'http://localhost:8080/health', idp: '', observability: '' },
@@ -93,16 +93,59 @@ test('findRoot walks up from a nested clone and returns null past the filesystem
   rmSync(root, { recursive: true, force: true });
 });
 
-test('filledString rejects empty strings and enum placeholders; filledList rejects arrays of blanks', () => {
+test('filledString rejects only empty strings; enum spellings are values, checked per field; filledList rejects arrays of blanks', () => {
   assert.equal(filledString('http://localhost:3000'), true);
   assert.equal(filledString(''), false);
   assert.equal(filledString('   '), false);
-  assert.equal(filledString('form|oidc-password|custom'), false);
-  assert.equal(filledString('a|b'), false);
-  assert.equal(filledString('error|exception|fatal|unhandled'), false);
+  assert.equal(filledString('correct|horse'), true);
+  assert.equal(filledString('error|exception|fatal|unhandled'), true);
   assert.equal(filledList(['']), false);
   assert.equal(filledList([]), false);
   assert.equal(filledList(['/']), true);
+});
+
+test('isPlaceholderEnum matches the template spelling of an enum field and nothing else', () => {
+  assert.equal(isPlaceholderEnum('form|oidc-password|custom', ['form', 'oidc-password', 'custom']), true);
+  assert.equal(isPlaceholderEnum('trx|vitest-json|junit-xml', ['trx', 'vitest-json', 'junit-xml']), true);
+  assert.equal(isPlaceholderEnum('form', ['form', 'oidc-password', 'custom']), false);
+  assert.equal(isPlaceholderEnum('correct|horse', ['trx', 'vitest-json', 'junit-xml']), false);
+});
+
+test('a partly filled role is dropped with a warning naming the missing field; required makes it missing', () => {
+  const dropped = validateConfig({ ...TEMPLATE_QA, roles: [{ name: 'admin', userEnv: 'QA_USER_ADMIN' }] }, ENV_ALL);
+  assert.ok(dropped.warnings.includes('qa.roles[0] dropped: missing passwordEnv'), `warnings: ${dropped.warnings}`);
+  const required = validateConfig({ ...TEMPLATE_QA, roles: [{ name: 'admin', userEnv: 'QA_USER_ADMIN', required: true }] }, ENV_ALL);
+  assert.ok(required.missing.some((m) => m.startsWith('qa.roles[0]') && m.includes('passwordEnv')), `missing: ${required.missing}`);
+});
+
+test('a required value that is not a boolean is warned about and the role is not required', () => {
+  const result = validateConfig({ ...FULL_QA, roles: [{ name: 'user', userEnv: 'QA_USER_USER', passwordEnv: 'QA_PW_USER', required: 'true' }] }, ENV_ALL);
+  assert.ok(result.warnings.includes('qa.roles[0].required must be a boolean (got "true"); treated as not required'), `warnings: ${result.warnings}`);
+  assert.equal(result.roles[0].required, false);
+});
+
+test('a password that spells an enum value is a credential', () => {
+  assert.equal(validateConfig(FULL_QA, { QA_USER_USER: 'u', QA_PW_USER: 'correct|horse' }).roles[0].credentials, 'present');
+  assert.equal(validateConfig(FULL_QA, { QA_USER_USER: 'u', QA_PW_USER: 'trx|vitest-json|junit-xml' }).roles[0].credentials, 'present');
+});
+
+test('containers.errorPattern with a pipe is kept', () => {
+  const result = validateConfig({ ...FULL_QA, containers: { watch: [], errorPattern: 'error|panic' } }, ENV_ALL);
+  assert.equal(result.containers.errorPattern, 'error|panic');
+});
+
+test('an untouched template entry raises no warning', () => {
+  assert.deepEqual(validateConfig(TEMPLATE_QA, ENV_ALL).warnings, []);
+});
+
+test('a partly filled suite or language is dropped with a warning naming the missing field', () => {
+  const result = validateConfig({
+    ...FULL_QA,
+    suites: [{ repo: 'repo-a', resultFormat: 'vitest-json' }],
+    languages: [{ code: '', switch: '?lang=fr' }, { code: 'en', switch: '' }],
+  }, ENV_ALL);
+  assert.ok(result.warnings.includes('qa.suites[0] dropped: missing command'), `warnings: ${result.warnings}`);
+  assert.ok(result.warnings.includes('qa.languages[0] dropped: missing code'), `warnings: ${result.warnings}`);
 });
 
 test('ticketBranchRegex escapes metacharacters, strips a leading #, and needs a non-digit boundary', () => {
