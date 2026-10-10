@@ -433,7 +433,7 @@ fi
 
 # --- Arbitrary in-page code is an egress and exfiltration bypass; never.
 case "$tool_lc" in
-  *run_code_unsafe*) deny "arbitrary in-page code execution is never allowed during $run_kind" ;;
+  *run_code*|*browser_evaluate*|*evaluate_script*|*javascript_tool*) deny "arbitrary in-page code execution is never allowed during $run_kind; it is an egress and exfiltration path no host list can see" ;;
 esac
 
 # --- MCP tools of a tracker or of git, autopilot profile: reads pass, writes belong to the
@@ -460,16 +460,14 @@ on_list() {
   [ -n "$1" ] && [ -n "$2" ] && printf ',%s,' "$1" | grep -qF ",$2,"
 }
 
-# --- Navigation and fetch tools: forbidden hosts never; allowed hosts only when a list is set.
+# --- Any tool that carries a url (navigation, fetch, scrape, crawl, whatever its name): forbidden
+# hosts never; allowed hosts only when a list is set.
 if [ -n "$url" ]; then
-  case "$tool_lc" in
-    *navigate*|*goto*|*open_url*|*new_page*|*fetch*)
-      h="$(host_of "$url")"
-      on_list "$forbidden" "$h" && deny "host '$h' is on qa.hosts.forbidden"
-      if [ -n "$allowed" ]; then
-        on_list "$allowed" "$h" || deny "host '$h' is not in qa.hosts.allowed"
-      fi ;;
-  esac
+  h="$(host_of "$url")"
+  on_list "$forbidden" "$h" && deny "host '$h' is on qa.hosts.forbidden"
+  if [ -n "$allowed" ]; then
+    on_list "$allowed" "$h" || deny "host '$h' is not in qa.hosts.allowed"
+  fi
 fi
 
 # --- Shell command surface.

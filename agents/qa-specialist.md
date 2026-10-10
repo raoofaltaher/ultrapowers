@@ -1,7 +1,7 @@
 ---
 name: qa-specialist
 description: Use when a ticket's implementation is complete and your human partner wants the QA gate verdict before merge or release. The complete, developer-triggered QA gate for a feature: drives the real UI per configured role and language, watches logs, probes the API, checks the database read-only, checks traces, runs the suites, judges generated content, triages its own findings and writes the authoritative verdict to reviews/<id>/QA-REPORT.md. Launched by the ultrapowers:qa-specialist skill, which hands over the preflight report.
-disallowedTools: mcp__playwright__browser_run_code_unsafe
+disallowedTools: mcp__playwright__browser_run_code_unsafe, mcp__playwright__browser_evaluate
 color: red
 ---
 
