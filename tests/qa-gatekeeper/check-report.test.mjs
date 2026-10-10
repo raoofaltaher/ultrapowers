@@ -38,6 +38,15 @@ test('a well-formed report passes every check', () => {
   assert.deepEqual(failed(checkReport(GOOD, OPTS)), []);
 });
 
+const STOPPED = 'Stopped at close: app (reviews/2001/suites/app), stopped 2026-10-10T12:00:00Z, reason timeout';
+
+test('a suite stopped at close is named under Lane 6, and a row anywhere else fails', () => {
+  const under6 = GOOD.replace('app: 0 new-failing', `app: 0 new-failing\n${STOPPED}`);
+  assert.deepEqual(failed(checkReport(under6, OPTS)), []);
+  const under1 = GOOD.replace('![admin list](artifacts/items-admin-en-list.png)', `![admin list](artifacts/items-admin-en-list.png)\n${STOPPED}`);
+  assert.ok(failed(checkReport(under1, OPTS)).includes('a Stopped at close row sits under Lane 6: Suites'));
+});
+
 test('a second Verdict line, a missing role screenshot and a linked png all fail', () => {
   const bad = GOOD
     .replace('## Data hygiene', 'Verdict: PASS\n\n## Data hygiene')

@@ -60,6 +60,10 @@ export function checkReport(text, { id, roles = [], notCovered = [], verdict = '
     const first = (under.find((line) => line.trim() !== '') || '').trim();
     check(/^not-covered — \S/.test(first), `lane ${n} is not-covered with a reason`);
   }
+  const lane6 = linesUnder(lines, LANES[5], /^#{2,3} /) || [];
+  for (const line of lines.filter((text) => text.includes('Stopped at close'))) {
+    check(lane6.includes(line), 'a Stopped at close row sits under Lane 6: Suites');
+  }
   if (!precondition) {
     const matrix = linesUnder(lines, '## Dimension matrix', /^## /) || [];
     for (const dimension of DIMENSIONS) {

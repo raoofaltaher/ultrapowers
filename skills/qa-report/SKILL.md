@@ -42,7 +42,8 @@ Structure, in order:
    (with one screenshot per role embedded), containers watched, endpoints probed, database checks
    run, traces read, suites run (repo, duration, judge summary), content judged. Gated or blocked
    lanes as `not-covered — <reason>`, using the reason from the preflight gates or the guardrail
-   denial.
+   denial. Under `### Lane 6: Suites`, every suite that STEP 7b stopped gets its own line:
+   `Stopped at close: <suite> (<out dir>), stopped <time>`. A suite that finished gets no such line.
 7. **Scenarios covered** — the plan rows with their statuses, from run-state.
 8. **Root-cause hints** — for correlated findings: probable cause at file, endpoint or query
    level, prioritized.
