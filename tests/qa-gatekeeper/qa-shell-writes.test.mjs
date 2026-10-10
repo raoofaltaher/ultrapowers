@@ -400,3 +400,21 @@ test('analyze counts the psql invocations it inspected, so the hook can refuse o
   assert.match(analyze('kubectl exec db psql -U postgres -c "drop table t"', c), /kubectl exec without --/);
   assert.match(analyze("eval \"$CMD\"", c), /built from a variable/);
 });
+
+test('an autopilot stage never prints a credential through a variable; a presence check passes', () => {
+  for (const cmd of ['echo $GH_TOKEN', 'echo "$ODOO_API_KEY"', "printf '%s' \"$GITHUB_TOKEN\"", 'curl -H "Authorization: Bearer $GL_TOKEN" http://localhost:3000/', 'node app.js --token=$MY_API_SECRET']) {
+    assert.match(analyze(cmd, apEnv), /credential or secret/, cmd);
+  }
+  for (const cmd of ['echo ${GH_TOKEN:+set}', '[ -n "$GH_TOKEN" ] && echo set', 'test -z "$ODOO_API_KEY"', 'echo $HOME', 'echo "$PATH"']) {
+    assert.equal(analyze(cmd, apEnv), '', cmd);
+  }
+  assert.equal(analyze('echo $GH_TOKEN', qaEnv), '', 'the QA profile has its own role-variable rule');
+});
+
+test('a path-qualified or quoted psql inside a command string is counted', () => {
+  const c = { cwd: '/p', root: '/p', ticket: '1234', profile: 'qa', ignoreCase: false, roRole: 'qa_agent_ro' };
+  for (const cmd of ['watch "/usr/bin/psql -U postgres -c \'drop table t\'"', "watch \"'psql' -U postgres -c 'drop table t'\"", 'watch "C:\\\\pg\\\\bin\\\\psql.exe -U postgres -c \'drop table t\'"']) {
+    assert.match(analyze(cmd, c), /did not inspect/, cmd);
+  }
+  assert.equal(analyze('sh -c "/usr/bin/psql -U qa_agent_ro -c \'select 1\'"', c), '');
+});

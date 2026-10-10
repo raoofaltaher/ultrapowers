@@ -1,0 +1,1 @@
+{"tool_name":"mcp__filesystem__move_file","tool_input":{"source":"{{ROOT}}/reviews/1234/a.md","destination":"{{ROOT}}/.claude/settings.json"}}

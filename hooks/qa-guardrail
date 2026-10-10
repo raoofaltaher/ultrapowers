@@ -306,7 +306,8 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
     const inner = guard.rel(real, rootReal, ignoreCase);
     return { real, rel: inner === null ? "" : "./" + inner };
   };
-  const writeRaw = str(inp.file_path) || str(inp.notebook_path) || str(inp.path);
+  // The written path under its known spellings; a move or copy writes its destination.
+  const writeRaw = str(inp.file_path) || str(inp.notebook_path) || str(inp.path) || str(inp.destination) || str(inp.target) || str(inp.target_file) || str(inp.TargetFile) || str(inp.filePath);
   const w = writeRaw ? resolve(writeRaw) : { real: "", rel: "" };
   const keyReal = pathFields.map((p) => { const r = resolve(p); return r.rel ? r.rel.slice(2) : r.real; }).filter(Boolean);
   // The files a patch names (Codex apply_patch, Droid ApplyPatch), each as raw, rel and real.
@@ -321,7 +322,7 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
   }
   process.stdout.write([
     "ok", toolName, command, writeRaw,
-    str(inp.url), str(ev.cwd), allowed.join(","), norm(hosts.forbidden).join(","), ticket,
+    [inp.url, inp.uri, inp.link].concat(Array.isArray(inp.urls) ? inp.urls : [inp.urls]).map(str).filter(Boolean).join(" "), str(ev.cwd), allowed.join(","), norm(hosts.forbidden).join(","), ticket,
     pathFields.join("\n"), trackerHosts.join(","), ignoreCase ? "1" : "0",
     w.real, w.rel, keyReal.join("\n"), patchRecs.join("\n"), roleVars.join(","),
     str((qa.db && typeof qa.db === "object" ? qa.db : {}).roRole).trim() || "qa_agent_ro",
@@ -386,6 +387,24 @@ PROTECTED_RE='(^|/)\.ssh/|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws/|mcp-secr
 # hooks (they run inside the engine's own commit and push) and the env file: a stage that
 # rewrites the workflow or the hooks rewrites its own brakes.
 AUTOPILOT_PROTECTED_RE='(^|/)\.github/|(^|/)\.gitlab-ci\.yml$|(^|/)hooks/(qa-guardrail|session-start|team-memory-[a-z]+|lib/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|/)\.gemini/hooks/|(^|/)\.husky/|(^|/)\.pre-commit-config\.ya?ml$|(^|/)lefthook\.ya?ml$|(^|/)\.env($|\.)'
+# --- MCP tools of a tracker or of git, autopilot profile: reads pass, writes belong to the
+# engine between stages (the approve label among them). A tool name with a read verb is a read.
+# This rule comes before the file-tool gate: a tracker tool that carries a `path` argument
+# (create_or_update_file, delete_file) is a tracker write, not a workspace write.
+if [ "$PROFILE" = "autopilot" ]; then
+  case "$tool_lc" in
+    mcp__*)
+      if printf '%s' "$tool_lc" | grep -Eq 'github|gitlab|glab|jira|linear|odoo|bitbucket|azure_?devops|^mcp__tickets-' \
+        && ! printf '%s' "$tool_lc" | grep -Eq '(^|_)(get|list|search|read|view|fetch|show|describe|find|query|resolve)(_|$)' \
+        && printf '%s' "$tool_lc" | grep -Eq '(create|update|edit|add|remove|delete|merge|comment|note|label|close|reopen|post|save|accept|push|fork|assign|transfer|lock|approve|submit|publish|manage|link|call|execute|write|unlink|method)'; then
+        deny "tracker writes through MCP tools are never run by an autopilot stage; the engine writes back between stages"
+      fi
+      printf '%s' "$tool_lc" | grep -Eq '^mcp__git__git_(push|reset)' \
+        && deny "git push and git reset through an MCP tool are never run by an autopilot stage"
+      ;;
+  esac
+fi
+
 is_write_tool=0
 case "$tool" in
   Write|Edit|MultiEdit|NotebookEdit|Create|ApplyPatch) is_write_tool=1 ;;
@@ -393,7 +412,7 @@ case "$tool" in
     # The other harnesses' spellings: Gemini's write_file and replace, Droid's Create, Antigravity's
     # write_to_file and replace_file_content, Codex's apply_patch (handled below, it carries a patch).
     case "$tool_lc" in
-      *write*|*edit*|*create*|*move_file*|*delete*|replace|*replace_file*|*patch*)
+      *write*|*edit*|*create*|*move_file*|*copy_file*|*delete*|replace|*replace_file*|*patch*)
         [ -n "$wpath" ] && is_write_tool=1 ;;
     esac ;;
 esac
@@ -472,22 +491,6 @@ case "$tool_lc" in
   *run_code*|*browser_evaluate*|*evaluate_script*|*javascript_tool*) deny "arbitrary in-page code execution is never allowed during $run_kind; it is an egress and exfiltration path no host list can see" ;;
 esac
 
-# --- MCP tools of a tracker or of git, autopilot profile: reads pass, writes belong to the
-# engine between stages (the approve label among them). A tool name with a read verb is a read.
-if [ "$PROFILE" = "autopilot" ]; then
-  case "$tool_lc" in
-    mcp__*)
-      if printf '%s' "$tool_lc" | grep -Eq 'github|gitlab|glab|jira|linear|odoo|bitbucket|azure_?devops|^mcp__tickets-' \
-        && ! printf '%s' "$tool_lc" | grep -Eq '(^|_)(get|list|search|read|view|fetch|show|describe|find|query|resolve)(_|$)' \
-        && printf '%s' "$tool_lc" | grep -Eq '(create|update|edit|add|remove|delete|merge|comment|note|label|close|reopen|post|save|accept|push|fork|assign|transfer|lock|approve|submit|publish|manage|link|call|execute|write|unlink|method)'; then
-        deny "tracker writes through MCP tools are never run by an autopilot stage; the engine writes back between stages"
-      fi
-      printf '%s' "$tool_lc" | grep -Eq '^mcp__git__git_(push|reset)' \
-        && deny "git push and git reset through an MCP tool are never run by an autopilot stage"
-      ;;
-  esac
-fi
-
 host_of() {
   printf '%s' "$1" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#^[^/?@]*@##; s#[/?].*$##; s#:[0-9]+$##' | tr '[:upper:]' '[:lower:]'
 }
@@ -496,15 +499,15 @@ on_list() {
   [ -n "$1" ] && [ -n "$2" ] && printf ',%s,' "$1" | grep -qF ",$2,"
 }
 
-# --- Any tool that carries a url (navigation, fetch, scrape, crawl, whatever its name): forbidden
-# hosts never; allowed hosts only when a list is set.
-if [ -n "$url" ]; then
-  h="$(host_of "$url")"
+# --- Any tool that carries a url (navigation, fetch, scrape, crawl, whatever its name), under
+# `url`, `uri`, `link` or a `urls` array: forbidden hosts never; allowed hosts only when a list is set.
+for u in $url; do
+  h="$(host_of "$u")"
   on_list "$forbidden" "$h" && deny "host '$h' is on qa.hosts.forbidden"
   if [ -n "$allowed" ]; then
     on_list "$allowed" "$h" || deny "host '$h' is not in qa.hosts.allowed"
   fi
-fi
+done
 
 # --- Shell command surface.
 [ -n "$cmd" ] || exit 0

@@ -29,7 +29,7 @@ const XARGS_VALUE_OPTS = new Set(['-I', '-i', '-n', '-P', '-L', '-d', '-a', '-E'
 // and the read-only database role's grants are the guarantee behind it.
 const PSQL_PROGRAMS = new Set(['psql']);
 // psql as a token inside a word that holds whitespace (a command string for another program).
-const PSQL_TOKEN_RE = /(^|[\s;&|(`])psql(\.exe)?(?=[\s;&|)`]|$)/gi;
+const PSQL_TOKEN_RE = /(^|[\s;&|(`'"])(?:[^\s'"`;&|()]*[\\/])?psql(\.exe)?(?=[\s;&|)`'"]|$)/gi;
 const psqlTokens = (text) => (String(text).match(PSQL_TOKEN_RE) || []).length;
 // Other PostgreSQL client tools: never run during a run; lane 4 reaches the database through
 // psql -c as the read-only role only.
@@ -419,6 +419,20 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     // countWords is false when a wrapper's tail is re-run and the outer command counted it already.
     const simple = (items, countWords = true) => {
       for (const t of items) if (t.k === 'w') checkAlias(t, dir);
+      // An autopilot stage never reads a credential out, whatever prints it: `echo $GH_TOKEN`,
+      // `printf '%s' "$ODOO_API_KEY"`. A presence check stays: `${NAME:+set}`, `[ -n "$NAME" ]`.
+      if (autopilot) {
+        const first = items.find((t) => t.k === 'w');
+        const firstWord = first ? (resolveWord(first) ?? '') : '';
+        const isTest = ['[', '[[', 'test'].includes(firstWord);
+        if (!isTest) {
+          for (const t of items) {
+            if (t.k !== 'w') continue;
+            const hit = t.parts.find((p) => p.t === 'var' && (TRACKER_VARS.test(p.v) || SECRET_VARS.test(p.v)));
+            if (hit) return deny(`$${hit.v} would print or pass on a credential or secret; an autopilot stage never reads one out, check it with \${NAME:+set}`);
+          }
+        }
+      }
       // redirections first; they apply whatever the program is
       const words = [];
       // True when standard output of this command goes to the null device: only then is a
