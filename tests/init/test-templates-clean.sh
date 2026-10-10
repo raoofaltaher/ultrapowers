@@ -59,7 +59,7 @@ if [ -n "${ULTRAPOWERS_FORBIDDEN_PATTERNS_FILE:-}" ] && [ -f "$ULTRAPOWERS_FORBI
   done <"$ULTRAPOWERS_FORBIDDEN_PATTERNS_FILE"
 fi
 
-kb_dirs=(tasks specs plans reviews evals handbooks brand-book business playbooks release-notes)
+kb_dirs=(tasks specs plans reviews evals handbooks brandbook business playbooks release-notes)
 for dir in "${kb_dirs[@]}"; do
   if [ -f "$TEMPLATES/$dir/README.md.tmpl" ] && [ -f "$TEMPLATES/$dir/.gitkeep" ]; then
     pass "templates/$dir has README.md.tmpl and .gitkeep"

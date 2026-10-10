@@ -1011,3 +1011,53 @@ test('check reports the ticket sources and the autopilot mode it found', () => {
   assert.equal(report.ticketsConfigured, true);
   assert.equal(report.autopilotMode, 'gated');
 });
+
+// Task 9: brandbook/ and near-named folders (#28 C2, D7).
+test('a new scaffold writes brandbook/README.md and no brand-book/', () => {
+  const root = scaffolded();
+  assert.ok(fs.existsSync(path.join(root, 'brandbook', 'README.md')));
+  assert.ok(fs.existsSync(path.join(root, 'brandbook', '.gitkeep')));
+  assert.equal(fs.existsSync(path.join(root, 'brand-book')), false);
+  assert.ok(marker(root).kb.includes('brandbook'));
+  assert.ok(!marker(root).kb.includes('brand-book'));
+});
+
+test('upgrade on a project with brand-book/ prints the git mv step and moves nothing', () => {
+  const root = scaffolded();
+  fs.renameSync(path.join(root, 'brandbook'), path.join(root, 'brand-book'));
+  setMarkerVersion(root, '1.3.1');
+  const before = snapshot(root);
+  const preview = run(['upgrade', '--root', root]);
+  assert.ok(preview.nextSteps.some((s) => s.includes('git mv brand-book brandbook')), JSON.stringify(preview.nextSteps));
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
+  const applied = run(['upgrade', '--root', root, '--apply', 'none']);
+  assert.ok(applied.nextSteps.some((s) => s.includes('git mv brand-book brandbook')));
+  assert.ok(fs.existsSync(path.join(root, 'brand-book')));
+  assert.equal(fs.existsSync(path.join(root, 'brandbook')), false, 'upgrade never moves the folder');
+});
+
+test('upgrade prints no git mv step once the folder is brandbook/', () => {
+  const root = scaffolded();
+  setMarkerVersion(root, '1.3.1');
+  assert.ok(!run(['upgrade', '--root', root]).nextSteps.some((s) => s.includes('git mv')));
+});
+
+test('the scaffold dry run reports near-named folders and writes nothing', () => {
+  const root = tmpWorkspace();
+  fs.mkdirSync(path.join(root, 'brandbook'));
+  fs.mkdirSync(path.join(root, 'docs', 'specs'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'Plans'));
+  const before = snapshot(root);
+  const report = run(['scaffold', '--root', root, '--name', 'WS', '--platform', 'linux', '--dry-run']);
+  assert.deepEqual(report.nearFolders.map((n) => n.existing).sort(), ['Plans', 'docs/specs']);
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
+  assert.ok(report.nextSteps.some((s) => s.includes('docs/specs') && s.includes('Plans')));
+});
+
+test('check names a legacy brand-book/ folder and the git mv that fixes it', () => {
+  const root = scaffolded();
+  fs.renameSync(path.join(root, 'brandbook'), path.join(root, 'brand-book'));
+  const report = run(['check', '--root', root], { env: ALL_SET });
+  const finding = report.findings.find((f) => f.kind === 'near-folder' && f.path === 'brand-book');
+  assert.ok(finding && finding.detail.includes('git mv brand-book brandbook'), JSON.stringify(report.findings));
+});

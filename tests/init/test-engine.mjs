@@ -534,3 +534,11 @@ test('missingContent: any other target reports nothing', () => {
   assert.deepEqual(engine.missingContent('AGENTS.md', 'x', 'y'), { missing: [] });
   assert.deepEqual(engine.missingContent('.mcp.json', 'not json', '{}'), { missing: [] });
 });
+
+test('the QA preflight reads brand logo paths under brand-book/ and brandbook/ alike', async () => {
+  const { validateConfig } = await import(pathToFileURL(path.join(repoRoot, 'skills', 'qa-specialist', 'scripts', 'qa-preflight.mjs')).href);
+  for (const folder of ['brand-book', 'brandbook']) {
+    const result = validateConfig({ brand: { logoPaths: [`${folder}/logos/logo-primary.svg`], tokenPaths: [], compareRoute: '/' } }, {});
+    assert.equal(result.gates.visualBrand.active, true, folder);
+  }
+});

@@ -31,7 +31,7 @@ export const ALL_HARNESSES = [
 ];
 export const KB_FOLDERS = [
   'tasks', 'specs', 'plans', 'reviews', 'evals', 'handbooks',
-  'brand-book', 'business', 'playbooks', 'release-notes',
+  'brandbook', 'business', 'playbooks', 'release-notes',
 ];
 export const BEST_EFFORT_TARGETS = ['.factory/mcp.json', '.kimi/mcp.json'];
 
@@ -1048,6 +1048,9 @@ function scaffoldNextSteps(opts, report, repos) {
     steps.push(`Best-effort files, verify against the vendor docs: ${bestEffort.join(', ')}`);
   }
   steps.push(...incompleteSteps(report));
+  if (report.nearFolders?.length) {
+    steps.push(`Folders near a knowledge-base name already exist: ${report.nearFolders.map((n) => `${n.existing} (near ${n.kb}/)`).join(', ')}. Decide with your human partner which one the project uses; init wrote the standard names beside them.`);
+  }
   steps.push('Review the written files, then commit the scaffold.');
   return steps;
 }
@@ -1068,6 +1071,7 @@ export function runScaffold(opts) {
   if (!opts.name && existingMarker?.name) opts.name = existingMarker.name;
   const repos = detectRepos(opts.root);
   report.repos = repos;
+  report.nearFolders = nearFolders(opts.root);
   if (opts.sources) opts.tickets = loadTickets(opts.sources);
   if (opts.autopilotFile) opts.autopilot = loadAutopilot(opts.autopilotFile);
   const plan = planPayload(opts, repos, harnesses);
@@ -1271,6 +1275,13 @@ function upgradeNextSteps(report, from, version, applied) {
   return steps;
 }
 
+// The knowledge-base folder was brand-book/ before 1.4.0. Init never moves it; the rename is the
+// project's own git mv, and every reader accepts both names until 2.0.
+function legacyFolderSteps(root) {
+  const legacy = fs.existsSync(path.join(root, 'brand-book')) && !fs.existsSync(path.join(root, 'brandbook'));
+  return legacy ? ['The knowledge-base folder is brandbook/ from 1.4.0. Rename yours when you are ready: git mv brand-book brandbook, and do not apply brandbook/README.md first, or the folder will already exist (init never moves it; both names are read until 2.0).'] : [];
+}
+
 export function runUpgrade(opts) {
   const report = { ...emptyReport('upgrade', opts), preview: opts.apply === null };
   const marker = requireMarker(opts);
@@ -1340,7 +1351,7 @@ export function runUpgrade(opts) {
   }
   report.written.sort();
   report.skipped.sort();
-  report.nextSteps = [...upgradeNextSteps(report, from, version, opts.apply !== null), ...repoNextSteps(report, recorded, opts.apply === null ? 'upgrade' : 'run')];
+  report.nextSteps = [...upgradeNextSteps(report, from, version, opts.apply !== null), ...legacyFolderSteps(opts.root), ...repoNextSteps(report, recorded, opts.apply === null ? 'upgrade' : 'run')];
   return report;
 }
 
@@ -1549,7 +1560,12 @@ export function runCheck(opts) {
     if (secrets.optional.length) add('secrets-optional', SECRETS_EXAMPLE, `not defined, optional: ${secrets.optional.join(', ')}`);
   }
   for (const proposal of findProposals(opts.root)) add('stale-proposal', proposal, `merge it into ${proposal.slice(0, -PROPOSAL_SUFFIX.length)} with your human partner, then delete it`);
-  for (const near of nearFolders(opts.root)) add('near-folder', near.existing, `near the knowledge-base folder ${near.kb}/; decide with your human partner which one the project uses`);
+  for (const near of nearFolders(opts.root)) {
+    const legacy = near.existing === 'brand-book' && near.kb === 'brandbook';
+    add('near-folder', near.existing, legacy
+      ? 'the knowledge-base folder is brandbook/ from 1.4.0; rename it with: git mv brand-book brandbook (both names are read until 2.0)'
+      : `near the knowledge-base folder ${near.kb}/; decide with your human partner which one the project uses`);
+  }
   report.nextSteps = [
     ...report.findings.map((f) => `${f.kind}: ${f.path}: ${f.detail}`),
     ...(report.next ? [`init mode for this project: ${report.next}`] : []),
