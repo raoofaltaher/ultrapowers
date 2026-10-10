@@ -287,6 +287,8 @@ hermes plugins install raoofaltaher/ultrapowers --enable
 
 Restart any active Hermes sessions after installing. Hermes has no post-compaction hook, so a very long session that compacts over its first turn loses the bootstrap; start a fresh session if skills stop triggering.
 
+**Team-memory reminder after a compaction.** On Claude Code the reminder returns after a compaction. Cursor gets it at session start only, and Hermes has no post-compaction hook at all. Copilot CLI, Factory Droid, Qwen Code and Devin load the same hooks file as Claude Code, but whether they report a compaction to it is not verified.
+
 ### Muse
 
 Ultrapowers is a native Muse plugin. The `using-ultrapowers` bootstrap is injected via the native `SessionStart` hook.

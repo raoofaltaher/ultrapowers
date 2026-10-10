@@ -18,7 +18,7 @@ The RED runs are not blind: the scaffolded store's own `README.md`, `MEMORY.md` 
 
 ## Harness notes
 
-- Cursor beforeSubmitPrompt ingestion of additional_context: not verified in this session (no Cursor install on the machine).
+- Cursor runs the team-memory nudge on sessionStart (`hooks/hooks-cursor.json`); whether Cursor ingests its additional_context: not verified in this session (no Cursor install on the machine).
 - Muse matcher support on SessionStart: not verified; the postcompact script guards on `source` regardless.
 - Scenario D could not complete under this test harness: its auto-mode permission check denies file deletion by subagents, and a prune that frees index lines has to delete entry files. Both D agents stopped instead of working around the denial.
 - Trailer parsing: the subagents ended every commit with this environment's attribution line directly after `Memory-Ref: ...`. `git log --grep="Memory-Ref"`, the form recall and acceptance criterion 6 use, finds those commits; git's strict trailer parser (`%(trailers:key=Memory-Ref)`) does not, because the extra line sits in the trailer block. Teams that parse trailers strictly should keep `Memory-Ref` in the last paragraph on its own.
