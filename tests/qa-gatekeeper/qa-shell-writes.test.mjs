@@ -346,8 +346,15 @@ test('analyze counts the psql invocations it inspected, so the hook can refuse o
   // a word with whitespace is text (an SQL statement, a sentence), not a program.
   assert.match(analyze('which psql', c), /did not inspect/);
   assert.match(analyze("echo 'psql' > reviews/1234/x.txt", c), /did not inspect/);
-  assert.equal(analyze('echo "checked via psql" > reviews/1234/x.txt', c), '');
   assert.equal(analyze("psql -U qa_agent_ro -c \"select * from pg_stat_activity where application_name='psql'\"", c), '');
+  assert.equal(analyze('psql -U qa_agent_ro -c "select 1 from psql"', c), '', 'a table named psql inside an inspected statement');
+  // A psql inside a command string for another program is a psql the walk did not inspect.
+  assert.match(analyze('watch "psql -U postgres -c \'drop table t\'"', c), /did not inspect/);
+  assert.match(analyze('parallel "psql -U postgres -c \'drop table t\'" ::: 1', c), /did not inspect/);
+  assert.match(analyze('echo "checked via psql" > reviews/1234/x.txt', c), /did not inspect/);
+  assert.match(analyze('docker run --rm db sh -c "psql -U postgres -c \'drop table t\'"', c), /superuser/);
+  assert.match(analyze('docker run --rm db sh -lc "psql -U postgres -c \'drop table t\'"', c), /superuser/);
+  assert.equal(analyze('docker compose run --rm db sh -c "psql -U qa_agent_ro -c \'select 1\'"', c), '');
   assert.equal(analyze('bash --version', c), '');
   // The reviewer's findings: identity spellings, psql's own environment, other client tools, SQL holes.
   for (const cmd of [

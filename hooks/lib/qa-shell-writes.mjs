@@ -20,13 +20,17 @@ const WRAPPERS = new Set(['nohup', 'command', 'exec', 'time', 'sudo', 'nice', 's
 const WRAPPER_VALUE_OPTS = new Set(['-n', '--adjustment', '-o', '-e', '-i']);
 const SUDO_VALUE_OPTS = new Set(['-g', '-p', '-C', '-D', '-h', '-r', '-t', '-T', '-U', '--group', '--prompt', '--host', '--role', '--type', '--other-user']);
 const XARGS_VALUE_OPTS = new Set(['-I', '-i', '-n', '-P', '-L', '-d', '-a', '-E', '-s', '--max-args', '--max-procs', '--max-lines', '--delimiter', '--arg-file', '--eof', '--max-chars', '--replace']);
-// A psql named as a bare word anywhere in a command must be one the walk inspected: there is no
-// list of programs that "only print" their words, because a printed word can reach a shell
-// (`echo psql ... | sh`). A word with whitespace in it (an SQL statement, a sentence) is text.
+// A psql named anywhere in a command must be one the walk inspected: there is no list of programs
+// that "only print" their words, because a printed word can reach a shell (`echo psql ... | sh`),
+// and a word with whitespace can be a command for a program that runs it (`watch "psql ..."`).
+// The SQL argument of an inspected psql is the one text that is not counted.
 // This analyzer matches the shapes a cooperative agent types; it is not a sandbox. A program
 // spelled with a glob, copied under another name or run from a script file is beyond a text rule,
 // and the read-only database role's grants are the guarantee behind it.
 const PSQL_PROGRAMS = new Set(['psql']);
+// psql as a token inside a word that holds whitespace (a command string for another program).
+const PSQL_TOKEN_RE = /(^|[\s;&|(`])psql(\.exe)?(?=[\s;&|)`]|$)/gi;
+const psqlTokens = (text) => (String(text).match(PSQL_TOKEN_RE) || []).length;
 // Other PostgreSQL client tools: never run during a run; lane 4 reaches the database through
 // psql -c as the read-only role only.
 const PG_TOOLS = new Set(['pgcli', 'usql', 'dropdb', 'createdb', 'createuser', 'dropuser', 'pg_restore', 'pg_dump', 'pg_dumpall', 'pgbench', 'vacuumdb', 'reindexdb', 'clusterdb', 'pg_ctl', 'pg_basebackup', 'pg_resetwal', 'pg_upgrade', 'pg_rewind']);
@@ -349,6 +353,8 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
   // or exported by an earlier command; psqlEnv: one of PSQL_ENV was set the same ways.
   const walkEnv = { pgUser: undefined, psqlEnv: false };
   const walkNested = (src, startDir, container, depth, pgUser, psqlEnv = walkEnv.psqlEnv) => {
+    // The string was counted as text by the command that holds it; its own walk counts its words.
+    psqlCount.words -= psqlTokens(src);
     const saved = { ...walkEnv };
     walkEnv.pgUser = pgUser;
     walkEnv.psqlEnv = psqlEnv;
@@ -461,6 +467,8 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       };
       const psqlCheck = (words) => {
         psqlCount.inspected += 1;
+        // The SQL and connection strings of this psql were counted as text; they are its own.
+        for (const x of words) if (x.v !== null && /\s/.test(x.v)) psqlCount.words -= psqlTokens(x.v);
         const reason = analyzePsql(words.map(psqlWord), { roRole, pgUser, psqlEnv });
         if (reason) deny(reason);
       };
@@ -543,8 +551,16 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         if (args[0].v === null) return deny(PROGRAM_FROM_VAR);
         prog = progName(args[0].v);
       }
-      // Every bare psql word of this command; the end of the walk compares it with the number inspected.
-      if (countWords) for (const t of items) { const v = t.k === 'w' ? resolveWord(t) : null; if (v !== null && !/\s/.test(v) && PSQL_PROGRAMS.has(progName(v))) psqlCount.words += 1; }
+      // Every psql word of this command, bare or inside a command string; the end of the walk
+      // compares the count with the number inspected.
+      if (countWords) {
+        for (const t of items) {
+          const v = t.k === 'w' ? resolveWord(t) : null;
+          if (v === null) continue;
+          if (/\s/.test(v)) psqlCount.words += psqlTokens(v);
+          else if (PSQL_PROGRAMS.has(progName(v))) psqlCount.words += 1;
+        }
+      }
       if (PG_TOOLS.has(prog)) return deny(`${prog} is not run during ${runKind}; lane 4 reaches the database through psql -c as the read-only role only`);
       const rest = args.slice(1);
       const plain = rest.filter((x) => !(x.v || '').startsWith('-'));
@@ -656,12 +672,11 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         if (ti !== -1) return deny(`${progName(after[ti].v)} is not run during ${runKind}; lane 4 reaches the database through psql -c as the read-only role only`);
         const pi = after.findIndex((x) => x.v && progName(x.v) === 'psql');
         if (pi !== -1) { psqlCheck(after.slice(pi + 1)); return; }
-        if (rest[ei].v === 'exec') {
-          const si = rest.findIndex((x) => x.v && SHELLS.has(x.v.split('/').pop()));
-          if (si !== -1 && rest[si + 1] && rest[si + 1].v === '-c' && rest[si + 2]) {
-            if (rest[si + 2].v === null) return deny('docker exec runs a shell command built from a variable; it cannot be verified');
-            walkNested(rest[si + 2].v, '/', true, depth + 1, pgUser);
-          }
+        // `docker exec|run ... sh -c "..."` (also -lc): the string runs inside the container.
+        const si = after.findIndex((x) => x.v && SHELLS.has(progName(x.v)));
+        if (si !== -1 && after[si + 1] && after[si + 1].v !== null && /^-[a-zA-Z]*c[a-zA-Z]*$/.test(after[si + 1].v)) {
+          if (!after[si + 2] || after[si + 2].v === null) return deny(`docker ${rest[ei].v} runs a shell command built from a variable; it cannot be verified`);
+          walkNested(after[si + 2].v, '/', true, depth + 1, pgUser);
         }
         return;
       }
