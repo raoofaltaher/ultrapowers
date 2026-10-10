@@ -271,9 +271,9 @@ test('upgrade --apply writes a missing target directly and records it', () => {
 test('upgrade --apply refuses a target that did not change and writes nothing', () => {
   const root = scaffolded();
   const before = snapshot(root);
-  const report = run(['upgrade', '--root', root, '--apply', 'AGENTS.md'], { expectExit: 2 });
+  const report = run(['upgrade', '--root', root, '--apply', 'tasks/README.md'], { expectExit: 2 });
   assert.equal(report.error.code, 'bad-args');
-  assert.deepEqual(report.error.unknown, ['AGENTS.md']);
+  assert.deepEqual(report.error.unknown, ['tasks/README.md']);
   assert.deepEqual(changedFiles(before, snapshot(root)), []);
 });
 

@@ -112,6 +112,30 @@ else
   fail "output style keeps the coding instructions"
 fi
 
+# The no-comments house rule must not make an agent strip what init writes: the provenance
+# header and the managed-block markers (stripping a marker makes the next run append a duplicate).
+if grep -q 'provenance' "$TEMPLATES/AGENTS.md.tmpl" && grep -qF '# >>> ultrapowers' "$TEMPLATES/AGENTS.md.tmpl" && grep -qF '# <<< ultrapowers' "$TEMPLATES/AGENTS.md.tmpl"; then
+  pass "the comment rule exempts the provenance header and the managed-block markers"
+else
+  fail "the comment rule exempts the provenance header and the managed-block markers"
+fi
+
+# The shared settings file pre-approves commands that run repository code; say so where it is read.
+if grep -q 'pre-approves' "$TEMPLATES/CLAUDE.md.tmpl" && grep -q 'run repository code' "$TEMPLATES/CLAUDE.md.tmpl"; then
+  pass "the generated CLAUDE.md discloses the allow list"
+else
+  fail "the generated CLAUDE.md discloses the allow list"
+fi
+
+changes_at() { node -e 'const c=require(process.argv[1]);process.stdout.write(String(c[process.argv[2]]))' "$TEMPLATES/CHANGES.json" "$1"; }
+for target in AGENTS.md CLAUDE.md; do
+  if [ "$(changes_at "$target")" = "1.4.0" ]; then
+    pass "CHANGES.json records $target at 1.4.0"
+  else
+    fail "CHANGES.json records $target at 1.4.0"
+  fi
+done
+
 if [[ "$FAILURES" -gt 0 ]]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"
   exit 1

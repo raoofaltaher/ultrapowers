@@ -51,7 +51,7 @@ node "<SKILL_DIR>/scripts/init.mjs" detect --root "<ROOT>"
    node "<SKILL_DIR>/scripts/init.mjs" scaffold --root "<ROOT>" --name "<NAME>" --dry-run
    ```
 
-3. Show the report: `written` (created); `skipped` (exist, stay byte-identical); each `blocks` entry (`created`, `appended` or `replaced` between the `# >>> ultrapowers` markers); `omitted` (harnesses not chosen). Ask: "Write these files? (yes / no)".
+3. Show the report: `written` (created); `skipped` (exist, stay byte-identical); each `blocks` entry (`created`, `appended` or `replaced` between the `# >>> ultrapowers` markers); `omitted` (harnesses not chosen); `incomplete` and `nearFolders` when present. Say that, with `claude-code`, `.claude/settings.json` pre-approves test and build commands, which run repository code. Ask: "Write these files? (yes / no)".
 4. Only an explicit yes continues. "Looks good?", a question or a change request is not a yes: answer it, adjust the flags, show a new dry run.
 5. Run the same command without `--dry-run`. Report `written` and `skipped` from the real report, then `nextSteps` as a numbered list, verbatim.
 6. Continue with join mode for this clone.
@@ -59,7 +59,7 @@ node "<SKILL_DIR>/scripts/init.mjs" detect --root "<ROOT>"
 ## Join mode
 
 1. Dry run: `node "<SKILL_DIR>/scripts/init.mjs" join --root "<ROOT>" --dry-run`
-2. Read `hooksPath` (`would-set`, `already-set`, `kept:<value>`, `existing-hooks:<names>`, `no-git`), `missingSecrets` (`required`, `optional`), `incomplete` (settings files lacking keys the plugin needs: name them, never edit them) and `newRepos`. `existing-hooks` means setting core.hooksPath would stop those hooks, so join leaves it unset: name them.
+2. Read `hooksPath` (`would-set`, `already-set`, `kept:<value>`, `existing-hooks:<names>`, `no-git`), `missingSecrets` (`required`, `optional`), `incomplete` (name them, never edit them) and `newRepos`. `existing-hooks` means setting core.hooksPath would stop those hooks, so join leaves it unset: name them.
 3. When `hooksPath` is `would-set` or `newRepos` is not empty, ask one question naming exactly what changes: "Set core.hooksPath to .githooks for this clone?" and, for new clones, "Record <names> in .agents/ultrapowers.json and the .gitignore block?" Nothing would change: skip the question.
 4. Run join without `--dry-run`; add `--record-repos` only after a yes to recording. Join writes no other shared file.
 5. Relay `nextSteps`: the variable names to define (never ask for or repeat a value) and the MCP approval prompt to expect.
@@ -75,7 +75,7 @@ node "<SKILL_DIR>/scripts/init.mjs" detect --root "<ROOT>"
 
 ## Check
 
-Run `node "<SKILL_DIR>/scripts/init.mjs" check --root "<ROOT>"`. It writes nothing and needs no yes. Print `findings` grouped by `kind`, each with `path` and `detail`, then `next`, the mode that fits. Never fix a finding by hand or run a mode unasked: offer the matching mode and wait.
+Run `node "<SKILL_DIR>/scripts/init.mjs" check --root "<ROOT>"`. It writes nothing and needs no yes. Print each finding's `kind`, `path` and `detail`, then `next`, the mode that fits. Never fix a finding by hand or run a mode unasked: offer the matching mode and wait.
 
 ## Ticket sources
 

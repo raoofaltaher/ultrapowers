@@ -5,5 +5,6 @@
 
 - Shared Claude Code settings are in `.claude/settings.json`; put personal overrides in `.claude/settings.local.json`, which is gitignored.
 - The output style is `STE Explanatory`, stored at `.claude/output-styles/ste-explanatory.md` and selected by `outputStyle` in the settings file.
+- `.claude/settings.json` pre-approves the test and build commands of common toolchains (`npm test`, `pytest`, `dotnet test`, `cargo test`, `go test` and the matching builds), which run repository code without a prompt. Remove the entries your team does not accept.
 - Hooks are declared in the `hooks` object of `.claude/settings.json`.
 - Project MCP servers are declared in `.mcp.json`, with secrets as `${VAR}` placeholders whose names are listed in `.agents/mcp-secrets.env.example`.
