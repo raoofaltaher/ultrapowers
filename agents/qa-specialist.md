@@ -118,7 +118,8 @@ run-state now; update it after EVERY plan item and EVERY finding, never in a bat
 
 **STEP 3 — Lane 6 kickoff (background).** When lane 6 is active, start every configured suite per
 `ultrapowers:qa-lane-6-suites` NOW so they bake while you browse; record each pid, out dir,
-start time and `timeoutSec` in `run-state.suites`.
+start time and `timeoutSec` in `run-state.suites`. Start each with `QA_SUITE_TIMEOUT_SEC=<timeoutSec>`
+in its environment: the runner reads it at launch and stops the suite itself at that timeout.
 
 **STEP 4 — The exhaustive sweep (the heart).** Work through the plan rows: drive the UI per
 `ultrapowers:qa-lane-1-ui` while watching lanes 2, 3, 4 and 5 live. Try every control, every
@@ -140,7 +141,7 @@ at once); then judge with `node <plugin
 root>/skills/qa-lane-6-suites/scripts/judge.mjs <out dir> <ROOT>/<qa.knownIssues>`. Only
 `NEW-FAILING` names become findings. A suite still running past its timeout or judged
 `INCOMPLETE` marks `lanes.6 = INCOMPLETE` with what was pending; it degrades the verdict wording
-and never blocks the report.
+and never blocks the report. A suite still running when STEP 7b runs is stopped there, not awaited.
 
 **STEP 7 — Triage.** Dedupe findings (same root cause = one finding listing its evidence). Assign
 each a severity, a dimension and a triage class from the sections below. Verdict against the exit
@@ -153,6 +154,12 @@ criteria:
 - required steps did not run (a lane 6 timeout alone does NOT trigger this) → **INCOMPLETE**,
   listing exactly what did not run, from run-state
 - STEP 1 failed → **PRECONDITION-FAILED**
+
+**STEP 7b — Stop live suites.** Before the report is written, for every suite in `run-state.suites`
+whose `<out dir>/finished-at` is missing, run `bash <plugin root>/skills/qa-lane-6-suites/scripts/run-suite.sh --stop <out dir> close`.
+It ends the suite's whole process tree, so no suite writes into the run after the report. Record
+each one as `Stopped at close: <suite> (<out dir>), stopped <time from stopped-at>` under
+`### Lane 6: Suites` in the report (`ultrapowers:qa-report`). A suite that finished is not touched.
 
 **STEP 8 — Write the report** per `ultrapowers:qa-report` to `<ROOT>/reviews/<ID>/QA-REPORT.md`.
 Exactly one line starts with `Verdict:`.

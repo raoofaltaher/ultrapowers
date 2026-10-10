@@ -44,7 +44,9 @@ export function parseSuppressList(markdown) {
       inside = false;
       continue;
     }
-    const line = rawLine.replace(/\s+#.*$/, '').trim();
+    // A comment is whitespace, "#", then whitespace or the end of the line, so "Foo #2" stays
+    // whole. A pasted NEW-FAILING prefix (the judge's own output) is not part of the name.
+    const line = rawLine.replace(/\s+#(\s.*)?$/, '').trim().replace(/^NEW-FAILING\s+/, '');
     if (line === '' || line.startsWith('#')) continue;
     entries.push(line);
   }
@@ -203,7 +205,7 @@ export function formatReport(result, outDir, baselinePath) {
   if (result.status === 'INCOMPLETE') {
     lines.push('INCOMPLETE  lane 6 did not run cleanly; a suite produced no results (crash, missing SDK, install failure or timeout).');
     for (const reason of result.reasons) lines.push(`INCOMPLETE  ${reason}`);
-    lines.push('== judge summary: INCOMPLETE; do NOT read as pass; re-run lane 6 (see qa-lane-6-suites troubleshooting) ==');
+    lines.push('== judge summary: INCOMPLETE; do NOT read as pass; read skills/qa-lane-6-suites/troubleshooting.md before any re-run ==');
     return lines.join('\n');
   }
   for (const name of result.suppressed) lines.push(`SUPPRESSED  ${name}`);

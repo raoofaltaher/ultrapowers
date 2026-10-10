@@ -34,5 +34,5 @@
   ".gitattributes": "1.0.0",
   ".agents/memory/README.md": "1.0.0",
   ".agents/memory/MEMORY.md": "1.0.0",
-  "qa/known-issues.md": "1.0.0"
+  "qa/known-issues.md": "1.4.0"
 }

@@ -189,6 +189,9 @@ if [[ -f "$LANE3_FILE" ]]; then
 fi
 if grep -q 'qa-api-\*' "$REPO_ROOT/agents/qa-specialist.md" && grep -q 'qa-api-\*' "$REPO_ROOT/skills/qa-specialist/SKILL.md"; then pass "STEP 9 and Step 7 delete the qa-api-* scratch files"; else fail "STEP 9 and Step 7 delete the qa-api-* scratch files"; fi
 
+# The judge's INCOMPLETE summary points at the troubleshooting notes, and the file exists.
+if [[ -f "$REPO_ROOT/skills/qa-lane-6-suites/troubleshooting.md" ]] && grep -q 'skills/qa-lane-6-suites/troubleshooting.md' "$REPO_ROOT/skills/qa-lane-6-suites/scripts/judge.mjs"; then pass "qa-lane-6-suites: troubleshooting.md exists and the judge names it"; else fail "qa-lane-6-suites: troubleshooting.md exists and the judge names it"; fi
+
 if [[ "$FAILURES" -gt 0 ]]; then
   echo "STATUS: FAILED ($FAILURES failure(s))"
   exit 1

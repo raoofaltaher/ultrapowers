@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, copyFileSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, copyFileSync, existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -33,6 +33,21 @@ function runCli(outDir, base = baseline) {
 test('parseSuppressList reads only the fenced block, strips comments and blanks', () => {
   const list = parseSuppressList(`prose Sample.Tests.ArticlesTests\n\n\`\`\`lane6-suppress\n# c\nA.B.C\n  D.E   # trailing\n\n\`\`\`\nA.After.Block\n`);
   assert.deepEqual(list, ['A.B.C', 'D.E']);
+});
+test('a comment starts at whitespace-#-whitespace, so "Foo #2" stays whole', () => {
+  assert.deepEqual(parseSuppressList('```lane6-suppress\nFoo #2\nCart adds item #2\nD.E   # trailing\n```'), ['Foo #2', 'Cart adds item #2', 'D.E']);
+});
+test('a pasted NEW-FAILING prefix is stripped', () => {
+  assert.deepEqual(parseSuppressList('```lane6-suppress\nNEW-FAILING A.B\n```'), ['A.B']);
+});
+test('"Foo #2" does not suppress a test named "Foo"', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'judge-'));
+  writeFileSync(join(dir, 'junit.xml'), '<testsuite><testcase name="Foo"><failure/></testcase></testsuite>');
+  const base = join(dir, 'baseline.md');
+  writeFileSync(base, '```lane6-suppress\nFoo #2\n```\n');
+  const result = judge(dir, base);
+  rmSync(dir, { recursive: true, force: true });
+  assert.deepEqual(result.newFailing, ['Foo']);
 });
 
 test('failingFromTrx names Failed results in either attribute order and decodes entities', () => {
@@ -101,6 +116,15 @@ test('a .failed marker forces INCOMPLETE even with results present', () => {
   rmSync(dir, { recursive: true, force: true });
   assert.equal(result.status, 'INCOMPLETE');
   assert.match(text, /^INCOMPLETE  suite failed to run: npm test$/m);
+});
+
+test('the INCOMPLETE summary names troubleshooting.md, and that file exists', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'judge-'));
+  writeFileSync(join(dir, '.failed'), 'exit 3\n');
+  const run = runCli(dir);
+  rmSync(dir, { recursive: true, force: true });
+  assert.match(run.stdout, /troubleshooting\.md/);
+  assert.ok(existsSync(resolve(repoRoot, 'skills/qa-lane-6-suites/troubleshooting.md')), 'the named file exists');
 });
 
 test('CLI prints the reference line shapes and exits 0', () => {

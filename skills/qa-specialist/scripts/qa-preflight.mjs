@@ -16,7 +16,6 @@ import { spawnSync } from 'node:child_process';
 export const DEFAULT_TICKET_PATTERN = '^#?[A-Za-z0-9][A-Za-z0-9._-]*$';
 const AUTH_TYPES = ['form', 'oidc-password', 'custom'];
 const RESULT_FORMATS = ['trx', 'vitest-json', 'junit-xml'];
-const PLACEHOLDER_ENUM = /^[a-z-]+(\|[a-z-]+)+$/;
 const CONTENT_TERMS = /\b(generat(?:e|es|ed|ion|ing)|export(?:s|ed|ing)?|render(?:s|ed|ing)?|summar(?:y|ies|ize|ise|izes|ises)|translat(?:e|es|ed|ion|ions)|pdf|docx|csv|spreadsheet|template|email body|prompt|completion|llm|assistant|synthesi[sz]e[sd]?)\b/gi;
 
 export function findRoot(startDir) {
@@ -29,11 +28,15 @@ export function findRoot(startDir) {
   }
 }
 
+// A value is filled when it is a non-blank string. Enum spellings are values too: only the enum
+// fields below ask whether a value is the template's placeholder (isPlaceholderEnum).
 export function filledString(value) {
-  if (typeof value !== 'string') return false;
-  const trimmed = value.trim();
-  if (trimmed === '') return false;
-  return !PLACEHOLDER_ENUM.test(trimmed);
+  return typeof value === 'string' && value.trim() !== '';
+}
+
+// True when the value is exactly the template's spelling of an enum field, "a|b|c" for [a, b, c].
+export function isPlaceholderEnum(value, allowed) {
+  return typeof value === 'string' && value.trim() === allowed.join('|');
 }
 
 export function filledList(value) {
@@ -80,13 +83,25 @@ export function validateConfig(qaInput, env) {
   if (hostsOut.allowed.length === 0) missing.push('qa.hosts.allowed');
 
   const auth = obj(qa.auth);
-  const authOut = { type: str(auth.type), route: str(auth.route), tokenUrl: str(auth.tokenUrl), clientId: str(auth.clientId), recipe: str(auth.recipe) };
+  const authOut = { type: isPlaceholderEnum(auth.type, AUTH_TYPES) ? '' : str(auth.type), route: str(auth.route), tokenUrl: str(auth.tokenUrl), clientId: str(auth.clientId), recipe: str(auth.recipe) };
   if (!AUTH_TYPES.includes(authOut.type)) missing.push(`qa.auth.type (one of ${AUTH_TYPES.join(', ')})`);
   if (authOut.type === 'oidc-password' && !authOut.tokenUrl) warnings.push('qa.auth.tokenUrl is empty; lane 3 path B cannot mint tokens and will probe unauthenticated cases only');
 
-  const roles = (Array.isArray(qa.roles) ? qa.roles : []).map(obj).map((r) => ({
-    name: str(r.name), userEnv: str(r.userEnv), passwordEnv: str(r.passwordEnv), required: r.required === true,
-  })).filter((r) => r.name && r.userEnv && r.passwordEnv);
+  // An entry with every field blank is an untouched template row and stays quiet; a partly filled
+  // entry is dropped with a warning, and a required one blocks the run.
+  const roles = [];
+  (Array.isArray(qa.roles) ? qa.roles : []).map(obj).forEach((raw, i) => {
+    const role = { name: str(raw.name), userEnv: str(raw.userEnv), passwordEnv: str(raw.passwordEnv), required: raw.required === true };
+    if (raw.required !== undefined && typeof raw.required !== 'boolean') {
+      warnings.push(`qa.roles[${i}].required must be a boolean (got ${JSON.stringify(raw.required)}); treated as not required`);
+    }
+    const absent = ['name', 'userEnv', 'passwordEnv'].filter((key) => !role[key]);
+    if (absent.length === 0) roles.push(role);
+    else if (absent.length < 3) {
+      warnings.push(`qa.roles[${i}] dropped: missing ${absent.join(', ')}`);
+      if (raw.required === true) missing.push(`qa.roles[${i}] is required and missing ${absent.join(', ')}`);
+    }
+  });
   if (roles.length === 0) missing.push('qa.roles (at least one role with name, userEnv, passwordEnv)');
   const rolesOut = roles.map((r) => ({
     ...r,
@@ -97,7 +112,12 @@ export function validateConfig(qaInput, env) {
   }
   if (rolesOut.length > 0 && rolesOut.every((r) => r.credentials === 'missing')) preconditions.push('no role has credentials in the environment; the browser cannot log in');
 
-  const languages = (Array.isArray(qa.languages) ? qa.languages : []).map(obj).map((l) => ({ code: str(l.code), switch: str(l.switch) })).filter((l) => l.code);
+  const languages = [];
+  (Array.isArray(qa.languages) ? qa.languages : []).map(obj).forEach((raw, i) => {
+    const language = { code: str(raw.code), switch: str(raw.switch) };
+    if (language.code) languages.push(language);
+    else if (language.switch) warnings.push(`qa.languages[${i}] dropped: missing code`);
+  });
   if (languages.length === 0) missing.push('qa.languages (at least one language with code)');
 
   const containers = obj(qa.containers);
@@ -109,13 +129,20 @@ export function validateConfig(qaInput, env) {
     roRole: str(db.roRole), roPasswordEnv: str(db.roPasswordEnv), tenantColumn: str(db.tenantColumn), auditTables: cleanList(db.auditTables),
   };
 
-  const suitesOut = (Array.isArray(qa.suites) ? qa.suites : []).map(obj).map((s) => ({
-    repo: str(s.repo), command: str(s.command), resultFormat: str(s.resultFormat),
-    timeoutSec: Number.isFinite(Number(s.timeoutSec)) && Number(s.timeoutSec) > 0 ? Number(s.timeoutSec) : 1800, path: '',
-  })).filter((s) => s.repo && s.command && RESULT_FORMATS.includes(s.resultFormat));
+  const suitesOut = [];
+  (Array.isArray(qa.suites) ? qa.suites : []).map(obj).forEach((raw, i) => {
+    const suite = {
+      repo: str(raw.repo), command: str(raw.command),
+      resultFormat: isPlaceholderEnum(raw.resultFormat, RESULT_FORMATS) ? '' : str(raw.resultFormat),
+      timeoutSec: Number.isFinite(Number(raw.timeoutSec)) && Number(raw.timeoutSec) > 0 ? Number(raw.timeoutSec) : 1800, path: '',
+    };
+    const absent = ['repo', 'command', 'resultFormat'].filter((key) => (key === 'resultFormat' ? !RESULT_FORMATS.includes(suite.resultFormat) : !suite[key]));
+    if (absent.length === 0) suitesOut.push(suite);
+    else if (absent.length < 3) warnings.push(`qa.suites[${i}] dropped: missing ${absent.join(', ')}`);
+  });
 
   const observability = obj(qa.observability);
-  const provider = str(observability.provider);
+  const provider = isPlaceholderEnum(observability.provider, ['langfuse', 'none']) ? '' : str(observability.provider);
   const observabilityOut = {
     provider, publicKeyEnv: str(observability.publicKeyEnv), secretKeyEnv: str(observability.secretKeyEnv),
     credentials: filledString(env[str(observability.publicKeyEnv)]) && filledString(env[str(observability.secretKeyEnv)]) ? 'present' : 'missing',

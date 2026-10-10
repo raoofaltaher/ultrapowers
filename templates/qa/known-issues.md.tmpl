@@ -14,9 +14,11 @@ Human context (prose; the judge does not read this part):
 Machine-readable suppress list: the judge reads ONLY the fenced block below. One entry per
 line: a full test name (suppresses that test) or a class (the name minus its last dotted
 segment; suppresses every test in it). Matched whole-line exact, never as a substring.
-Lines starting with `#` and blank lines are ignored. Seed it from a run on a known-good
-checkout: paste the `NEW-FAILING <name>` lines the judge printed that a human confirmed
-are pre-existing, verbatim. Until seeded, known failures surface as NEW-FAILING, which is
+Lines starting with `#` and blank lines are ignored. A comment starts at a `#` that follows
+whitespace and is followed by whitespace or the end of the line, so `Cart adds item #2` is a
+whole name. Seed it from a run on a known-good checkout: paste the names the judge printed as
+`NEW-FAILING <name>` that a human confirmed are pre-existing (the `NEW-FAILING` prefix may
+stay). Until seeded, known failures surface as NEW-FAILING, which is
 the safe direction. A suppressed test that passes again is a blind spot; the report lists
 those under known-issues candidates so a human can prune them.
 
