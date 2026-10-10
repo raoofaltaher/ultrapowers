@@ -8,7 +8,7 @@ One question per message; use multiple choice where the harness has it.
 
 1. Mode: `off` (default; every skill behaves as today), `gated` (stops at the review packet and at the pull requests) or `full` (stops at the pull requests only).
 2. Base branch of the documents repository, this workspace root, for ticket branches: default the remote HEAD. Code repositories keep their own `defaultBranch` from `repos`.
-3. Approvers: tracker logins allowed to approve a packet. Empty means any member with write access.
+3. Approvers: tracker logins allowed to approve a packet. Empty means any member with write access. When autopilot runs an Odoo source, at least one human login is required and never the technical user's own `login`; the engine refuses `bad-tickets` otherwise.
 4. Execution: `subagent` (default; a fresh subagent per task) or `inline`.
 5. Harness for the watcher's headless stages: `claude-code` (default), `codex`, `copilot`, `cursor`, `gemini`, `qwen`, `opencode`, `pi`, `droid`, `kimi`, `hermes` or `antigravity`. `devin` runs tickets from a session only.
 6. Only when a watcher will run: may the watcher take an approval from the account it runs as? Default no (`watchSelfApproval` false). Yes is for a solo developer whose own account runs the watcher; it counts only with the read-only stage tokens the next steps name. And: will the watcher's stages hold their own read-only tokens (the default, the watcher refuses to start without them) or the engine's credentials (`watch.sharedCredentials` true, said in writing)?

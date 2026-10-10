@@ -85,6 +85,27 @@ export function validateAutopilot(block) {
   return errors;
 }
 
+// An Odoo source that autopilot runs holds the engine's technical-user key, so an empty approvers
+// list would let that account (or any member) approve its own work: approvers must name people, and
+// never the technical user itself. A source with `autopilot: false` is not run and is left out.
+export function odooApproverErrors(tickets, block) {
+  const sources = Array.isArray(tickets?.sources) ? tickets.sources : [];
+  const running = sources.filter((s) => isObject(s) && s.provider === 'odoo' && s.autopilot !== false);
+  if (!running.length || !isObject(block) || block.mode === 'off') return [];
+  const approvers = Array.isArray(block.approvers) ? block.approvers.map((a) => String(a).trim().toLowerCase()) : [];
+  const errors = [];
+  if (!approvers.length) {
+    errors.push('autopilot.approvers must name at least one human login when autopilot runs an Odoo source: the engine holds the key of a technical user, and an empty list would let any member approve');
+  }
+  for (const source of running) {
+    const login = typeof source.login === 'string' ? source.login.trim().toLowerCase() : '';
+    if (login && approvers.includes(login)) {
+      errors.push(`autopilot.approvers lists ${source.login}, the technical user of the Odoo source ${source.prefix}: the technical user cannot be its own approver`);
+    }
+  }
+  return errors;
+}
+
 // The effective settings for a marker: { mode: 'off' } when absent or off, else every field with defaults.
 export function effectiveAutopilot(marker) {
   const block = marker && isObject(marker) ? marker.autopilot : undefined;
@@ -92,6 +113,8 @@ export function effectiveAutopilot(marker) {
   const errors = validateAutopilot(block);
   if (errors.length) throw new AutopilotError('bad-autopilot', errors.join('; '));
   if (block.mode === 'off') return { mode: 'off' };
+  const odooErrors = odooApproverErrors(marker.tickets, block);
+  if (odooErrors.length) throw new AutopilotError('bad-autopilot', odooErrors.join('; '));
   return {
     mode: block.mode,
     baseBranch: block.baseBranch ?? null,

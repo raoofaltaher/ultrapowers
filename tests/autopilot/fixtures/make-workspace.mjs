@@ -75,6 +75,8 @@ export function makeWorkspace({ dir = null, autopilot = { mode: 'gated', baseBra
   if (odoo) {
     marker.tickets = { sources: [{ prefix: 'ODOO', provider: 'odoo', url: odoo, mcpUrl: `${odoo}/mcp`, login: 'bot', ...(odooDb ? { db: odooDb } : {}), defaultProject: '34' }] };
     if (marker.autopilot) marker.autopilot.events = { ...ODOO_EVENTS, ...(autopilot?.events ?? {}) };
+    // An Odoo source that autopilot runs needs human approvers (#32); the fake's approver is `val`.
+    if (marker.autopilot && !(marker.autopilot.approvers ?? []).length) marker.autopilot.approvers = ['val', 'intern'];
   }
   // `qa: true` means a configured QA gate: at least one url, which is what the engine checks.
   if (!qa) delete marker.qa;

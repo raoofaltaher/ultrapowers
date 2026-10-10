@@ -1061,3 +1061,39 @@ test('check names a legacy brand-book/ folder and the git mv that fixes it', () 
   const finding = report.findings.find((f) => f.kind === 'near-folder' && f.path === 'brand-book');
   assert.ok(finding && finding.detail.includes('git mv brand-book brandbook'), JSON.stringify(report.findings));
 });
+
+// Task 10 (#32): an Odoo source that autopilot runs needs human approvers.
+test('autopilot refuses an Odoo source with no approvers and names autopilot.approvers', () => {
+  const root = scaffolded();
+  run(['tickets', '--root', root, '--sources', sourcesFile(odooOnly('https://erp.example.com'))]);
+  const before = snapshot(root);
+  const report = run(['autopilot', '--root', root, '--answers', answersFile({ mode: 'gated' })], { expectExit: 2 });
+  assert.equal(report.error.code, 'bad-tickets');
+  assert.match(report.error.message, /autopilot\.approvers/);
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
+});
+
+test('autopilot refuses the technical user as its own approver', () => {
+  const root = scaffolded();
+  run(['tickets', '--root', root, '--sources', sourcesFile(odooOnly('https://erp.example.com', { login: 'bot@example.com' }))]);
+  const report = run(['autopilot', '--root', root, '--answers', answersFile({ mode: 'gated', approvers: ['bot@example.com'] })], { expectExit: 2 });
+  assert.equal(report.error.code, 'bad-tickets');
+  assert.match(report.error.message, /the technical user cannot be its own approver/);
+});
+
+test('autopilot accepts an Odoo source with a human approver, and an opted-out one with none', () => {
+  const root = scaffolded();
+  run(['tickets', '--root', root, '--sources', sourcesFile(odooOnly('https://erp.example.com', { login: 'bot@example.com' }))]);
+  assert.equal(run(['autopilot', '--root', root, '--answers', answersFile({ mode: 'gated', approvers: ['ana'] }), '--dry-run']).marker.after.approvers[0], 'ana');
+  const other = scaffolded('ws2');
+  run(['tickets', '--root', other, '--sources', sourcesFile(odooOnly('https://erp.example.com', { autopilot: false }))]);
+  assert.equal(run(['autopilot', '--root', other, '--answers', answersFile({ mode: 'gated' }), '--dry-run']).marker.after.mode, 'gated');
+});
+
+test('scaffold with --sources and --autopilot applies the same approver rule before writing', () => {
+  const root = tmpWorkspace();
+  const before = snapshot(root);
+  const report = run(['scaffold', '--root', root, '--name', 'WS', '--platform', 'linux', '--sources', sourcesFile(odooOnly('https://erp.example.com')), '--autopilot', answersFile({ mode: 'gated' })], { expectExit: 2 });
+  assert.equal(report.error.code, 'bad-tickets');
+  assert.deepEqual(changedFiles(before, snapshot(root)), []);
+});

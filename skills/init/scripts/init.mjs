@@ -5,7 +5,7 @@ import process from 'node:process';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { effectiveTransport, serverId as ticketServerId, validateTickets, resolveTicket } from '../../new-task/scripts/ticket-sources.mjs';
-import { validateAutopilot, DEFAULTS as AUTOPILOT_DEFAULTS, ODOO_EVENTS, loadSecretsFile } from '../../autopilot/scripts/autopilot-lib.mjs';
+import { validateAutopilot, odooApproverErrors, DEFAULTS as AUTOPILOT_DEFAULTS, ODOO_EVENTS, loadSecretsFile } from '../../autopilot/scripts/autopilot-lib.mjs';
 import { trackerFor } from '../../autopilot/scripts/tracker.mjs';
 import { forgeFor } from '../../autopilot/scripts/repos.mjs';
 import { transportOnThisMachine } from '../../new-task/scripts/fetch-ticket.mjs';
@@ -941,6 +941,12 @@ export function loadAutopilot(file) {
   return block;
 }
 
+// An Odoo source that autopilot runs needs human approvers (the engine enforces the same rule).
+function requireOdooApprovers(tickets, block) {
+  const errors = odooApproverErrors(tickets, block);
+  if (errors.length) throw new InitError('bad-tickets', errors.join('; '), { errors });
+}
+
 // The --sources file holds the tickets object. No sources means local only.
 export function loadTickets(file) {
   let tickets;
@@ -1074,6 +1080,7 @@ export function runScaffold(opts) {
   report.nearFolders = nearFolders(opts.root);
   if (opts.sources) opts.tickets = loadTickets(opts.sources);
   if (opts.autopilotFile) opts.autopilot = loadAutopilot(opts.autopilotFile);
+  if (opts.tickets && opts.autopilot) requireOdooApprovers(opts.tickets, opts.autopilot);
   const plan = planPayload(opts, repos, harnesses);
   applyPlan(opts.root, plan, report, opts.dryRun);
   writeMarker(opts.root, opts, repos, harnesses, report.written, opts.dryRun, report);
@@ -1599,6 +1606,7 @@ export async function runAutopilot(opts) {
     if (noLogin >= 0) {
       throw new InitError('bad-tickets', `tickets.sources[${noLogin}].login is required for autopilot: the engine signs in to Odoo as a technical user; run init tickets and name it, or set "autopilot": false on that source when autopilot must not run its tickets`);
     }
+    requireOdooApprovers(marker.tickets, block);
     // An Odoo-only project gets the readable tag names (spec 2026-10-05 D9) unless the answers chose.
     const watched = sources.filter((s) => s.defaultProject && s.autopilot !== false);
     if (!block.events && watched.length && watched.every((s) => s.provider === 'odoo')) block.events = { ...ODOO_EVENTS };
