@@ -652,3 +652,55 @@ test('upgrade --apply .gitignore replaces only the managed block', () => {
   assert.ok(text.endsWith('# <<< ultrapowers\ndist/\n'));
   assert.match(text, /^\.temp\/$/m);
 });
+
+test('scaffold over an existing .claude/settings.json that lacks the plugin keys reports it incomplete', () => {
+  const root = tmpWorkspace();
+  fs.mkdirSync(path.join(root, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude', 'settings.json'), '{}\n');
+  const report = run(['scaffold', '--root', root, '--name', 'WS', '--platform', 'linux']);
+  const entry = report.incomplete.find((i) => i.path === '.claude/settings.json');
+  assert.ok(entry, JSON.stringify(report.incomplete));
+  assert.ok(entry.missing.includes('outputStyle'));
+  assert.ok(entry.missing.includes('Skill(ultrapowers:task)'));
+  assert.ok(report.nextSteps.some((s) => s.startsWith('.claude/settings.json lacks: outputStyle') && s.includes('merge them by hand (init never overwrites)')));
+  assert.equal(fs.readFileSync(path.join(root, '.claude', 'settings.json'), 'utf8'), '{}\n');
+});
+
+test('scaffold reports a settings file with comments as unreadable, not complete', () => {
+  const root = tmpWorkspace();
+  fs.mkdirSync(path.join(root, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude', 'settings.json'), '// ours\n{ "outputStyle": "STE Explanatory" }\n');
+  const report = run(['scaffold', '--root', root, '--name', 'WS', '--platform', 'linux']);
+  const entry = report.incomplete.find((i) => i.path === '.claude/settings.json');
+  assert.ok(entry && typeof entry.unreadable === 'string');
+  assert.ok(report.nextSteps.some((s) => s.startsWith('.claude/settings.json') && /not strict JSON/.test(s)));
+});
+
+test('scaffold of a fresh project reports nothing incomplete', () => {
+  assert.deepEqual(run(['scaffold', '--root', tmpWorkspace(), '--name', 'WS', '--platform', 'linux']).incomplete, []);
+});
+
+test('upgrade from 1.1.0 lists .gemini/settings.json as changed', () => {
+  const root = scaffolded();
+  setMarkerVersion(root, '1.1.0');
+  const report = run(['upgrade', '--root', root]);
+  assert.ok(report.changed.some((c) => c.path === '.gemini/settings.json'), JSON.stringify(report.changed));
+});
+
+test('join reports a .gemini/settings.json that lacks the guardrail hook', () => {
+  const root = scaffolded();
+  fs.writeFileSync(path.join(root, '.gemini', 'settings.json'), '{ "mcpServers": {} }\n');
+  const report = run(['join', '--root', root]);
+  assert.deepEqual(report.incomplete, [{ path: '.gemini/settings.json', missing: ['hooks.BeforeTool'] }]);
+  assert.ok(report.nextSteps.some((s) => s.startsWith('.gemini/settings.json lacks: hooks.BeforeTool')));
+  assert.equal(run(['join', '--root', scaffolded('ws3')]).incomplete.length, 0);
+});
+
+test('upgrade reports an incomplete settings file too', () => {
+  const root = scaffolded();
+  fs.writeFileSync(path.join(root, '.claude', 'settings.json'), '{}\n');
+  setMarkerVersion(root, '0.0.1');
+  const report = run(['upgrade', '--root', root]);
+  assert.ok(report.incomplete.some((i) => i.path === '.claude/settings.json' && i.missing.includes('outputStyle')));
+  assert.ok(report.nextSteps.some((s) => s.includes('.claude/settings.json lacks:')));
+});

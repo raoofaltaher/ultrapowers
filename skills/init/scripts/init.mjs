@@ -648,6 +648,7 @@ function emptyReport(mode, opts) {
     newRepos: [],
     changed: [],
     missingSecrets: [],
+    incomplete: [],
     hooksPath: 'skipped',
     nextSteps: [],
   };
@@ -735,6 +736,26 @@ function writeFile(root, target, content, executable, dryRun, flag = 'w') {
   }
 }
 
+// An existing settings file that lacks what the plugin needs: init never overwrites it, so the
+// report names the missing keys for a hand merge.
+export function incompleteFiles(root, plan) {
+  const out = [];
+  for (const file of plan.files) {
+    const full = path.join(root, file.target);
+    if (!fs.existsSync(full)) continue;
+    const { missing, unreadable } = missingContent(file.target, fs.readFileSync(full, 'utf8'), file.content);
+    if (unreadable !== undefined) out.push({ path: file.target, missing, unreadable });
+    else if (missing.length) out.push({ path: file.target, missing });
+  }
+  return out;
+}
+
+function incompleteSteps(report) {
+  return report.incomplete.map((i) => (i.unreadable !== undefined
+    ? `${i.path} is not strict JSON (${i.unreadable}), so init cannot tell what it lacks; compare it with the template by hand (init never overwrites)`
+    : `${i.path} lacks: ${i.missing.join(', ')}; merge them by hand (init never overwrites)`));
+}
+
 export function applyPlan(root, plan, report, dryRun) {
   // Merge the blocks and check every target first, so a failure comes before any write.
   const blocks = plan.blocks.map((block) => planBlock(root, block.target, block.body));
@@ -754,6 +775,7 @@ export function applyPlan(root, plan, report, dryRun) {
     writeBlock(root, block, report, dryRun);
   }
   report.omitted.push(...plan.omitted);
+  report.incomplete = incompleteFiles(root, { files: plan.files.filter((f) => !creates.includes(f)) });
 }
 
 export function writeMarker(root, opts, repos, harnesses, written, dryRun, report) {
@@ -883,6 +905,7 @@ function scaffoldNextSteps(opts, report, repos) {
   if (bestEffort.length) {
     steps.push(`Best-effort files, verify against the vendor docs: ${bestEffort.join(', ')}`);
   }
+  steps.push(...incompleteSteps(report));
   steps.push('Review the written files, then commit the scaffold.');
   return steps;
 }
@@ -1046,6 +1069,7 @@ function localNextSteps(report) {
   if (report.missingSecrets.length) {
     steps.push(`Define these variables in your user environment (see .agents/mcp-secrets.env.example): ${report.missingSecrets.join(', ')}`);
   }
+  steps.push(...incompleteSteps(report));
   steps.push('Approve the project MCP servers when your harness prompts for them.');
   return steps;
 }
@@ -1062,6 +1086,7 @@ export function runJoin(opts) {
   const marker = requireMarker(opts);
   report.hooksPath = ensureHooksPath(opts);
   report.missingSecrets = missingSecrets(opts.root);
+  report.incomplete = incompleteFiles(opts.root, planPayload(markerOpts(opts, marker), marker.repos ?? [], markerHarnesses(marker)));
   const recorded = reconcileRepos(opts, marker, report);
   if (recorded) {
     for (const target of ['.gitignore', MARKER_PATH]) guardTarget(opts.root, target);
@@ -1086,16 +1111,18 @@ function changedTargets(opts, plan, from) {
 function upgradeNextSteps(report, from, version, applied) {
   if (!applied) {
     if (!report.changed.length) {
-      return [`No template changed since ${from}. Run upgrade with --apply none to record version ${version} in ${MARKER_PATH}.`];
+      return [`No template changed since ${from}. Run upgrade with --apply none to record version ${version} in ${MARKER_PATH}.`, ...incompleteSteps(report)];
     }
     return [
       'Choose the targets to apply, then run upgrade with --apply <target,target> or --apply none.',
       `An existing file is never overwritten: its new version is written next to it as <target>${PROPOSAL_SUFFIX}.`,
+      ...incompleteSteps(report),
     ];
   }
   const steps = report.written
     .filter((p) => p.endsWith(PROPOSAL_SUFFIX))
     .map((p) => `Compare ${p} with ${p.slice(0, -PROPOSAL_SUFFIX.length)}, merge what you want by hand, then delete ${p}.`);
+  steps.push(...incompleteSteps(report));
   steps.push(`${MARKER_PATH} records version ${version}.`);
   steps.push('Review the changes, then commit them.');
   return steps;
@@ -1109,6 +1136,7 @@ export function runUpgrade(opts) {
   const recorded = reconcileRepos(opts, marker, report);
   const plan = planPayload(markerOpts(opts, marker), marker.repos ?? [], markerHarnesses(marker));
   report.changed = changedTargets(opts, plan, from);
+  report.incomplete = incompleteFiles(opts.root, plan);
   // Everything is checked before the first write, so an error leaves the project untouched.
   if (opts.apply !== null) {
     const changedPaths = new Set(report.changed.map((c) => c.path));

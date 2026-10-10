@@ -17,7 +17,7 @@
   ".mcp.json": "1.0.0",
   ".codex/config.toml": "1.0.0",
   ".cursor/mcp.json": "1.0.0",
-  ".gemini/settings.json": "1.0.0",
+  ".gemini/settings.json": "1.4.0",
   ".qwen/settings.json": "1.0.0",
   "opencode.json": "1.0.0",
   ".factory/mcp.json": "1.0.0",
