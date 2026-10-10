@@ -11,6 +11,7 @@
 // command substitution). A regex hook cannot contain a determined adversary; this closes the
 // ordinary spellings of a write.
 import { readFileSync } from 'node:fs';
+import { inside, realCanonical, rel } from './guard-paths.mjs';
 
 const DEVICES = new Set(['/dev/null', '/dev/stdout', '/dev/stderr', '/dev/tty', 'nul', '/dev/fd/1', '/dev/fd/2']);
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
@@ -144,19 +145,25 @@ const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)h
 const GIT_AUTOPILOT_ALLOWED = new Set(['add', 'commit', 'mv', 'rm']);
 
 // ---------- analysis ----------
-export function analyze(command, { cwd, root, ticket, profile = 'qa' }) {
+export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase = process.platform === 'win32' || process.platform === 'darwin' }) {
   const autopilot = profile === 'autopilot';
-  const rootN = normPath(root).toLowerCase();
+  // Every compare below is between real canonical paths (8.3 short names, Git Bash forms and
+  // symlinks resolved), exact unless the project's folder ignores case.
+  const rootC = realCanonical(root, root);
   const areas = autopilot
-    ? [rootN]
-    : [ticket ? `${rootN}/reviews/${String(ticket).toLowerCase()}` : `${rootN}/reviews`, `${rootN}/.ultrapowers`];
+    ? [rootC]
+    : [realCanonical(ticket ? `${rootC}/reviews/${ticket}` : `${rootC}/reviews`, rootC), realCanonical(`${rootC}/.ultrapowers`, rootC)];
   const areaText = autopilot ? 'the workspace' : `reviews/${ticket || '<id>'}/ and .ultrapowers/`;
   const runKind = autopilot ? 'an autopilot stage' : 'a QA run';
   const vars = new Map();
   let reason = '';
   const deny = (r) => { if (!reason) reason = r; };
-  const protectedPath = (p) => {
-    const l = p.toLowerCase().replace(/\.env\.example/g, '');
+  // The path inside the project is what the protected-name patterns judge, so a project that
+  // sits under a folder like .claude/worktrees is not protected as a whole; a path outside the
+  // project is judged by its full canonical spelling.
+  const protectedPath = (real) => {
+    const inner = rel(real, rootC, ignoreCase);
+    const l = (inner === null ? real : inner).toLowerCase().replace(/\.env\.example/g, '');
     return PROTECTED_RE.test(l) || (autopilot && AUTOPILOT_PROTECTED_RE.test(l));
   };
 
@@ -169,7 +176,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa' }) {
     }
     return s;
   };
-  const inArea = (abs) => areas.some((a) => abs === a || abs.startsWith(`${a}/`));
+  const inArea = (real) => areas.some((a) => inside(real, a, ignoreCase));
   const checkTarget = (w, dir, what, container) => {
     const raw = resolveWord(w);
     if (raw === null) return deny(`${what} is built from a variable or command substitution and cannot be verified; write to a literal path under ${areaText}`);
@@ -182,8 +189,9 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa' }) {
       p = `${dir}/${p.replace(/^\.\//, '')}`;
     }
     if (p.split('/').includes('..')) return deny(`${what} (${raw}) has a parent-directory segment and cannot be verified`);
-    if (protectedPath(p)) return deny(`${what} (${raw}) is a protected path; the config, hooks, CI, settings and key material are never written during ${runKind}`);
-    if (!inArea(p.toLowerCase())) deny(`${what} (${raw}) is outside ${areaText}; shell writes during ${runKind} are limited to ${autopilot ? 'the workspace' : 'those folders'}`);
+    const real = realCanonical(p, rootC);
+    if (protectedPath(real)) return deny(`${what} (${raw}) is a protected path; the config, hooks, CI, settings and key material are never written during ${runKind}`);
+    if (!inArea(real)) deny(`${what} (${raw}) is outside ${areaText}; shell writes during ${runKind} are limited to ${autopilot ? 'the workspace' : 'those folders'}`);
   };
 
   const walk = (src, startDir, container, depth) => {
@@ -420,9 +428,9 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa' }) {
 function main() {
   let input = '';
   try { input = readFileSync(0, 'utf8'); } catch { input = ''; }
-  const [cwd = '', root = '', ticket = '', ...cmdParts] = input.split('\0');
+  const [cwd = '', root = '', ticket = '', ignoreCaseFlag = '', ...cmdParts] = input.split('\0');
   const profile = process.env.ULTRAPOWERS_GUARD_PROFILE === 'autopilot' ? 'autopilot' : 'qa';
-  const out = analyze(cmdParts.join('\0'), { cwd, root, ticket, profile });
+  const out = analyze(cmdParts.join('\0'), { cwd, root, ticket, profile, ignoreCase: ignoreCaseFlag === '1' });
   if (out) process.stdout.write(out);
 }
 

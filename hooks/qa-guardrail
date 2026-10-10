@@ -141,7 +141,16 @@ if command -v cygpath >/dev/null 2>&1; then
   root_node="$(cygpath -m "$root" 2>/dev/null)" || root_node="$root"
 fi
 
-parse_status=""; tool=""; cmd=""; wpath=""; url=""; event_cwd=""; allowed=""; forbidden=""; ticket=""; keypaths=""; tracker_hosts=""
+# The hook's own folder: the node block and the write analyzer load hooks/lib/ from it.
+# cmd.exe hands bash this script as S:\...\hooks\qa-guardrail, so normalize the slashes first.
+hook_src="${BASH_SOURCE[0]}"
+slash='/'
+hook_src="${hook_src//\\/$slash}"
+case "$hook_src" in */*) hook_dir="${hook_src%/*}" ;; *) hook_dir="." ;; esac
+hook_dir_node="$hook_dir"
+if command -v cygpath >/dev/null 2>&1; then hook_dir_node="$(cygpath -m "$hook_dir" 2>/dev/null || printf '%s' "$hook_dir")"; fi
+
+parse_status=""; tool=""; cmd=""; wpath=""; url=""; event_cwd=""; allowed=""; forbidden=""; ticket=""; keypaths=""; tracker_hosts=""; ignore_case="0"
 {
   IFS= read -r -d '' parse_status || true
   IFS= read -r -d '' tool || true
@@ -154,6 +163,7 @@ parse_status=""; tool=""; cmd=""; wpath=""; url=""; event_cwd=""; allowed=""; fo
   IFS= read -r -d '' ticket || true
   IFS= read -r -d '' keypaths || true
   IFS= read -r -d '' tracker_hosts || true
+  IFS= read -r -d '' ignore_case || true
 } < <(printf '%s' "$event" | node -e '
 const fs = require("node:fs");
 const path = require("node:path");
@@ -214,14 +224,20 @@ for (const key of ["paths", "files"]) {
 // patch tool reads those fields, so free text of another tool is never taken for a command.
 const isPatchTool = /patch/i.test(str(ev.tool_name));
 const command = str(inp.command) || (isPatchTool ? (str(inp.patch) || str(inp.patchText) || str(inp.input) || str(inp.diff)) : "");
-process.stdout.write([
-  "ok", str(ev.tool_name), command,
-  str(inp.file_path) || str(inp.notebook_path) || str(inp.path),
-  str(inp.url), str(ev.cwd), allowed.join(","), norm(hosts.forbidden).join(","), ticket,
-  pathFields.join("\n"), trackerHosts.join(","),
-].join("\0") + "\0");
-' "$root_node")
+// The path resolver is an ES module: import() works on every node this plugin supports (18+).
+import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guard-paths.mjs")).href).then((guard) => {
+  process.stdout.write([
+    "ok", str(ev.tool_name), command,
+    str(inp.file_path) || str(inp.notebook_path) || str(inp.path),
+    str(inp.url), str(ev.cwd), allowed.join(","), norm(hosts.forbidden).join(","), ticket,
+    pathFields.join("\n"), trackerHosts.join(","), guard.rootIgnoresCase(root) ? "1" : "0",
+  ].join("\0") + "\0");
+}, (e) => {
+  process.stdout.write(["noresolver:" + String(e.message).split("\n")[0], "", "", "", "", "", "", "", ""].join("\0") + "\0");
+});
+' "$root_node" "$hook_dir_node")
 case "$parse_status" in
+  noresolver:*) deny "the path resolver hooks/lib/guard-paths.mjs cannot be loaded (${parse_status#noresolver:}); every call is refused during $run_kind" ;;
   badconfig:*) deny "the project config .agents/ultrapowers.json cannot be read (${parse_status#badconfig:}); every call is refused while a run marker exists under .ultrapowers/" ;;
 esac
 [ "$parse_status" = "ok" ] || deny "the tool event could not be parsed; an uninspectable call is refused during $run_kind"
@@ -507,14 +523,8 @@ printf '%s' "$lc" | grep -Eq '(curl|wget)[^;&|]*(-t |--upload-file|--data-binary
 # Shell writes (spec 3.5): redirects, tee, curl -o, cp/mv/install/ln destinations, rm
 # operands, in-place editors and git subcommands, checked by the quote-aware analyzer. Its
 # inputs travel on stdin so Git Bash's argument conversion cannot rewrite the paths.
-# cmd.exe hands bash this script as S:\...\hooks\qa-guardrail, so normalize the slashes first.
-hook_src="${BASH_SOURCE[0]}"
-slash='/'
-hook_src="${hook_src//\\/$slash}"
-case "$hook_src" in */*) hook_dir="${hook_src%/*}" ;; *) hook_dir="." ;; esac
-writes_js="$hook_dir/lib/qa-shell-writes.mjs"
-if command -v cygpath >/dev/null 2>&1; then writes_js="$(cygpath -m "$writes_js" 2>/dev/null || printf '%s' "$writes_js")"; fi
-wreason="$(printf '%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$cmd" | ULTRAPOWERS_GUARD_PROFILE="$PROFILE" node "$writes_js" 2>&1)" \
+writes_js="$hook_dir_node/lib/qa-shell-writes.mjs"
+wreason="$(printf '%s\0%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$ignore_case" "$cmd" | ULTRAPOWERS_GUARD_PROFILE="$PROFILE" node "$writes_js" 2>&1)" \
   || wreason="the command could not be analysed for writes; it is refused during $run_kind"
 [ -z "$wreason" ] || deny "$wreason"
 
