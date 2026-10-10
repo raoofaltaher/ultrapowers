@@ -379,3 +379,34 @@ test('the CLI exits 3 without a project, 4 for an id that names a path, 5 for a 
     rmSync(bare, { recursive: true, force: true });
   }
 });
+
+test('an artifact link that leaves reviews/<ID>/artifacts/ is never read, attached or linked', async () => {
+  const id = 'OD-13627';
+  const ticket = fakeTracker('ticket');
+  const qa = [
+    '# QA', '', 'Verdict: PASS — ok.', '',
+    '![up](artifacts/../../../.agents/mcp-secrets.env)',
+    '![enc](artifacts/..%2F..%2F..%2F.agents%2Fmcp-secrets.env)',
+    '![abs](artifacts//etc/passwd)',
+    '![back](artifacts/..\\..\\secret.txt)',
+    '![ok](artifacts/cart.png)', '',
+  ].join('\n');
+  const s = setup({ id, qa, artifacts: { 'cart.png': Buffer.from('png') }, trackers: { ticket }, entries: [] });
+  mkdirSync(join(s.root, '.agents'), { recursive: true });
+  writeFileSync(join(s.root, '.agents', 'mcp-secrets.env'), 'TOKEN=secret-value');
+  try {
+    await postReview({ id, root: s.root, marker: MARKER, resolution: ticketOf(id) }, s.deps);
+    const qaComment = ticket.calls.filter((c) => c.op === 'comment').find((c) => c.body.startsWith('**QA-REPORT.md**'));
+    assert.deepEqual(qaComment.options.attachments.map((a) => a.name), ['cart.png']);
+    assert.doesNotMatch(qaComment.body, /secret-value/);
+    assert.match(qaComment.body, /not inside reviews\/OD-13627\/artifacts\//);
+  } finally { rmSync(s.root, { recursive: true, force: true }); }
+});
+
+test('rewriteLinks in raw mode never builds a URL outside the artifacts folder', () => {
+  const { text, files } = rewriteLinks('![a](artifacts/../x.png) ![b](artifacts/ok.png)', { id: 'GH-7', mode: 'raw', base: 'https://raw.example/o/r/GH-7-x' });
+  assert.deepEqual(files.map((f) => f.name), ['ok.png']);
+  assert.doesNotMatch(text, /\.\.\//);
+  assert.match(text, /not inside reviews\/GH-7\/artifacts\//);
+  assert.match(text, /https:\/\/raw\.example\/o\/r\/GH-7-x\/reviews\/GH-7\/artifacts\/ok\.png/);
+});

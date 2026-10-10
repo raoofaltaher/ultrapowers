@@ -71,6 +71,14 @@ function decodeName(raw) {
   }
 }
 
+// A report is written by an agent and can echo ticket text, so a link's path is untrusted data.
+// Only a relative name that stays inside reviews/<ID>/artifacts/ is read, attached or linked.
+export function insideArtifacts(name) {
+  if (typeof name !== 'string' || name === '' || name.includes('\\') || name.includes('\0')) return false;
+  if (name.startsWith('/') || /^[A-Za-z]:/.test(name)) return false;
+  return name.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..');
+}
+
 // Rewrites every link into artifacts/ in a report for one destination.
 //   mode 'raw'    -> the file's URL on the pushed branch (options.base)
 //   mode 'attach' -> a line naming the attached file (the caller attaches it); options.exists(name) says
@@ -82,6 +90,9 @@ export function rewriteLinks(text, { id, mode, base = null, exists = () => true 
   const out = String(text).replace(ARTIFACT, (whole, bang, label, angled, bare) => {
     const name = decodeName((angled ?? bare).slice('artifacts/'.length));
     const caption = label || name;
+    if (!insideArtifacts(name)) {
+      return `${bang ? 'Screenshot' : 'File'}: ${caption} (the link is not inside reviews/${id}/artifacts/, not posted)`;
+    }
     let replacement;
     if (mode === 'raw') {
       const url = `${base}/reviews/${encodeSegment(id)}/artifacts/${name.split('/').map(encodeSegment).join('/')}`;
@@ -161,7 +172,13 @@ function numbered(name, parts) {
 // Returns [{ body, attachments }] in posting order.
 function commentsFor(documents, { id, mode, base, limit, root }) {
   const out = [];
-  const exists = (name) => fs.existsSync(path.join(root, 'reviews', id, 'artifacts', name));
+  const artifactsDir = path.resolve(root, 'reviews', id, 'artifacts');
+  const artifactPath = (name) => {
+    const file = path.resolve(artifactsDir, name);
+    if (!insideArtifacts(name) || !file.startsWith(`${artifactsDir}${path.sep}`)) throw new AutopilotError('bad-artifact', `artifacts/${name} is not inside reviews/${id}/artifacts/`);
+    return file;
+  };
+  const exists = (name) => insideArtifacts(name) && fs.existsSync(artifactPath(name));
   for (const doc of documents) {
     const { text, files } = rewriteLinks(doc.text, { id, mode, base, exists });
     const parts = numbered(doc.name, splitParts(text, limit - HEADER_RESERVE));
@@ -171,7 +188,7 @@ function commentsFor(documents, { id, mode, base, limit, root }) {
       if (mode === 'attach') {
         for (const file of files) {
           if (!body.includes(file.replacement) || !exists(file.name) || attachments.some((a) => a.name === file.name)) continue;
-          attachments.push({ name: file.name, bytes: fs.readFileSync(path.join(root, 'reviews', id, 'artifacts', file.name)) });
+          attachments.push({ name: file.name, bytes: fs.readFileSync(artifactPath(file.name)) });
         }
       }
       out.push({ body, attachments });
