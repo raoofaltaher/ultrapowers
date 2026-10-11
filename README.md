@@ -148,6 +148,7 @@ This repository is its own plugin marketplace (`.claude-plugin/marketplace.json`
   ```
 
 - For a local checkout, register the directory instead: `/plugin marketplace add <path-to-your-clone>`, then the same `/plugin install ultrapowers@ultrapowers`.
+- To update, run `claude plugin update ultrapowers@ultrapowers`, then `/reload-plugins` in an open session, or start a new one. Auto-update is off for a third-party marketplace by default; turn it on under `/plugin` > Marketplaces, or set `autoUpdate: true` on the marketplace entry in your user `settings.json`.
 
 ### Antigravity
 
