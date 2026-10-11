@@ -23,7 +23,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { AutopilotError, loadSecretsFile } from '../../autopilot/scripts/autopilot-lib.mjs';
+import { AutopilotError, loadSecretsFile, reviewFolderProblem } from '../../autopilot/scripts/autopilot-lib.mjs';
 import { trackerFor } from '../../autopilot/scripts/tracker.mjs';
 import { commitPaths, forgeFor, git, push } from '../../autopilot/scripts/repos.mjs';
 import { resolveTicket, TicketError } from '../../new-task/scripts/ticket-sources.mjs';
@@ -197,9 +197,12 @@ async function commentsFor(documents, { id, mode, base, limit, root, imageQuery 
   const out = [];
   const artifactsDir = path.resolve(root, 'reviews', id, 'artifacts');
   // The real path must sit under the real artifacts folder: a symlink inside it is not followed out.
+  // The folder itself must be the project's own reviews/<ID>/artifacts, not a link out of it.
   const artifactPath = (name) => {
     const file = path.resolve(artifactsDir, name);
     if (!insideArtifacts(name) || !file.startsWith(`${artifactsDir}${path.sep}`)) throw new AutopilotError('bad-artifact', `artifacts/${name} is not inside reviews/${id}/artifacts/`);
+    const folder = reviewFolderProblem(root, id, 'artifacts');
+    if (folder) throw new AutopilotError('bad-artifact', folder);
     let realDir;
     let realFile;
     try { realDir = fs.realpathSync(artifactsDir); realFile = fs.realpathSync(file); } catch { return file; }
@@ -267,6 +270,10 @@ export async function postReview({ id, root, marker, resolution, draftPr = false
   if (!['github', 'gitlab', 'odoo'].includes(resolution.provider)) {
     throw new AutopilotError('no-writeback', `${resolution.provider} tickets have no write-back in this version; GitHub, GitLab and Odoo do`);
   }
+  // Everything under reviews/<ID> is read and posted: a folder that links out of the project is
+  // refused before anything is read, committed or pushed.
+  const folder = reviewFolderProblem(root, id) ?? reviewFolderProblem(root, id, 'artifacts');
+  if (folder) throw new AutopilotError('bad-artifact', `${folder}; nothing was posted`);
   const reviewFile = path.join(root, 'reviews', id, 'TASK-REVIEW.md');
   if (!fs.existsSync(reviewFile)) {
     throw new AutopilotError('no-review', `reviews/${id}/TASK-REVIEW.md does not exist; run the review before posting it`);

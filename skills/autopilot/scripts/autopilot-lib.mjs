@@ -14,6 +14,32 @@ export class AutopilotError extends Error {
   }
 }
 
+// A ticket's review folder, or a folder under it, is read and posted on the tracker, so it must be
+// a real folder of the project: neither reviews/<ID> nor the named sub-folder may be a symbolic
+// link or junction, and its real path must be <real project root>/reviews/<ID>[/<sub>]. Returns
+// null when it is, or when it does not exist; otherwise a sentence naming the folder.
+export function reviewFolderProblem(root, id, sub = '') {
+  const rel = sub ? `reviews/${id}/${sub}` : `reviews/${id}`;
+  const steps = [path.join(root, 'reviews', id)].concat(sub ? [path.join(root, 'reviews', id, sub)] : []);
+  for (const step of steps) {
+    const stat = fs.lstatSync(step, { throwIfNoEntry: false });
+    if (!stat) return null;
+    if (stat.isSymbolicLink()) return `${path.relative(root, step).replace(/\\/g, '/')} is a symbolic link or junction, not a folder of the project`;
+  }
+  let realRoot;
+  let realDir;
+  try {
+    realRoot = fs.realpathSync(root);
+    realDir = fs.realpathSync(steps.at(-1));
+  } catch {
+    return `${rel} cannot be resolved`;
+  }
+  const expected = path.join(realRoot, 'reviews', id, ...(sub ? [sub] : []));
+  const fold = (p) => (process.platform === 'win32' ? path.normalize(p).toLowerCase() : path.normalize(p));
+  if (!realDir.startsWith(realRoot + path.sep) || fold(realDir) !== fold(expected)) return `${rel} resolves outside the project, to ${realDir}`;
+  return null;
+}
+
 export const STAGES = ['scaffold', 'spec', 'plan', 'gate', 'changes', 'execute', 'qa', 'pr', 'done'];
 export const MODES = ['off', 'gated', 'full'];
 export const EXECUTIONS = ['subagent', 'inline'];

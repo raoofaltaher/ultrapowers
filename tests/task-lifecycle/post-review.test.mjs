@@ -3,7 +3,7 @@
 // Run: node --test tests/task-lifecycle/post-review.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -461,4 +461,62 @@ test('a non-Error thrown by upload is noted, not fatal, and a file linked twice 
     assert.equal((qaComment.body.match(/upload failed: boom/g) || []).length, 2);
     assert.ok(out.notes.some((n) => n === 'artifacts/a.png: upload failed: boom'));
   } finally { rmSync(s.root, { recursive: true, force: true }); }
+});
+
+// A folder link (a symlink, or a junction on Windows) that leads out of the project: every file
+// behind it would pass a check against the folder's own real path, so the folder itself is refused.
+function linkDir(target, link) {
+  try {
+    symlinkSync(target, link, process.platform === 'win32' ? 'junction' : 'dir');
+    return true;
+  } catch (error) {
+    if (error.code === 'EPERM' || error.code === 'EACCES') return false;
+    throw error;
+  }
+}
+
+test('reviews/<ID>/artifacts linked to a folder outside the project: nothing is read, uploaded or posted', async (t) => {
+  const id = 'GL-7';
+  const ticket = fakeTracker('ticket');
+  const qa = '# QA\n\nVerdict: PASS — ok.\n\n![s](artifacts/secret.png)\n';
+  const s = setup({ id, qa, trackers: { ticket }, entries: [] });
+  const outside = mkdtempSync(join(tmpdir(), 'post-review-outside-'));
+  writeFileSync(join(outside, 'secret.png'), 'TOKEN=secret-value');
+  try {
+    rmSync(join(s.root, 'reviews', id, 'artifacts'), { recursive: true, force: true });
+    if (!linkDir(outside, join(s.root, 'reviews', id, 'artifacts'))) { t.skip('no right to create a folder link here'); return; }
+    s.deps.forgeFor = (dir) => (dir === s.root ? { provider: 'gitlab', host: 'gitlab.example.com', path: 'acme/docs' } : null);
+    await assert.rejects(postReview({ id, root: s.root, marker: MARKER, resolution: ticketOf(id) }, s.deps),
+      (e) => e.code === 'bad-artifact' && /reviews\/GL-7\/artifacts/.test(e.message));
+    assert.equal(ticket.calls.filter((c) => c.op === 'upload').length, 0, 'nothing uploaded');
+    assert.equal(ticket.calls.filter((c) => c.op === 'comment').length, 0, 'nothing posted');
+    assert.equal(s.log.length, 0, 'nothing committed or pushed');
+  } finally {
+    rmSync(join(s.root, 'reviews', id, 'artifacts'), { force: true, recursive: false });
+    rmSync(s.root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('reviews/<ID> linked to a folder outside the project: nothing is read, attached or posted', async (t) => {
+  const id = 'OD-13627';
+  const ticket = fakeTracker('ticket');
+  const s = setup({ id, trackers: { ticket }, entries: [] });
+  const outside = mkdtempSync(join(tmpdir(), 'post-review-outside-'));
+  mkdirSync(join(outside, 'artifacts'));
+  writeFileSync(join(outside, 'TASK-REVIEW.md'), '# Task review\n\nVerdict: PASS — ok.\n');
+  writeFileSync(join(outside, 'QA-REPORT.md'), '# QA\n\nVerdict: PASS — ok.\n\n![s](artifacts/secret.png)\n');
+  writeFileSync(join(outside, 'artifacts', 'secret.png'), 'TOKEN=secret-value');
+  try {
+    rmSync(join(s.root, 'reviews', id), { recursive: true, force: true });
+    if (!linkDir(outside, join(s.root, 'reviews', id))) { t.skip('no right to create a folder link here'); return; }
+    await assert.rejects(postReview({ id, root: s.root, marker: MARKER, resolution: ticketOf(id) }, s.deps),
+      (e) => e.code === 'bad-artifact' && /reviews\/OD-13627/.test(e.message));
+    assert.equal(ticket.calls.length, 0, 'nothing attached or posted');
+    assert.equal(s.log.length, 0, 'nothing committed or pushed');
+  } finally {
+    rmSync(join(s.root, 'reviews', id), { force: true, recursive: false });
+    rmSync(s.root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
 });
