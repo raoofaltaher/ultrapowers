@@ -1598,16 +1598,45 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
           break;
         }
         if (rest[k] && rest[k].v === null) return deny('the git subcommand is built from a variable or substitution and cannot be verified; spell it out');
+        // Every profile: a config key given on the command line (core.fsmonitor, core.pager,
+        // diff.external, an alias) names a program git runs, so -c and --config-env turn a read into
+        // anything; --exec-path picks the programs git runs. -C, --git-dir and --work-tree name a
+        // literal folder inside the project.
+        for (let g = 0; g < k; g++) {
+          const v = rest[g].v;
+          if (v === null) return deny('a git global option built from a variable or substitution cannot be verified; spell it out');
+          if (v === '-c' || v.startsWith('--config-env') || v === '--exec-path' || v.startsWith('--exec-path=')) {
+            return deny(`git -c and --exec-path can turn any git command into another (a config key names a program git runs); ${autopilot ? 'an autopilot stage runs plain git' : `git runs plain during ${runKind}`}`);
+          }
+          const dirOpt = ['-C', '--git-dir', '--work-tree'].find((o) => v === o || v.startsWith(`${o}=`));
+          if (dirOpt) {
+            const valWord = v === dirOpt ? rest[g + 1] : { v: v.slice(dirOpt.length + 1) };
+            if (!valWord || valWord.v === null) return deny(`git ${dirOpt} with a folder built from a variable or substitution cannot be verified; spell it out`);
+            const raw = valWord.v;
+            let p = normPath(raw);
+            if (p.startsWith('~')) return deny(`git ${dirOpt} ${raw} is outside the project; git reads the project's repositories only`);
+            if (!p.startsWith('/')) {
+              if (dir === null) return deny(`git ${dirOpt} ${raw} is relative to a directory the command changed to through a variable; use a literal path`);
+              p = `${dir}/${p.replace(/^\.\//, '')}`;
+            }
+            if (p.split('/').includes('..')) return deny(`git ${dirOpt} ${raw} has a parent-directory segment and cannot be verified`);
+            if (rel(realCanonical(p, rootC), rootC, ignoreCase) === null) return deny(`git ${dirOpt} ${raw} is outside the project; git reads the project's repositories only`);
+          }
+        }
         const sub = rest[k] ? rest[k].v : '';
         const subArgs = rest.slice(k + 1).map((x) => x.v || '');
         if (!sub) return;
+        // git takes any unambiguous prefix of a long option (--open for --open-files-in-pager).
+        const longIs = (x, name, min) => { if (!x.startsWith('--')) return false; const n = x.slice(2).split('=')[0]; return n.length >= min && name.startsWith(n); };
+        // grep -O / --open-files-in-pager runs the program it names on the matching files.
+        if (sub === 'grep' && subArgs.some((x) => (/^-[A-Za-z]*O/.test(x) && !x.startsWith('--')) || longIs(x, 'open-files-in-pager', 2))) {
+          return deny(`git grep -O (--open-files-in-pager) runs the program it names; during ${runKind} git grep prints its matches`);
+        }
+        // --ext-diff runs the external diff driver a config names, on any command that prints a diff.
+        if (subArgs.some((x) => longIs(x, 'ext-diff', 3))) return deny(`git --ext-diff runs an external diff program; during ${runKind} git prints its own diff`);
         if (autopilot) {
           // An allow-list: the stage commits, branches, stashes and fetches; it never pushes,
           // integrates, discards or reconfigures git.
-          const globals = rest.slice(0, k).map((x) => x.v || '');
-          if (globals.some((g) => g === '-c' || g.startsWith('--config-env') || g === '--exec-path' || g.startsWith('--exec-path='))) {
-            return deny('git -c and --exec-path can turn any git command into another; an autopilot stage runs plain git');
-          }
           if (GIT_READ_ONLY.has(sub) || GIT_AUTOPILOT_ALLOWED.has(sub)) return;
           if (sub === 'fetch') {
             // Positive form only: `git fetch origin [refspec...]` with a few plain options.

@@ -504,5 +504,8 @@
   {"name":"allow_subst_read_only","event":{"tool_name":"Bash","tool_input":{"command":"echo \"head: $(git rev-parse HEAD)\" > repo-a/head.txt"}}},
   {"name":"allow_subst_date_in_commit","event":{"tool_name":"Bash","tool_input":{"command":"git commit -m \"wip $(date +%F)\""}}},
   {"name":"deny_cd_in_subshell_then_protected_write","reason":"protected path","event":{"tool_name":"Bash","tool_input":{"command":"(cd repo-a); echo x > AGENTS.md"}}},
-  {"name":"deny_ansi_c_quote_target","reason":"cannot be verified","event":{"tool_name":"Bash","tool_input":{"command":"echo x > $'.github'/workflows/ci.yml"}}}
+  {"name":"deny_ansi_c_quote_target","reason":"cannot be verified","event":{"tool_name":"Bash","tool_input":{"command":"echo x > $'.github'/workflows/ci.yml"}}},
+  {"name":"deny_git_grep_open_files_in_pager","reason":"open-files-in-pager","event":{"tool_name":"Bash","tool_input":{"command":"git grep -Otouch foo"}}},
+  {"name":"deny_git_ext_diff","reason":"--ext-diff","event":{"tool_name":"Bash","tool_input":{"command":"git diff --ext-diff"}}},
+  {"name":"deny_git_C_outside","reason":"outside the project","event":{"tool_name":"Bash","tool_input":{"command":"git -C /tmp/ap-elsewhere status"}}}
 ]

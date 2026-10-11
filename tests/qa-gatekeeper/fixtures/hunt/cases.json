@@ -302,5 +302,19 @@
   {"name":"deny_rm_f_other_marker","reason":"forced delete","event":{"tool_name":"Bash","tool_input":{"command":"rm -f .ultrapowers/qa-active"}}},
   {"name":"allow_rm_own_marker_sole_command","event":{"tool_name":"Bash","tool_input":{"command":"rm .ultrapowers/hunt-active"}}},
   {"name":"allow_rm_f_own_marker_absolute_quoted","event":{"tool_name":"Bash","tool_input":{"command":"rm -f \"{{ROOT}}/.ultrapowers/hunt-active\""}}},
-  {"name":"allow_write_other_ultrapowers_state","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.ultrapowers/sdd/x.md","content":"x"}}}
+  {"name":"allow_write_other_ultrapowers_state","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.ultrapowers/sdd/x.md","content":"x"}}},
+  {"name":"deny_git_dash_c_fsmonitor","reason":"git -c and --exec-path","event":{"tool_name":"Bash","tool_input":{"command":"git -c core.fsmonitor='touch repo-a/x' status"}}},
+  {"name":"deny_git_config_env","reason":"git -c and --exec-path","event":{"tool_name":"Bash","tool_input":{"command":"git --config-env=core.pager=X log"}}},
+  {"name":"deny_git_exec_path","reason":"git -c and --exec-path","event":{"tool_name":"Bash","tool_input":{"command":"git --exec-path=repo-a status"}}},
+  {"name":"deny_git_grep_open_files_in_pager","reason":"open-files-in-pager","event":{"tool_name":"Bash","tool_input":{"command":"git grep -O'touch x' foo"}}},
+  {"name":"deny_git_grep_open_files_in_pager_attached","reason":"open-files-in-pager","event":{"tool_name":"Bash","tool_input":{"command":"git grep -Otouch foo"}}},
+  {"name":"deny_git_grep_open_files_in_pager_long","reason":"open-files-in-pager","event":{"tool_name":"Bash","tool_input":{"command":"git grep --open-files-in-pager=touch foo"}}},
+  {"name":"deny_git_grep_open_files_in_pager_abbrev","reason":"open-files-in-pager","event":{"tool_name":"Bash","tool_input":{"command":"git grep --open=touch foo"}}},
+  {"name":"deny_git_ext_diff","reason":"--ext-diff","event":{"tool_name":"Bash","tool_input":{"command":"git diff --ext-diff"}}},
+  {"name":"deny_git_log_ext_diff","reason":"--ext-diff","event":{"tool_name":"Bash","tool_input":{"command":"git log -p --ext-diff -1"}}},
+  {"name":"deny_git_C_outside","reason":"outside the project","event":{"tool_name":"Bash","tool_input":{"command":"git -C /tmp/hunt-elsewhere log --oneline -3"}}},
+  {"name":"deny_git_C_from_variable","reason":"cannot be verified","event":{"tool_name":"Bash","tool_input":{"command":"git -C $D log"}}},
+  {"name":"allow_git_grep_plain","event":{"tool_name":"Bash","tool_input":{"command":"git grep -n foo -- repo-a"}}},
+  {"name":"allow_git_C_inside","event":{"tool_name":"Bash","tool_input":{"command":"git -C repo-a log --oneline -3"}}},
+  {"name":"allow_git_diff_no_ext_diff","event":{"tool_name":"Bash","tool_input":{"command":"git diff --no-ext-diff --stat"}}}
 ]

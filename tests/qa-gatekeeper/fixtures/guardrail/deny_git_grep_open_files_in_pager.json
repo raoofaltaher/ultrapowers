@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"git grep -O'touch x' foo"},"reason":"open-files-in-pager"}

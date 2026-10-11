@@ -48,10 +48,10 @@ test('in-place editors and truncate are denied', () => {
 });
 
 test('only read-only git subcommands run', () => {
-  for (const cmd of ['git -C repo-a apply fix.patch', 'git commit -am fix', 'git checkout .', 'git stash', 'git clean -d -f', 'git clean --force -d', 'git -C repo-a reset --hard HEAD~1', 'git add -A', 'git branch -D x', 'git fetch origin']) {
+  for (const cmd of ['git -C repo-a apply fix.patch', 'git commit -am fix', 'git checkout .', 'git stash', 'git clean -d -f', 'git clean --force -d', 'git -C repo-a reset --hard HEAD~1', 'git add -A', 'git branch -D x', 'git fetch origin', 'git -c color.ui=never ls-files', 'git -c core.fsmonitor=x status', 'git grep -Ox y', 'git diff --ext-diff', 'git -C /elsewhere log']) {
     assert.ok(denied(cmd), cmd);
   }
-  for (const cmd of ['git -C repo-a diff --stat main...HEAD', 'git status --porcelain', 'git -C repo-a log --oneline -5', 'git branch --show-current', 'git rev-parse --abbrev-ref HEAD', 'git --no-pager -C repo-a show HEAD --stat', 'git -c color.ui=never ls-files', 'git stash list']) {
+  for (const cmd of ['git -C repo-a diff --stat main...HEAD', 'git status --porcelain', 'git -C repo-a log --oneline -5', 'git branch --show-current', 'git rev-parse --abbrev-ref HEAD', 'git --no-pager -C repo-a show HEAD --stat', 'git stash list']) {
     assert.ok(allowed(cmd), cmd);
   }
 });
