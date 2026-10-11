@@ -269,6 +269,12 @@ root_node="$root"
 if command -v cygpath >/dev/null 2>&1; then
   root_node="$(cygpath -m "$root" 2>/dev/null)" || root_node="$root"
 fi
+# The project folder the harness named (workspace_roots[0] or CURSOR_PROJECT_DIR) when the root came
+# from it: relative file-tool paths resolve there, as the shell's do, when the event has no cwd.
+root_start_node="$root_start"
+if [ -n "$root_start" ] && command -v cygpath >/dev/null 2>&1; then
+  root_start_node="$(cygpath -m "$root_start" 2>/dev/null)" || root_start_node="$root_start"
+fi
 
 # The hook's own folder: the node block and the write analyzer load hooks/lib/ from it.
 # cmd.exe hands bash this script as S:\...\hooks\qa-guardrail, so normalize the slashes first.
@@ -434,8 +440,8 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
   // against the event cwd, and compared exactly unless the project folder ignores case. The bash
   // rules then match on these trusted values: `real` is the full canonical path, `rel` the path
   // inside the project written "./<path>" (empty when the path is outside it).
-  let base = process.cwd();
-  try { if (str(ev.cwd) && fs.statSync(guard.toNative(str(ev.cwd))).isDirectory()) base = str(ev.cwd); } catch (e) { /* keep the process cwd */ }
+  let base = process.argv[3] || process.cwd();
+  try { if (str(ev.cwd) && fs.statSync(guard.toNative(str(ev.cwd))).isDirectory()) base = str(ev.cwd); } catch (e) { /* keep the found root or the process cwd */ }
   const rootReal = guard.realCanonical(root, root);
   const ignoreCase = guard.rootIgnoresCase(root);
   // A tool call may carry its own working directory (OpenCode workdir, Hermes working_directory,
@@ -503,7 +509,7 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
 }, (e) => {
   process.stdout.write(["noresolver:" + String(e.message).split("\n")[0], "", "", "", "", "", "", "", ""].join("\0") + "\0");
 });
-' "$root_node" "$hook_dir_node")
+' "$root_node" "$hook_dir_node" "$root_start_node")
 case "$parse_status" in
   noresolver:*) deny "the path resolver hooks/lib/guard-paths.mjs cannot be loaded (${parse_status#noresolver:}); every call is refused during $run_kind" ;;
   badconfig:*) deny "the project config .agents/ultrapowers.json cannot be read (${parse_status#badconfig:}); every call is refused while a run marker exists under .ultrapowers/" ;;
