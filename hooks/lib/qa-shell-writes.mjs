@@ -36,9 +36,9 @@ const psqlTokens = (text) => (String(text).match(PSQL_TOKEN_RE) || []).length;
 const PG_TOOLS = new Set(['pgcli', 'usql', 'dropdb', 'createdb', 'createuser', 'dropuser', 'pg_restore', 'pg_dump', 'pg_dumpall', 'pgbench', 'vacuumdb', 'reindexdb', 'clusterdb', 'pg_ctl', 'pg_basebackup', 'pg_resetwal', 'pg_upgrade', 'pg_rewind']);
 // Variables that make psql read a file or a service entry the analyzer cannot see.
 const PSQL_ENV = new Set(['PSQLRC', 'PGSERVICE', 'PGSERVICEFILE', 'PGOPTIONS', 'PGPASSFILE', 'PGSYSCONFDIR']);
-// Programs that read their environment before the command they are given: shells and interpreters.
-const ENV_SENSITIVE_PROGRAMS = /^(python[0-9.]*|node(js)?|ruby|perl|php[0-9.]*|lua[0-9.]*|pwsh|powershell)$/;
-// The only variables a prefix or an env wrapper may set for one of them.
+// Autopilot: programs that run code of their own, by name (python3.12, nodejs, pwsh.exe and /usr/bin/python all contain one).
+const AUTOPILOT_ENV_PROGRAMS = /(sh|python|py|node|ruby|perl|php|lua|pwsh|powershell|cmd|irb|ipython|jshell|deno|bun)/;
+// The only variables a prefix, an env wrapper or an export may set for a gated program.
 const SAFE_ENV_RE = /^(CI|NODE_ENV|DEBUG|LANG|LC_[A-Z_]+|LANGUAGE|TZ|TERM|FORCE_COLOR|NO_COLOR|PAGER|GIT_PAGER|PYTHONDONTWRITEBYTECODE|PYTHONUNBUFFERED|PYTHONIOENCODING|NODE_NO_WARNINGS|npm_config_loglevel|ULTRAPOWERS_[A-Z_]+|QA_[A-Z_]+)$/;
 // Names that move a shell's init files, its program lookup or its loaded code, or whose value is executed:
 // judged when assigned or exported earlier in the command (a plain assignment of an inherited name still changes it).
@@ -488,6 +488,8 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
   const areaText = autopilot ? 'the workspace' : `reviews/${ticket || '<id>'}/ and .ultrapowers/`;
   const runKind = autopilot ? 'an autopilot stage' : 'a QA run';
   const vars = new Map();
+  // Names given to `export`, `declare` or `typeset` earlier in the command: they reach every later program.
+  const exportedNames = new Set();
   // PGUSER handed down to a nested shell (`PGUSER=x sh -c '...'`, `docker exec -e PGUSER=x ... sh -c`),
   // or exported by an earlier command; psqlEnv: one of PSQL_ENV was set the same ways.
   const walkEnv = { pgUser: undefined, psqlEnv: false };
@@ -677,6 +679,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
           if (x.v.startsWith('-')) continue;
           const eq = x.v.indexOf('=');
           const name = eq === -1 ? x.v : x.v.slice(0, eq);
+          exportedNames.add(name);
           const value = eq === -1 ? (vars.has(name) ? vars.get(name) : undefined) : x.v.slice(eq + 1);
           if (eq !== -1) vars.set(name, value);
           if (name === 'PGUSER') walkEnv.pgUser = value === undefined ? null : value;
@@ -828,12 +831,15 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       }
       if (PG_TOOLS.has(prog)) return deny(`${prog} is not run during ${runKind}; lane 4 reaches the database through psql -c as the read-only role only`);
       const rest = args.slice(1);
-      // A shell or an interpreter reads its environment before it runs the command: a variable set for it by a
-      // prefix, an env assignment or env -u is refused unless it is on a short list of harmless ones. A name
-      // assigned or exported earlier in the command is judged by the list of names known to run code.
-      if (SHELLS.has(prog) || ENV_SENSITIVE_PROGRAMS.test(prog)) {
-        if ([...shellEnvNames].some((n) => !SAFE_ENV_RE.test(n))) return deny('a variable set for a shell or interpreter can make it run code before the command; only the listed harmless variables pass');
-        if ([...vars.keys()].some((n) => EARLIER_ENV_RE.test(n))) return deny('a shell init command or rc file runs code the analyzer does not see');
+      // A program reads its environment before it runs: a variable set for it by a prefix, an env assignment or
+      // env -u, or exported earlier in the command, is refused unless it is on the short list of harmless ones.
+      // QA run: every program (a read-only run needs no other variable). Autopilot stage: a shell, an
+      // interpreter or another program that runs code (name contains sh, python, node, ...), so that
+      // `DATABASE_URL=x npm test` still passes there. psql keeps its own PG* rules (analyzePsql).
+      if (!autopilot || AUTOPILOT_ENV_PROGRAMS.test(prog)) {
+        const judged = (n) => !(prog === 'psql' && (n === 'PGUSER' || /^(PG|PSQL)/.test(n)));
+        if ([...shellEnvNames, ...exportedNames].some((n) => judged(n) && !SAFE_ENV_RE.test(n))) return deny('a variable set for a shell or interpreter can make it run code before the command; only the listed harmless variables pass');
+        if ([...vars.keys()].some((n) => judged(n) && EARLIER_ENV_RE.test(n))) return deny('a shell init command or rc file runs code the analyzer does not see');
       }
       const plain = rest.filter((x) => !(x.v || '').startsWith('-'));
       const interpKind = interpreterKind(prog);

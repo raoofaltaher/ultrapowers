@@ -482,5 +482,17 @@
   {"name":"allow_env_interpreter_node_env","event":{"tool_name":"Bash","tool_input":{"command":"NODE_ENV=test node x.js"}}},
   {"name":"allow_env_interpreter_pythonunbuffered","event":{"tool_name":"Bash","tool_input":{"command":"PYTHONUNBUFFERED=1 python3 x.py"}}},
   {"name":"allow_env_interpreter_qa_var_env_wrapper","event":{"tool_name":"Bash","tool_input":{"command":"env QA_USER=u TZ=UTC bash x.sh"}}},
-  {"name":"allow_env_interpreter_not_an_interpreter","event":{"tool_name":"Bash","tool_input":{"command":"FOO=1 ls reviews"}}}
+  {"name":"allow_env_interpreter_not_an_interpreter","event":{"tool_name":"Bash","tool_input":{"command":"FOO=1 ls reviews"}}},
+  {"name":"deny_env_gate_nodejs_prefix","event":{"tool_name":"Bash","tool_input":{"command":"FOO=1 nodejs x.js"}}},
+  {"name":"deny_env_gate_python_path_prefix","event":{"tool_name":"Bash","tool_input":{"command":"FOO=1 /usr/bin/python x.py"}}},
+  {"name":"deny_env_gate_python_version_suffix","event":{"tool_name":"Bash","tool_input":{"command":"FOO=1 python3.12 x.py"}}},
+  {"name":"deny_env_gate_bun_prefix","event":{"tool_name":"Bash","tool_input":{"command":"FOO=1 bun x.ts"}}},
+  {"name":"deny_env_gate_deno_prefix","event":{"tool_name":"Bash","tool_input":{"command":"FOO=1 deno run x.ts"}}},
+  {"name":"deny_env_gate_ipython_prefix","event":{"tool_name":"Bash","tool_input":{"command":"FOO=1 ipython x.py"}}},
+  {"name":"deny_env_gate_exported_before_interpreter","event":{"tool_name":"Bash","tool_input":{"command":"export FOO=1; python3 x.py"}}},
+  {"name":"deny_env_gate_declare_x_before_shell","event":{"tool_name":"Bash","tool_input":{"command":"declare -x FOO=1; bash x.sh"}}},
+  {"name":"deny_env_gate_env_wrapper_perl","event":{"tool_name":"Bash","tool_input":{"command":"env FOO=1 perl x.pl"}}},
+  {"name":"allow_env_ap_database_url_npm_test","event":{"tool_name":"Bash","tool_input":{"command":"DATABASE_URL=x npm test"}}},
+  {"name":"allow_env_ap_exported_then_non_interpreter","event":{"tool_name":"Bash","tool_input":{"command":"export FOO=1; ls"}}},
+  {"name":"allow_env_ap_safe_names_everywhere","event":{"tool_name":"Bash","tool_input":{"command":"LC_ALL=C CI=1 git status"}}}
 ]
