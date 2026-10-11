@@ -85,4 +85,27 @@ try {
   delete process.env.ULTRAPOWERS_AUTOPILOT_INSIDE;
 }
 
+// V2: setup() registers the same guard through ctx.tool.hook('execute.before'). The V2 event
+// carries the call's arguments as `input`; a denied call throws with the hook's reason.
+const v2Hooks = new Map();
+const v2Ctx = (directory) => ({
+  directory,
+  skill: { transform: async () => ({ dispose: async () => {} }) },
+  session: { hook: async () => ({ dispose: async () => {} }) },
+  tool: { hook: async (name, callback) => { v2Hooks.set(name, callback); return { dispose: async () => {} }; } },
+});
+await mod.default.setup(v2Ctx(hunt));
+const v2Before = v2Hooks.get('execute.before');
+assert.equal(typeof v2Before, 'function', 'V2 registers execute.before through ctx.tool.hook');
+await assert.rejects(
+  v2Before({ tool: 'bash', sessionID: 's4', id: 'v1', input: { command: 'git push origin x' } }),
+  /HUNT-GUARDRAIL DENY: /,
+  'V2: a push during a hunt is refused',
+);
+await v2Before({ tool: 'bash', sessionID: 's4', id: 'v2', input: { command: 'npm audit --package-lock-only --json' } });
+await mod.default.setup(v2Ctx(idle));
+await v2Hooks.get('execute.before')({ tool: 'bash', sessionID: 's5', id: 'v3', input: { command: 'git push origin main' } });
+// A V2 ctx without a tool domain still sets up (the bootstrap and the skills do not depend on it).
+await mod.default.setup({ ...v2Ctx(idle), tool: undefined });
+
 console.log('opencode guardrail: PASS');

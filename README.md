@@ -449,7 +449,7 @@ Autopilot needs a GitHub, GitLab or Odoo source in `tickets`; an Odoo source nee
 | Factory Droid | plugin hook `hooks/hooks.json` | yes | |
 | Kimi Code | plugin hook in `.kimi-plugin/plugin.json`, through `hooks/lib/guardrail-cli.mjs` | yes | Like Gemini CLI, Qwen Code and Droid, Kimi lets a crashed or timed-out hook through; the deny path itself is exit 2 |
 | Grok Build CLI | not verified: install it through the Claude Code marketplace path and check that `hooks/hooks.json` fires | no adapter | Run its tickets from a session once the hook is confirmed |
-| OpenCode | in process, `tool.execute.before` in the plugin | yes | Never run it with `--pure`, which drops the plugin |
+| OpenCode | in process, `tool.execute.before` in the plugin (V1) and `ctx.tool.hook("execute.before")` (V2) | yes | Never run it with `--pure`, which drops the plugin. On V2 a denied call fails without the hook's reason text |
 | Pi | in process, the extension's `tool_call` handler | yes | The watcher loads this extension and no other |
 | Hermes Agent | in process, the plugin's `pre_tool_call` (fails closed) | yes | The plugin must be in `plugins.enabled`; the watcher passes `--accept-hooks` |
 | Antigravity | plugin hook `hooks.json` at the plugin root, through `guardrail-cli.mjs --antigravity` | yes (`agy -p`) | From its documentation only: Antigravity runs plugin hooks in its CLI, the IDE surface and its crash behaviour are not confirmed |

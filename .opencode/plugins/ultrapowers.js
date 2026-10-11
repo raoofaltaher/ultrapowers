@@ -478,7 +478,7 @@ export const UltrapowersPlugin = async ({ client, directory }) => {
  * V2 Setup Function (default.setup)
  *
  * Called by V2 PluginSupervisor (packages/core/src/plugin/supervisor.ts).
- * Performs two things:
+ * Performs three things:
  *
  * 1. Registers every skills/<name>/SKILL.md as a native Skill.Info object
  *    via ctx.skill.transform((draft) => draft.add(info)).
@@ -491,6 +491,8 @@ export const UltrapowersPlugin = async ({ client, directory }) => {
  *    See packages/core/src/plugin/skill.ts and packages/schema/src/skill.ts.
  * 2. Injects bootstrap context via ctx.session.hook("context"), the V2
  *    equivalent of V1's experimental.chat.messages.transform.
+ * 3. Registers the run guardrail through ctx.tool.hook("execute.before"), the V2
+ *    equivalent of V1's tool.execute.before.
  */
 async function setup(ctx) {
   // V1 (observed on opencode 1.18.18) also invokes default.setup, but with a
@@ -597,6 +599,19 @@ async function setup(ctx) {
     });
   } catch (err) {
     console.error('[ultrapowers] session hook registration failed:', err);
+  }
+
+  // 3. The guardrail of a run: V2's tool domain has the same before-execute hook V1 calls
+  // tool.execute.before. The V2 event carries the call's arguments as `input`. A thrown error
+  // stops the call before the tool runs; the V2 promise adapter reports it as a failure of the
+  // call rather than as a Tool.Error with this reason. Inert outside a run, as in V1.
+  try {
+    if (ctx.tool && typeof ctx.tool.hook === 'function') {
+      const guard = guardTool(projectDir);
+      await ctx.tool.hook('execute.before', (event) => guard({ tool: event?.tool, sessionID: event?.sessionID, callID: event?.id }, { args: event?.input }));
+    }
+  } catch (err) {
+    console.error('[ultrapowers] tool guard registration failed:', err);
   }
 }
 

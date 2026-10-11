@@ -119,7 +119,7 @@ Every Ultrapowers release loads on both V1 and V2.
 
 ## How It Works
 
-The plugin does two things, using host-flavor-specific APIs. It also runs the guardrail of a QA run or an autopilot stage in process, through `tool.execute.before`; that hook does nothing outside a run, so never run one with `--pure`, which drops the plugin.
+The plugin does two things, using host-flavor-specific APIs. It also runs the guardrail of a QA run, a vulnerability hunt or an autopilot stage in process, through `tool.execute.before` on V1 and `ctx.tool.hook("execute.before")` on V2 (a denied call is stopped before the tool runs; V2 reports it as a failed call and does not carry the hook's reason text); that hook does nothing outside a run, so never run one with `--pure`, which drops the plugin.
 
 1. **Registers the skills directory** so OpenCode discovers all ultrapowers skills without symlinks or manual config.
     - **V1:** via the `config` hook, injecting into `config.skills.paths`
