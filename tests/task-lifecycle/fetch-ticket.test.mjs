@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { linkFetchable } from '../../skills/new-task/scripts/fetch-ticket.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.resolve(HERE, '../../skills/new-task/scripts/fetch-ticket.mjs');
@@ -477,4 +478,65 @@ test('resolve reports json-rpc for an Odoo source with a login and a key, mcp ot
 
 test('resolve of a local id has no transport', () => {
   assert.deepEqual(run(project(), ['resolve', 'PROJ-88']).json, { provider: 'local' });
+});
+
+// A link in a ticket is written by whoever commented on it, and the spec stage fetches it. Only a
+// public https host is fetchable; the ticket source's own host may also be reached over http.
+test('linkFetchable refuses each kind of host a ticket must not make the session reach', () => {
+  const refused = {
+    'http://docs.example.com/spec': /https/,
+    'ftp://docs.example.com/spec': /https/,
+    'https://127.0.0.1/admin': /loopback/,
+    'https://[::1]/admin': /loopback/,
+    'https://10.1.2.3/': /private/,
+    'https://172.20.0.1/': /private/,
+    'https://192.168.1.1/': /private/,
+    'https://169.254.169.254/latest/meta-data/': /link-local/,
+    'https://[fe80::1]/': /link-local/,
+    'https://[fd12:3456::1]/': /unique-local/,
+    'https://[::ffff:127.0.0.1]/': /loopback/,
+    'https://0x7f.1/': /loopback/,
+    'https://localhost:8080/': /localhost/,
+    'https://intranet/wiki': /single-label/,
+    'https://db.internal/': /internal/,
+    'https://printer.local/': /local/,
+    'https://app.localhost/': /localhost/,
+    'https://user:pw@docs.example.com/': /user name or password/,
+    'https://user@docs.example.com/': /user name or password/,
+    'not a url': /not a valid URL/,
+  };
+  for (const [url, reason] of Object.entries(refused)) {
+    const r = linkFetchable(url);
+    assert.equal(r.ok, false, url);
+    assert.match(r.reason, reason, url);
+  }
+});
+
+test('linkFetchable allows a public https host, and the ticket source\'s own host over http', () => {
+  assert.deepEqual(linkFetchable('https://docs.example.com/spec?a=1'), { ok: true });
+  assert.deepEqual(linkFetchable('https://172.32.0.1/x'), { ok: true });
+  assert.deepEqual(linkFetchable('http://erp.example.com/web/content/5', { sourceHost: 'erp.example.com' }), { ok: true });
+  assert.deepEqual(linkFetchable('http://127.0.0.1:8069/web/content/5', { sourceHost: '127.0.0.1:8069' }), { ok: true });
+  assert.equal(linkFetchable('http://127.0.0.1:9999/', { sourceHost: '127.0.0.1:8069' }).ok, false, 'another port is another host');
+  assert.equal(linkFetchable('http://u:p@erp.example.com/', { sourceHost: 'erp.example.com' }).ok, false, 'userinfo is refused even on the source host');
+});
+
+test('write-source writes a link or attachment the session must not fetch as not fetched', () => {
+  const root = withTask('GH-web-7');
+  const r = writeSource(root, 'GH-web-7', {
+    ...LOGIN_TICKET, url: 'https://github.com/acme/web/issues/7',
+    links: ['https://docs.example.com/spec', 'http://169.254.169.254/latest/meta-data/', 'https://intranet/wiki'],
+    attachments: [
+      { name: 'ok.png', url: 'https://github.com/user-attachments/assets/ok.png', size: null, reason: 'url only' },
+      { name: 'meta.png', url: 'https://10.0.0.5/meta.png', size: null, reason: 'url only' },
+    ],
+  });
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const text = fs.readFileSync(path.join(root, 'tasks', 'GH-web-7', 'source.md'), 'utf8');
+  assert.match(text, /\n- https:\/\/docs\.example\.com\/spec\n/);
+  assert.match(text, /\n- http:\/\/169\.254\.169\.254\/latest\/meta-data\/ \(not fetched: [^)\n]+\)\n/);
+  assert.match(text, /\n- https:\/\/intranet\/wiki \(not fetched: [^)\n]*single-label[^)\n]*\)\n/);
+  assert.match(text, /- ok\.png https:\/\/github\.com\/user-attachments\/assets\/ok\.png, not downloaded: url only; read in the session only\n/);
+  assert.match(text, /- meta\.png https:\/\/10\.0\.0\.5\/meta\.png, not downloaded: url only \(not fetched: [^)\n]*private[^)\n]*\)\n/);
+  assert.doesNotMatch(text, /meta\.png[^\n]*read in the session only/);
 });

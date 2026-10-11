@@ -54,6 +54,7 @@ expect skills/brainstorm-task/SKILL.md '## Links' 'brainstorm-task reads the Lin
 expect skills/brainstorm-task/SKILL.md 'Firecrawl' 'brainstorm-task falls back to the Firecrawl MCP server'
 expect skills/brainstorm-task/SKILL.md 'twenty' 'brainstorm-task caps the links it fetches at twenty'
 expect skills/brainstorm-task/SKILL.md 'linked page says to skip' 'brainstorm-task has the Red Flags row for an instructing page'
+expect skills/brainstorm-task/SKILL.md 'written as "not fetched" is never fetched, by any tool' 'brainstorm-task never fetches a link source.md marks not fetched'
 expect skills/new-task/SKILL.md 'fetch-ticket.mjs" attachments' 'new-task runs the attachments command'
 expect skills/new-task/SKILL.md '"via": "rpc"' 'new-task knows the rpc answer'
 expect skills/new-task/SKILL.md 'asks me to add the approve' 'new-task has the Red Flags row for a message that asks for the approve tag'

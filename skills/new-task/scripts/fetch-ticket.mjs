@@ -144,6 +144,90 @@ export function collectLinks(texts) {
   return out;
 }
 
+// IPv4 ranges a ticket link must not make the session reach: [first octets, prefix length, reason].
+const BLOCKED_V4 = [
+  [[127], 8, 'a loopback address'],
+  [[0], 8, 'a reserved address'],
+  [[10], 8, 'a private address'],
+  [[172, 16], 12, 'a private address'],
+  [[192, 168], 16, 'a private address'],
+  [[100, 64], 10, 'a shared (carrier-grade NAT) address'],
+  [[169, 254], 16, 'a link-local address'],
+];
+
+function v4Problem(octets) {
+  const n = ((octets[0] << 24) >>> 0) + (octets[1] << 16) + (octets[2] << 8) + octets[3];
+  for (const [first, bits, reason] of BLOCKED_V4) {
+    const base = first.concat([0, 0, 0, 0]).slice(0, 4);
+    const b = ((base[0] << 24) >>> 0) + (base[1] << 16) + (base[2] << 8) + base[3];
+    const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
+    if (((n & mask) >>> 0) === ((b & mask) >>> 0)) return reason;
+  }
+  return null;
+}
+
+// The eight 16-bit groups of an IPv6 literal as the URL parser writes it (compressed, lower case).
+function v6Groups(text) {
+  let head = text;
+  let tail4 = [];
+  const v4 = /(\d+\.\d+\.\d+\.\d+)$/.exec(text);
+  if (v4) {
+    const o = v4[1].split('.').map(Number);
+    tail4 = [((o[0] << 8) | o[1]).toString(16), ((o[2] << 8) | o[3]).toString(16)];
+    head = text.slice(0, -v4[1].length).replace(/:$/, ':0');
+    head = head.endsWith('::0') ? head.slice(0, -1) : head;
+  }
+  const [left, right] = head.includes('::') ? head.split('::') : [head, null];
+  const l = left ? left.split(':') : [];
+  const r = right ? right.split(':') : [];
+  const fill = right === null ? [] : Array(8 - tail4.length - l.length - r.length).fill('0');
+  return l.concat(fill, r, tail4).filter((g) => g !== '').map((g) => parseInt(g, 16));
+}
+
+function v6Problem(hostname) {
+  const g = v6Groups(hostname);
+  if (g.length !== 8 || g.some((x) => !Number.isInteger(x))) return 'an IPv6 address that cannot be read';
+  if (g.slice(0, 7).every((x) => x === 0) && g[7] <= 1) return g[7] === 1 ? 'a loopback address' : 'a reserved address';
+  // IPv4-mapped (::ffff:a.b.c.d) and IPv4-compatible forms are judged as the IPv4 address.
+  if (g.slice(0, 5).every((x) => x === 0) && (g[5] === 0xffff || g[5] === 0)) {
+    return v4Problem([g[6] >> 8, g[6] & 255, g[7] >> 8, g[7] & 255]);
+  }
+  if ((g[0] & 0xffc0) === 0xfe80) return 'a link-local address';
+  if ((g[0] & 0xfe00) === 0xfc00) return 'a unique-local address';
+  return null;
+}
+
+// Whether the session may fetch a link a ticket names. Ticket text is written by anyone who can
+// comment, so only a public https host is fetchable: no IP literal in a loopback, private,
+// link-local or unique-local range, no localhost, no single-label name, no .internal, .local or
+// .localhost name, and no user name or password in the URL. The ticket source's own host (as the
+// project's .agents/ultrapowers.json names it) may also be reached over http. No DNS lookup is
+// made, so a public name that resolves to a private address is not caught here.
+export function linkFetchable(url, { sourceHost = '' } = {}) {
+  let u;
+  try {
+    u = new URL(String(url));
+  } catch {
+    return { ok: false, reason: 'not a valid URL' };
+  }
+  if (u.username || u.password) return { ok: false, reason: 'the URL carries a user name or password' };
+  if (!['https:', 'http:'].includes(u.protocol)) return { ok: false, reason: 'only https links are fetched' };
+  if (sourceHost && u.host.toLowerCase() === String(sourceHost).toLowerCase()) return { ok: true };
+  const problem = hostProblem(u.hostname.toLowerCase().replace(/\.$/, ''));
+  if (problem) return { ok: false, reason: `the host is ${problem}` };
+  if (u.protocol !== 'https:') return { ok: false, reason: 'only https links are fetched; http only on the ticket source\'s own host' };
+  return { ok: true };
+}
+
+function hostProblem(host) {
+  if (host.startsWith('[')) return v6Problem(host.slice(1, -1));
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) return v4Problem(host.split('.').map(Number));
+  if (host === 'localhost' || host.endsWith('.localhost')) return 'localhost';
+  if (!host.includes('.')) return 'a single-label name';
+  const suffix = ['internal', 'local'].find((x) => host.endsWith(`.${x}`));
+  return suffix ? `a .${suffix} name` : null;
+}
+
 const FILE_LINK = /\.(png|jpe?g|gif|webp|svg|pdf|docx?|xlsx?|pptx?|csv|zip|txt|md|json|mp4|mov)(\?[^/]*)?$/i;
 const ATTACHMENT_HOST = /github\.com\/user-attachments\/|githubusercontent\.com\/|\/uploads\/|\/-\/project\/\d+\/uploads\//i;
 
@@ -434,11 +518,20 @@ function writeSource(root, resolution, id, opts) {
       // A file kept outside the tracker reports no size; "(0 B)" would misdescribe it.
       const size = Number(a.size) > 0 ? `(${formatSize(a.size)}) ` : '';
       if (a.file) sections.push(`- ${oneLine(a.name)} ${size}→ ${a.file}`);
-      else sections.push(`- ${oneLine(a.name)} ${size}${oneLine(a.url)}, not downloaded: ${oneLine(a.reason) || 'not downloaded'}; read in the session only`);
+      else {
+        const check = linkFetchable(oneLine(a.url), { sourceHost: resolution.host });
+        const tail = check.ok ? '; read in the session only' : ` (not fetched: ${check.reason})`;
+        sections.push(`- ${oneLine(a.name)} ${size}${oneLine(a.url)}, not downloaded: ${oneLine(a.reason) || 'not downloaded'}${tail}`);
+      }
     }
     sections.push('');
   }
-  if (links.length) sections.push('## Links', '', ...links.map((l) => `- ${oneLine(l)}`), '');
+  // A link the session must not fetch is still listed, with the reason, so it shows as unread.
+  const linkLine = (l) => {
+    const check = linkFetchable(oneLine(l), { sourceHost: resolution.host });
+    return check.ok ? `- ${oneLine(l)}` : `- ${oneLine(l)} (not fetched: ${check.reason})`;
+  };
+  if (links.length) sections.push('## Links', '', ...links.map(linkLine), '');
   const lines = [
     `# Source: ${id}`,
     '',
