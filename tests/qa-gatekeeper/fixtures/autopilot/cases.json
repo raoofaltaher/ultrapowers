@@ -512,5 +512,10 @@
   {"name":"deny_nested_run_dir_decoy_bridge","reason":"forbidden","dir":"{{ELSEWHERE}}","env":{"ULTRAPOWERS_RUN_DIR":"{{ROOT}}"},"event":{"tool_name":"Bash","tool_input":{"command":"curl -s https://prod.example.com/","ultrapowers_run_dir":"{{DECOY}}"},"cwd":"{{ROOT}}"}},
   {"name":"deny_nested_cwd_decoy_bridge","reason":"is outside the project","dir":"{{ELSEWHERE}}","env":{"ULTRAPOWERS_RUN_DIR":"{{ROOT}}"},"event":{"tool_name":"Bash","tool_input":{"command":"curl -s https://prod.example.com/","cwd":"{{DECOY}}"},"cwd":"{{ROOT}}"}},
   {"name":"deny_nested_run_dir_decoy_direct","reason":"forbidden","dir":"{{ELSEWHERE}}","event":{"tool_name":"Bash","tool_input":{"command":"curl -s https://prod.example.com/","ultrapowers_run_dir":"{{DECOY}}"},"cwd":"{{ROOT}}"}},
-  {"name":"deny_nested_cwd_decoy_direct","reason":"is outside the project","dir":"{{ELSEWHERE}}","event":{"tool_name":"Bash","tool_input":{"command":"curl -s https://prod.example.com/","cwd":"{{DECOY}}"},"cwd":"{{ROOT}}"}}
+  {"name":"deny_nested_cwd_decoy_direct","reason":"is outside the project","dir":"{{ELSEWHERE}}","event":{"tool_name":"Bash","tool_input":{"command":"curl -s https://prod.example.com/","cwd":"{{DECOY}}"},"cwd":"{{ROOT}}"}},
+  {"name":"deny_glob_git_config","reason":"a glob or brace target cannot be checked","event":{"tool_name":"Bash","tool_input":{"command":"echo x > .gi[t]/config"}}},
+  {"name":"deny_brace_git_config","reason":"a glob or brace target cannot be checked","event":{"tool_name":"Bash","tool_input":{"command":"echo x | tee {.git,x}/config"}}},
+  {"name":"deny_glob_guardrail","reason":"a glob or brace target cannot be checked","event":{"tool_name":"Bash","tool_input":{"command":"echo x > hooks/qa-guardra[i]l"}}},
+  {"name":"deny_glob_github_workflows","reason":"a glob or brace target cannot be checked","event":{"tool_name":"Bash","tool_input":{"command":"echo x > .githu*/workflows/ci.yml"}}},
+  {"name":"allow_literal_src_write","event":{"tool_name":"Bash","tool_input":{"command":"echo x > repo-a/src/x.ts"}}}
 ]

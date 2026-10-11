@@ -960,6 +960,8 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     if (raw === null) return deny(`${what} is built from a variable or command substitution and cannot be verified; write to a literal path under ${areaText}`);
     if (DEVICES.has(raw) || DEVICES.has(raw.toLowerCase()) || /^&?[0-9-]$/.test(raw)) return;
     if (container) return deny(`a write inside a container (${raw}) changes the stack; the stack stays as found`);
+    // An autopilot stage: a pattern or a brace list expands to names the text rule never sees (.gi[t]/config).
+    if (autopilot && /[*?[{]/.test(raw)) return deny(`${what} (${raw}): a glob or brace target cannot be checked against the protected paths during an autopilot stage; spell the path out`);
     let p = normPath(raw);
     if (p.startsWith('~')) return deny(`${what} (${raw}) is outside the project; writes are limited to ${areaText}`);
     if (!p.startsWith('/')) {
