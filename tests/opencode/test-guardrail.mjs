@@ -41,6 +41,13 @@ const idle = project(false);
 const idleHooks = await mod.UltrapowersPlugin({ client: null, directory: idle });
 await idleHooks['tool.execute.before']({ tool: 'bash', sessionID: 's2', callID: 'c5' }, { args: { command: 'git push origin main' } });
 
+// A call whose own workdir sits under a run is guarded even when the session directory is not.
+await assert.rejects(
+  idleHooks['tool.execute.before']({ tool: 'bash', sessionID: 's2', callID: 'c8' }, { args: { command: 'git push origin GH-16-x', workdir: active } }),
+  /git push is never allowed/,
+  'the workdir is a marker candidate too',
+);
+
 // A headless stage (ULTRAPOWERS_AUTOPILOT_INSIDE=1) is guarded even when the marker is gone.
 process.env.ULTRAPOWERS_AUTOPILOT_INSIDE = '1';
 try {

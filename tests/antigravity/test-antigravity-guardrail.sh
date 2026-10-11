@@ -28,7 +28,9 @@ function project({ marker = false } = {}) {
   return root;
 }
 const hook = (event, { env = {}, cwd = repo } = {}) => {
-  const r = spawnSync(process.execPath, parts.slice(1), {
+  // the script path is relative to the plugin root; the process cwd is the case's own
+  const args = parts.slice(1).map((a) => (a.endsWith('.mjs') ? path.resolve(repo, a) : a));
+  const r = spawnSync(process.execPath, args, {
     input: JSON.stringify(event), encoding: 'utf8', cwd, env: { ...process.env, ULTRAPOWERS_AUTOPILOT_INSIDE: '', ...env },
   });
   if (r.status !== 0) throw new Error(`the hook must exit 0 and answer JSON (exit ${r.status}: ${r.stderr})`);
@@ -43,6 +45,17 @@ let out = hook(runCommand('git push origin x', plain, [plain]));
 assert(out.decision === 'allow', `no marker, no flag: inert (${JSON.stringify(out)})`);
 out = hook(runCommand('git push origin x', plain, [plain]), { env: { ULTRAPOWERS_AUTOPILOT_INSIDE: '1' } });
 assert(out.decision === 'deny' && /^AUTOPILOT-GUARDRAIL DENY: git push is never allowed/.test(out.reason), `the flag keeps the envelope (${JSON.stringify(out)})`);
+
+// The call's own Cwd never replaces the session directory: a run_command whose Cwd points
+// outside the project is still judged by the marker under the workspace or the process cwd.
+const stage = project({ marker: true });
+const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-outside-'));
+out = hook(runCommand('git push origin GH-16-x', stage, [stage]));
+assert(out.decision === 'deny', `Cwd in the project: denied (${JSON.stringify(out)})`);
+out = hook(runCommand('git push origin GH-16-x', outside, [stage]), { cwd: outside });
+assert(out.decision === 'deny', `Cwd outside, the workspace holds the marker: denied (${JSON.stringify(out)})`);
+out = hook(runCommand('git push origin GH-16-x', outside), { cwd: stage });
+assert(out.decision === 'deny', `Cwd outside, no workspacePaths, the process cwd holds the marker: denied (${JSON.stringify(out)})`);
 
 console.log('test-antigravity-guardrail: OK');
 JS

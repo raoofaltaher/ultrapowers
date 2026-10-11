@@ -7,15 +7,7 @@
 // answer is its JSON ({ decision, reason }) on stdout. Node built-ins only.
 import { denyText, runGuardrail } from './guardrail-bridge.mjs';
 
-const args = process.argv.slice(2);
-const antigravity = args.includes('--antigravity');
-
-let raw = '';
-try {
-  raw = (await import('node:fs')).readFileSync(0, 'utf8');
-} catch {
-  raw = '';
-}
+import fs from 'node:fs';
 
 // Antigravity tool names to the shell-hook vocabulary the guardrail already reads.
 const AG_TOOLS = { run_command: 'Bash', write_to_file: 'Write', replace_file_content: 'Edit', multi_replace_file_content: 'Edit', view_file: 'Read', call_mcp_tool: 'mcp__tool' };
@@ -39,13 +31,25 @@ export function eventFrom(text, { antigravity: ag = false } = {}) {
     if (typeof argsIn.CommandLine === 'string') input.command = argsIn.CommandLine;
     if (typeof argsIn.TargetFile === 'string') input.file_path = argsIn.TargetFile;
     if (typeof argsIn.AbsolutePath === 'string') input.file_path = argsIn.AbsolutePath;
-    const cwd = typeof argsIn.Cwd === 'string' ? argsIn.Cwd : Array.isArray(ev.workspacePaths) && ev.workspacePaths[0] ? ev.workspacePaths[0] : process.cwd();
-    return { toolName: AG_TOOLS[name] ?? name, input, cwd };
+    // The session directory is the workspace (else the process cwd); the call's own Cwd is a
+    // per-call argument and never replaces it. The marker search takes every candidate: each
+    // workspace path, the process cwd, then Cwd, and the first marker found wins.
+    const workspaces = Array.isArray(ev.workspacePaths) ? ev.workspacePaths.filter((p) => typeof p === 'string' && p !== '') : [];
+    const cwd = workspaces[0] ?? process.cwd();
+    const dirs = [...workspaces, process.cwd(), ...(typeof argsIn.Cwd === 'string' && argsIn.Cwd ? [argsIn.Cwd] : [])];
+    return { toolName: AG_TOOLS[name] ?? name, input, cwd, dirs };
   }
   return { toolName: ev.tool_name ?? ev.toolName ?? '', input: ev.tool_input ?? ev.toolArgs ?? ev.input, cwd: ev.cwd ?? process.cwd() };
 }
 
 if (process.argv[1] && /guardrail-cli\.mjs$/.test(process.argv[1].replace(/\\/g, '/'))) {
+  const antigravity = process.argv.slice(2).includes('--antigravity');
+  let raw = '';
+  try {
+    raw = fs.readFileSync(0, 'utf8');
+  } catch {
+    raw = '';
+  }
   const ev = eventFrom(raw, { antigravity });
   // An event that cannot be read is refused only while a run is active; the bridge decides that.
   // (an event that is not JSON reaches the hook as a call with no tool name, which it refuses)

@@ -69,6 +69,7 @@ test('a run marker with no usable hook fails closed', () => {
 // ---- guardrail-cli: the node entry for Kimi, Antigravity and Hermes ----
 import { spawnSync } from 'node:child_process';
 const CLI = path.resolve(HERE, '..', '..', 'hooks', 'lib', 'guardrail-cli.mjs');
+const { eventFrom } = await import(`file://${CLI.replace(/\\/g, '/')}`);
 const runCli = (event, extra = []) => spawnSync(process.execPath, [CLI, ...extra], { input: JSON.stringify(event), encoding: 'utf8', cwd: event.cwd ?? undefined });
 
 test('guardrail-cli answers exit 2 and the reason on stderr for a deny, exit 0 for an allow', () => {
@@ -189,6 +190,7 @@ test('ULTRAPOWERS_AUTOPILOT_INSIDE=1 with the marker gone: the bridge runs the h
 
 test('ULTRAPOWERS_AUTOPILOT_INSIDE=1 outside any ultrapowers project: every call is denied', () => {
   const idle = fs.mkdtempSync(path.join(os.tmpdir(), 'inside-idle-'));
+  // the process cwd (this checkout, itself a project) never roots the stage: the session cwd does
   const r = withInside(() => runGuardrail({ toolName: 'bash', input: { command: 'ls' }, cwd: idle, hookDir: '/nonexistent' }));
   assert.equal(r.deny, true);
   assert.equal(r.prefix, 'AUTOPILOT-GUARDRAIL');
@@ -207,4 +209,32 @@ test('guardrail-cli and --antigravity honour ULTRAPOWERS_AUTOPILOT_INSIDE=1 like
   const out = runCliInside({ tool_name: 'Bash', tool_input: { command: 'ls' }, cwd: idle });
   assert.equal(out.status, 2);
   assert.match(out.stderr, /outside any ultrapowers project/);
+});
+
+// ---- the marker search takes every candidate; a tool argument never replaces the session cwd ----
+test('guardrail-cli --antigravity finds the marker from workspacePaths or the process cwd when Cwd points outside', () => {
+  const root = project();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-outside-'));
+  const call = (Cwd, extra = {}) => ({ toolCall: { name: 'run_command', args: { CommandLine: 'git push origin GH-16-x', Cwd } }, ...extra });
+  const viaWorkspace = spawnSync(process.execPath, [CLI, '--antigravity'], { input: JSON.stringify(call(outside, { workspacePaths: [outside, root] })), encoding: 'utf8', cwd: outside });
+  assert.equal(JSON.parse(viaWorkspace.stdout).decision, 'deny', viaWorkspace.stdout + viaWorkspace.stderr);
+  const viaProcess = spawnSync(process.execPath, [CLI, '--antigravity'], { input: JSON.stringify(call(outside)), encoding: 'utf8', cwd: root });
+  assert.equal(JSON.parse(viaProcess.stdout).decision, 'deny', viaProcess.stdout + viaProcess.stderr);
+  // and the session directory stays the event cwd: Cwd never replaces it
+  const ev = eventFrom(JSON.stringify(call(outside, { workspacePaths: [root] })), { antigravity: true });
+  assert.equal(ev.cwd, root);
+  assert.ok(ev.dirs.includes(root) && ev.dirs.includes(outside), JSON.stringify(ev.dirs));
+});
+
+test('runGuardrail takes the first marker among the session cwd and every extra candidate', () => {
+  const root = project();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-outside-'));
+  const r = runGuardrail({ toolName: 'bash', input: { command: 'git push origin GH-16-x' }, cwd: outside, dirs: [outside, root] });
+  assert.equal(r.deny, true, JSON.stringify(r));
+  assert.match(r.reason, /git push is never allowed/);
+  // a call's own working directory, in any harness's spelling, is a candidate too
+  for (const key of ['workdir', 'working_directory', 'Cwd', 'dir_path']) {
+    const v = runGuardrail({ toolName: 'bash', input: { command: 'git push origin GH-16-x', [key]: root }, cwd: outside });
+    assert.equal(v.deny, true, `${key}: ${JSON.stringify(v)}`);
+  }
 });

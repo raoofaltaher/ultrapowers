@@ -683,3 +683,18 @@ test('Gemini launcher: ULTRAPOWERS_AUTOPILOT_INSIDE=1 keeps the envelope without
   assert.match(missing.stderr, /extension was not found/);
   assert.equal(geminiLaunch(push, {}).status, 0, 'the extension missing outside a run: inert');
 });
+
+test('Gemini launcher: the run is looked for from the event cwd, the process cwd and dir_path', () => {
+  const root = geminiProject();
+  fs.mkdirSync(path.join(root, '.ultrapowers'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.ultrapowers', 'autopilot-active'), JSON.stringify({ ticket: 'GH-16', branch: 'GH-16-x', scope: ['.'], stage: 'execute' }));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'gemini-outside-'));
+  const call = (extra) => ({ hook_event_name: 'BeforeTool', tool_name: 'run_shell_command', tool_input: { command: 'git push origin GH-16-x', ...extra }, cwd: outside });
+  // the extension missing: any candidate under a run refuses the call
+  assert.equal(geminiLaunch(call({ dir_path: root }), { cwd: outside }).status, 2, 'dir_path under the run');
+  assert.equal(geminiLaunch(call({}), { cwd: root }).status, 2, 'process cwd under the run');
+  assert.equal(geminiLaunch(call({}), { cwd: outside }).status, 0, 'no candidate under a run');
+  // the extension present: the guardrail-cli does the same search and the hook denies
+  const denied = geminiLaunch(call({ dir_path: root }), { pluginRoot: repoRoot, cwd: outside });
+  assert.equal(denied.status, 2, denied.stderr);
+});

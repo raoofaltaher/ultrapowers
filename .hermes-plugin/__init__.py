@@ -266,7 +266,13 @@ def _guardrail_verdict(skills_dir, tool_name, args, cwd):
     Inert without a run marker, so an ordinary session spawns nothing. With a marker, the hook
     decides; a hook that cannot run blocks (an active run without its brake fails closed).
     """
-    prefix = _run_active(cwd)
+    # Every candidate is searched: the session cwd and the call's own workdir (Hermes terminal);
+    # a tool argument can add a run, never hide one.
+    candidates = [cwd]
+    workdir = args.get("workdir") if isinstance(args, dict) else None
+    if isinstance(workdir, str) and workdir:
+        candidates.append(os.path.join(cwd, workdir))
+    prefix = next((p for p in (_run_active(c) for c in candidates) if p), None)
     if not prefix:
         return None
     import subprocess

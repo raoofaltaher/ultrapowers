@@ -57,25 +57,36 @@ export function projectRoot(startDir) {
   }
 }
 
-// The active run seen from any of `dirs`: { prefix, root, dir } with `dir` the candidate it was
-// found from, or null when no run is active. A marker wins; with ULTRAPOWERS_AUTOPILOT_INSIDE=1
-// and no marker the run is an autopilot stage rooted at the nearest project (root null: none).
-export function activeRun(dirs) {
-  const list = dirs.filter((d) => typeof d === 'string' && d !== '');
+// The active run seen from `sessionDir` and the further candidates `dirs`: { prefix, root, dir }
+// with `dir` the candidate it was found from, or null when no run is active. A marker found from
+// any candidate wins (a candidate can add a run, never hide one). With
+// ULTRAPOWERS_AUTOPILOT_INSIDE=1 and no marker the run is an autopilot stage rooted at the
+// project above the session directory alone, as the hook roots it above its cwd: a hook's own
+// working directory (a plugin install, itself maybe a project) never roots it. Root null: none.
+export function activeRun(sessionDir, dirs = []) {
+  const list = [sessionDir, ...dirs].filter((d) => typeof d === 'string' && d !== '');
   for (const d of list) {
     const root = markerRoot(d);
     if (root) return { prefix: markerPrefix(d), root, dir: d };
   }
   if (!insideFlag()) return null;
-  for (const d of list) {
-    const root = projectRoot(d);
-    if (root) return { prefix: 'AUTOPILOT-GUARDRAIL', root, dir: d };
-  }
-  return { prefix: 'AUTOPILOT-GUARDRAIL', root: null, dir: list[0] ?? process.cwd() };
+  const root = sessionDir ? projectRoot(sessionDir) : null;
+  return { prefix: 'AUTOPILOT-GUARDRAIL', root, dir: sessionDir || process.cwd() };
 }
 
 // The text every harness shows for a deny: the profile's prefix, then the reason.
 export const denyText = (verdict) => `${verdict.prefix || 'QA-GUARDRAIL'} DENY: ${verdict.reason}`;
+
+// The per-call working directory a tool input carries, in any harness's spelling, or undefined:
+// `workdir` (OpenCode bash, Hermes terminal, Codex shell), `working_directory` (Cursor), `Cwd`
+// (Antigravity run_command), and `dir_path` on a shell call (Gemini run_shell_command; on Gemini's
+// listing tools the same key names the directory listed, not a working directory).
+export function perCallDir(inp) {
+  if (!inp || typeof inp !== 'object' || Array.isArray(inp)) return undefined;
+  const str = (v) => (typeof v === 'string' && v !== '' ? v : undefined);
+  const shell = str(inp.command) !== undefined || str(inp.cmd) !== undefined;
+  return str(inp.workdir) ?? str(inp.working_directory) ?? str(inp.Cwd) ?? (shell ? str(inp.dir_path) : undefined);
+}
 
 // The shell-hook event for a harness tool call. OpenCode spells the file as `filePath`, Pi as
 // `path`; the hook reads `file_path`, `command` and `url`, so those are filled from the spellings
@@ -124,9 +135,15 @@ function bashBinary() {
 // Runs the guardrail for one tool call. { deny: false } when no run is active or the hook
 // allows; { deny: true, reason } when it denies, or when a run is active and the hook cannot run
 // (no bash, no hook file): an active run without its brake fails closed, as the hook itself does.
-export function runGuardrail({ toolName, input, cwd, hookDir = HOOK_DIR, timeoutMs = 15000 }) {
+// `cwd` is the session directory and stays the event's cwd; `dirs` are further candidates (an
+// entry point's workspace paths, a call's own directory). The run is looked for from every
+// candidate, the session cwd and the process cwd included, and the first marker found wins: a
+// candidate can add a run, never hide one.
+export function runGuardrail({ toolName, input, cwd, dirs = [], hookDir = HOOK_DIR, timeoutMs = 15000 }) {
   const startDir = cwd && String(cwd) ? String(cwd) : process.cwd();
-  const run = activeRun([startDir]);
+  const event = guardrailEvent({ toolName, input, cwd: startDir });
+  const callDir = perCallDir(event.tool_input);
+  const run = activeRun(startDir, [...dirs, process.cwd(), ...(callDir ? [path.resolve(startDir, callDir)] : [])]);
   if (!run) return { deny: false };
   const { prefix } = run;
   if (!run.root) {
@@ -137,10 +154,11 @@ export function runGuardrail({ toolName, input, cwd, hookDir = HOOK_DIR, timeout
   if (!bash || !fs.existsSync(hook)) {
     return { deny: true, prefix, reason: `the ultrapowers guardrail could not run (${!bash ? 'no bash' : 'hook missing'}); a tool call during a run is refused without it` };
   }
-  const event = guardrailEvent({ toolName, input, cwd: startDir });
   const env = { ...process.env };
   delete env.CURSOR_PLUGIN_ROOT; // the verdict is read from stderr and the exit code, not from Cursor's JSON
-  const res = spawnSync(bash, [hook], { input: `${JSON.stringify(event)}\0`, cwd: fs.existsSync(startDir) ? startDir : undefined, env, encoding: 'utf8', timeout: timeoutMs, windowsHide: true });
+  // The hook finds the run from its own cwd first: start it where the run was found.
+  const spawnDir = [run.dir, startDir].find((d) => d && fs.existsSync(d));
+  const res = spawnSync(bash, [hook], { input: `${JSON.stringify(event)}\0`, cwd: spawnDir, env, encoding: 'utf8', timeout: timeoutMs, windowsHide: true });
   if (res.status === 0) return { deny: false };
   const line = String(res.stderr ?? '').split('\n').map((l) => DENY_RE.exec(l)).find(Boolean);
   if (res.status === 2) return { deny: true, prefix: line ? line[1] : prefix, reason: line ? line[2].trim() : 'denied by the ultrapowers guardrail' };

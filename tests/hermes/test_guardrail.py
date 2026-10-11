@@ -74,6 +74,17 @@ def test_inside_flag_keeps_the_envelope_without_the_marker(hook, tmp_path, monke
     assert hook("terminal", {"command": "git status"}, "t9") is None
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is needed to run the guardrail")
+def test_a_workdir_under_a_run_is_guarded_from_a_session_outside_it(hook, tmp_path, monkeypatch):
+    (tmp_path / "proj").mkdir()
+    root = _project(tmp_path / "proj")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    verdict = hook("terminal", {"command": "git push origin GH-16-x", "workdir": str(root)}, "t10")
+    assert verdict and verdict.get("action") == "block"
+
+
 def test_plugin_yaml_declares_the_hook():
     here = os.path.dirname(os.path.abspath(__file__))
     text = open(os.path.join(here, "..", "..", ".hermes-plugin", "plugin.yaml"), encoding="utf-8").read()

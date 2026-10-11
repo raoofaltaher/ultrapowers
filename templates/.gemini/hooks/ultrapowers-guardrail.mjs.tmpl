@@ -36,13 +36,18 @@ function runActive(start) {
 }
 
 if (!cli) {
-  let cwd = process.cwd();
+  // Every candidate is searched: the event's cwd, the process cwd and the call's own dir_path; a
+  // tool argument can add a run, never hide one.
+  const candidates = [process.cwd()];
   try {
-    cwd = JSON.parse(input).cwd || cwd;
+    const ev = JSON.parse(input);
+    if (typeof ev.cwd === 'string' && ev.cwd) candidates.unshift(ev.cwd);
+    const dirPath = ev.tool_input && ev.tool_input.dir_path;
+    if (typeof dirPath === 'string' && dirPath) candidates.push(path.resolve(candidates[0], dirPath));
   } catch {
     // an unreadable event is judged by the process cwd
   }
-  const active = runActive(cwd);
+  const active = candidates.map((c) => runActive(c)).find(Boolean);
   if (active) {
     process.stderr.write(`${active.prefix} DENY: the ultrapowers extension was not found, and ${active.marker ?? 'ULTRAPOWERS_AUTOPILOT_INSIDE=1'} marks a run; a tool call during a run is refused without its guardrail\n`);
     process.exit(2);
