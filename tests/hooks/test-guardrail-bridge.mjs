@@ -397,3 +397,23 @@ test('deny_decoy_file_path_key: a call that names two different files under two 
   const same = runGuardrail({ toolName: 'write', input: { path: 'reviews/audit-2026-10-11/x.md', file_path: inside, content: 'x' }, cwd: root });
   assert.deepEqual(same, { deny: false });
 });
+
+test('the bridge resolves bash from absolute PATH entries, never the project directory', async () => {
+  const mod = await import(`file://${BRIDGE.replace(/\\/g, '/')}`);
+  assert.equal(typeof mod.bashBinary, 'function', 'bashBinary is exported');
+  const root = project({ marker: 'hunt' });
+  const name = process.platform === 'win32' ? 'bash.exe' : 'bash';
+  // A decoy in the project directory, reachable through `.`, a relative entry, or the entry that is the cwd.
+  fs.mkdirSync(path.join(root, 'bin'), { recursive: true });
+  for (const d of [root, path.join(root, 'bin')]) { fs.writeFileSync(path.join(d, name), '#!/bin/sh\nexit 0\n'); fs.chmodSync(path.join(d, name), 0o755); }
+  const PATH = ['.', 'bin', root].join(path.delimiter);
+  assert.equal(mod.bashBinary({ env: { PATH }, cwd: root, candidates: [] }), null);
+  // An absolute entry elsewhere is used.
+  const tools = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-bash-'));
+  fs.writeFileSync(path.join(tools, name), '#!/bin/sh\nexit 0\n'); fs.chmodSync(path.join(tools, name), 0o755);
+  assert.equal(mod.bashBinary({ env: { PATH: [PATH, tools].join(path.delimiter) }, cwd: root, candidates: [] }), path.join(tools, name));
+  // The real call still runs the hook (spawned from the plugin folder) and judges the call.
+  const push = runGuardrail({ toolName: 'bash', input: { command: 'git push origin x' }, cwd: root });
+  assert.equal(push.deny, true, JSON.stringify(push));
+  assert.match(push.reason, /git push is never allowed|never publishes/);
+});

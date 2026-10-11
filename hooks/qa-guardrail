@@ -145,7 +145,7 @@ else
   # The directory a call runs in: the event cwd and a call's own working directory (OpenCode
   # workdir, Hermes working_directory, Gemini dir_path, Antigravity Cwd). A call may name a project
   # under run from a process that sits elsewhere, with no cwd in the event.
-  cwd_re='"(cwd|workdir|working_directory|workingDirectory|dir_path|Cwd)"[[:space:]]*:[[:space:]]*"([^"]*)"'
+  cwd_re='"(cwd|workdir|working_directory|workingDirectory|dir_path|Cwd|ultrapowers_run_dir)"[[:space:]]*:[[:space:]]*"([^"]*)"'
   while [[ "$rest" =~ $cwd_re ]]; do
     rest="${rest#*"${BASH_REMATCH[0]}"}"
     candidate="${BASH_REMATCH[2]}"
@@ -162,6 +162,9 @@ fi
 # .agents/ultrapowers.json above the cwd; no project, no verifiable call).
 if [ -z "$root" ] && [ "${ULTRAPOWERS_AUTOPILOT_INSIDE:-}" = "1" ]; then
   d="$(norm_path "$PWD")"
+  # The bridge runs the hook from the plugin's folder and names the session directory itself.
+  run_dir_re='"ultrapowers_run_dir"[[:space:]]*:[[:space:]]*"([^"]+)"'
+  [[ "$event" =~ $run_dir_re ]] && d="$(norm_path "${BASH_REMATCH[1]}")"
   while :; do
     if [ -f "$d/.agents/ultrapowers.json" ]; then root="$d"; PROFILE="autopilot"; break; fi
     case "$d" in /|.|"") break ;; esac

@@ -159,18 +159,30 @@ function within(p, root) {
 
 // Git for Windows bash, found the way hooks/run-hook.cmd finds it; `bash` on PATH elsewhere.
 // The WSL launcher in System32 is never used: it fails when no distribution is installed.
-function bashBinary() {
-  if (process.platform !== 'win32') return 'bash';
-  const candidates = [
-    'C:\\Program Files\\Git\\bin\\bash.exe',
-    'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
-    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe') : null,
-  ].filter(Boolean);
-  for (const c of candidates) if (fs.existsSync(c)) return c;
-  const system32 = (process.env.SystemRoot ?? 'C:\\Windows').toLowerCase();
-  for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
-    const c = path.join(dir, 'bash.exe');
-    if (dir && !dir.toLowerCase().startsWith(system32) && fs.existsSync(c)) return c;
+// The PATH search takes absolute entries only and skips the working directory (`cwd`, the
+// project during a run), so a bash planted in the project is never the one that runs the hook.
+const WIN_CANDIDATES = () => [
+  'C:\\Program Files\\Git\\bin\\bash.exe',
+  'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+  process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe') : null,
+].filter(Boolean);
+export function bashBinary({ env = process.env, cwd = process.cwd(), candidates } = {}) {
+  const win = process.platform === 'win32';
+  if (win) for (const c of candidates ?? WIN_CANDIDATES()) if (fs.existsSync(c)) return c;
+  const fold = (p) => (win ? p.toLowerCase() : p);
+  let here = '';
+  try { here = fold(fs.realpathSync.native(cwd)); } catch { here = fold(path.resolve(cwd)); }
+  const system32 = (env.SystemRoot ?? 'C:\\Windows').toLowerCase();
+  for (const raw of (env.PATH ?? env.Path ?? '').split(path.delimiter)) {
+    const dir = raw.trim().replace(/^"|"$/g, '');
+    if (!dir || !path.isAbsolute(dir)) continue;
+    let real = dir;
+    try { real = fs.realpathSync.native(dir); } catch { /* keep as written */ }
+    if (fold(real) === here) continue;
+    // The WSL launcher in System32 is never used: it fails when no distribution is installed.
+    if (win && dir.toLowerCase().startsWith(system32)) continue;
+    const c = path.join(dir, win ? 'bash.exe' : 'bash');
+    try { if (fs.statSync(c).isFile()) { if (!win) fs.accessSync(c, fs.constants.X_OK); return c; } } catch { /* not here */ }
   }
   return null;
 }
@@ -228,9 +240,13 @@ export function runGuardrail({ toolName, input, cwd, dirs = [], hookDir = HOOK_D
   }
   const env = { ...process.env };
   delete env.CURSOR_PLUGIN_ROOT; // the verdict is read from stderr and the exit code, not from Cursor's JSON
-  // The hook finds the run from its own cwd first: start it where the run was found.
-  const spawnDir = [run.dir, startDir].find((d) => d && fs.existsSync(d));
-  const res = spawnSync(bash, [hook], { input: `${JSON.stringify(event)}\0`, cwd: spawnDir, env, encoding: 'utf8', timeout: timeoutMs, windowsHide: true });
+  // The hook runs from the plugin's folder, never the project's (it finds the run from the event's
+  // cwd), and on Windows it does not search its current directory for the programs it starts.
+  if (process.platform === 'win32') env.NoDefaultCurrentDirectoryInExePath = '1';
+  // The directory the run was found from, which the hook's root scan reads like a cwd (it may be an
+  // extra candidate, not the event cwd).
+  event.ultrapowers_run_dir = path.resolve(run.dir);
+  const res = spawnSync(bash, [hook], { input: `${JSON.stringify(event)}\0`, cwd: path.resolve(hookDir, '..'), env, encoding: 'utf8', timeout: timeoutMs, windowsHide: true });
   if (res.status === 0) return { deny: false };
   const line = String(res.stderr ?? '').split('\n').map((l) => DENY_RE.exec(l)).find(Boolean);
   if (res.status === 2) return { deny: true, prefix: line ? line[1] : prefix, reason: line ? line[2].trim() : 'denied by the ultrapowers guardrail' };
