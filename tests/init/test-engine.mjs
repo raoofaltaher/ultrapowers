@@ -514,6 +514,26 @@ test('the rendered OpenCode config denies reads of secret files through its perm
   assert.equal(config.mcp !== undefined, true, 'the MCP servers are still written');
 });
 
+// Qwen Code: permissions.deny, https://qwenlm.github.io/qwen-code-docs/en/users/configuration/settings/
+// (a Read rule covers read_file, grep_search, glob and list_directory; shell reads of a denied path are refused too).
+test('the rendered Qwen Code settings deny reads of secret files through permissions.deny', () => {
+  const root = tmpRepo();
+  run(['scaffold', '--root', root, '--name', 'Sec', '--date', '2026-10-11', '--platform', 'linux'], { env: { CONTEXT7_API_KEY: '' } });
+  const settings = JSON.parse(fs.readFileSync(path.join(root, '.qwen', 'settings.json'), 'utf8'));
+  const deny = settings.permissions?.deny;
+  assert.ok(Array.isArray(deny), 'permissions.deny exists');
+  for (const rule of [
+    'Read(**/.agents/mcp-secrets.env)', 'Read(**/.env)', 'Read(**/.env.local)', 'Read(**/.env.*.local)', 'Read(**/.env.production)',
+    'Read(~/.ssh/**)', 'Read(~/.aws/**)',
+  ]) {
+    assert.ok(deny.includes(rule), `deny has ${rule}`);
+  }
+  assert.equal(deny.includes('Read(**/.env.*)'), false, 'example env files stay readable');
+  assert.ok(settings.mcpServers, 'the MCP servers are still written');
+  const gemini = JSON.parse(fs.readFileSync(path.join(root, '.gemini', 'settings.json'), 'utf8'));
+  assert.equal(gemini.permissions, undefined, 'Gemini CLI documents no project-level read deny, so none is written');
+});
+
 test('the tasks README describes the brief new-task writes', () => {
   const readme = fs.readFileSync(path.join(repoRoot, 'templates', 'tasks', 'README.md.tmpl'), 'utf8');
   for (const section of ['Context', 'Definition of Ready', 'Definition of Done', 'Related Documentation']) {

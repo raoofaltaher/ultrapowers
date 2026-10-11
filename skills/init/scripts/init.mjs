@@ -147,9 +147,26 @@ const GEMINI_GUARDRAIL_HOOK = {
   }],
 };
 
+// Qwen Code's permissions.deny blocks a tool call before it runs; a Read rule covers read_file,
+// grep_search, glob and list_directory, and a shell command that reads a denied path is refused too
+// (https://qwenlm.github.io/qwen-code-docs/en/users/configuration/settings/). Gemini CLI has no
+// project-level equivalent in its documentation, so only Qwen gets this.
+export const QWEN_PERMISSIONS = {
+  deny: [
+    'Read(**/.agents/mcp-secrets.env)',
+    'Read(**/.env)',
+    'Read(**/.env.local)',
+    'Read(**/.env.*.local)',
+    'Read(**/.env.production)',
+    'Read(~/.ssh/**)',
+    'Read(~/.aws/**)',
+  ],
+};
+
 function geminiFamilyJson(schema) {
   return (servers) => toJson({
     context: { fileName: CONTEXT_FILES[schema] },
+    ...(schema === 'qwen' ? { permissions: QWEN_PERMISSIONS } : {}),
     mcpServers: jsonServers(servers, dollarRef, { stdioType: false, httpKey: 'httpUrl' }),
     ...(schema === 'gemini' ? { hooks: GEMINI_GUARDRAIL_HOOK } : {}),
   });
