@@ -565,6 +565,8 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         args = args.slice(1);
         if (prog === 'env') {
           while (args.length && args[0].v && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(args[0].v) || args[0].v.startsWith('-'))) {
+            // -u NAME / --unset NAME and -C DIR / --chdir DIR take the next word as their value.
+            if (['-u', '--unset', '-C', '--chdir'].includes(args[0].v)) { args = args.slice(2); continue; }
             if (args[0].v.startsWith('PGUSER=')) pgUser = args[0].v.slice('PGUSER='.length);
             if (PSQL_ENV.has(args[0].v.split('=')[0])) psqlEnv = true;
             args = args.slice(1);
