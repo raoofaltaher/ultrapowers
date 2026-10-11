@@ -66,7 +66,11 @@ test('cd and simple assignments inside the command are followed', () => {
   assert.ok(denied('cd repo-a && printf x > a'));
   assert.ok(denied('R=/p/repo-a; printf x > "$R/a"'));
   assert.ok(allowed('R=/p/reviews/1234; printf x > "$R/artifacts/a.txt"'));
-  assert.ok(allowed('export R="/p/reviews/1234"; printf x > "${R}/artifacts/a.txt"'));
+  // The variable gate: an export of a name off the safe list is refused in a QA run, so the export
+  // spelling is followed through a safe-list name (QA_*) and the original name is asserted denied.
+  assert.ok(allowed('export QA_R="/p/reviews/1234"; printf x > "${QA_R}/artifacts/a.txt"'));
+  assert.ok(denied('export QA_R="/p/repo-a"; printf x > "${QA_R}/a.txt"'));
+  assert.match(analyze('export R="/p/reviews/1234"; printf x > "${R}/artifacts/a.txt"', ctx), /variable set for a shell or interpreter/);
   assert.ok(allowed('cd /p/reviews/1234 && printf x > artifacts/a.txt'));
 });
 
@@ -208,9 +212,25 @@ test('every spelling of an environment dump is denied in both profiles', () => {
     for (const cmd of ['printenv', 'printenv -0', 'env', 'env -0', 'env -i', 'export -p', 'export', 'set', 'declare -x', 'declare -p', 'compgen -e', 'env | sort', 'sh -c "export -p"', 'nohup env']) {
       assert.match(analyze(cmd, env), /environment/, `${env.profile || 'qa'}: ${cmd}`);
     }
-    for (const cmd of ['env FOO=1 node app.js', 'export FOO=1', 'set -e', 'declare -x FOO=1', 'echo ${GITHUB_TOKEN:+set}']) {
+    // A safe-list variable before a program, and an export or declare with no program after it, pass.
+    for (const cmd of ['env CI=1 node app.js', 'CI=1 NODE_ENV=test node app.js', 'export FOO=1', 'export CI=1', 'set -e', 'declare -x FOO=1', 'echo ${GITHUB_TOKEN:+set}']) {
       assert.equal(analyze(cmd, env), '', `${env.profile || 'qa'}: ${cmd}`);
     }
+  }
+});
+
+test('the variable gate: QA refuses a non-safe variable before any program, a stage only before a shell or interpreter', () => {
+  const gate = /variable set for a shell or interpreter/;
+  for (const cmd of ['env FOO=1 node app.js', 'FOO=1 node app.js', 'export FOO=1; node app.js', 'env -u FOO node app.js']) {
+    assert.match(analyze(cmd, qaEnv), gate, `qa: ${cmd}`);
+    assert.match(analyze(cmd, apEnv), gate, `autopilot: ${cmd}`);
+  }
+  for (const cmd of ['env FOO=1 ls', 'FOO=1 ls', 'export FOO=1; ls', 'env -u FOO ls']) {
+    assert.match(analyze(cmd, qaEnv), gate, `qa: ${cmd}`);
+    assert.equal(analyze(cmd, apEnv), '', `autopilot: ${cmd}`);
+  }
+  for (const cmd of ['env -u CI ls', 'LANG=C ls', 'LC_ALL=C ls', 'ULTRAPOWERS_X=1 ls', 'QA_X=1 ls']) {
+    assert.equal(analyze(cmd, qaEnv), '', `qa: ${cmd}`);
   }
 });
 
