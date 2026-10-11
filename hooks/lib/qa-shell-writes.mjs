@@ -565,16 +565,10 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         args = args.slice(1);
         if (prog === 'env') {
           while (args.length && args[0].v && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(args[0].v) || args[0].v.startsWith('-'))) {
-            // -S STRING / --split-string=STRING: the string is split into the command and its words.
-            if (/^(-S|--split-string)/.test(args[0].v)) {
-              const sv = args[0].v;
-              const bare = sv === '-S' || sv === '--split-string';
-              const text = bare ? (args[1] ? args[1].v : null) : sv.startsWith('--split-string=') ? sv.slice('--split-string='.length) : sv.slice(2);
-              const tail = bare ? args.slice(2) : args.slice(1);
-              if (text === null || tail.some((x) => x.v === null)) return deny('env -S runs a command built from a variable; it cannot be verified');
-              walkNested([text, ...tail.map((x) => x.v)].join(' '), dir, container, depth + 1, pgUser);
-              return;
-            }
+            // -S STRING, --split-string[=STRING] or a short cluster holding S (-iS, -vS, -S0): env
+            // splits the string into words with its own escapes, comments and $VAR expansion, so the
+            // real command sits in one token. Not modelled: refused.
+            if (/^(-[A-Za-z0-9]*S|--split-string)/.test(args[0].v)) return deny('env -S hides the command in one token; run the command directly');
             // -u NAME / --unset NAME and -C DIR / --chdir DIR take the next word as their value.
             if (['-u', '--unset', '-C', '--chdir'].includes(args[0].v)) { args = args.slice(2); continue; }
             if (args[0].v.startsWith('PGUSER=')) pgUser = args[0].v.slice('PGUSER='.length);
