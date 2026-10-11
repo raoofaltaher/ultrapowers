@@ -797,14 +797,33 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         walkNested(rest.map((x) => x.v).join(' '), dir, container, depth + 1, pgUser);
         return;
       }
-      if (prog === 'kubectl') {
-        const sub = rest.find((x) => x.v && !x.v.startsWith('-'));
-        if (sub && (sub.v === 'exec' || sub.v === 'run')) {
+      if (prog === 'kubectl' || prog === 'oc') {
+        // The verb is the first word after the global options; those that take a separate argument
+        // (--context X, -n NS, --kubeconfig F, --server S, --token T ...) must be skipped, or the
+        // argument is taken for the verb.
+        const KUBE_VALUED = new Set(['--kubeconfig', '--context', '-n', '--namespace', '--server', '-s', '--token', '--cluster', '--user', '--as', '--as-group', '--as-uid', '--certificate-authority', '--client-certificate', '--client-key', '--cache-dir', '--request-timeout', '--tls-server-name', '--username', '--password', '--profile', '--profile-output', '--log-flush-frequency', '-v', '--v', '--vmodule', '--log-file', '--log-dir']);
+        let g = 0;
+        while (g < rest.length && rest[g].v !== null && rest[g].v.startsWith('-')) g += KUBE_VALUED.has(rest[g].v) ? 2 : 1;
+        const top = rest[g];
+        if (!top) {
+          if (rest.every((x) => x.v !== null && ['--version', '-h', '--help', 'version'].includes(x.v)) ) return;
+          return deny(`the ${prog} verb cannot be located after its global options; spell the command plainly`);
+        }
+        if (top.v === null) return deny(`the ${prog} verb is built from a variable or substitution and cannot be verified; spell it out`);
+        const verb = top.v;
+        if (verb === 'exec' || verb === 'run') {
           const di = rest.findIndex((x) => x.v === '--');
-          if (di === -1) return deny(`kubectl ${sub.v} without -- cannot be inspected; put -- before the command`);
+          if (di === -1) return deny(`${prog} ${verb} without -- cannot be inspected; put -- before the command`);
           return redispatch(rest.slice(di + 1), false);
         }
-        return;
+        const next = rest.slice(g + 1).find((x) => x.v === null || !x.v.startsWith('-'));
+        if (['config', 'auth', 'rollout'].includes(verb) && next && next.v === null) return deny(`the ${prog} ${verb} verb is built from a variable or substitution and cannot be verified; spell it out`);
+        const READ = new Set(['get', 'describe', 'logs', 'top', 'version', 'cluster-info', 'api-resources', 'api-versions', 'explain', 'events', 'diff', 'wait', 'port-forward']);
+        if (verb === 'config' ? ['view', 'get-contexts', 'current-context', 'get-clusters', 'get-users'].includes(next ? next.v : '')
+          : verb === 'auth' ? ['can-i', 'whoami'].includes(next ? next.v : '')
+          : verb === 'rollout' ? ['status', 'history'].includes(next ? next.v : '')
+          : READ.has(verb)) return;
+        return deny(`${prog} ${verb}${next && ['config', 'auth', 'rollout'].includes(verb) ? ' ' + next.v : ''} changes the cluster; the stack stays as found, only read verbs (get, describe, logs, top ...) run during ${runKind}`);
       }
       if (prog === 'cmd') {
         // cmd /c COMMAND... (also /k, /r, /d /s /c): the rest of the line is the command, with
@@ -858,13 +877,16 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         // The subcommand is the first word after the global options (-H HOST, --context NAME, -f FILE,
         // -p NAME ...), however it is quoted: the text rules of the hook read `docker rm`, this reads
         // `docker -H tcp://h "rm"`.
-        const GLOBAL_VALUED = new Set(['-H', '--host', '-c', '--context', '--config', '-l', '--log-level', '--tlscacert', '--tlscert', '--tlskey', '--namespace', '-n', '--address', '-a']);
+        const GLOBAL_VALUED = new Set(['-H', '--host', '-c', '--context', '--config', '-l', '--log-level', '--tlscacert', '--tlscert', '--tlskey', '--namespace', '-n', '--address', '-a',
+          // podman and nerdctl
+          '--url', '--connection', '--identity', '--root', '--runroot', '--storage-driver', '--storage-opt', '--cgroup-manager', '--network-backend', '--hooks-dir', '--conmon', '--events-backend', '--runtime', '--tmpdir', '--imagestore', '--data-root', '--cni-path', '--cni-netconfpath', '--snapshotter', '--cgroup-manager']);
         const COMPOSE_VALUED = new Set(['-f', '--file', '-p', '--project-name', '--profile', '--env-file', '--project-directory', '--ansi', '--parallel', '--progress']);
         const skipGlobals = (list, valued) => { let g = 0; while (g < list.length && list[g].v !== null && list[g].v.startsWith('-')) g += valued.has(list[g].v) ? 2 : 1; return g; };
         const composeProg = prog === 'docker-compose' || prog === 'podman-compose';
         const topIdx = skipGlobals(rest, composeProg ? COMPOSE_VALUED : GLOBAL_VALUED);
         const top = rest[topIdx];
         if (top && top.v === null) return deny(`the ${prog} subcommand is built from a variable or substitution and cannot be verified; spell it out`);
+        if (!top && rest.length && !rest.every((x) => x.v !== null && ['--version', '-v', '-h', '--help', 'version'].includes(x.v))) return deny(`the ${prog} subcommand cannot be located after its global options; spell the command plainly`);
         let sub = top ? top.v : '';
         let noun = '';
         if (composeProg || sub === 'compose') {
@@ -874,7 +896,8 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
           sub = rest[subIdx] && rest[subIdx].v !== null ? rest[subIdx].v : (rest[subIdx] ? null : '');
         } else if (['container', 'volume', 'network', 'image', 'system', 'builder', 'service', 'stack', 'node', 'secret', 'config'].includes(sub)) {
           noun = sub;
-          sub = rest[topIdx + 1] && rest[topIdx + 1].v !== null ? rest[topIdx + 1].v : '';
+          // The verb after the noun (docker container $X): an unreadable verb is not a read.
+          sub = rest[topIdx + 1] ? rest[topIdx + 1].v : '';
         }
         const REMOVE = noun === 'compose' ? ['down', 'stop', 'rm'] : ['rm', 'kill', 'stop', 'prune', 'rmi', 'remove', 'down'];
         const CHANGE = noun === 'compose' ? ['up', 'build', 'restart', 'start', 'kill', 'pause', 'unpause', 'create'] : ['restart', 'start', 'pause', 'unpause', 'update'];

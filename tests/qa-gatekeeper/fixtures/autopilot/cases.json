@@ -295,5 +295,8 @@
   {"name":"allow_perl_in_place_edit","event":{"tool_name":"Bash","tool_input":{"command":"perl -pi -e 's/a/b/' repo-a/src/x.ts"}}},
   {"name":"deny_perl_in_place_edit_protected","event":{"tool_name":"Bash","tool_input":{"command":"perl -pi -e 's/a/b/' .husky/pre-commit"}}},
   {"name":"allow_python_script_and_module","event":{"tool_name":"Bash","tool_input":{"command":"python3 scripts/check.py; python3 -m pytest -q"}}},
+  {"name":"deny_kubectl_context_option_delete","event":{"tool_name":"Bash","tool_input":{"command":"kubectl --context prod delete pod api"}}},
+  {"name":"deny_docker_noun_verb_variable","event":{"tool_name":"Bash","tool_input":{"command":"docker container \"$X\" api"}}},
+  {"name":"allow_kubectl_get","event":{"tool_name":"Bash","tool_input":{"command":"kubectl -n ns get pods -o json"}}},
   {"name":"allow_write_nested_agents_md","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/repo-a/AGENTS.md","content":"x"}}}
 ]

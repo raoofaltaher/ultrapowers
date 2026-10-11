@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"kubectl get pods -o json; kubectl --context c -n y describe pod api; kubectl logs api --tail 50; kubectl rollout status deploy/api; kubectl config view; kubectl auth can-i get pods; kubectl top pod"}}

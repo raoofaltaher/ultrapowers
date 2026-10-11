@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"docker --tlscacert ca.pem --tlscert c.pem --tlskey k.pem -H tcp://h stop api"}}

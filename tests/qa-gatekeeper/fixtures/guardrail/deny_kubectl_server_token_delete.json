@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"kubectl --server https://h --token t delete pod api"}}

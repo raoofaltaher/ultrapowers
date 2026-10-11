@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"podman --connection remote --url ssh://h rm api"}}

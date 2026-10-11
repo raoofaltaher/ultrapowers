@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"docker --log-level debug restart api"}}
