@@ -257,5 +257,15 @@
   {"name":"deny_shell_write_changes_comments","event":{"tool_name":"Bash","tool_input":{"command":"echo x > tasks/GH-16/changes-comments.md"}}},
   {"name":"deny_apply_patch_changes_comments","event":{"tool_name":"apply_patch","tool_input":{"patch":"*** Begin Patch\n*** Update File: tasks/GH-16/changes-comments.md\n@@\n-a\n+b\n*** End Patch"}}},
   {"name":"allow_write_task_other_doc","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/tasks/GH-16/notes.md","content":"x"}}},
+  {"name":"deny_tar_extract_into_workflows","event":{"tool_name":"Bash","tool_input":{"command":"tar -xf a.tar -C .github/workflows"}}},
+  {"name":"deny_unzip_into_hooks","event":{"tool_name":"Bash","tool_input":{"command":"unzip -o a.zip -d .husky"}}},
+  {"name":"allow_tar_extract_in_repo","event":{"tool_name":"Bash","tool_input":{"command":"tar -xzf a.tgz -C repo-a/src"}}},
+  {"name":"allow_gzip_in_repo","event":{"tool_name":"Bash","tool_input":{"command":"gzip -k repo-a/src/big.log"}}},
+  {"name":"deny_cp_into_husky_dir","event":{"tool_name":"Bash","tool_input":{"command":"cp repo-a/src/x.sh .husky"}}},
+  {"name":"deny_cp_into_git_dir","event":{"tool_name":"Bash","tool_input":{"command":"cp -t .git repo-a/src/x.sh"}}},
+  {"name":"deny_mv_into_claude_dir","event":{"tool_name":"Bash","tool_input":{"command":"mv repo-a/src/x.json .claude"}}},
+  {"name":"deny_mkdir_husky","event":{"tool_name":"Bash","tool_input":{"command":"mkdir .husky"}}},
+  {"name":"deny_ln_into_github","event":{"tool_name":"Bash","tool_input":{"command":"ln -s ../x .github"}}},
+  {"name":"allow_cp_into_repo_dir","event":{"tool_name":"Bash","tool_input":{"command":"cp repo-a/src/x.sh repo-a/src"}}},
   {"name":"allow_write_nested_agents_md","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/repo-a/AGENTS.md","content":"x"}}}
 ]

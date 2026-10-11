@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"unzip -l a.zip; unzip -p a.zip file | head; unzip -q a.zip -d reviews/1234/artifacts/x"}}

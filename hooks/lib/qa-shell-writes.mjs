@@ -424,7 +424,9 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     }
     if (p.split('/').includes('..')) return deny(`${what} (${raw}) has a parent-directory segment and cannot be verified`);
     const real = realCanonical(p, rootC);
-    if (protectedPath(real)) return deny(`${what} (${raw}) is a protected path; the config, hooks, CI, settings and key material are never written during ${runKind}`);
+    // A directory named as the target (cp x .husky, mkdir .github) receives its content inside it:
+    // the patterns name the contents of a protected folder, so the folder is judged as one.
+    if (protectedPath(real) || protectedPath(`${real}/_`)) return deny(`${what} (${raw}) is a protected path; the config, hooks, CI, settings and key material are never written during ${runKind}`);
     if (!inArea(real)) deny(`${what} (${raw}) is outside ${areaText}; shell writes during ${runKind} are limited to ${autopilot ? 'the workspace' : 'those folders'}`);
   };
 
@@ -439,6 +441,10 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     const l = (inner === null ? real : inner).toLowerCase().replace(/\.env\.example/g, '');
     if (KEY_RE.test(l)) deny(`key material (${raw}) is never read, searched, uploaded or written during ${runKind}`);
   };
+
+  // A directory something is extracted into, judged as a file inside it: the protected patterns name
+  // the contents of a folder (.husky/, .github/), not the folder itself.
+  const inDir = (w) => ({ k: 'w', parts: [...w.parts, { t: 'lit', v: '/_' }] });
 
   const walk = (src, startDir, container, depth) => {
     if (depth > 4) return deny('the command nests shells too deeply to be verified');
@@ -859,6 +865,55 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         return;
       }
       if (prog === 'tee') { for (const x of plain) checkTarget(x.w, dir, 'tee target', container); return; }
+      if (prog === 'tar' || prog === 'bsdtar') {
+        // Extracting writes under -C DIR (the working directory when none); creating, appending and
+        // updating write the archive named by -f. -O / --to-stdout extracts nowhere.
+        let extract = false; let create = false; let stdoutOnly = false; let file = null; let into = null;
+        const word = (k) => (rest[k + 1] ? rest[k + 1].w : null);
+        for (let k = 0; k < rest.length; k++) {
+          const v = rest[k].v;
+          if (v === null) continue;
+          if (v === '--extract' || v === '--get') extract = true;
+          else if (v === '--create' || v === '--append' || v === '--update') create = true;
+          else if (v === '--to-stdout') stdoutOnly = true;
+          else if (v === '--file' || v === '-f') { file = word(k); k++; }
+          else if (v.startsWith('--file=')) file = { k: 'w', parts: [{ t: 'lit', v: v.slice('--file='.length) }] };
+          else if (v === '--directory' || v === '-C') { into = word(k); k++; }
+          else if (v.startsWith('--directory=')) into = { k: 'w', parts: [{ t: 'lit', v: v.slice('--directory='.length) }] };
+          else if (!v.startsWith('--') && (v.startsWith('-') || k === 0) && /^-?[A-Za-z]+$/.test(v)) {
+            // a cluster: -xzf FILE, -czf FILE, old style xf FILE; f and C take the next words in order
+            let skip = 0;
+            for (const ch of v.replace(/^-/, '')) {
+              if (ch === 'x') extract = true;
+              else if (ch === 'c' || ch === 'r' || ch === 'u') create = true;
+              else if (ch === 'O') stdoutOnly = true;
+              else if (ch === 'f') { file = rest[k + 1 + skip] ? rest[k + 1 + skip].w : null; skip++; }
+              else if (ch === 'C') { into = rest[k + 1 + skip] ? rest[k + 1 + skip].w : null; skip++; }
+            }
+            k += skip;
+          }
+        }
+        if (extract && !stdoutOnly) checkTarget(inDir(into || { k: 'w', parts: [{ t: 'lit', v: '.' }] }), dir, 'tar extraction directory', container);
+        if (create && file) checkTarget(file, dir, 'tar archive', container);
+        return;
+      }
+      if (prog === 'unzip') {
+        // -l, -p, -t, -v and -z read only; otherwise the files land under -d DIR (the working directory).
+        const readOnly = rest.some((x) => x.v !== null && /^-[a-zA-Z]*[lpvtz][a-zA-Z]*$/.test(x.v) && !/^-d/.test(x.v));
+        if (!readOnly) {
+          const di = rest.findIndex((x) => x.v === '-d');
+          const dAttached = rest.find((x) => x.v !== null && /^-d.+/.test(x.v));
+          const into = dAttached ? { k: 'w', parts: [{ t: 'lit', v: dAttached.v.slice(2) }] } : (di !== -1 && rest[di + 1] ? rest[di + 1].w : { k: 'w', parts: [{ t: 'lit', v: '.' }] });
+          checkTarget(inDir(into), dir, 'unzip destination', container);
+        }
+        return;
+      }
+      if (['gzip', 'gunzip', 'bzip2', 'bunzip2', 'xz', 'unxz', 'zstd', 'unzstd'].includes(prog)) {
+        // In place: the operand is replaced by its (de)compressed copy unless -c / --stdout, -l or -t.
+        const toStdout = rest.some((x) => x.v !== null && (x.v === '--stdout' || x.v === '--to-stdout' || x.v === '--list' || x.v === '--test' || /^-[a-zA-Z]*[clt][a-zA-Z]*$/.test(x.v)));
+        if (!toStdout) for (const x of plain) if (x.v === null || !x.v.startsWith('-')) checkTarget(x.w, dir, `${prog} operand`, container);
+        return;
+      }
       if (prog === 'sort') {
         // -o FILE, -oFILE, a cluster ending in o (-ro FILE), --output FILE and --output=FILE write FILE.
         for (let k = 0; k < rest.length; k++) {

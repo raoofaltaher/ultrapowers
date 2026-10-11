@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"gzip -c repo-a/src/app.js > reviews/1234/artifacts/app.js.gz; gzip -dc reviews/1234/artifacts/app.js.gz | head -3; xz -l reviews/1234/artifacts/a.xz"}}
