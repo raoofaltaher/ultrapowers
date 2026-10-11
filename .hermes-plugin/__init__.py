@@ -242,15 +242,17 @@ def _guardrail_cli(skills_dir):
 
 
 def _run_active(start_dir):
-    """True when a QA or autopilot run marker exists at or above start_dir."""
+    """The deny prefix of the run marker at or above start_dir (the QA profile wins), or None."""
     current = os.path.realpath(start_dir)
     while True:
         base = os.path.join(current, ".ultrapowers")
-        if os.path.isfile(os.path.join(base, "qa-active")) or os.path.isfile(os.path.join(base, "autopilot-active")):
-            return True
+        if os.path.isfile(os.path.join(base, "qa-active")):
+            return "QA-GUARDRAIL"
+        if os.path.isfile(os.path.join(base, "autopilot-active")):
+            return "AUTOPILOT-GUARDRAIL"
         parent = os.path.dirname(current)
         if parent == current:
-            return False
+            return None
         current = parent
 
 
@@ -260,19 +262,20 @@ def _guardrail_verdict(skills_dir, tool_name, args, cwd):
     Inert without a run marker, so an ordinary session spawns nothing. With a marker, the hook
     decides; a hook that cannot run blocks (an active run without its brake fails closed).
     """
-    if not _run_active(cwd):
+    prefix = _run_active(cwd)
+    if not prefix:
         return None
     import subprocess
 
     cli = _guardrail_cli(skills_dir)
     node = shutil.which("node")
     if not cli or not node:
-        return {"action": "block", "message": "the ultrapowers guardrail could not run (node or the hook is missing); a tool call during a run is refused without it"}
+        return {"action": "block", "message": f"{prefix} DENY: the ultrapowers guardrail could not run (node or the hook is missing); a tool call during a run is refused without it"}
     event = json.dumps({"hook_event_name": "PreToolUse", "tool_name": tool_name, "tool_input": {} if args is None else args, "cwd": cwd})
     try:
         proc = subprocess.run([node, cli], input=event, capture_output=True, text=True, timeout=20, cwd=cwd)
     except (OSError, subprocess.SubprocessError) as exc:
-        return {"action": "block", "message": f"the ultrapowers guardrail could not run ({exc}); a tool call during a run is refused without it"}
+        return {"action": "block", "message": f"{prefix} DENY: the ultrapowers guardrail could not run ({exc}); a tool call during a run is refused without it"}
     if proc.returncode == 0:
         return None
     deny_line = ""
@@ -282,7 +285,7 @@ def _guardrail_verdict(skills_dir, tool_name, args, cwd):
     if proc.returncode == 2:
         # The hook's own line, with the profile's prefix: QA-GUARDRAIL DENY or AUTOPILOT-GUARDRAIL DENY.
         return {"action": "block", "message": deny_line or "ultrapowers guardrail: denied"}
-    return {"action": "block", "message": f"the ultrapowers guardrail could not run (exit {proc.returncode}); a tool call during a run is refused without it"}
+    return {"action": "block", "message": f"{prefix} DENY: the ultrapowers guardrail could not run (exit {proc.returncode}); a tool call during a run is refused without it"}
 
 
 def register(ctx):
@@ -295,8 +298,9 @@ def register(ctx):
         try:
             return _guardrail_verdict(skills_dir, str(tool_name or ""), args, os.getcwd())
         except Exception as exc:  # a broken guard must never fail open during a run
-            if _run_active(os.getcwd()):
-                return {"action": "block", "message": f"the ultrapowers guardrail failed ({exc}); a tool call during a run is refused without it"}
+            prefix = _run_active(os.getcwd())
+            if prefix:
+                return {"action": "block", "message": f"{prefix} DENY: the ultrapowers guardrail failed ({exc}); a tool call during a run is refused without it"}
             return None
 
     ctx.register_hook("pre_tool_call", pre_tool_call)

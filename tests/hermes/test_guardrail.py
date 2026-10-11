@@ -77,3 +77,45 @@ def test_a_non_dict_args_reaches_the_hook_and_is_refused(hook, tmp_path, monkeyp
         verdict = hook("terminal", args, "t6")
         assert verdict and verdict.get("action") == "block", args
     assert hook("terminal", None, "t7") is None
+
+
+@pytest.mark.parametrize("marker,prefix", [("qa-active", "QA-GUARDRAIL DENY: "), ("autopilot-active", "AUTOPILOT-GUARDRAIL DENY: ")])
+def test_the_plugins_own_fail_closed_denies_carry_the_profile_prefix(tmp_path, monkeypatch, marker, prefix):
+    import subprocess
+
+    plugin = _load_plugin()
+    root = _project(tmp_path, active=False)
+    (root / ".ultrapowers" / marker).write_text("{}", encoding="utf-8")
+    verdict = lambda: plugin._guardrail_verdict(str(root), "terminal", {"command": "git status"}, str(root))
+
+    # The node binary or the hook is missing.
+    monkeypatch.setattr(plugin.shutil, "which", lambda name: None)
+    missing = verdict()
+    assert missing["action"] == "block" and missing["message"].startswith(prefix), missing
+
+    # The hook cannot be spawned, and it exits with something other than 0 or 2.
+    monkeypatch.setattr(plugin.shutil, "which", lambda name: "node")
+    monkeypatch.setattr(plugin, "_guardrail_cli", lambda skills_dir: "guardrail-cli.mjs")
+
+    def spawn_fails(*args, **kwargs):
+        raise OSError("boom")
+
+    monkeypatch.setattr(subprocess, "run", spawn_fails)
+    spawn = verdict()
+    assert spawn["action"] == "block" and spawn["message"].startswith(prefix), spawn
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 1, "", ""))
+    crashed = verdict()
+    assert crashed["action"] == "block" and crashed["message"].startswith(prefix), crashed
+    assert "exit 1" in crashed["message"]
+
+
+def test_the_qa_profile_wins_when_both_markers_exist(tmp_path):
+    plugin = _load_plugin()
+    root = _project(tmp_path)
+    (root / ".ultrapowers" / "qa-active").write_text("{}", encoding="utf-8")
+    assert plugin._run_active(str(root)) == "QA-GUARDRAIL"
+    (root / ".ultrapowers" / "qa-active").unlink()
+    assert plugin._run_active(str(root)) == "AUTOPILOT-GUARDRAIL"
+    (root / ".ultrapowers" / "autopilot-active").unlink()
+    assert plugin._run_active(str(root)) is None
