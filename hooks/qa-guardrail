@@ -570,7 +570,7 @@ fi
 # the loop where the agent edits the guardrail, the config, CI, harness settings or key material).
 # Named targets, not folder names: `src/hooks/` of a React app and `appsettings.json` of a .NET
 # app are ordinary implementation files. The ticket's state files are the gate's record.
-PROTECTED_RE='(^|/)\.ssh(/|$)|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws(/|$)|mcp-secrets\.env|\.local\.(sh|env|json)$|hooks/qa-guardrail|\.agents/ultrapowers\.json|(^|/)\.claude/|(^|/)\.git/|(^|/)\.githooks/|(^|/)\.[a-z0-9_-]+/settings(\.local)?\.json$|(^|/)tasks/[^/]+/(autopilot\.json|stage-log\.jsonl|changes-comments\.md)$|(^|/)\.ultrapowers/(autopilot-active|autopilot-stop)$|(^|/)\.ultrapowers/autopilot(/|$)|(^|/)\.ultrapowers$'
+PROTECTED_RE='(^|/)\.ssh(/|$)|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws(/|$)|mcp-secrets\.env|\.local\.(sh|env|json)$|hooks/qa-guardrail|\.agents/ultrapowers\.json|(^|/)\.claude/|(^|/)\.git/|(^|/)\.git$|(^|/)\.githooks/|(^|/)\.[a-z0-9_-]+/settings(\.local)?\.json$|(^|/)tasks/[^/]+/(autopilot\.json|stage-log\.jsonl|changes-comments\.md)$|(^|/)\.ultrapowers/(autopilot-active|autopilot-stop)$|(^|/)\.ultrapowers/autopilot(/|$)|(^|/)\.ultrapowers$'
 # The autopilot envelope also keeps the agent out of CI, the plugin hooks, the repository's commit
 # hooks (they run inside the engine's own commit and push) and the env file: a stage that
 # rewrites the workflow or the hooks rewrites its own brakes.
@@ -694,12 +694,14 @@ if [ "$is_write_tool" -eq 1 ]; then
   # it lies outside); both come from the node block, resolved to the real spelling.
   wcheck="${wpath_rel:-$wpath_real}"
   wl="$(lower "${wcheck#./}")"
-  printf '%s' "$wl" | grep -Eq "$PROTECTED_RE" \
+  # A directory-shaped name is judged as the folder that receives content (`.git` as a file, in a
+  # nested worktree, points the engine's git at a config the stage wrote): path and path/_ both.
+  { printf '%s\n' "$wl"; printf '%s\n' "$wl/_"; } | grep -Eq "$PROTECTED_RE" \
     && deny "write to a protected path ($wpath) is never allowed during $run_kind"
   [ "$PROFILE" != "autopilot" ] && [[ "$wl" =~ $MARKER_RE ]] \
     && deny "the write target ($wpath) $MARKER_WHY"
   if [ "$PROFILE" = "autopilot" ]; then
-    printf '%s' "${wl//.env.example/}" | grep -Eq "$AUTOPILOT_PROTECTED_RE" \
+    { printf '%s\n' "${wl//.env.example/}"; printf '%s\n' "${wl//.env.example/}/_"; } | grep -Eq "$AUTOPILOT_PROTECTED_RE" \
       && deny "write to a protected path ($wpath) is never allowed during an autopilot stage: CI, hooks, settings and the project config stay as they are"
     [ -n "$known_lc" ] && [ "${wl%/}" = "$known_lc" ] \
       && deny "write to the QA baseline ($wpath) is never allowed during an autopilot stage: a stage never edits its own known-issues file"

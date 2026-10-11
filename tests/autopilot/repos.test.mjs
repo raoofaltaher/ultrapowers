@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
-  git, remoteHead, remotePath, forgeFor, ensureBranch, ensureOnTicketBranch, ensureWorktree, tip, workTip, commitPaths, push, repoDirs,
+  git, gitArgs, remoteHead, remotePath, forgeFor, ensureBranch, ensureOnTicketBranch, ensureWorktree, tip, workTip, commitPaths, push, repoDirs,
 } from '../../skills/autopilot/scripts/repos.mjs';
 
 const GIT_ENV = {
@@ -51,6 +51,31 @@ test('git wraps execFile and reports failures without throwing', () => {
   const bad = git(clone, ['rev-parse', '--verify', 'nope']);
   assert.equal(bad.ok, false);
   assert.match(bad.stderr, /fatal/);
+});
+
+test('every engine git call carries the neutralisers, so a stage-written .git/config runs nothing in the engine', () => {
+  const { clone } = fixture();
+  const argv = gitArgs(clone, ['status']);
+  assert.deepEqual(argv.slice(-1), ['status']);
+  const text = argv.join(' ');
+  assert.ok(text.includes('-c core.fsmonitor=false'));
+  assert.ok(text.includes('-c core.sshCommand=ssh'));
+  const hp = argv.find((a) => a.startsWith('core.hooksPath='));
+  assert.ok(hp, 'core.hooksPath is pinned');
+  const dir = hp.slice('core.hooksPath='.length);
+  assert.ok(fs.existsSync(dir) && fs.readdirSync(dir).length === 0, 'to an empty engine-owned directory');
+});
+
+test('a hook a stage planted through .git/config does not run in the engine commit', () => {
+  const { clone, base } = fixture();
+  const evil = path.join(base, 'evil-hooks');
+  fs.mkdirSync(evil);
+  const marker = path.join(base, 'hook-ran');
+  fs.writeFileSync(path.join(evil, 'pre-commit'), ['#!/bin/sh', 'echo ran > "' + marker.split(path.sep).join('/') + '"', ''].join(String.fromCharCode(10)), { mode: 0o755 });
+  sh(clone, 'config', 'core.hooksPath', evil);
+  fs.writeFileSync(path.join(clone, 'tasks.md'), 'x');
+  assert.ok(commitPaths(clone, ['tasks.md'], 'chore: state', ''));
+  assert.equal(fs.existsSync(marker), false, 'the planted pre-commit hook did not run');
 });
 
 test('remoteHead reads origin/HEAD and falls back to main', () => {

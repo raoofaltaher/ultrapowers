@@ -345,5 +345,6 @@
   {"name":"deny_nested_run_dir_decoy_bridge","reason":"npm install is not on the hunt's list","dir":"{{ELSEWHERE}}","env":{"ULTRAPOWERS_RUN_DIR":"{{ROOT}}"},"event":{"tool_name":"Bash","tool_input":{"command":"npm install left-pad","ultrapowers_run_dir":"{{DECOY}}"},"cwd":"{{ROOT}}"}},
   {"name":"deny_nested_cwd_decoy_bridge","reason":"is outside the project","dir":"{{ELSEWHERE}}","env":{"ULTRAPOWERS_RUN_DIR":"{{ROOT}}"},"event":{"tool_name":"Bash","tool_input":{"command":"npm install left-pad","cwd":"{{DECOY}}"},"cwd":"{{ROOT}}"}},
   {"name":"deny_nested_run_dir_decoy_direct","reason":"npm install is not on the hunt's list","dir":"{{ELSEWHERE}}","event":{"tool_name":"Bash","tool_input":{"command":"npm install left-pad","ultrapowers_run_dir":"{{DECOY}}"},"cwd":"{{ROOT}}"}},
-  {"name":"deny_nested_cwd_decoy_direct","reason":"is outside the project","dir":"{{ELSEWHERE}}","event":{"tool_name":"Bash","tool_input":{"command":"npm install left-pad","cwd":"{{DECOY}}"},"cwd":"{{ROOT}}"}}
+  {"name":"deny_nested_cwd_decoy_direct","reason":"is outside the project","dir":"{{ELSEWHERE}}","event":{"tool_name":"Bash","tool_input":{"command":"npm install left-pad","cwd":"{{DECOY}}"},"cwd":"{{ROOT}}"}},
+  {"name":"deny_write_tool_dotgit_file","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/repo-a/.git","content":"gitdir: /tmp/x"}}}
 ]

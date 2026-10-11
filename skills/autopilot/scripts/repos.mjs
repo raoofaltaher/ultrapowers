@@ -2,6 +2,7 @@
 // Node built-ins only; git runs through execFileSync with an argument array, never a shell.
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { AutopilotError, pushAllowed } from './autopilot-lib.mjs';
@@ -12,10 +13,30 @@ function gitBinary() {
   return process.env.ULTRAPOWERS_GIT || 'git';
 }
 
+// The engine's git reads the repository's config, and a stage can reach it (a nested worktree's
+// `.git` file, a script it ran). Command-line `-c` outranks every config file, so the settings
+// that run a program are pinned here: no filesystem monitor, plain ssh, and hooks only from an
+// empty engine-owned directory (under .ultrapowers/autopilot/ of the workspace, which a stage
+// cannot write; the system temp folder when no workspace is found).
+function emptyHooksDir(dir) {
+  let base = null;
+  for (let d = path.resolve(dir); ; d = path.dirname(d)) {
+    if (fs.existsSync(path.join(d, '.agents', 'ultrapowers.json'))) { base = path.join(d, '.ultrapowers', 'autopilot'); break; }
+    if (path.dirname(d) === d) break;
+  }
+  const hooks = path.join(base ?? path.join(os.tmpdir(), 'ultrapowers-autopilot'), 'hooks-empty');
+  fs.mkdirSync(hooks, { recursive: true });
+  return hooks.split(path.sep).join('/');
+}
+
+export function gitArgs(dir, args) {
+  return ['-c', 'core.fsmonitor=false', '-c', 'core.sshCommand=ssh', '-c', `core.hooksPath=${emptyHooksDir(dir)}`, ...args];
+}
+
 // Runs git in `dir`. Never throws: { ok, stdout, stderr }.
 export function git(dir, args) {
   try {
-    const stdout = execFileSync(gitBinary(), args, { cwd: dir, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const stdout = execFileSync(gitBinary(), gitArgs(dir, args), { cwd: dir, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     return { ok: true, stdout, stderr: '' };
   } catch (err) {
     return { ok: false, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? err.message) };
