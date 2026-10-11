@@ -219,6 +219,22 @@ test('a CVE listed by two lanes with runtime true then false stays runtime and f
   }
 });
 
+test('a dependencies lane with status incomplete that recorded a CVE is not INCOMPLETE', () => {
+  assert.equal(runSec(sec([hunt('api', 'dependencies', { status: 'incomplete', cves: [cve('low', true)] })])).security.verdict, 'PASS');
+  assert.equal(runSec(sec([hunt('api', 'dependencies', { status: 'incomplete', cves: [cve('moderate', true)] })])).security.verdict, 'PASS-WITH-ISSUES');
+});
+
+test('a CVE critical and test-only in one lane and moderate and runtime in another is one critical runtime row', () => {
+  for (const order of [0, 1]) {
+    const pair = [cve('critical', false), cve('moderate', true)];
+    if (order) pair.reverse();
+    const r = runSec(sec(pair.map((c, i) => hunt('api', i === 0 ? 'dependencies' : 'code', { cves: [c] }))));
+    assert.equal(r.security.verdict, 'FAIL', `order ${order}`);
+    assert.equal(r.markdown.match(/\| lodash \|/g).length, 1);
+    assert.match(r.markdown, /\| critical \| 4\.17\.21 \| runtime \|/);
+  }
+});
+
 test('a CVE listed by two lanes with different severities keeps the highest, in either order', () => {
   for (const order of [['critical', 'moderate'], ['moderate', 'critical']]) {
     const cves = order.map((severity) => cve(severity, true, { fixedIn: severity === 'critical' ? '4.17.21' : '4.17.19' }));
