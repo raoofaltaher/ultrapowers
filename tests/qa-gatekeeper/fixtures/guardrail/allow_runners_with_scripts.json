@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"npx vitest run; npx -y prettier --check reviews/1234/artifacts/x.json; uv run --with pytest python -m pytest -q; pnpm exec vitest run; poetry run pytest; pipx run black --check repo-a"}}

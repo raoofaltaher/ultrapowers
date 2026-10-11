@@ -384,6 +384,12 @@ export function interpreterKind(p) {
 function inlineInterpreterReason(kind, prog, rest, { inPlaceOk = false } = {}) {
   // A word built from a variable ("$SCRIPT") is taken for the script path: it does not start with a dash.
   const words = rest.map((x) => (x.v === null ? '\u0000var' : x.v));
+  // Fail closed: a variable or substitution among the leading options, or as the first operand, may be
+  // an eval flag or the code itself (python $FLAG x, node "$OPT" x).
+  for (const v of words) {
+    if (v === '\u0000var') return `${prog} with an option or script built from a variable or substitution cannot be verified; spell it out`;
+    if (!v.startsWith('-')) break;
+  }
   if (kind === 'python') {
     for (let k = 0; k < words.length; k++) {
       const v = words[k];
@@ -668,21 +674,46 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         return list.slice(k);
       };
       // Package runners start a program of their own: npx tsx -e, npm exec -- node -e, pnpm dlx, yarn dlx, bun x.
-      const isRunner = () => ['npx', 'bunx', 'pnpx'].includes(prog) || (['npm', 'pnpm', 'yarn', 'bun'].includes(prog) && args[1] && args[1].v !== null && ['exec', 'dlx', 'x'].includes(args[1].v));
+      // Also uvx, pipx run, uv run, uv tool run, poetry run and pipenv run (a Python program started the same way).
+      const RUNNER_DIRECT = ['npx', 'bunx', 'pnpx', 'uvx'];
+      const runnerSkip = () => {
+        if (RUNNER_DIRECT.includes(prog)) return 1;
+        if (['npm', 'pnpm', 'yarn', 'bun'].includes(prog) && args[1] && args[1].v !== null && ['exec', 'dlx', 'x'].includes(args[1].v)) return 2;
+        if (['pipx', 'uv', 'poetry', 'pipenv', 'pdm'].includes(prog) && args[1] && args[1].v === 'run') return 2;
+        if (prog === 'uv' && args[1] && args[1].v === 'tool' && args[2] && args[2].v === 'run') return 3;
+        return 0;
+      };
+      const isRunner = () => runnerSkip() > 0;
       while (WRAPPERS.has(prog) || prog === 'env' || prog === 'timeout' || prog === 'xargs' || isRunner()) {
         if (isRunner()) {
-          args = args.slice(['npx', 'bunx', 'pnpx'].includes(prog) ? 1 : 2);
-          const RUNNER_VALUED = new Set(['-p', '--package', '--node-arg', '--cache', '--userconfig', '--registry', '-w', '--workspace']);
+          args = args.slice(runnerSkip());
+          // -c/--call STRING (npx) is a command string; --call=STRING too.
+          const callEq = args.findIndex((x) => x.v !== null && x.v.startsWith('--call='));
+          if (callEq !== -1) { walkNested(args[callEq].v.slice('--call='.length), dir, container, depth + 1, pgUser); return; }
           const ci = args.findIndex((x) => x.v === '-c' || x.v === '--call');
           if (ci !== -1) {
             if (!args[ci + 1] || args[ci + 1].v === null) return deny('a package runner -c runs a command built from a variable; it cannot be verified');
             walkNested(args[ci + 1].v, dir, container, depth + 1, pgUser);
             return;
           }
+          // Fail closed: only the options below, then the program. An option on neither list could take
+          // an argument and make it the program.
+          const RUNNER_SPEC = {
+            flags: new Set(['-y', '--yes', '--no', '--no-install', '-q', '--quiet', '--ignore-existing', '--prefer-offline', '--offline', '--no-project', '--isolated', '--frozen', '--locked', '--no-sync', '--no-cache', '--silent', '-h', '--help', '--version', '--no-warnings']),
+            valued: new Set(['-p', '--package', '--node-arg', '--cache', '--userconfig', '--registry', '-w', '--workspace', '--with', '--python', '--directory', '--project', '--with-requirements', '--env-file', '--from', '--spec', '--index-url']),
+          };
           let r = 0;
-          while (r < args.length && args[r].v !== null && args[r].v.startsWith('-')) {
-            if (args[r].v === '--') { r++; break; }
-            r += RUNNER_VALUED.has(args[r].v) ? 2 : 1;
+          for (;;) {
+            const w = args[r];
+            if (!w) break;
+            if (w.v === null) return deny('a package runner option or program built from a variable or substitution cannot be verified; spell it out');
+            if (w.v === '--') { r += 1; break; }
+            if (!w.v.startsWith('-')) break;
+            const eq = w.v.indexOf('=');
+            const name = w.v.startsWith('--') && eq !== -1 ? w.v.slice(0, eq) : w.v;
+            if (RUNNER_SPEC.flags.has(name) && eq === -1) { r += 1; continue; }
+            if (RUNNER_SPEC.valued.has(name)) { r += eq === -1 ? 2 : 1; continue; }
+            return deny(`unrecognised option ${w.v} before the package runner's program; run the program directly`);
           }
           args = args.slice(r);
           if (!args.length) return;
@@ -845,23 +876,8 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         return;
       }
       if (prog === 'helm') {
-        // helm reads: list, status, get, show, search, history, template, lint, env, version, repo list,
-        // plugin list, dependency list. Everything else (install, upgrade, uninstall, rollback, repo add ...)
-        // changes the cluster or the machine.
-        const HELM_SPEC = { flags: new Set(['--debug', '-h', '--help', '--version']), valued: new Set(['-n', '--namespace', '--kube-context', '--kubeconfig', '--kube-apiserver', '--kube-token', '--kube-as-user', '--kube-as-group', '--kube-ca-file', '--registry-config', '--repository-cache', '--repository-config', '--burst-limit', '--qps']) };
-        const helmWalk = walkGlobalOptions(rest, HELM_SPEC, 'helm');
-        if (helmWalk.reason) return deny(helmWalk.reason);
-        const top = rest[helmWalk.idx];
-        if (!top) return;
-        if (top.v === null) return deny('the helm verb is built from a variable or substitution and cannot be verified; spell it out');
-        const next = rest.slice(helmWalk.idx + 1).find((x) => x.v === null || !x.v.startsWith('-'));
-        if (['repo', 'plugin', 'dependency', 'dep'].includes(top.v)) {
-          if (next && next.v === null) return deny(`the helm ${top.v} verb is built from a variable or substitution and cannot be verified; spell it out`);
-          if (next && ['list', 'ls'].includes(next.v)) return;
-          return deny(`helm ${top.v} ${next ? next.v : ''} changes the machine or the cluster; only read verbs run during ${runKind}`);
-        }
-        if (['list', 'ls', 'status', 'get', 'show', 'search', 'history', 'template', 'lint', 'env', 'version', 'help'].includes(top.v)) return;
-        return deny(`helm ${top.v} changes the cluster; the stack stays as found, only read verbs (list, status, get, show, history, template ...) run during ${runKind}`);
+        // Not modelled: its read verbs (template, install --dry-run, lint, show) take --post-renderer BINARY.
+        return deny('helm can run a post-renderer; a QA run or a stage has no use for it');
       }
       if (prog === 'kubectl' || prog === 'oc') {
         // The verb is the first word after the global options; those that take a separate argument
