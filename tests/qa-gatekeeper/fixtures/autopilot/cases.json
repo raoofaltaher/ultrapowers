@@ -184,5 +184,20 @@
   {"name":"deny_compose_file_option_down","event":{"tool_name":"Bash","tool_input":{"command":"docker compose -f a.yml --profile p down"}}},
   {"name":"deny_compose_rm_subcommand","event":{"tool_name":"Bash","tool_input":{"command":"docker compose rm api"}}},
   {"name":"deny_probe_chmod_marker","event":{"tool_name":"Bash","tool_input":{"command":"chmod u+r {{ROOT}}/.ultrapowers/autopilot-active"}}},
-  {"name":"deny_probe_chmod_qa_marker","event":{"tool_name":"Bash","tool_input":{"command":"chmod u+r {{ROOT}}/.ultrapowers/qa-active"}}}
+  {"name":"deny_probe_chmod_qa_marker","event":{"tool_name":"Bash","tool_input":{"command":"chmod u+r {{ROOT}}/.ultrapowers/qa-active"}}},
+  {"name":"deny_write_known_issues","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/qa/known-issues.md","content":"x"}}},
+  {"name":"deny_edit_known_issues_relative","event":{"tool_name":"Edit","tool_input":{"file_path":"qa/known-issues.md","old_string":"a","new_string":"b"}}},
+  {"name":"deny_write_known_issues_config_path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/qa/baseline/known.md","content":"x"}}},
+  {"name":"deny_write_agents_md","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/AGENTS.md","content":"x"}}},
+  {"name":"deny_write_claude_md","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/CLAUDE.md","content":"x"}}},
+  {"name":"deny_write_gemini_md","event":{"tool_name":"Edit","tool_input":{"file_path":"{{ROOT}}/GEMINI.md","old_string":"a","new_string":"b"}}},
+  {"name":"deny_apply_patch_known_issues","event":{"tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Update File: qa/known-issues.md\n@@\n-a\n+b\n*** End Patch"}}},
+  {"name":"deny_shell_redirect_known_issues","event":{"tool_name":"Bash","tool_input":{"command":"echo x >> qa/known-issues.md"}}},
+  {"name":"deny_shell_redirect_known_issues_config_path","event":{"tool_name":"Bash","tool_input":{"command":"echo x >> qa/baseline/known.md"}}},
+  {"name":"deny_shell_redirect_agents_md","event":{"tool_name":"Bash","tool_input":{"command":"echo x >> AGENTS.md"}}},
+  {"name":"deny_shell_redirect_claude_md","event":{"tool_name":"Bash","tool_input":{"command":"echo x > CLAUDE.md"}}},
+  {"name":"deny_shell_redirect_gemini_md","event":{"tool_name":"Bash","tool_input":{"command":"echo x > GEMINI.md"}}},
+  {"name":"allow_write_team_memory","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.agents/memory/gotchas/x.md","content":"x"}}},
+  {"name":"allow_shell_redirect_team_memory","event":{"tool_name":"Bash","tool_input":{"command":"echo x >> .agents/memory/MEMORY.md"}}},
+  {"name":"allow_write_nested_agents_md","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/repo-a/AGENTS.md","content":"x"}}}
 ]

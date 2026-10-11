@@ -163,7 +163,7 @@ const PROTECTED_RE = /(^|\/)\.ssh\/|authorized_keys|id_rsa|id_ed25519|(^|\/)\.aw
 // word with an alias-shaped segment is resolved here and its real name is tested.
 const KEY_RE = /(^|\/)\.ssh\/|authorized_keys|id_rsa|id_ed25519|\.aws\/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|\/)\.env($|\.)/;
 const SHORT_SEG = /[^\\/]~[0-9]/;
-const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)hooks\/(qa-guardrail|session-start|team-memory-[a-z]+|lib\/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|\/)\.gemini\/hooks\/|(^|\/)\.husky\/|(^|\/)\.pre-commit-config\.ya?ml$|(^|\/)lefthook\.ya?ml$|(^|\/)\.env($|\.)/;
+const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)hooks\/(qa-guardrail|session-start|team-memory-[a-z]+|lib\/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|\/)\.gemini\/hooks\/|(^|\/)\.husky\/|(^|\/)\.pre-commit-config\.ya?ml$|(^|\/)lefthook\.ya?ml$|(^|\/)\.env($|\.)|(^|\/)qa\/known-issues\.md$|^(agents|claude|gemini)\.md$/;
 // Git subcommands an autopilot stage may run: the read-only set plus the commands that build the
 // ticket branch. Pushing and integrating belong to the engine; nothing discards work; `config` and
 // the `-c` global option are refused because an alias resolves to any command at all.
@@ -384,9 +384,20 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
   // The path inside the project is what the protected-name patterns judge, so a project that
   // sits under a folder like .claude/worktrees is not protected as a whole; a path outside the
   // project is judged by its full canonical spelling.
+  // The QA baseline named by qa.knownIssues (the default qa/known-issues.md is in the pattern): a
+  // stage never edits its own baseline.
+  let knownReal = '';
+  if (autopilot) {
+    try {
+      const cfg = JSON.parse(readFileSync(`${rootC}/.agents/ultrapowers.json`, 'utf8').replace(/^﻿/, ''));
+      const k = cfg && cfg.qa && typeof cfg.qa.knownIssues === 'string' ? cfg.qa.knownIssues.trim() : '';
+      if (k) knownReal = realCanonical(k, rootC);
+    } catch { knownReal = ''; }
+  }
   const protectedPath = (real) => {
     const inner = rel(real, rootC, ignoreCase);
     const l = (inner === null ? real : inner).toLowerCase().replace(/\.env\.example/g, '');
+    if (autopilot && knownReal && (ignoreCase ? real.toLowerCase() === knownReal.toLowerCase() : real === knownReal)) return true;
     return PROTECTED_RE.test(l) || (autopilot && AUTOPILOT_PROTECTED_RE.test(l));
   };
 

@@ -173,7 +173,7 @@ hook_dir_node="$hook_dir"
 if command -v cygpath >/dev/null 2>&1; then hook_dir_node="$(cygpath -m "$hook_dir" 2>/dev/null || printf '%s' "$hook_dir")"; fi
 
 parse_status=""; tool=""; cmd=""; wpath=""; url=""; event_cwd=""; allowed=""; forbidden=""; ticket=""; keypaths=""; tracker_hosts=""; ignore_case="0"
-wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""; role_vars=""; ro_role=""; marker_age=""; marker_stage=""
+wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""; role_vars=""; ro_role=""; marker_age=""; marker_stage=""; known_issues=""
 {
   IFS= read -r -d '' parse_status || true
   IFS= read -r -d '' tool || true
@@ -195,6 +195,7 @@ wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""; role_vars=""; ro_r
   IFS= read -r -d '' ro_role || true
   IFS= read -r -d '' marker_age || true
   IFS= read -r -d '' marker_stage || true
+  IFS= read -r -d '' known_issues || true
 } < <(printf '%s' "$event" | node -e '
 const fs = require("node:fs");
 const path = require("node:path");
@@ -327,6 +328,8 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
     w.real, w.rel, keyReal.join("\n"), patchRecs.join("\n"), roleVars.join(","),
     str((qa.db && typeof qa.db === "object" ? qa.db : {}).roRole).trim() || "qa_agent_ro",
     markerAge, markerStage,
+    // The QA baseline file (qa.knownIssues) inside the project, "" when it is not set or lies outside.
+    str(qa.knownIssues).trim() ? resolve(path.resolve(root, str(qa.knownIssues).trim())).rel.replace(/^\.\//, "") : "",
   ].join("\0") + "\0");
 }, (e) => {
   process.stdout.write(["noresolver:" + String(e.message).split("\n")[0], "", "", "", "", "", "", "", ""].join("\0") + "\0");
@@ -386,7 +389,11 @@ PROTECTED_RE='(^|/)\.ssh/|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws/|mcp-secr
 # The autopilot envelope also keeps the agent out of CI, the plugin hooks, the repository's commit
 # hooks (they run inside the engine's own commit and push) and the env file: a stage that
 # rewrites the workflow or the hooks rewrites its own brakes.
-AUTOPILOT_PROTECTED_RE='(^|/)\.github/|(^|/)\.gitlab-ci\.yml$|(^|/)hooks/(qa-guardrail|session-start|team-memory-[a-z]+|lib/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|/)\.gemini/hooks/|(^|/)\.husky/|(^|/)\.pre-commit-config\.ya?ml$|(^|/)lefthook\.ya?ml$|(^|/)\.env($|\.)'
+AUTOPILOT_PROTECTED_RE='(^|/)\.github/|(^|/)\.gitlab-ci\.yml$|(^|/)hooks/(qa-guardrail|session-start|team-memory-[a-z]+|lib/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|/)\.gemini/hooks/|(^|/)\.husky/|(^|/)\.pre-commit-config\.ya?ml$|(^|/)lefthook\.ya?ml$|(^|/)\.env($|\.)|(^|/)qa/known-issues\.md$|^(agents|claude|gemini)\.md$'
+# The QA baseline (known-issues) and the instruction files every later session obeys are the gate's
+# record and the agents' rules: a stage that edits its own baseline hides a failure from the QA
+# gate. The baseline's path is qa.knownIssues (default qa/known-issues.md, matched above).
+known_lc="$(lower "$known_issues")"
 # --- MCP tools of a tracker or of git, autopilot profile: reads pass, writes belong to the
 # engine between stages (the approve label among them). A tool name with a read verb is a read.
 # This rule comes before the file-tool gate: a tracker tool that carries a `path` argument
@@ -434,6 +441,8 @@ case "$tool_lc" in
       if [ "$PROFILE" = "autopilot" ]; then
         printf '%s' "${pl//.env.example/}" | grep -Eq "$AUTOPILOT_PROTECTED_RE" \
           && deny "the patch writes a protected path ($ppath); CI, hooks, settings and the project config stay as they are"
+        [ -n "$known_lc" ] && [ "${pl%/}" = "$known_lc" ] \
+          && deny "the patch writes the QA baseline ($ppath); a stage never edits its own known-issues file"
       fi
       case "$(lower "$(norm_path "$ppath")")" in
         ..|../*|*/../*|*/..) deny "the patch names a path with a parent-directory segment ($ppath)" ;;
@@ -461,6 +470,8 @@ if [ "$is_write_tool" -eq 1 ]; then
   if [ "$PROFILE" = "autopilot" ]; then
     printf '%s' "${wl//.env.example/}" | grep -Eq "$AUTOPILOT_PROTECTED_RE" \
       && deny "write to a protected path ($wpath) is never allowed during an autopilot stage: CI, hooks, settings and the project config stay as they are"
+    [ -n "$known_lc" ] && [ "${wl%/}" = "$known_lc" ] \
+      && deny "write to the QA baseline ($wpath) is never allowed during an autopilot stage: a stage never edits its own known-issues file"
   fi
   case "$(lower "$(norm_path "$wpath")")" in
     ..|../*|*/../*|*/..) deny "write path with a parent-directory segment ($wpath) cannot be verified" ;;
