@@ -91,7 +91,8 @@ Skills and repository:
 |---|---|
 | Offline suites | The suites `AGENTS.md` lists, including the new `tests/vulnerability-hunt/`, the `hunt` profile fixtures, the entry-point parity suite and the extended assembler and `post-review.mjs` tests |
 | Pressure scenarios | Subagents under pressure for the hunt's door and for `task-review` Step 3b (S28 to S30); the record is in `tests/task-lifecycle/pressure-results.md` |
-| Not yet run live | The hunt end to end through a harness, the OpenCode V2 guard on a live V2 host, and `--post` of a security report |
+| Live, Claude Code, 2026-10-11 | The hunt through both doors, headless: the standalone audit of this repository (verdict FAIL; two High findings against the guardrail analyzer left unverified when the verification pass was cut short, one Medium confirmed; dependencies, OSINT and secrets lanes incomplete) and the ticket door on the review fixture (verdict FAIL; the token and curl-pipe-shell findings confirmed; the planted CVE missed because the dependencies lane could not audit a nested manifest). The fixes those runs produced are in this release: the envelope gate, the nested-manifest audit with `--prefix`, the lane prompts' allowed forms, and the gatekeeper waiting for its hunters |
+| Not yet run live | The OpenCode V2 guard on a live V2 host, and `--post` of a security report |
 
 ## v2.0.1 (2026-10-11)
 
