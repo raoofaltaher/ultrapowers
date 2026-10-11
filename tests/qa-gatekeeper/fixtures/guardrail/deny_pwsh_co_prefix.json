@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"pwsh -co \"echo x > repo-a/src/app.js\""}}

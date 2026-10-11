@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"python3 -u -B reviews/1234/artifacts/check.py; python3 -X dev -m pytest -q; node --no-warnings reviews/1234/artifacts/check.mjs; node --max-old-space-size 4096 reviews/1234/artifacts/check.mjs; perl -w reviews/1234/artifacts/x.pl; ruby -W0 reviews/1234/artifacts/x.rb; npx vitest run; npm exec -- vitest run"}}

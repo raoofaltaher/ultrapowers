@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"python -X dev -W ignore -c 'print(1)'"}}

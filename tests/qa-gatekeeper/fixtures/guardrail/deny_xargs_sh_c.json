@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"echo a | xargs -I{} sh -c 'echo {} > repo-a/src/app.js'"}}

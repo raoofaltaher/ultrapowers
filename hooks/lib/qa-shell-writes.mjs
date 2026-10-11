@@ -363,13 +363,14 @@ export function interpreterKind(p) {
   return '';
 }
 function inlineInterpreterReason(kind, prog, rest, { inPlaceOk = false } = {}) {
-  const words = rest.map((x) => x.v);
-  if (words.some((v) => v === null)) return `${prog} with an argument built from a variable or substitution cannot be verified`;
+  // A word built from a variable ("$SCRIPT") is taken for the script path: it does not start with a dash.
+  const words = rest.map((x) => (x.v === null ? '\u0000var' : x.v));
   if (kind === 'python') {
     for (let k = 0; k < words.length; k++) {
       const v = words[k];
       if (!v.startsWith('-')) return '';
       if (v === '-') return STDIN_WHY;
+      if (v === '--') return '';
       if (v.startsWith('--')) { if (v === '--version' || v === '--help') return ''; continue; }
       for (let c = 1; c < v.length; c++) {
         const ch = v[c];
@@ -387,9 +388,13 @@ function inlineInterpreterReason(kind, prog, rest, { inPlaceOk = false } = {}) {
       const v = words[k];
       if (!v.startsWith('-')) return '';
       if (v === '-') return STDIN_WHY;
+      if (v === '--') return '';
       if (/^--(eval|print)(=|$)/.test(v) || /^-(pe|ep|e|p)(?![A-Za-z-])/.test(v)) return INLINE_WHY;
       if (['--version', '-v', '--help', '-h', '--test', '--check', '-c', '--run'].includes(v) || v.startsWith('--test-') || v.startsWith('--run=')) return '';
-      if (VALUED.has(v)) k++;
+      if (VALUED.has(v)) { k++; continue; }
+      // A long option given its value as the next word (--max-old-space-size 4096): a word that is not
+      // a path or a file name is that value, not the script, and must not end the option scan.
+      if (v.startsWith('--') && !v.includes('=') && words[k + 1] !== undefined && !words[k + 1].startsWith('-') && !/[./\\\u0000]/.test(words[k + 1])) k++;
     }
     return prog === 'bun' ? '' : STDIN_WHY;
   }
@@ -406,6 +411,7 @@ function inlineInterpreterReason(kind, prog, rest, { inPlaceOk = false } = {}) {
       const v = words[k];
       if (!v.startsWith('-')) { hasScript = true; break; }
       if (v === '-') return STDIN_WHY;
+      if (v === '--') { hasScript = true; break; }
       if (v.startsWith('--')) { if (v === '--version' || v === '--help') return ''; continue; }
       for (let c = 1; c < v.length; c++) {
         const ch = v[c];
@@ -418,9 +424,11 @@ function inlineInterpreterReason(kind, prog, rest, { inPlaceOk = false } = {}) {
   }
   if (kind === 'evalflag') {
     const flags = { php: /^-[a-zA-Z]*[rRBE]$/, lua: /^-[a-zA-Z]*e$/, luajit: /^-[a-zA-Z]*e$/, rscript: /^-e$/, julia: /^-[a-zA-Z]*[eE]$|^--(eval|print)$/, groovy: /^-[a-zA-Z]*e$/, elixir: /^(-e|--eval)$/, osascript: /^-[a-zA-Z]*e$/ }[prog];
-    if (words.some((v) => v === '-' ) ) return STDIN_WHY;
+    if (words.some((v) => v === '-')) return STDIN_WHY;
     if (flags && words.some((v) => flags.test(v))) return INLINE_WHY;
-    return '';
+    // No script and no informational flag: the program is read from stdin (php < x, lua <<EOF).
+    if (words.some((v) => ['-v', '-V', '--version', '-h', '--help', '-?', '-i', '-m', '--info'].includes(v))) return '';
+    return words.some((v) => !v.startsWith('-')) ? '' : STDIN_WHY;
   }
   return '';
 }
@@ -640,7 +648,29 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         while (k < list.length && list[k].v !== null && list[k].v.startsWith('-')) k += withValue.has(list[k].v) ? 2 : 1;
         return list.slice(k);
       };
-      while (WRAPPERS.has(prog) || prog === 'env' || prog === 'timeout' || prog === 'xargs') {
+      // Package runners start a program of their own: npx tsx -e, npm exec -- node -e, pnpm dlx, yarn dlx, bun x.
+      const isRunner = () => ['npx', 'bunx', 'pnpx'].includes(prog) || (['npm', 'pnpm', 'yarn', 'bun'].includes(prog) && args[1] && args[1].v !== null && ['exec', 'dlx', 'x'].includes(args[1].v));
+      while (WRAPPERS.has(prog) || prog === 'env' || prog === 'timeout' || prog === 'xargs' || isRunner()) {
+        if (isRunner()) {
+          args = args.slice(['npx', 'bunx', 'pnpx'].includes(prog) ? 1 : 2);
+          const RUNNER_VALUED = new Set(['-p', '--package', '--node-arg', '--cache', '--userconfig', '--registry', '-w', '--workspace']);
+          const ci = args.findIndex((x) => x.v === '-c' || x.v === '--call');
+          if (ci !== -1) {
+            if (!args[ci + 1] || args[ci + 1].v === null) return deny('a package runner -c runs a command built from a variable; it cannot be verified');
+            walkNested(args[ci + 1].v, dir, container, depth + 1, pgUser);
+            return;
+          }
+          let r = 0;
+          while (r < args.length && args[r].v !== null && args[r].v.startsWith('-')) {
+            if (args[r].v === '--') { r++; break; }
+            r += RUNNER_VALUED.has(args[r].v) ? 2 : 1;
+          }
+          args = args.slice(r);
+          if (!args.length) return;
+          if (args[0].v === null) return deny(PROGRAM_FROM_VAR);
+          prog = progName(args[0].v);
+          continue;
+        }
         if (prog === 'xargs') {
           const tail = skipOptions(args.slice(1), XARGS_VALUE_OPTS);
           const ip = tail.length ? progName(tail[0].v) : '';
@@ -834,8 +864,10 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         return;
       }
       if (prog === 'pwsh' || prog === 'powershell') {
-        if (rest.some((x) => x.v !== null && /^-(e|ec|encodedcommand)$/i.test(x.v))) return deny(`${prog} -EncodedCommand hides the command in base64; it cannot be verified`);
-        const ci = rest.findIndex((x) => x.v !== null && /^-(c|command)$/i.test(x.v));
+        // PowerShell takes any unambiguous prefix of an option: -e, -en, -enc ... -EncodedCommand; -c, -co ... -Command.
+        const pfx = (w, full) => w.length > 1 && w[0] === '-' && full.startsWith(w.slice(1).toLowerCase());
+        if (rest.some((x) => x.v !== null && (pfx(x.v, 'encodedcommand') || /^-ec$/i.test(x.v)))) return deny(`${prog} -EncodedCommand hides the command in base64; it cannot be verified`);
+        const ci = rest.findIndex((x) => x.v !== null && (pfx(x.v, 'command') || pfx(x.v, 'commandwithargs') || /^-cwa$/i.test(x.v)));
         if (ci !== -1) {
           const tail = rest.slice(ci + 1);
           if (!tail.length || tail.some((x) => x.v === null)) return deny(`${prog} -Command runs a command built from a variable or missing; it cannot be verified`);
@@ -990,6 +1022,45 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         if (sub === 'worktree' && subArgs[0] === 'list') return;
         return deny(`git ${sub} changes a repository; only read-only git commands run during a QA run`);
       }
+      if (['awk', 'gawk', 'mawk', 'nawk'].includes(prog)) {
+        // An awk program can run a command (system(), a pipe, getline from a command) or write a file
+        // (print > "f"); -i inplace rewrites its operands.
+        const AWK_VALUED = new Set(['-F', '-v', '-f', '-i', '-e', '-W', '--field-separator', '--assign', '--file', '--include', '--source']);
+        const texts = [];
+        let progFromFile = false;
+        for (let k = 0; k < rest.length; k++) {
+          const v = rest[k].v;
+          if (v === null) continue;
+          if (v === '-i' || v.startsWith('--inplace') || v === '--include=inplace') return deny('awk -i inplace rewrites files that cannot be seen before it runs; edit through the file tools');
+          if (v === '-f' || v === '--file') { progFromFile = true; k++; continue; }
+          if (v === '-e' || v === '--source') { if (rest[k + 1] && rest[k + 1].v !== null) texts.push(rest[k + 1].v); k++; continue; }
+          if (AWK_VALUED.has(v)) { k++; continue; }
+          if (v.startsWith('-')) continue;
+          if (!progFromFile && texts.length === 0) texts.push(v);
+          break;
+        }
+        for (const text of texts) {
+          if (/\bsystem\s*\(|\|\s*&|\|\s*getline|\bprintf?\b[^;}\n]*\|\s*[^|\s]|\bprintf?\b[^;}\n]*>>?\s*\S|["')]\s*\|\s*getline|\bgetline\b[^;}\n]*<\s*\S/.test(text)) return deny('an awk program with system(), a pipe, getline from a command or an output redirect runs or writes outside the write rules; use a plain pipeline');
+        }
+        return;
+      }
+      if (prog === 'sed') {
+        // The w and e commands (and the w and e flags of s) write a file or run a command without -i.
+        const scripts = [];
+        let haveE = false;
+        for (let k = 0; k < rest.length; k++) {
+          const v = rest[k].v;
+          if (v === null) continue;
+          if (v === '-e' || v === '--expression') { haveE = true; if (rest[k + 1] && rest[k + 1].v !== null) scripts.push(rest[k + 1].v); k++; continue; }
+          if (/^-e./.test(v)) { haveE = true; scripts.push(v.slice(2)); continue; }
+          if (v.startsWith('--expression=')) { haveE = true; scripts.push(v.slice('--expression='.length)); continue; }
+          if (v === '-f' || v === '--file') { k++; continue; }
+        }
+        if (!haveE) { const first = plain[0]; if (first && first.v !== null) scripts.push(first.v); }
+        for (const s of scripts) {
+          if (/(^|[;{}\n])\s*(\d+|\$|\/[^/\n]*\/)?(,\s*(\d+|\$|\/[^/\n]*\/))?\s*!?\s*[weWE](\s|$)/.test(s) || /\bs(.)(?:(?!\1).)*\1(?:(?!\1).)*\1[a-zA-Z0-9]*[we]/.test(s)) return deny(`sed's w and e commands write a file or run a command outside the write rules; ${autopilot ? 'edit through the file tools' : 'redirect into reviews/<id>/artifacts/ instead'}`);
+        }
+      }
       if (prog === 'sed' || prog === 'perl' || prog === 'ruby') {
         const inPlace = rest.some((x) => x.v && (x.v === '--in-place' || x.v.startsWith('--in-place=') || /^-[A-Za-z]*i/.test(x.v)));
         if (inPlace && !autopilot) deny(`${prog} -i edits files in place; the code under test is read-only during a QA run`);
@@ -1059,6 +1130,29 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         if (group.v === null) return deny(`the ${prog} command is built from a variable or substitution and cannot be verified; spell it out`);
         const spec = Object.prototype.hasOwnProperty.call(READ, group.v) ? READ[group.v] : undefined;
         if (spec === undefined) return deny(`${prog} ${group.v} is not on the autopilot read allow-list; the engine writes to the tracker between stages`);
+        if (group.v === 'api') {
+          // api is a read only without a method and without a body: -X/--method/--request other than
+          // GET, -f/-F/--field/--raw-field/--input/-d/--data (any spelling, attached or not), a
+          // Content-Type header, graphql (a POST) and a mutation word in any field.
+          const apiWords = rest.slice(g + 1);
+          for (let k = 0; k < apiWords.length; k++) {
+            const v = apiWords[k].v;
+            if (v === null) return deny(`${prog} api with an argument built from a variable or substitution cannot be verified; spell it out`);
+            const m = /^(?:-X|--method|--request)(?:=(.*))?$/i.exec(v) || (/^-X(.+)$/.exec(v) ? [v, /^-X(.+)$/.exec(v)[1]] : null);
+            if (m) {
+              const methodWord = m[1] !== undefined ? m[1] : (apiWords[k + 1] ? apiWords[k + 1].v : null);
+              if (methodWord === null || String(methodWord).toUpperCase() !== 'GET') return deny(`${prog} api with a method other than GET writes to the tracker; the engine writes back between stages`);
+              if (m[1] === undefined) k++;
+              continue;
+            }
+            if (/^(-f|-F|--field|--raw-field|--input|-d|--data)([=].*)?$/.test(v) || /^-[fFd].+/.test(v) || /^--(field|raw-field|input|data)=/.test(v)) return deny(`${prog} api with a field, a body or input is a write; the engine writes back between stages`);
+            if (/^(-H|--header)$/i.test(v) && apiWords[k + 1] && apiWords[k + 1].v !== null && /content-type/i.test(apiWords[k + 1].v)) return deny(`${prog} api with a Content-Type header carries a body; the engine writes back between stages`);
+            if (/^-H.*content-type/i.test(v) || /^--header=.*content-type/i.test(v)) return deny(`${prog} api with a Content-Type header carries a body; the engine writes back between stages`);
+            if (/mutation/i.test(v)) return deny(`${prog} api with a mutation is a write; the engine writes back between stages`);
+            if (v === 'graphql') return deny(`${prog} api graphql is a POST; run the read through a REST endpoint or a gh read verb`);
+          }
+          return;
+        }
         if (spec === '*') return;
         const verbWord = rest.slice(g + 1).find((x) => x.v === null || !x.v.startsWith('-'));
         if (!verbWord) return;
@@ -1070,20 +1164,18 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         // Every target is a pid written out in the command: the analyzer cannot know which pids the
         // stage started, so a variable ($!, $PID), a substitution (kill $(pgrep x), $(cat pid)), a
         // process group (-123, 0) and -1 (every process, however it is spelled) are refused.
-        let operands = false;
+        // Shape: kill [-SIGNAL | -s SIG | -n NUM] PID... with every PID a literal positive integer other
+        // than 1. The signal option and a negative pid look alike, so none is modelled: after the one
+        // signal option every word must be a pid, and `--`, 0, 1, a negative number and a name are refused.
+        let signalSeen = false;
         for (let k = 0; k < rest.length; k++) {
           const v = rest[k].v;
-          if (v === null) {
-            return deny('kill with a target that is not written out (a variable, a substitution, a file) is a kill by name or by a pid nobody can see; kill takes a literal pid');
-          }
-          if (!operands) {
-            if (v === '--') { operands = true; continue; }
-            if (['-s', '-n', '--signal'].includes(v)) { k++; continue; } // the signal's name or number
-            if (v === '-l' || v === '-L' || v === '--list' || v === '-t' || v === '--table') return;
-            if (v.startsWith('--signal=')) continue;
-            if (/^-([A-Za-z]+|[0-9]+)$/.test(v) && v !== '-1') continue;
-          }
-          if (!/^[1-9][0-9]*$/.test(v)) return deny(`kill ${v} is not a literal pid; a process group, every process (-1) or a name is blocked`);
+          if (v === null) return deny('kill with a target that is not written out (a variable, a substitution, a file) is a kill by name or by a pid nobody can see; kill takes a literal pid');
+          if (v === '-l' || v === '-L' || v === '--list' || v === '-t' || v === '--table') return;
+          if (!signalSeen && ['-s', '-n', '--signal'].includes(v)) { signalSeen = true; k++; continue; }
+          if (!signalSeen && v.startsWith('--signal=')) { signalSeen = true; continue; }
+          if (!signalSeen && v !== '-1' && /^-([A-Za-z]+|[0-9]+)$/.test(v)) { signalSeen = true; continue; }
+          if (!/^(?!1$)[1-9][0-9]*$/.test(v)) return deny(`kill ${v} is not a literal positive pid; "--", 0, 1, a negative pid or process group (-1, -123) and a name are blocked`);
         }
         return;
       }

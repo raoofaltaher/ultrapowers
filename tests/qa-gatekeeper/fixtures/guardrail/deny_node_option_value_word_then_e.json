@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"node --max-old-space-size 4096 -e '1'"}}

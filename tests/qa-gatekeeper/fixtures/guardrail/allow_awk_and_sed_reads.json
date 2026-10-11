@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"awk '{print $1}' reviews/1234/artifacts/a.txt; awk -F, '$2 > 5 {print $1}' reviews/1234/artifacts/a.csv; sed -n '1,5p' repo-a/src/app.js; sed 's/a/w b/' repo-a/src/app.js; sed -n '/x/p' repo-a/src/app.js"}}
