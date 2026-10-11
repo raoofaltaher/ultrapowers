@@ -128,6 +128,22 @@ result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"Set-Content x.t
 err="${result#*|}"; err="${err%%|*}"
 if [[ "$err" == *"AUTOPILOT-GUARDRAIL DENY: "* && "$err" != *"QA run"* ]]; then pass "a PowerShell deny under autopilot does not speak of a QA run"; else fail "a PowerShell deny under autopilot does not speak of a QA run (stderr: $err)"; fi
 
+echo "autopilot profile: the hook's time does not grow with the size of the command"
+# A hook killed at the registration timeout (30 s) lets the call through: 500 segments followed by a
+# write to a protected path must be denied, and quickly.
+long=""
+for ((i = 0; i < 500; i++)); do long+="echo a; "; done
+long+="echo x > .claude/settings.json"
+t_start="$(date +%s)"
+result="$(run_hook "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$long\"}}" "$ROOT")"
+t_end="$(date +%s)"
+err="${result#*|}"; err="${err%%|*}"
+if [[ "${result%%|*}" -eq 2 && "$err" == AUTOPILOT-GUARDRAIL\ DENY:* && $((t_end - t_start)) -lt 5 ]]; then
+  pass "a 500-segment command is denied in under 5 s ($((t_end - t_start)) s)"
+else
+  fail "a 500-segment command is denied in under 5 s (exit ${result%%|*}, $((t_end - t_start)) s)"
+fi
+
 echo "autopilot profile: both markers present, the QA profile wins"
 printf '%s' "GH-16" > "$QA_MARKER"
 result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' "$ROOT")"

@@ -156,6 +156,18 @@ else
   fail "event cwd activates the guardrail (exit ${result%%|*})"
 fi
 
+echo "qa-guardrail: the hook's time does not grow with the size of the command"
+# Claude Code lets a call through when its hook is killed at the registration timeout (30 s), so a
+# command of ~500 segments followed by a protected write must still be denied, and quickly.
+t_start="$(date +%s)"
+result="$(run_hook "$(render "$FIXTURES/deny_long_command_then_protected_redirect.json")" "$ROOT")"
+t_end="$(date +%s)"
+if [[ "${result%%|*}" -eq 2 && $((t_end - t_start)) -lt 5 ]]; then
+  pass "a 500-segment command is denied in under 5 s ($((t_end - t_start)) s)"
+else
+  fail "a 500-segment command is denied in under 5 s (exit ${result%%|*}, $((t_end - t_start)) s)"
+fi
+
 echo "qa-guardrail: a config with a byte order mark keeps its host lists"
 BOMROOT="$TEST_ROOT/bomproject"
 mkdir -p "$BOMROOT/.agents" "$BOMROOT/.ultrapowers"

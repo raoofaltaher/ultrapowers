@@ -617,11 +617,16 @@ B="(^|[;&|[:space:]\"'(\`/\\\\])"
 # excepted: it stores work locally and is the autopilot stage's way to set work aside.
 push_why="the QA gate reads and reports, it never publishes"
 [ "$PROFILE" = "autopilot" ] && push_why="the autopilot engine pushes between stages"
-while IFS= read -r seg; do
-  printf '%s' "$seg" | grep -Eq '\bgit\b.*\bpush\b' || continue
-  printf '%s' "$seg" | grep -Eq '\bgit\b[^;&|]*\bstash[[:space:]]+push\b' && ! printf '%s' "$seg" | grep -Eq '\bpush\b.*\bpush\b' && continue
-  deny "git push is never allowed during $run_kind; $push_why"
-done < <(printf '%s\n' "$lc" | tr ';&|' '\n')
+# One pass over the segments: a loop costs a process per `;`, `&` or `|`, so a long command could
+# outlast the hook's timeout (and a timed-out hook lets the call through). A segment with the push
+# token is a push unless it is a `git stash push` with no second push in it.
+push_hits="$(printf '%s\n' "$lc" | tr ';&|' '\n' | grep -E '\bgit\b.*\bpush\b' || true)"
+if [ -n "$push_hits" ]; then
+  if printf '%s\n' "$push_hits" | grep -Evq '\bgit\b[^;&|]*\bstash[[:space:]]+push\b' \
+    || printf '%s\n' "$push_hits" | grep -Eq '\bpush\b.*\bpush\b'; then
+    deny "git push is never allowed during $run_kind; $push_why"
+  fi
+fi
 
 if [ "$PROFILE" = "autopilot" ]; then
   # The engine merges nothing and the agent merges nothing: the ticket branch is the only branch.
@@ -639,14 +644,15 @@ if [ "$PROFILE" = "autopilot" ]; then
     && deny "reading the tracker token is never allowed during an autopilot stage"
   # A program word built at run time (a substitution, a backtick, eval) is the way around every
   # name rule above; the stage spells its commands out.
-  while IFS= read -r seg; do
-    seg="${seg#"${seg%%[![:space:]]*}"}"
-    while printf '%s' "$seg" | grep -Eq '^[a-z_][a-z0-9_]*=[^[:space:]]*[[:space:]]+'; do seg="${seg#*[[:space:]]}"; seg="${seg#"${seg%%[![:space:]]*}"}"; done
-    case "$seg" in
-      '$('*|'"$('*|"'\$("*|'`'*|'"`'*|nohup\ *\$\(*) deny "a command whose program is built by substitution cannot be verified during an autopilot stage; spell the command out" ;;
-      eval\ *|eval) deny "eval is never run by an autopilot stage; its command cannot be verified" ;;
-    esac
-  done < <(printf '%s\n' "$lc" | tr ';&|' '\n')
+  # One pass over the segments (a loop here costs a process per `;`, `&` or `|`, so a long command
+  # could outlast the hook's timeout): a segment starts, after its leading NAME=value words, with
+  # a substitution, a backtick, nohup ... $( or eval.
+  seg_pre='^[[:space:]]*([a-z_][a-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
+  segs="$(printf '%s\n' "$lc" | tr ';&|' '\n')"
+  printf '%s\n' "$segs" | grep -Eq "${seg_pre}"'(\$\(|"\$\(|'"'"'\$\(|`|"`|nohup[[:space:]].*\$\()' \
+    && deny "a command whose program is built by substitution cannot be verified during an autopilot stage; spell the command out"
+  printf '%s\n' "$segs" | grep -Eq "${seg_pre}"'eval([[:space:]]|$)' \
+    && deny "eval is never run by an autopilot stage; its command cannot be verified"
 fi
 
 # Forbidden hosts anywhere in the command line.
