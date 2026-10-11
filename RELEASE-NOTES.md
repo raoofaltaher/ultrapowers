@@ -101,6 +101,17 @@ Skills and repository:
 - `task-review` runs the review inline, with a `declined` entry, on a harness without a subagent tool.
 - CI pins its actions to commit SHAs and pytest to a version; the engine's documented floor is Node 22 (18 and 20 are end-of-life); the brainstorm-server test dependency ws moves to 8.22.0; the Kimi manifest test falls back to `python` when `python3` is the Windows Store stub.
 
+**Upstream 7.0.0**
+
+What version 7.0.0 of the project this plugin was forked from changed, and this plugin did not have yet:
+
+- The `brainstorming` skill is rebuilt on the upstream design. It starts from what is already known (a quick, clear task is done and reported, the request being the approval); the first message offers to skip the questions and asks one open question; it offers to look at prior art, the project or the web; it plays each understood part back with guesses marked; it confirms the size once the work is understood; it asks which how-it-gets-made choices (framework, language, libraries, tools) the partner owns, even when the questions are skipped; and it offers the visual companion whenever seeing helps. The checklist and the flow graph are gone.
+- What was kept: the spec routing to `specs/<id>/Spec.md` when `.agents/ultrapowers.json` and a ticket id exist, now worded as under the project root and not inside `.agents/` (the old wording sent a simulated run into `.agents/specs/`); the Autopilot form (no question, `## Assumption ledger`, `## Repositories in scope`); the three paths announced in the first message and the one-way ratchet; the hard gate per path; the Red Flags rows, with upstream's new rows added; the visual companion's paths, logo and `--open`; and the handoff to `ultrapowers:writing-plans`. A ticket always produces the spec: in `brainstorm-task`, with a ticket id and the scaffold, or in the Autopilot form, the quick size does not apply and no skip offer is made. `brainstorm-task` keeps its rhythm: one grounded question per message, multiple choice, recommendation first.
+- The builder check replaces the spec-document reviewer: after the inline self-review, a fresh subagent reads the written design as the person who has to build it (`skills/brainstorming/builder-check-prompt.md`). In the Autopilot form what only the partner could answer becomes low-confidence ledger rows, never questions. `spec-document-reviewer-prompt.md`, which the skill never dispatched, is removed. The design and the merge decisions are in `docs/ultrapowers/specs/2026-10-11-brainstorming-v7-port-design.md`, the before and after pressure runs in `tests/skills/brainstorming-pressure-results.md`; the partner in those runs is simulated, and a live session is still owed.
+- Antigravity native manifest: `.antigravity-plugin/plugin.json`, kept in step by `scripts/bump-version.sh` (now twelve files) and checked by `tests/antigravity/test-plugin-manifest.sh`. `agy plugin install` of it has not been run here.
+- Antigravity docs correction: the README and `docs/porting-to-a-new-harness.md` no longer say that Antigravity runs the session-start hook. As measured upstream on agy 1.3.1 (not re-measured here), agy has no session-start event; it lists each installed skill's description, and the description of `using-ultrapowers` prompts the model to load it. The repository-root `hooks.json` registers only the guardrail.
+- Already present since v1.0.0, named here for completeness: eight upstream 7.0.0 fixes were taken when this fork was cut: `run-hook.cmd`'s bash discovery (upstream #2393), the hooks with a broken `PATH` (upstream #2349), the companion server's literal content insert (upstream #2364), the systematic-debugging example that no longer prints a secret (upstream #2380), `task-done` recording a silently passing test command (upstream #2388), the requesting-code-review `cut` example (upstream #2361), `sdd-workspace` leaving a repository's own `.gitignore` alone (upstream #2399), and the Hermes skill descriptions (upstream #2284).
+
 **What was verified, and how**
 
 | | Verified |
@@ -109,6 +120,10 @@ Skills and repository:
 | Pressure scenarios | Subagents under pressure for the hunt's door and for `task-review` Step 3b (S28 to S34: the hunt in task-review, a repository with nothing to audit, the standalone `--post` with and without an open pull request, a hostile code comment, and the envelope gate when the marker or the preflight is refused); the record is in `tests/task-lifecycle/pressure-results.md` |
 | Live, Claude Code, 2026-10-11 | The hunt through both doors, headless: the standalone audit of this repository (verdict FAIL; two High findings against the guardrail analyzer left unverified when the verification pass was cut short, one Medium confirmed; dependencies, OSINT and secrets lanes incomplete) and the ticket door on the review fixture (verdict FAIL; the token and curl-pipe-shell findings confirmed; the planted CVE missed because the dependencies lane could not audit a nested manifest). The fixes those runs produced are in this release: the envelope gate, the nested-manifest audit with `--prefix`, the lane prompts' allowed forms, and the gatekeeper waiting for its hunters |
 | Not yet run live | The OpenCode V2 guard on a live V2 host, and `--post` of a security report |
+
+**Known residuals**
+
+- During a hunt the hook still allows a command that computes a hash of a literal value; the hunt's contract forbids it, and a hook rule follows in 2.1.1. The Cursor event shape (`workspace_roots` instead of `cwd`) was taken from the session-start hook, not captured from a live Cursor guardrail call.
 
 ## v2.0.1 (2026-10-11)
 
