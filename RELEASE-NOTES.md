@@ -2,7 +2,7 @@
 
 ## v2.1.0 (2026-10-11)
 
-A vulnerability hunt for a ticket's change or a whole project, the guardrail profile that keeps it read-only on every harness that runs the guardrail, one test suite that keeps those entry points in step, and a security hardening pass over the plugin's own code. The hunt is beta.
+A vulnerability hunt for a ticket's change or a whole project, the guardrail profile that keeps it read-only on every harness that runs the guardrail, one test suite that keeps those entry points in step, and a security hardening pass over the plugin's own code. The hunt is beta. The live run of the new hunt on this repository found six guardrail bypasses that the earlier hunt on dev had missed, and this release fixes them (see "Found by the live hunt" below).
 
 **Heads up:**
 
@@ -33,7 +33,7 @@ A vulnerability hunt for a ticket's change or a whole project, the guardrail pro
 
 **Harness parity**
 
-- `AGENTS.md` rule 9 (every harness, every change) is applied to the hunt: each harness-specific surface it touches is covered or recorded as absent. The Muse manifest lists the new skill, and `.claude-plugin/plugin.json` declares `"agents": "./agents/"`.
+- `AGENTS.md` rule 9 (every harness, every change) is applied to the hunt: each harness-specific surface it touches is covered or recorded as absent. The Muse manifest lists the new skill, and `.claude-plugin/plugin.json` declares `"agents"` as an array of the two agent files, `["./agents/qa-specialist.md", "./agents/vulnerability-hunter.md"]` (a folder value does not load).
 - New suite `tests/hooks/test-guardrail-entrypoints-parity.mjs`, one test over every entry point. It pins that the bash hook, the bridge, the OpenCode, Hermes and Gemini entry points and `run-hook.cmd` agree on the run markers, the deny prefixes and the precedence; the bridge's deny parser; the hook registration on every harness; the OpenCode V1 and V2 guard registration; and that each skill that forks into an agent has its agent file. A new profile can no longer land in one entry point only. It is listed in `AGENTS.md` and in CI, with `tests/vulnerability-hunt/run-tests.sh` and the `hunt` profile fixtures (`tests/qa-gatekeeper/test-hunt-profile.sh`, which `tests/qa-gatekeeper/run-tests.sh` runs).
 - Gemini CLI is in the Platform Adaptation list of `using-ultrapowers`, with its `references/gemini-tools.md`.
 
@@ -80,6 +80,20 @@ Guardrail rules, QA and autopilot profiles (the hook matches patterns; it is sti
 - Writes: `mkdir`, `touch`, `sort -o`, `find -fprint`, `-fprintf` and `-fls`, `tar` and `unzip` extraction, in-place `gzip` and a copy into a protected folder are refused outside the report area; key material is refused under `absolute_path`, `dir_path`, `DirectoryPath` and `Url`, and a bare `.ssh` or `.aws` folder counts; a trailing dot, a trailing space or an NTFS stream on a protected path is refused like the plain name; a tool with a path-shaped field the hook did not list is judged like `Write`, a write-named file tool without a readable path is refused, and the patch of any tool named `*patch*` is judged file by file; a git subcommand built from a variable is refused.
 - The loops over a call's URLs, key paths and patch files start no process per item, and the push and substitution checks read the command in one pass, so a long command no longer outlasts the hook's timeout.
 
+Found by the live hunt, fixed in this release (hardening rounds 4 to 6). The live hunt of this repository found six bypasses of the guardrail analyzer that the earlier hunt on dev had missed; each was confirmed on the branch, and each is now refused or analysed:
+
+- A command substitution (`$( )` or backticks) is analysed as a command of its own in the same profile, up to three levels deep, instead of being read as opaque text; a cut whose quotes do not balance, a substitution inside a here-document, `${...}` or arithmetic, and in a QA run or a hunt `<( )` and `>( )`, are refused.
+- `cd` is scoped: the tracked directory is saved and restored around `( )`, each side of a pipeline, a backgrounded list and a brace group in a pipeline, so a `cd` there no longer moves where the next command's paths are judged; `eval` with a `cd` and `source` make it unknown.
+- `$'...'` and `$"..."` words are dynamic for every target check, not literal text.
+- The run markers `qa-active` and `hunt-active` are protected from every shell write, move and removal, file tool and patch; the one exit is a call whose entire command is `rm [-f]` of the run's own marker. A marker whose id holds `..`, `/` or `\` refuses every call.
+- `git -c`, `--config-env` and `--exec-path` are refused in every profile, not only in an autopilot stage, and so are `git grep -O` (`--open-files-in-pager`) and `--ext-diff` on any subcommand; `-C`, `--git-dir` and `--work-tree` take a literal folder inside the project.
+- The bridge refuses a call whose path spellings (`file_path`, `filePath`, `path`, `notebook_path`) name two different files, so a decoy path no longer decides how a write is judged; the hook's own event parse does the same.
+
+The same rounds closed the routes the re-reviews found next to them:
+
+- The Hermes plugin finds `node`, and the bridge finds `bash`, on absolute PATH entries outside the project only, never in the working directory, a relative entry or a folder under the project such as `node_modules/.bin`; the child runs from the plugin's folder.
+- The run's directory reaches the hook out of band, as `ULTRAPOWERS_RUN_DIR` set by the bridge on the spawn, and must be an absolute, existing folder; otherwise the hook reads the project root from the event's top-level `cwd` only, never from a key nested under the tool input.
+
 Skills and repository:
 
 - `task-review` runs the review inline, with a `declined` entry, on a harness without a subagent tool.
@@ -90,7 +104,7 @@ Skills and repository:
 | | Verified |
 |---|---|
 | Offline suites | The suites `AGENTS.md` lists, including the new `tests/vulnerability-hunt/`, the `hunt` profile fixtures, the entry-point parity suite and the extended assembler and `post-review.mjs` tests |
-| Pressure scenarios | Subagents under pressure for the hunt's door and for `task-review` Step 3b (S28 to S30); the record is in `tests/task-lifecycle/pressure-results.md` |
+| Pressure scenarios | Subagents under pressure for the hunt's door and for `task-review` Step 3b (S28 to S34: the hunt in task-review, a repository with nothing to audit, the standalone `--post` with and without an open pull request, a hostile code comment, and the envelope gate when the marker or the preflight is refused); the record is in `tests/task-lifecycle/pressure-results.md` |
 | Live, Claude Code, 2026-10-11 | The hunt through both doors, headless: the standalone audit of this repository (verdict FAIL; two High findings against the guardrail analyzer left unverified when the verification pass was cut short, one Medium confirmed; dependencies, OSINT and secrets lanes incomplete) and the ticket door on the review fixture (verdict FAIL; the token and curl-pipe-shell findings confirmed; the planted CVE missed because the dependencies lane could not audit a nested manifest). The fixes those runs produced are in this release: the envelope gate, the nested-manifest audit with `--prefix`, the lane prompts' allowed forms, and the gatekeeper waiting for its hunters |
 | Not yet run live | The OpenCode V2 guard on a live V2 host, and `--post` of a security report |
 
