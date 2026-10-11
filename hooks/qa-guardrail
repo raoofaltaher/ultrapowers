@@ -418,18 +418,33 @@ known_lc="$(lower "$known_issues")"
 # engine between stages (the approve label among them). A tool name with a read verb is a read.
 # This rule comes before the file-tool gate: a tracker tool that carries a `path` argument
 # (create_or_update_file, delete_file) is a tracker write, not a workspace write.
+# The harnesses spell an MCP tool differently: mcp__<server>__<tool> (Claude Code), <server>_<tool>
+# (OpenCode), mcp_<server>_<tool> (Hermes), MCP:<tool> (Cursor, no server). The name is judged
+# normalised: lowercase, `-`, `:`, `.`, `/` and spaces as `_`, a leading `mcp` marker removed.
+# Shell builtins only until a tracker word is seen.
 if [ "$PROFILE" = "autopilot" ]; then
-  case "$tool_lc" in
-    mcp__*)
-      if printf '%s' "$tool_lc" | grep -Eq 'github|gitlab|glab|jira|linear|odoo|bitbucket|azure_?devops|^mcp__tickets-' \
-        && ! printf '%s' "$tool_lc" | grep -Eq '(^|_)(get|list|search|read|view|fetch|show|describe|find|query|resolve)(_|$)' \
-        && printf '%s' "$tool_lc" | grep -Eq '(create|update|edit|add|remove|delete|merge|comment|note|label|close|reopen|post|save|accept|push|fork|assign|transfer|lock|approve|submit|publish|manage|link|call|execute|write|unlink|method)'; then
-        deny "tracker writes through MCP tools are never run by an autopilot stage; the engine writes back between stages"
-      fi
-      printf '%s' "$tool_lc" | grep -Eq '^mcp__git__git_(push|reset)' \
-        && deny "git push and git reset through an MCP tool are never run by an autopilot stage"
-      ;;
-  esac
+  tool_norm="$tool_lc"
+  tool_norm="${tool_norm//-/_}"; tool_norm="${tool_norm//:/_}"; tool_norm="${tool_norm//./_}"
+  tool_norm="${tool_norm// /_}"; tool_norm="${tool_norm//\//_}"
+  tool_server_less=0
+  case "$tool_lc" in mcp:*) tool_server_less=1 ;; esac
+  case "$tool_norm" in mcp_*) tool_norm="${tool_norm#mcp}" ;; esac
+  while [[ "$tool_norm" == *__* ]]; do tool_norm="${tool_norm//__/_}"; done
+  while [[ "$tool_norm" == _* ]]; do tool_norm="${tool_norm#_}"; done
+  tracker_re='github|gitlab|glab|jira|linear|odoo|bitbucket|azure_?devops|^tickets_'
+  # Cursor's MCP:<tool> carries no server name: the object of the tool says it is a tracker's.
+  object_re='(^|_)(issue|issues|pull_request|pull_requests|merge_request|merge_requests|pr|mr|comment|comments|label|labels|milestone|discussion|work_item|workitem|ticket)(_|$)'
+  if [[ "$tool_norm" =~ $tracker_re ]] || { [ "$tool_server_less" -eq 1 ] && [[ "$tool_norm" =~ $object_re ]]; }; then
+    read_re='(^|_)(get|list|search|read|view|fetch|show|describe|find|query|resolve)(_|$)'
+    write_re='(create|update|edit|add|remove|delete|merge|comment|note|label|close|reopen|post|save|accept|push|fork|assign|transfer|lock|approve|submit|publish|manage|link|call|execute|write|unlink|method)'
+    if ! [[ "$tool_norm" =~ $read_re ]] && [[ "$tool_norm" =~ $write_re ]]; then
+      deny "tracker writes through MCP tools are never run by an autopilot stage; the engine writes back between stages"
+    fi
+  fi
+  git_mcp_re='(^|_)git_git_(push|reset)|^git_(push|reset)'
+  if [[ "$tool_norm" =~ $git_mcp_re ]]; then
+    deny "git push and git reset through an MCP tool are never run by an autopilot stage"
+  fi
 fi
 
 is_write_tool=0
