@@ -3,6 +3,9 @@
 # vulnerability hunt and the autopilot envelope (autopilot spec section 8).
 #
 # stdin  : the harness event JSON (tool_name, tool_input, optional cwd)
+# env    : ULTRAPOWERS_RUN_DIR, set only by hooks/lib/guardrail-bridge.mjs on the hook's spawn: the
+#          absolute directory the bridge found the run from (see the root scan below). Nothing
+#          else sets it; the run directory never travels inside the event.
 # exit 0 : allow.  exit 2 : deny; stderr carries "QA-GUARDRAIL DENY: <reason>",
 #          "HUNT-GUARDRAIL DENY: <reason>" or "AUTOPILOT-GUARDRAIL DENY: <reason>".
 #
@@ -133,41 +136,73 @@ find_root() { find_root_r "$1" || return 1; printf '%s' "$REPLY"; }
 event=""
 IFS= read -r -d '' event || true
 
-# --- Fast path: is a run active? Check the process cwd, then EVERY "cwd" string in the
-# event (all occurrences, so text inside a command can add a candidate but never hide the
-# real one). No process is started for an inert session.
+# --- Fast path: is a run active? The scan starts from ULTRAPOWERS_RUN_DIR when it is set, else
+# from the process cwd; then the event's TOP-LEVEL cwd alone is a further start. A key nested
+# under tool_input (cwd, workdir, working_directory, dir_path, ultrapowers_run_dir, ...) never
+# names the root: a tool argument would then choose the run, its profile and its project config.
+#
+# ULTRAPOWERS_RUN_DIR is set by hooks/lib/guardrail-bridge.mjs alone, on the hook's spawn: the
+# bridge runs the hook from the plugin folder (OpenCode, Pi, and through guardrail-cli.mjs Kimi,
+# Antigravity, Hermes and the Gemini project hook) and passes the directory it found the run from
+# out of band, never inside the event. It must be an absolute, existing directory, or every call
+# is refused. Unset (Claude Code, Cursor, Muse, Codex, Copilot CLI, Droid, Qwen Code, Devin), the
+# scan starts from the hook's own cwd, the session directory the harness runs it in.
+#
+# No process is started for an inert session: the top-level cwd is read through node
+# (hooks/lib/event-fields.mjs) only when some "cwd" string in the event text leads to a marker.
 root=""
-norm_path_r "$PWD"
-if find_root_r "$REPLY"; then
-  root="$REPLY"
+if [ -n "${ULTRAPOWERS_RUN_DIR+x}" ]; then
+  case "$ULTRAPOWERS_RUN_DIR" in
+    /*|[A-Za-z]:/*|[A-Za-z]:\\*) ;;
+    *) deny "ULTRAPOWERS_RUN_DIR ($ULTRAPOWERS_RUN_DIR) is not an absolute path; the run directory cannot be verified, so every call is refused" ;;
+  esac
+  norm_path_r "$ULTRAPOWERS_RUN_DIR"
+  scan_start="$REPLY"
+  [ -d "$scan_start" ] || deny "ULTRAPOWERS_RUN_DIR ($ULTRAPOWERS_RUN_DIR) does not name an existing directory; the run directory cannot be verified, so every call is refused"
+  if find_root_r "$scan_start"; then root="$REPLY"; fi
 else
-  rest="$event"
-  # The directory a call runs in: the event cwd and a call's own working directory (OpenCode
-  # workdir, Hermes working_directory, Gemini dir_path, Antigravity Cwd). A call may name a project
-  # under run from a process that sits elsewhere, with no cwd in the event.
-  cwd_re='"(cwd|workdir|working_directory|workingDirectory|dir_path|Cwd|ultrapowers_run_dir)"[[:space:]]*:[[:space:]]*"([^"]*)"'
-  while [[ "$rest" =~ $cwd_re ]]; do
-    rest="${rest#*"${BASH_REMATCH[0]}"}"
-    candidate="${BASH_REMATCH[2]}"
-    [ -n "$candidate" ] || continue
-    norm_path_r "$candidate"
-    if find_root_r "$REPLY"; then
-      root="$REPLY"
-      break
+  norm_path_r "$PWD"
+  scan_start="$REPLY"
+  if find_root_r "$scan_start"; then
+    root="$REPLY"
+  else
+    # A superset filter with builtins only: every "cwd" string in the text, the nested ones too.
+    # Only when one of them leads to a marker is the real top-level cwd read, and only it counts.
+    rest="$event"
+    cwd_re='"cwd"[[:space:]]*:[[:space:]]*"([^"]*)"'
+    hit=""
+    while [[ "$rest" =~ $cwd_re ]]; do
+      rest="${rest#*"${BASH_REMATCH[0]}"}"
+      candidate="${BASH_REMATCH[1]}"
+      [ -n "$candidate" ] || continue
+      norm_path_r "$candidate"
+      if find_root_r "$REPLY"; then hit=1; break; fi
+    done
+    PROFILE=""
+    if [ -n "$hit" ]; then
+      command -v node >/dev/null 2>&1 || deny "node is required to read the event of a call that names a run directory, and is not on PATH"
+      ef_src="${BASH_SOURCE[0]}"
+      ef_slash='/'
+      ef_src="${ef_src//\\/$ef_slash}"
+      case "$ef_src" in */*) ef_js="${ef_src%/*}/lib/event-fields.mjs" ;; *) ef_js="lib/event-fields.mjs" ;; esac
+      if command -v cygpath >/dev/null 2>&1; then ef_js="$(cygpath -m "$ef_js" 2>/dev/null || printf '%s' "$ef_js")"; fi
+      top_cwd="$(printf '%s' "$event" | node "$ef_js" cwd)" || deny "the tool event could not be parsed for its top-level cwd; an uninspectable call is refused"
+      if [ -n "$top_cwd" ]; then
+        norm_path_r "$top_cwd"
+        if find_root_r "$REPLY"; then root="$REPLY"; fi
+      fi
     fi
-  done
+  fi
 fi
 # A headless watcher stage carries ULTRAPOWERS_AUTOPILOT_INSIDE=1 in its environment: the
 # envelope then holds even when the marker file is gone (the root is the project that holds
-# .agents/ultrapowers.json above the cwd; no project, no verifiable call).
+# .agents/ultrapowers.json above the scan start: ULTRAPOWERS_RUN_DIR or the hook's cwd, never a
+# key of the event; no project, no verifiable call).
 if [ -z "$root" ] && [ "${ULTRAPOWERS_AUTOPILOT_INSIDE:-}" = "1" ]; then
-  d="$(norm_path "$PWD")"
-  # The bridge runs the hook from the plugin's folder and names the session directory itself.
-  run_dir_re='"ultrapowers_run_dir"[[:space:]]*:[[:space:]]*"([^"]+)"'
-  [[ "$event" =~ $run_dir_re ]] && d="$(norm_path "${BASH_REMATCH[1]}")"
+  d="$scan_start"
   while :; do
     if [ -f "$d/.agents/ultrapowers.json" ]; then root="$d"; PROFILE="autopilot"; break; fi
-    case "$d" in /|.|"") break ;; esac
+    case "$d" in /|.|"") break ;; */*) ;; *) break ;; esac
     d="${d%/*}"; [ -n "$d" ] || d="/"
   done
   [ -n "$root" ] || deny "an autopilot stage is running (ULTRAPOWERS_AUTOPILOT_INSIDE) outside any ultrapowers project; the call cannot be verified"
@@ -444,7 +479,9 @@ if [ -n "$event_cwd" ]; then
   ev_norm="$(norm_path "$event_cwd")"
   if [ -d "$ev_norm" ]; then
     base_cwd="$ev_norm"
-    if ev_root="$(find_root "$ev_norm")"; then
+    # Through the bridge the event cwd is the call's own directory, which the bridge bounded to the
+    # run it found; the root stays the one ULTRAPOWERS_RUN_DIR gave, so both judge the same run.
+    if [ -z "${ULTRAPOWERS_RUN_DIR+x}" ] && ev_root="$(find_root "$ev_norm")"; then
       root="$ev_root"
     fi
   fi

@@ -508,5 +508,9 @@
   {"name":"deny_git_grep_open_files_in_pager","reason":"open-files-in-pager","event":{"tool_name":"Bash","tool_input":{"command":"git grep -Otouch foo"}}},
   {"name":"deny_git_ext_diff","reason":"--ext-diff","event":{"tool_name":"Bash","tool_input":{"command":"git diff --ext-diff"}}},
   {"name":"deny_git_C_outside","reason":"outside the project","event":{"tool_name":"Bash","tool_input":{"command":"git -C /tmp/ap-elsewhere status"}}},
-  {"name":"deny_decoy_file_path_key","reason":"the call names two different targets","event":{"tool_name":"write","tool_input":{"path":".github/workflows/ci.yml","file_path":"repo-a/src/x.ts","content":"x"}}}
+  {"name":"deny_decoy_file_path_key","reason":"the call names two different targets","event":{"tool_name":"write","tool_input":{"path":".github/workflows/ci.yml","file_path":"repo-a/src/x.ts","content":"x"}}},
+  {"name":"deny_nested_run_dir_decoy_bridge","reason":"forbidden","dir":"{{ELSEWHERE}}","env":{"ULTRAPOWERS_RUN_DIR":"{{ROOT}}"},"event":{"tool_name":"Bash","tool_input":{"command":"curl -s https://prod.example.com/","ultrapowers_run_dir":"{{DECOY}}"},"cwd":"{{ROOT}}"}},
+  {"name":"deny_nested_cwd_decoy_bridge","reason":"is outside the project","dir":"{{ELSEWHERE}}","env":{"ULTRAPOWERS_RUN_DIR":"{{ROOT}}"},"event":{"tool_name":"Bash","tool_input":{"command":"curl -s https://prod.example.com/","cwd":"{{DECOY}}"},"cwd":"{{ROOT}}"}},
+  {"name":"deny_nested_run_dir_decoy_direct","reason":"forbidden","dir":"{{ELSEWHERE}}","event":{"tool_name":"Bash","tool_input":{"command":"curl -s https://prod.example.com/","ultrapowers_run_dir":"{{DECOY}}"},"cwd":"{{ROOT}}"}},
+  {"name":"deny_nested_cwd_decoy_direct","reason":"is outside the project","dir":"{{ELSEWHERE}}","event":{"tool_name":"Bash","tool_input":{"command":"curl -s https://prod.example.com/","cwd":"{{DECOY}}"},"cwd":"{{ROOT}}"}}
 ]

@@ -417,3 +417,39 @@ test('the bridge resolves bash from absolute PATH entries, never the project dir
   assert.equal(push.deny, true, JSON.stringify(push));
   assert.match(push.reason, /git push is never allowed|never publishes/);
 });
+
+// ---- the run directory reaches the hook out of band; a tool argument never picks the root ----
+test('a nested ultrapowers_run_dir or cwd naming a decoy project never roots the hook', () => {
+  // The decoy: another project with its own autopilot marker and no forbidden host.
+  const decoy = project();
+  fs.writeFileSync(path.join(decoy, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'decoy', qa: { urls: {}, hosts: { allowed: [], forbidden: [] } } }));
+  const curl = 'curl -s https://prod.example.com/';
+  // ULTRAPOWERS_AUTOPILOT_INSIDE=1, no marker: the project's forbidden host still holds.
+  const inside = project({ marker: 'none' });
+  for (const key of ['ultrapowers_run_dir', 'cwd']) {
+    const r = withInside(() => runGuardrail({ toolName: 'bash', input: { command: curl, [key]: decoy }, cwd: inside }));
+    assert.equal(r.deny, true, `${key}: ${JSON.stringify(r)}`);
+    assert.equal(r.prefix, 'AUTOPILOT-GUARDRAIL');
+  }
+  // A hunt: the decoy's autopilot profile never replaces the hunt's.
+  const hunt = project({ marker: 'hunt' });
+  for (const key of ['ultrapowers_run_dir', 'cwd']) {
+    const r = runGuardrail({ toolName: 'bash', input: { command: 'npm install left-pad', [key]: decoy }, cwd: hunt });
+    assert.equal(r.deny, true, `${key}: ${JSON.stringify(r)}`);
+    assert.equal(r.prefix, 'HUNT-GUARDRAIL', `${key}: ${JSON.stringify(r)}`);
+  }
+});
+
+test('the bridge and the hook agree on the run when the session directory and the call directory differ', () => {
+  // The session directory holds a hunt marker; the call's directory, inside it, holds its own
+  // autopilot marker. The bridge finds the hunt from the session directory, and the hook judges the
+  // same run: the deny carries the HUNT prefix, and npm install (legal in a stage) is refused.
+  const root = project({ marker: 'hunt' });
+  const nested = path.join(root, 'repo-a');
+  fs.mkdirSync(path.join(nested, '.ultrapowers'), { recursive: true });
+  fs.writeFileSync(path.join(nested, '.ultrapowers', 'autopilot-active'), JSON.stringify({ ticket: 'GH-16', branch: 'GH-16-x', scope: ['.'], stage: 'execute' }));
+  const r = runGuardrail({ toolName: 'bash', input: { command: 'npm install left-pad', workdir: nested }, cwd: root });
+  assert.equal(r.deny, true, JSON.stringify(r));
+  assert.equal(r.prefix, 'HUNT-GUARDRAIL', JSON.stringify(r));
+  assert.match(r.reason, /npm install is not on the hunt's list/);
+});

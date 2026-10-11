@@ -243,9 +243,9 @@ export function runGuardrail({ toolName, input, cwd, dirs = [], hookDir = HOOK_D
   // The hook runs from the plugin's folder, never the project's (it finds the run from the event's
   // cwd), and on Windows it does not search its current directory for the programs it starts.
   if (process.platform === 'win32') env.NoDefaultCurrentDirectoryInExePath = '1';
-  // The directory the run was found from, which the hook's root scan reads like a cwd (it may be an
-  // extra candidate, not the event cwd).
-  event.ultrapowers_run_dir = path.resolve(run.dir);
+  // The directory the run was found from travels out of band, never inside the event (a tool
+  // argument would then choose the root): the hook starts its root scan there.
+  env.ULTRAPOWERS_RUN_DIR = path.resolve(run.dir);
   const res = spawnSync(bash, [hook], { input: `${JSON.stringify(event)}\0`, cwd: path.resolve(hookDir, '..'), env, encoding: 'utf8', timeout: timeoutMs, windowsHide: true });
   if (res.status === 0) return { deny: false };
   const line = String(res.stderr ?? '').split('\n').map((l) => DENY_RE.exec(l)).find(Boolean);
