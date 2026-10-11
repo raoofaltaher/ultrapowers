@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build a scaffolded project holding ticket 501 on branches in two repositories with
-# different bases, for the task-review pressure scenarios (S21-S26).
+# different bases, for the task-review pressure scenarios (S21-S27).
 #
 #   api  (base main)     feature/501-discount: changes applyDiscount's signature but not its
 #                        caller cart.js (an unchanged file), and commits the test AFTER the code.

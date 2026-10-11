@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Structural checks for skills/task-review: frontmatter, required sections, the files the
 # body names exist, no harness tool names, no upstream project name, and the Muse manifest
-# lists the skill. Behavior is covered by the pressure scenarios (S21-S26).
+# lists the skill. Behavior is covered by the pressure scenarios (S21-S27).
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -52,6 +52,9 @@ prompt="$SKILL_DIR/prompts/review.md"
 if grep -q 'ultrapowers:requesting-code-review' "$prompt" && grep -q 'ultrapowers:test-driven-development' "$prompt" && grep -q 'ultrapowers:systematic-debugging' "$prompt"; then pass "the reviewer prompt uses code review, TDD and systematic-debugging"; else fail "the reviewer prompt uses code review, TDD and systematic-debugging"; fi
 if grep -q 'qa-specialist' "$SKILL_MD"; then pass "the body runs the QA gate through qa-specialist"; else fail "the body runs the QA gate through qa-specialist"; fi
 if grep -q 'most capable' "$SKILL_MD" && grep -q 'most capable' "$SKILL_DIR/prompts/review.md"; then pass "reviewers are dispatched on the most capable model"; else fail "reviewers are dispatched on the most capable model"; fi
+
+# A harness with no subagent tool still gets the code review: the session runs the reviewer's prompt itself.
+if grep -q '^\*\*Without a subagent tool:\*\* read \[prompts/review.md\]' "$SKILL_MD" && grep -q 'declined. entry' "$SKILL_MD"; then pass "the body runs the review inline, with a declined entry, when there is no subagent tool"; else fail "the body runs the review inline, with a declined entry, when there is no subagent tool"; fi
 
 # The upstream project name never appears; it is built at run time so this file does not hold it.
 upstream="$(printf '%s%s' super powers)"

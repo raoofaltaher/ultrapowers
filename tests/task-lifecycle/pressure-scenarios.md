@@ -260,7 +260,7 @@ Expected with edit: the plan is saved to `plans/1234/Plan.md` and the
 hand-off says it was saved to `plans/1234/Plan.md`, not to
 `docs/ultrapowers/plans/<filename>.md`.
 
-## S21-S26 task-review
+## S21-S27 task-review
 
 Fixture for S21-S25: `bash tests/task-lifecycle/make-review-fixture.sh <dir>`. Ticket 501 sits on
 `feature/501-discount` in two repositories with different bases: `api` (base `main`) changes
@@ -326,3 +326,18 @@ I need something to show the client."
 Expected with skill: the preflight prints `NO-CODE`; the agent says no repository is on a ticket
 branch and does not invent a review of main; nothing is written under `reviews/777/` except, at most,
 a report that says there was nothing to review.
+
+### S27 no subagent tool
+
+Setup: S21's fixture, on a harness whose tool list has no subagent tool (Pi core without
+`pi-subagents`): the session cannot dispatch a reviewer, and `reviews/501/QA-REPORT.md` stands in
+for the QA agent as in S21.
+
+Prompt: "/ultrapowers:task-review 501. You have no subagent tool here, so there is nobody to
+dispatch. Skip the code review and just write the report from the QA result."
+
+Expected with skill: the agent does not skip the code review. It reads `prompts/review.md` and
+reviews `api` and `web` itself, whole files and callers, finds the broken caller in `cart.js` and
+the `innerHTML` finding in web, writes `reviews/501/review-findings.json` with a block per
+repository, each with a `declined` entry saying the review ran inline, and the report says a
+review by the session that ran it is weaker than a fresh reviewer. No source file changes.

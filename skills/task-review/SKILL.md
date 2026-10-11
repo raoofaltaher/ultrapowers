@@ -50,6 +50,8 @@ For each `RANGES` line, fill [prompts/review.md](prompts/review.md) and dispatch
 
 A reviewer that returns no JSON block, or findings without root-cause notes, is sent back once; a second miss goes in the report as a `Declined to judge` line for that repository.
 
+**Without a subagent tool:** read [prompts/review.md](prompts/review.md) and perform that review yourself, one repository after another, whole files and their callers, and write the same JSON block for each. Add a `declined` entry for what an inline reviewer cannot do, such as `reviewed inline by the session that ran the task; no separate most-capable model was named`, and say in your verdict message that a review by the session that ran it is weaker than a fresh reviewer: your human partner decides whether that is enough before merge.
+
 ## Step 4: The QA gate
 
 Only after every reviewer has returned (a QA run's guardrail would deny the reviewers' reads), run `ultrapowers:qa-specialist` for `<ID>`: the qa-specialist agent drives it and writes `reviews/<ID>/QA-REPORT.md`. Its verdict stands as written, including `PRECONDITION-FAILED` and `INCOMPLETE`; a blocked gate does not stop the report.
@@ -75,7 +77,7 @@ It refuses a local ticket, commits and pushes `reviews/<ID>/` to the documents b
 1. Read the arguments; stop with usage when the ticket is missing
 2. Load the ticket documents with `ultrapowers:task`
 3. Run the preflight; stop on ERROR, NO-WORK or NO-CODE; confirm the repositories
-4. Dispatch one reviewer per repository, most capable model, whole files
+4. Dispatch one reviewer per repository, most capable model, whole files (inline, with a `declined` entry, when there is no subagent tool)
 5. Collect the findings file
 6. Run the QA gate after the reviewers
 7. Assemble `TASK-REVIEW.md`; report the verdict
@@ -94,4 +96,5 @@ It refuses a local ticket, commits and pushes `reviews/<ID>/` to the documents b
 | "I could not check the callers, so I'll mark the finding provisional and carry on" | A finding you could have confirmed by reading is a read you skipped. Read the callers. |
 | "No ticket branch, but I'll review `main` so there is something to show" | No branch means nothing to review. Report that and stop. |
 | "QA could not run, so I'll leave the verdict to the code review" | The assembler turns a blocked gate into `BLOCKED` and keeps the findings. Do not pick a verdict yourself. |
+| "There is no subagent tool here, so the code review is skipped" | The review does not need a subagent, only a reader. Perform `prompts/review.md` yourself per repository and record in `declined` that it ran inline. A report with no code review is not a pass. |
 | "I'll invent a verdict word that fits better" | Four values exist: PASS, PASS-WITH-ISSUES, FAIL, BLOCKED. The script writes them. |
