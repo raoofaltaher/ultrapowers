@@ -615,7 +615,7 @@ printf '%s' "$lc" | grep -Eq "${B}(chmod|chown|chgrp|icacls|takeown)[[:space:]]"
   && deny "permission or ownership change is blocked"
 
 # Remote shells and copies; inline interpreters; raw network redirection.
-printf '%s' "$lc" | grep -Eq "${B}(ssh|scp|sftp|rsync|telnet|nc|ncat|netcat|socat)(\\.exe)?[[:space:]]" \
+printf '%s' "$lc" | grep -Eq "${B}(ssh|scp|sftp|rsync|telnet|nc|ncat|netcat|socat|ftp|tftp|lftp)(\\.exe)?[[:space:]]|${B}openssl(\\.exe)?[[:space:]]+s_(client|server)\\b" \
   && deny "remote shell or copy is blocked"
 printf '%s' "$lc" | grep -Eq "${B}(python3?|node|nodejs|perl|ruby|php|deno|bun)(\\.exe)?[[:space:]]+(-c|-e|-p|--print|--eval|-)([[:space:]]|\$)" \
   && deny "inline interpreter code is blocked; it is an unbounded egress and execution bypass"

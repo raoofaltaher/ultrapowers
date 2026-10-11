@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"lftp -e 'put a.txt; quit' example.invalid"}}
