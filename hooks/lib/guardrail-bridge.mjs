@@ -17,7 +17,7 @@ const DENY_RE = /((?:QA|AUTOPILOT)-GUARDRAIL) DENY: (.*)/;
 export function markerRoot(startDir) {
   let dir;
   try {
-    dir = fs.realpathSync(path.resolve(startDir));
+    dir = fs.realpathSync.native(path.resolve(startDir));
   } catch {
     return null;
   }
@@ -45,7 +45,7 @@ export const insideFlag = () => process.env.ULTRAPOWERS_AUTOPILOT_INSIDE === '1'
 export function projectRoot(startDir) {
   let dir;
   try {
-    dir = fs.realpathSync(path.resolve(startDir));
+    dir = fs.realpathSync.native(path.resolve(startDir));
   } catch {
     return null;
   }
@@ -81,6 +81,15 @@ export const denyText = (verdict) => `${verdict.prefix || 'QA-GUARDRAIL'} DENY: 
 // `workdir` (OpenCode bash, Hermes terminal, Codex shell), `working_directory` (Cursor), `Cwd`
 // (Antigravity run_command), and `dir_path` on a shell call (Gemini run_shell_command; on Gemini's
 // listing tools the same key names the directory listed, not a working directory).
+// Every working-directory spelling the input carries, in the order above (a decoy under one key
+// must not hide an outside directory under another).
+export function perCallDirs(inp) {
+  if (!inp || typeof inp !== 'object' || Array.isArray(inp)) return [];
+  const str = (v) => (typeof v === 'string' && v !== '' ? v : undefined);
+  const shell = str(inp.command) !== undefined || str(inp.cmd) !== undefined;
+  return [str(inp.workdir), str(inp.working_directory), str(inp.Cwd), shell ? str(inp.dir_path) : undefined].filter((v) => v !== undefined);
+}
+
 export function perCallDir(inp) {
   if (!inp || typeof inp !== 'object' || Array.isArray(inp)) return undefined;
   const str = (v) => (typeof v === 'string' && v !== '' ? v : undefined);
@@ -125,7 +134,7 @@ function realish(p) {
   const tail = [];
   for (;;) {
     try {
-      return path.join(fs.realpathSync(head), ...tail);
+      return path.join(fs.realpathSync.native(head), ...tail);
     } catch {
       const parent = path.dirname(head);
       if (parent === head) return path.resolve(p);
@@ -173,16 +182,23 @@ export function runGuardrail({ toolName, input, cwd, dirs = [], hookDir = HOOK_D
   const startDir = givenCwd || process.cwd();
   const event = guardrailEvent({ toolName, input, cwd: givenCwd });
   if (!event.cwd) event.cwd = startDir;
-  const callDir = perCallDir(event.tool_input);
-  const callAbs = callDir !== undefined ? path.resolve(startDir, callDir) : null;
+  const callDirs = perCallDirs(event.tool_input);
+  const callAbsAll = callDirs.map((d) => path.resolve(startDir, d));
+  const callAbs = callAbsAll.length ? callAbsAll[0] : null;
   const run = activeRun(startDir, [...dirs, process.cwd(), ...(callAbs ? [callAbs] : [])]);
   if (!run) return { deny: false };
   const { prefix } = run;
   if (!run.root) {
     return { deny: true, prefix, reason: 'an autopilot stage is running (ULTRAPOWERS_AUTOPILOT_INSIDE) outside any ultrapowers project; the call cannot be verified' };
   }
-  if (callAbs && !within(realish(callAbs), run.root)) {
-    return { deny: true, prefix, reason: `the call's working directory ${callAbs} is outside the project root ${run.root}; during a run a call works inside the project` };
+  for (const dir of callAbsAll) {
+    if (!within(realish(dir), run.root)) {
+      return { deny: true, prefix, reason: `the call's working directory ${dir} is outside the project root ${run.root}; during a run a call works inside the project` };
+    }
+  }
+  const fold = (d) => (process.platform === 'win32' ? realish(d).toLowerCase() : realish(d));
+  if (callAbsAll.length > 1 && new Set(callAbsAll.map(fold)).size > 1) {
+    return { deny: true, prefix, reason: `the call names two working directories (${callAbsAll.join(', ')}); one call runs in one directory` };
   }
   // The marker was found from the session cwd; the command itself runs in the call's directory, so
   // the hook resolves a relative target there (a bare autopilot.json inside tasks/<ID> is the state file).

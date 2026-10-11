@@ -33,7 +33,7 @@ test('guardrailEvent speaks the shell-hook contract for OpenCode and Pi inputs',
 
 test('markerRoot finds the run marker above the cwd and nothing elsewhere', () => {
   const root = project();
-  assert.equal(markerRoot(path.join(root, 'repo-a', 'src')), root);
+  assert.equal(markerRoot(path.join(root, 'repo-a', 'src')), fs.realpathSync.native(root));
   assert.equal(markerRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'no-marker-'))), null);
 });
 
@@ -282,6 +282,32 @@ test('a relative target is resolved against the per-call working directory, not 
   assert.match(v.reason, /autopilot\.json|protected/);
   const marker = runGuardrail({ toolName: 'bash', input: { command: 'rm autopilot-active', workdir: path.join(root, '.ultrapowers') }, cwd: root });
   assert.equal(marker.deny, true, JSON.stringify(marker));
+});
+
+test('every working-directory spelling present is bounded, and two that disagree are refused', () => {
+  const root = project();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'workdir-decoy-'));
+  // a harmless first spelling must not hide an outside one under another key
+  const decoy = runGuardrail({ toolName: 'bash', input: { command: 'echo x > config', workdir: '.', dir_path: outside }, cwd: root });
+  assert.equal(decoy.deny, true, JSON.stringify(decoy));
+  assert.match(decoy.reason, /outside the project root/);
+  const decoy2 = runGuardrail({ toolName: 'bash', input: { command: 'echo x > config', workdir: path.join(root, 'repo-a'), working_directory: outside }, cwd: root });
+  assert.equal(decoy2.deny, true, JSON.stringify(decoy2));
+  // two spellings inside the project that name different directories cannot both be the cwd
+  const split = runGuardrail({ toolName: 'bash', input: { command: 'git status', workdir: path.join(root, 'repo-a'), Cwd: root }, cwd: root });
+  assert.equal(split.deny, true, JSON.stringify(split));
+  assert.match(split.reason, /two working directories/);
+  // the same directory under two spellings is one directory
+  assert.deepEqual(runGuardrail({ toolName: 'bash', input: { command: 'git status', workdir: path.join(root, 'repo-a'), Cwd: path.join(root, 'repo-a', '.') }, cwd: root }), { deny: false });
+});
+
+test('a Windows short-name spelling of the project is the same project', { skip: process.platform !== 'win32' }, () => {
+  const root = project();
+  const long = fs.realpathSync.native(root);
+  // On a volume where TMP is spelled with an 8.3 name, root is the short form and long the real one.
+  if (long.toLowerCase() === root.toLowerCase()) return;
+  assert.deepEqual(runGuardrail({ toolName: 'bash', input: { command: 'git status', workdir: path.join(long, 'repo-a') }, cwd: root }), { deny: false });
+  assert.deepEqual(runGuardrail({ toolName: 'bash', input: { command: 'git status', workdir: path.join(root, 'repo-a') }, cwd: long }), { deny: false });
 });
 
 test('guardrail-cli bounds the working directory of a Gemini dir_path and an Antigravity Cwd', () => {
