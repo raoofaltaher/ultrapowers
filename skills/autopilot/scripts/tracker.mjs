@@ -53,7 +53,7 @@ function run(resolution, env, args, stdin) {
 // the engine posts is written by an agent, so every such line gets a zero-width space in front: GitLab
 // renders the text and runs nothing. Fenced code blocks too, since the fence may not survive.
 export function neutralizeQuickActions(text) {
-  return String(text ?? '').replace(/^\/(?=[A-Za-z])/gm, '​/');
+  return String(text ?? '').replace(/^\/(?=[A-Za-z])/gm, '\u200b/');
 }
 
 function parseJson(text, what) {

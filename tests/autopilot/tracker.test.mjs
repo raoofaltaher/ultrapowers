@@ -415,7 +415,7 @@ test('odoo upload rejects with no-upload, and a glab answer without markdown sti
 // --- GitLab quick actions: a posted line that starts with / is never run as one.
 
 test('neutralizeQuickActions puts a zero-width space before a slash word at column 0, fenced or not', () => {
-  const ZW = '​';
+  const ZW = '\u200b';
   const body = ['/merge', '  /merge', 'a/merge', '/ 5', '```', '/approve', '```', 'text', '/label ~bug'].join('\n');
   const out = neutralizeQuickActions(body).split('\n');
   assert.equal(out[0], `${ZW}/merge`);
@@ -429,7 +429,7 @@ test('neutralizeQuickActions puts a zero-width space before a slash word at colu
 });
 
 test('the glab write methods send a neutralized body; the gh ones are untouched', async () => {
-  const ZW = '​';
+  const ZW = '\u200b';
   const text = 'Report\n/merge\n/assign @me';
   const clean = `Report\n${ZW}/merge\n${ZW}/assign @me`;
   const g = env({ 'issue note 7 -R acme/platform/web -m': { stdout: 'https://gitlab.example.com/acme/platform/web/-/issues/7#note_1\n' } });
