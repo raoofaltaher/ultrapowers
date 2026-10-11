@@ -28,7 +28,7 @@ The manifest does three things:
 2. Loads `using-ultrapowers` at session start through `sessionStart.skill`.
 3. Provides Kimi-specific tool mapping through `skillInstructions`.
 
-Kimi Code reads Ultrapowers skills from this repository. There are no copied skills, symlinks, hooks, or extra runtime dependencies.
+Kimi Code reads Ultrapowers skills from this repository. There are no copied skills, symlinks, or extra runtime dependencies. The manifest also registers one `PreToolUse` hook, `hooks/lib/guardrail-cli.mjs`, which is the guardrail of a QA run or an autopilot stage and does nothing outside one.
 
 ## Tool Mapping
 
