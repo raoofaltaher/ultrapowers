@@ -261,6 +261,37 @@ else
   fail "a 200-file patch is denied in under 5 s (exit ${result%%|*}, $((t_end - t_start)) s)"
 fi
 
+echo "qa-guardrail: the marker prefilter is linear and bounded"
+# The prefilter runs when the hook's cwd holds no run. A model-controlled argument of 1 MB before a
+# nested "cwd" key took minutes when each match was stripped with ${rest#*match}, and a hook killed
+# at its timeout lets the call through on some harnesses. It must answer in under 2 s; past its
+# 256 KB bound the top-level fields are read through node, so a top-level cwd after the argument
+# still roots the hook.
+big_arg="$(printf '%*s' 1048576 '' | tr ' ' 'a')"
+ms_now() { local t="${EPOCHREALTIME/[.,]/}"; REPLY=$((t / 1000)); }
+ms_now; t0="$REPLY"
+result="$(run_hook "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"echo $big_arg\",\"cwd\":\"$ROOT\"}}" "$ELSEWHERE")"
+ms_now; elapsed=$((REPLY - t0))
+if [[ "${result%%|*}" -eq 0 && "$elapsed" -lt 2000 ]]; then
+  pass "a 1 MB argument before a nested cwd is answered in under 2 s, unrooted ($elapsed ms)"
+else
+  fail "a 1 MB argument before a nested cwd is answered in under 2 s, unrooted (exit ${result%%|*}, $elapsed ms)"
+fi
+result="$(run_hook "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push origin $big_arg\"},\"cwd\":\"$ROOT\"}" "$ELSEWHERE")"
+if [[ "${result%%|*}" -eq 2 && "$result" == *"QA-GUARDRAIL DENY: git push is never allowed"* ]]; then
+  pass "a top-level cwd past the 256 KB bound still roots the hook"
+else
+  fail "a top-level cwd past the 256 KB bound still roots the hook (exit ${result%%|*})"
+fi
+many_keys=""
+for ((i = 0; i < 2000; i++)); do many_keys+="\"cwd\":\"/nowhere/$i\","; done
+result="$(run_hook "{\"tool_name\":\"Bash\",\"tool_input\":{$many_keys\"command\":\"git push origin qa\"},\"cwd\":\"$ROOT\"}" "$ELSEWHERE")"
+if [[ "${result%%|*}" -eq 2 ]]; then
+  pass "a top-level cwd after 2000 nested cwd keys still roots the hook"
+else
+  fail "a top-level cwd after 2000 nested cwd keys still roots the hook (exit ${result%%|*})"
+fi
+
 echo "qa-guardrail: a marker whose ticket would widen the write area refuses every call"
 for bad in '..' '1234/../..' 'a\b'; do
   printf '%s' "$bad" > "$ROOT/.ultrapowers/qa-active"

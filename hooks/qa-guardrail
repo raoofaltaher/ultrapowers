@@ -134,7 +134,11 @@ find_root_r() {
 find_root() { find_root_r "$1" || return 1; printf '%s' "$REPLY"; }
 
 event=""
-IFS= read -r -d '' event || true
+# read -N takes the pipe in blocks; read -d '' takes it one byte per call, 2 s per MB on Windows.
+# NUL bytes are dropped (the bridge ends the event with one; JSON escapes any other).
+ev_chunk=""
+while IFS= read -r -N 1048576 ev_chunk; do event+="$ev_chunk"; done
+event+="$ev_chunk"
 
 # --- Fast path: is a run active? The scan starts from ULTRAPOWERS_RUN_DIR when it is set, else
 # from the process cwd; then the event's TOP-LEVEL cwd alone is a further start. A key nested
@@ -180,17 +184,32 @@ else
     # A superset filter with builtins only: every "cwd" string and every first "workspace_roots"
     # entry in the text, the nested ones too. Only when one of them leads to a marker are the real
     # top-level fields read, and only they count.
-    rest="$event"
+    # Linear and bounded: the scan reads at most the first 256 KB of the event and 64 candidates,
+    # and each match advances by an offset (a ${rest#*match} strip is quadratic in bash, and a hook
+    # killed at its timeout lets the call through on some harnesses). Past either bound the filter
+    # cannot rule a run out, so the top-level fields are read through node as on a hit.
+    scan_cap=262144
+    rest="${event:0:$scan_cap}"
+    over_cap=""
+    [ "${#event}" -gt "$scan_cap" ] && over_cap=1
     cwd_re='"(cwd|workspace_roots)"[[:space:]]*:[[:space:]]*\[?[[:space:]]*"([^"]*)"'
     hit=""
+    n_cand=0
     while [[ "$rest" =~ $cwd_re ]]; do
-      rest="${rest#*"${BASH_REMATCH[0]}"}"
+      n_cand=$((n_cand + 1))
+      if [ "$n_cand" -gt 64 ]; then over_cap=1; break; fi
+      m="${BASH_REMATCH[0]}"
       candidate="${BASH_REMATCH[2]}"
+      pre="${rest%%"$m"*}"
+      rest="${rest:$((${#pre} + ${#m}))}"
       [ -n "$candidate" ] || continue
       norm_path_r "$candidate"
       if find_root_r "$REPLY"; then hit=1; break; fi
     done
     PROFILE=""
+    # Past the bound with no node the event cannot be read: an inert session must not depend on
+    # node, so the call goes on to the CURSOR_PROJECT_DIR start and, failing that, is allowed.
+    if [ -z "$hit" ] && [ -n "$over_cap" ] && command -v node >/dev/null 2>&1; then hit=1; fi
     if [ -n "$hit" ]; then
       command -v node >/dev/null 2>&1 || deny "node is required to read the event of a call that names a run directory, and is not on PATH"
       ef_src="${BASH_SOURCE[0]}"
