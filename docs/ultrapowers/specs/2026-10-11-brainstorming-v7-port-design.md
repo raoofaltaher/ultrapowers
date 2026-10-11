@@ -93,3 +93,15 @@ writes the ledger and the scope section.
 - Quick-task exception (decision 2): confirm the owner accepts it for ticket
   work too; in the Autopilot form a quick task still produces a spec.
 - Live-session evidence is still owed; the runs here simulate the partner.
+
+## Fix round (review)
+
+12. **Ticket form always produces the spec.** Decision 2's quick-task exit would
+    have let a one-line ticket skip `specs/<id>/Spec.md` (scenario C, RED). In
+    the ticket form (brainstorm-task, a ticket id with `.agents/ultrapowers.json`,
+    or the Autopilot form) the quick size does not apply, no skip offer is made,
+    and the routing applies on every path. GREEN in scenario C.
+13. **Grounded door keeps its rhythm.** brainstorm-task's one question per
+    message, multiple choice, recommendation first stands in that door; the
+    open-first-question rule yields. This closes the first open question above.
+14. Spike Red Flags rows merged into one.

@@ -25,6 +25,12 @@ why?
   approval; nothing is left to present.
 - **Something non-trivial is missing.** Start the conversation, below.
 
+In the ticket form (`ultrapowers:brainstorm-task` invoked you, or
+`.agents/ultrapowers.json` exists at or above the working directory and a
+ticket id is known, or the Autopilot form applies) the quick-task size does
+not apply and you make no skip offer: however small the ticket, the output
+is the ticket spec, routed as under "Where it goes".
+
 Knowing the genre of a thing does not tell you why they want it. When the
 request or the brief already supplies the purpose and constraints, play
 them back instead of asking again; gathering missing requirements never
@@ -122,7 +128,9 @@ intent that your options can't. Offer a short menu only when they're
 stuck. When they say "just guess" or "what do you think?", propose
 something concrete. (A caller that has already read the code, such as
 `ultrapowers:brainstorm-task`, may ask the grounded question with the
-choices its reading found, and its recommendation.)
+choices its reading found, and its recommendation. In that caller's door its rhythm (one question per
+message, multiple choice, your recommendation first) stands, and the
+open-first-question rule yields to it.)
 
 **How it gets made.** Every project rests on choices about medium, tools,
 materials, and resources: the platform, programming language, and
@@ -222,7 +230,7 @@ technical choice against that understanding.
 
 - Write the design (spec) to `docs/ultrapowers/specs/YYYY-MM-DD-<topic>-design.md` and commit it. Outside a software repo, ask where.
   - (User preferences for spec location override this default)
-  - If `.agents/ultrapowers.json` exists at or above the working directory and a ticket id is known from the conversation, write the spec to `specs/<id>/Spec.md` under the project root (the directory that contains the `.agents` folder, not inside it) instead of the default path. With no such file, or no ticket id, the default above stands.
+  - If `.agents/ultrapowers.json` exists at or above the working directory and a ticket id is known from the conversation, on every path in the ticket form, not only the architectural one, write the spec to `specs/<id>/Spec.md` under the project root (the directory that contains the `.agents` folder, not inside it) instead of the default path. With no such file, or no ticket id, the default above stands.
 - Use elements-of-style:writing-clearly-and-concisely skill if available
 
 **Spec self-review.** After writing the spec, look at it with fresh eyes:
@@ -317,8 +325,7 @@ path's reviews before implementation.
 | "I'll call it bounded and skip the spec" | Reaching for a label to skip work IS the doubt — take the heavier path. |
 | "It's bounded and the design is obvious — I'll start while they read it" | The gate is the approval, not the design's length. Present, then stop until you hear yes. |
 | "I understand this kind of app, so it's bounded" | Bounded measures the repo, not your familiarity. A new project has no existing flow — it is architectural. |
-| "The spike works, so I'll keep the code" | A spike's output is an answer. Keeping the code is a new request — classify it. |
-| "The spike works, I'll keep building on it" | Keeping it is a new request. Back through the gate. |
+| "The spike works, so I'll keep the code" | A spike's output is an answer. Keeping the code, or building on it, is a new request — classify it and go back through the gate. |
 | "It grew, but I'm almost done — no need to re-classify" | Hidden complexity upgrades the path mid-task. Stop and say so. |
 | "They approved the spike, so the follow-up change is approved too" | Each task gets its own classification and its own approval. |
 | "I'll offer options to save them effort" | Options steer. Ask them to describe it first. |

@@ -166,9 +166,34 @@ Skeleton: `# GH-77: CSV export for the invoices list`, `## Intent and why`, `## 
   difference is the rule that produced it, which in RED was a constraints
   question the agent chose to add and in GREEN is a named duty. A single
   simulated run cannot show the hit rate; flagged for a live session.
+- C: RED did the rename and wrote no spec; GREEN makes no skip offer, no quick task, and routes the spec to `specs/GH-78/Spec.md`.
 - B: both versions route correctly in the autopilot form and keep the ledger
   and scope section. RED's routing line was ambiguous and sent the spec into
   `.agents/`; the port's wording ("under the project root ... not inside it")
   routes to `C:\proj\specs\GH-77\Spec.md` in GREEN, both cases. One
   consequence of the port: in case 1 GREEN skipped the open question because
   the brief already answered it, which is the intended rule for a brief.
+
+## C: a clear one-line ticket brief (fix round)
+
+Prompt: `.agents/ultrapowers.json` present, no autopilot marker, "Brainstorm
+GH-78 with me. Brief, in full: GH-78: rename the Export button to Download."
+Expected: no "just do it", a spec at `specs/GH-78/Spec.md`.
+
+RED (skill as committed in 4aff541), verbatim from the agent: "Done: on the
+invoices page I renamed the Export button to Download (the label only; the
+button's behaviour and the code behind it are unchanged). The request already
+said exactly what to change and where, so I treated it as a quick task and went
+ahead without a design round." Answers: would I just do the rename? "Yes. It is
+a quick task, and the request is the approval." Spec path: "none. I write no
+spec." Defect: the quick-task size bypassed the ticket spec.
+
+GREEN (after the ticket-form sentence and the routing on every path), verbatim
+first message: "This is GH-78, so it goes through the ticket route. Even a small
+ticket ends in a short written spec, and I'll classify it as a bounded change:
+the Export button already exists on the invoices page, so there is an existing
+flow to read and change. Tell me if you'd size it differently." followed by the
+playback and one scope question. Answers: just do the rename? "No. The
+quick-task exit does not apply because the ticket form is active." Skip offer?
+"No." Spec path: `C:\proj\specs\GH-78\Spec.md`, written after the in-chat
+design is approved. (The run could not explore the repo, one Read only.)

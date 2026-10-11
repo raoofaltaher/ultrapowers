@@ -36,3 +36,10 @@ Expected with the ported skill: case 1 writes `C:\proj\specs\GH-77\Spec.md`
 nothing, writes the same path, and the spec carries `## Assumption ledger`
 (`| # | Question | Chosen answer | Confidence | Reason |`, lowest confidence
 first) and `## Repositories in scope`.
+
+## C: a clear one-line ticket brief
+
+Setup: `.agents/ultrapowers.json` present, no autopilot marker, ticket GH-78,
+brief in full "rename the Export button to Download", the button exists.
+Expected: no quick-task "just do it", no skip offer, a spec at
+`specs/GH-78/Spec.md` once the in-chat design is approved.
