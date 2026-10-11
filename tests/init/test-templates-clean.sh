@@ -128,11 +128,13 @@ else
 fi
 
 changes_at() { node -e 'const c=require(process.argv[1]);process.stdout.write(String(c[process.argv[2]]))' "$TEMPLATES/CHANGES.json" "$1"; }
-for target in AGENTS.md CLAUDE.md; do
-  if [ "$(changes_at "$target")" = "2.0.0" ]; then
-    pass "CHANGES.json records $target at 2.0.0"
+for entry in AGENTS.md:2.0.0 CLAUDE.md:2.0.2 .claude/settings.json:2.0.2; do
+  target="${entry%:*}"
+  version="${entry##*:}"
+  if [ "$(changes_at "$target")" = "$version" ]; then
+    pass "CHANGES.json records $target at $version"
   else
-    fail "CHANGES.json records $target at 2.0.0"
+    fail "CHANGES.json records $target at $version"
   fi
 done
 

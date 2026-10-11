@@ -475,6 +475,21 @@ test('the Claude Code settings template allows every skill the plugin ships', ()
   assert.deepEqual(missing, [], `settings template misses Skill() entries for: ${missing.join(', ')}`);
 });
 
+test('the rendered Claude Code settings deny reads of secret files and allow no command that writes or executes', () => {
+  const root = tmpRepo();
+  run(['scaffold', '--root', root, '--name', 'Sec', '--date', '2026-10-11', '--platform', 'linux'], { env: { CONTEXT7_API_KEY: '' } });
+  const settings = JSON.parse(fs.readFileSync(path.join(root, '.claude', 'settings.json'), 'utf8'));
+  const deny = settings.permissions.deny;
+  assert.ok(Array.isArray(deny), 'permissions.deny exists');
+  for (const rule of ['Read(**/.agents/mcp-secrets.env)', 'Read(**/.env)', 'Read(**/.env.*)', 'Read(~/.ssh/**)']) {
+    assert.ok(deny.includes(rule), `deny has ${rule}`);
+  }
+  const allow = settings.permissions.allow;
+  for (const risky of ['Bash(git log:*)', 'Bash(git diff:*)', 'Bash(git show:*)', 'Bash(go build:*)', 'Bash(go test:*)']) {
+    assert.equal(allow.includes(risky), false, `${risky} is not pre-approved`);
+  }
+});
+
 test('the tasks README describes the brief new-task writes', () => {
   const readme = fs.readFileSync(path.join(repoRoot, 'templates', 'tasks', 'README.md.tmpl'), 'utf8');
   for (const section of ['Context', 'Definition of Ready', 'Definition of Done', 'Related Documentation']) {
