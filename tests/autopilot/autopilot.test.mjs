@@ -1358,6 +1358,20 @@ test('a spec or plan changed after the approval blocks execute', () => {
   assert.equal(run(ws, ['pr', 'GH-16']).json.error.code, 'wrong-stage');
 });
 
+test('a plan edited after the approval is reported as plan-changed by pr, not as a tampered state', () => {
+  const ws = workspace();
+  throughPlan(ws);
+  approveThenExecute(ws);
+  run(ws, ['end', 'GH-16', 'execute', '--result', JSON.stringify({ ok: true })]);
+  fs.writeFileSync(path.join(ws.root, 'plans', 'GH-16', 'Plan.md'), PLAN(['.', 'backend']));
+  git(ws.root, 'add', '-A');
+  git(ws.root, 'commit', '-q', '-m', 'plan(GH-16): widened the scope');
+  ws.setMap({ ...approvedBy('alice'), ...PR_CREATE });
+  const r = run(ws, ['pr', 'GH-16']);
+  assert.equal(r.json.error.code, 'plan-changed', r.stdout + r.stderr);
+  assert.ok(!ws.calls().some((a) => a[0] === 'pr' && a[1] === 'create'), 'no pull request opens');
+});
+
 test('the packet and the pull request name base commits that are not on origin', () => {
   const ws = workspace({ map: PR_CREATE });
   fs.writeFileSync(path.join(ws.root, 'LOCAL.md'), 'not pushed\n');

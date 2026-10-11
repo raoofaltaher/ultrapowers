@@ -646,8 +646,8 @@ async function runPr(opts) {
   const qaOn = qaConfigured(ctx.marker);
   if (qaOn && !state.qa) throw new AutopilotError('qa-missing', `${opts.id}: QA is configured for this project and no verdict was recorded; no pull request opens without one`);
   await recheckApproval(ctx, state, await derivedMode(ctx, opts));
-  trustState(ctx, opts.id, state);
   if (planChangedSince(ctx, state)) throw new AutopilotError('plan-changed', `${opts.id}: specs/${opts.id} or plans/${opts.id} changed after the approval at ${state.approval.docsTip}; the gate must approve them again`);
+  trustState(ctx, opts.id, state);
   const lock = acquireLock(ctx.root, opts.id, opts.door, opts.pid);
   if (!lock.ok) throw new AutopilotError('locked', `${opts.id} is being run by the ${lock.door} door`);
   try {
