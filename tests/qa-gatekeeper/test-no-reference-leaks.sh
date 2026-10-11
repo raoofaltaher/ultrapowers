@@ -57,7 +57,7 @@ scan() {
 
 scan "no email addresses" \
   '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' \
-  '@example\.(com|org|net)$|<[^>]*@[^>]*>'
+  '@example\.(com|org|net|invalid)$|<[^>]*@[^>]*>'
 
 scan "no IPv4 addresses outside loopback and TEST-NET-1" \
   '([0-9]{1,3}\.){3}[0-9]{1,3}' \
