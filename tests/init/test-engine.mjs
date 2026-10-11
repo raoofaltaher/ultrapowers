@@ -485,7 +485,7 @@ test('the rendered Claude Code settings deny reads of secret files and the --out
     'Read(**/.agents/mcp-secrets.env)', 'Read(**/.env)', 'Read(**/.env.local)', 'Read(**/.env.*.local)', 'Read(**/.env.production)',
     'Read(~/.ssh/**)', 'Read(~/.aws/**)',
     'Bash(git log *--ou*)', 'Bash(git diff *--ou*)', 'Bash(git show *--ou*)',
-    'Bash(git diff *--no-index*)', 'Bash(git blame *--contents*)', 'Bash(git show *:.env*)', 'Read(**/.env.*)',
+    'Bash(git diff *--no-index*)', 'Bash(git blame *--contents*)', 'Bash(git show *:.env*)', 'Read(**/.env.development)', 'Read(**/.env.test)', 'Read(**/.env.staging)', 'Read(**/.env.secret)',
     'Read(~/.config/gh/**)', 'Read(~/.config/glab-cli/**)', 'Read(~/.git-credentials)', 'Read(~/.netrc)', 'Read(~/.npmrc)', 'Read(~/.gnupg/**)', 'Read(~/.kube/**)', 'Read(~/.docker/config.json)',
   ]) {
     assert.ok(deny.includes(rule), `deny has ${rule}`);
@@ -494,9 +494,9 @@ test('the rendered Claude Code settings deny reads of secret files and the --out
   for (const kept of ['Bash(git log:*)', 'Bash(git diff:*)', 'Bash(git show:*)', 'Bash(go build:*)', 'Bash(go test:*)']) {
     assert.ok(allow.includes(kept), `${kept} stays pre-approved`);
   }
-  // The only allow added is the example env file; the others were not widened.
-  assert.equal(allow.filter((r) => !r.startsWith('Skill(')).length, 27, 'the non-skill allow list is the original 26 entries plus Read(**/.env.example)');
-  assert.ok(allow.includes('Read(**/.env.example)'), 'the example env file has an allow entry');
+  // No allow was added; the example env file stays readable because no deny names it.
+  assert.equal(allow.filter((r) => !r.startsWith('Skill(')).length, 26, 'the non-skill allow list is the original 26 entries');
+  assert.equal(allow.includes('Read(**/.env.example)'), false); assert.equal(deny.includes('Read(**/.env.*)'), false, 'example env files stay readable');
 });
 
 // Each harness whose official docs describe a project-level read deny gets one; the others get none
