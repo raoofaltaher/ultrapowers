@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"PYTHONUNBUFFERED=1 python3 x.py"}}

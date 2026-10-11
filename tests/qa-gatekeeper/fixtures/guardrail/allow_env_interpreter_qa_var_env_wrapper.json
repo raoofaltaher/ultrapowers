@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"env QA_USER=u TZ=UTC bash x.sh"}}

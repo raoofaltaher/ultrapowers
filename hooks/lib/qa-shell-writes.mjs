@@ -36,6 +36,13 @@ const psqlTokens = (text) => (String(text).match(PSQL_TOKEN_RE) || []).length;
 const PG_TOOLS = new Set(['pgcli', 'usql', 'dropdb', 'createdb', 'createuser', 'dropuser', 'pg_restore', 'pg_dump', 'pg_dumpall', 'pgbench', 'vacuumdb', 'reindexdb', 'clusterdb', 'pg_ctl', 'pg_basebackup', 'pg_resetwal', 'pg_upgrade', 'pg_rewind']);
 // Variables that make psql read a file or a service entry the analyzer cannot see.
 const PSQL_ENV = new Set(['PSQLRC', 'PGSERVICE', 'PGSERVICEFILE', 'PGOPTIONS', 'PGPASSFILE', 'PGSYSCONFDIR']);
+// Programs that read their environment before the command they are given: shells and interpreters.
+const ENV_SENSITIVE_PROGRAMS = /^(python[0-9.]*|node(js)?|ruby|perl|php[0-9.]*|lua[0-9.]*|pwsh|powershell)$/;
+// The only variables a prefix or an env wrapper may set for one of them.
+const SAFE_ENV_RE = /^(CI|NODE_ENV|DEBUG|LANG|LC_[A-Z_]+|LANGUAGE|TZ|TERM|FORCE_COLOR|NO_COLOR|PAGER|GIT_PAGER|PYTHONDONTWRITEBYTECODE|PYTHONUNBUFFERED|PYTHONIOENCODING|NODE_NO_WARNINGS|npm_config_loglevel|ULTRAPOWERS_[A-Z_]+|QA_[A-Z_]+)$/;
+// Names that move a shell's init files, its program lookup or its loaded code, or whose value is executed:
+// judged when assigned or exported earlier in the command (a plain assignment of an inherited name still changes it).
+const EARLIER_ENV_RE = /^(HOME|ENV|BASH_ENV|ZDOTDIR|XDG_[A-Z_]+|SHELL|PATH|LD_PRELOAD|LD_LIBRARY_PATH|LD_AUDIT|DYLD_[A-Z_]+|SHELLOPTS|PS4|PROMPT_COMMAND|BASH_FUNC_[A-Za-z_]+(%%)?|PERL5OPT|PYTHONSTARTUP|NODE_OPTIONS|RUBYOPT|PYTHONPATH|PYTHONHOME|NODE_PATH|RUBYLIB|PERL5LIB)$/;
 const progName = (v) => String(v || '').replace(/\\/g, '/').split('/').pop().toLowerCase().replace(/\.exe$/, '');
 const GIT_READ_ONLY = new Set(['status', 'diff', 'log', 'show', 'rev-parse', 'ls-files', 'ls-tree', 'rev-list', 'cat-file',
   'blame', 'describe', 'grep', 'shortlog', 'merge-base', 'for-each-ref', 'name-rev', 'show-ref', 'help', 'version', 'whatchanged']);
@@ -622,9 +629,9 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       let pgUser = walkEnv.pgUser;
       let psqlEnv = walkEnv.psqlEnv;
       for (const [n, v] of assigns) { if (n === 'PGUSER') pgUser = v; if (PSQL_ENV.has(n)) psqlEnv = true; }
-      // The names set or unset for this command by a prefix or an env wrapper (env NAME=x, env -u NAME), or
-      // assigned or exported earlier: a shell program judges them (INIT_VAR_RE) before it runs anything.
-      const shellEnvNames = new Set([...assigns.map(([m]) => m), ...vars.keys()]);
+      // The names set or unset for this command by a prefix or an env wrapper (env NAME=x, env -u NAME);
+      // a shell or interpreter program judges them (SAFE_ENV_RE) before it runs anything.
+      const shellEnvNames = new Set(assigns.map(([m]) => m));
       // A word for analyzePsql: its value, PSQL_VAR + NAME for a pure $NAME, else PSQL_DYN.
       const psqlWord = (x) => {
         if (x.v !== null) return x.v;
@@ -821,6 +828,13 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       }
       if (PG_TOOLS.has(prog)) return deny(`${prog} is not run during ${runKind}; lane 4 reaches the database through psql -c as the read-only role only`);
       const rest = args.slice(1);
+      // A shell or an interpreter reads its environment before it runs the command: a variable set for it by a
+      // prefix, an env assignment or env -u is refused unless it is on a short list of harmless ones. A name
+      // assigned or exported earlier in the command is judged by the list of names known to run code.
+      if (SHELLS.has(prog) || ENV_SENSITIVE_PROGRAMS.test(prog)) {
+        if ([...shellEnvNames].some((n) => !SAFE_ENV_RE.test(n))) return deny('a variable set for a shell or interpreter can make it run code before the command; only the listed harmless variables pass');
+        if ([...vars.keys()].some((n) => EARLIER_ENV_RE.test(n))) return deny('a shell init command or rc file runs code the analyzer does not see');
+      }
       const plain = rest.filter((x) => !(x.v || '').startsWith('-'));
       const interpKind = interpreterKind(prog);
       if (interpKind) {
@@ -987,13 +1001,6 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
           return false;
         };
         if (rest.some((x) => x.v !== null && initOpt(x.v))) return deny(INIT_CODE);
-        // A variable that moves where a shell reads its rc and profile files (HOME, ENV, BASH_ENV, ZDOTDIR, XDG_*),
-        // which shell it is or which program it finds (SHELL, PATH), or what is loaded into it (LD_PRELOAD,
-        // LD_LIBRARY_PATH, DYLD_*): set, exported or unset for a shell program, whatever the shell.
-        // Also the variables whose value the shell or an interpreter executes: SHELLOPTS, PS4, PROMPT_COMMAND,
-        // exported functions (BASH_FUNC_x%%), LD_AUDIT, PERL5OPT, PYTHONSTARTUP, NODE_OPTIONS, RUBYOPT.
-        const INIT_VAR_RE = /^(HOME|ENV|BASH_ENV|ZDOTDIR|XDG_[A-Z_]+|SHELL|PATH|LD_PRELOAD|LD_LIBRARY_PATH|LD_AUDIT|DYLD_[A-Z_]+|SHELLOPTS|PS4|PROMPT_COMMAND|BASH_FUNC_[A-Za-z_]+(%%)?|PERL5OPT|PYTHONSTARTUP|NODE_OPTIONS|RUBYOPT)$/;
-        if ([...shellEnvNames].some((n) => INIT_VAR_RE.test(n))) return deny(INIT_CODE);
         // -c may be bundled with other short flags (-lc, -ec, -xc); the next word is the command.
         // fish takes the long spelling too: --command CMD, --command=CMD.
         const eqi = rest.findIndex((x) => x.v !== null && x.v.startsWith('--command='));

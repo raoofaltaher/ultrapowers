@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"env NODE_PATH=/tmp node x.js"}}

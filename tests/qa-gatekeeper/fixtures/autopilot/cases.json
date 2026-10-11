@@ -470,5 +470,17 @@
   {"name":"allow_shell_init_env_unset_other_zsh","event":{"tool_name":"Bash","tool_input":{"command":"env -u DEBUG zsh -c 'ls reviews'"}}},
   {"name":"deny_shell_init_ps4_command_substitution","event":{"tool_name":"Bash","tool_input":{"command":"PS4='$(rm x)' bash -x s.sh"}}},
   {"name":"deny_shell_init_node_options_sh","event":{"tool_name":"Bash","tool_input":{"command":"NODE_OPTIONS=--require=/tmp/x.js sh -c ls"}}},
-  {"name":"deny_shell_init_bash_func_env_wrapper","event":{"tool_name":"Bash","tool_input":{"command":"env BASH_FUNC_ls%%='() { rm x; }' bash -c ls"}}}
+  {"name":"deny_shell_init_bash_func_env_wrapper","event":{"tool_name":"Bash","tool_input":{"command":"env BASH_FUNC_ls%%='() { rm x; }' bash -c ls"}}},
+  {"name":"deny_env_interpreter_pythonpath","event":{"tool_name":"Bash","tool_input":{"command":"PYTHONPATH=/tmp python3 x.py"}}},
+  {"name":"deny_env_interpreter_unlisted_name_bash","event":{"tool_name":"Bash","tool_input":{"command":"FOO=1 bash x.sh"}}},
+  {"name":"deny_env_interpreter_node_require_env","event":{"tool_name":"Bash","tool_input":{"command":"env NODE_PATH=/tmp node x.js"}}},
+  {"name":"deny_env_interpreter_perl_lib","event":{"tool_name":"Bash","tool_input":{"command":"PERL5LIB=/tmp perl x.pl"}}},
+  {"name":"deny_env_interpreter_ruby_wrapper","event":{"tool_name":"Bash","tool_input":{"command":"env -i RUBYLIB=/tmp ruby x.rb"}}},
+  {"name":"deny_env_interpreter_unset_path","event":{"tool_name":"Bash","tool_input":{"command":"env -u PATH python3 x.py"}}},
+  {"name":"deny_env_interpreter_exported_pythonpath","event":{"tool_name":"Bash","tool_input":{"command":"export PYTHONPATH=/tmp; python3 x.py"}}},
+  {"name":"allow_env_interpreter_lc_all_bash","event":{"tool_name":"Bash","tool_input":{"command":"LC_ALL=C bash x.sh"}}},
+  {"name":"allow_env_interpreter_node_env","event":{"tool_name":"Bash","tool_input":{"command":"NODE_ENV=test node x.js"}}},
+  {"name":"allow_env_interpreter_pythonunbuffered","event":{"tool_name":"Bash","tool_input":{"command":"PYTHONUNBUFFERED=1 python3 x.py"}}},
+  {"name":"allow_env_interpreter_qa_var_env_wrapper","event":{"tool_name":"Bash","tool_input":{"command":"env QA_USER=u TZ=UTC bash x.sh"}}},
+  {"name":"allow_env_interpreter_not_an_interpreter","event":{"tool_name":"Bash","tool_input":{"command":"FOO=1 ls reviews"}}}
 ]

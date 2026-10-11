@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"NODE_ENV=test node x.js"}}
