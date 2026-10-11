@@ -475,9 +475,12 @@ function inlineInterpreterReason(kind, prog, rest, { inPlaceOk = false } = {}) {
 // built-in that no script of the project can shadow: npm and pnpm audit (npm only, with
 // --package-lock-only) and ls/list; pip and pip3 list and freeze; cargo audit and tree --locked;
 // dotnet list package --vulnerable --no-restore; go nothing; yarn, bun, uv, poetry, pipenv and pdm
-// nothing (they run a script of the project for a word they do not know). Every other subcommand, and
+// nothing (they run a script of the project for a word they do not know). composer, bundle, gem, pipx,
+// corepack, brew, apt, apt-get, choco and winget are refused for every subcommand. The listing forms take
+// a fixed option set (nothing that names an index, a registry or a file). Every other subcommand, and
 // any program started through a package runner (npx, npm exec, uvx, pipx run ...), is refused with
-// HUNT_NO_INSTALL. Test commands (and `git worktree add`, in the git branch of simple()) are refused
+// HUNT_NO_INSTALL. python -m pip and ensurepip are refused, and the -m module is found the way the
+// interpreter rule walks the options (pyModule). Test commands (and `git worktree add`, in the git branch of simple()) are refused
 // with HUNT_NO_SUITE. pip-audit, osv-scanner, gh and glab are allowed only in the forms below. A program
 // outside these families is left to the QA rules. The hunters run the tools with no variable prefix, so
 // SAFE_ENV_RE (the QA variable gate) gets no addition: NPM_CONFIG_AUDIT_LEVEL=high npm audit is refused,
@@ -494,6 +497,9 @@ const HUNT_AUDIT_TOOLS = new Set(['osv-scanner', 'pip-audit', 'cargo-audit']);
 const HUNT_TEST_RUNNERS = new Set(['pytest', 'py.test', 'vitest', 'jest', 'mvn', 'gradle', 'gradlew', 'phpunit']);
 const HUNT_TEST_MODULES = new Set(['pytest', 'unittest', 'nose', 'nose2', 'tox']);
 const NPM_AUDIT_LEVELS = /^(info|low|moderate|high|critical|none)$/;
+// Installers outside the families below: refused for every subcommand (and a bare call), the way the package
+// managers are. A read-only form for one of them (composer audit, bundler-audit) would be a later allow-form.
+const HUNT_INSTALLERS = new Set(['composer', 'bundle', 'gem', 'pipx', 'corepack', 'brew', 'apt', 'apt-get', 'choco', 'winget']);
 const HUNT_PY_MANAGERS = /^(pip[0-9]*(\.[0-9]+)*|uv|poetry|pipenv|pdm)$/;
 const INFO_FLAGS = ['--version', '-v', '-V', '--help', '-h'];
 
@@ -540,22 +546,23 @@ export function huntCheck(prog0, words, { viaRunner = false, interpreter = '' } 
   const notListed = (what, forms) => refuse(`${what} is not on the hunt's list; ${HUNT_NO_INSTALL} (the forms it runs: ${forms})`);
   if (HUNT_TEST_RUNNERS.has(prog)) return refuse(HUNT_NO_SUITE);
   if ((prog === 'make' || prog === 'gmake') && before.some((v) => v === 'test' || v === 'check')) return refuse(HUNT_NO_SUITE);
+  if (HUNT_INSTALLERS.has(prog)) return refuse(`${prog} installs software or runs a script of the project; the hunt installs nothing (${prog} is refused for every subcommand)`);
   if (viaRunner && HUNT_AUDIT_TOOLS.has(prog)) return refuse(`${prog} started through a package runner installs it first; the hunt runs the audit tools that are already installed (${prog} on PATH)`);
   if (viaRunner) return refuse(`${prog} started through a package runner (npx, npm exec, uvx, pipx run ...) is downloaded and run; ${HUNT_NO_INSTALL}`);
 
   if (interpreter === 'python') {
-    const m = words.findIndex((v) => v !== null && (v === '-m' || /^-m.+/.test(v)));
-    if (m !== -1) {
-      const mod = words[m] === '-m' ? words[m + 1] : words[m].slice(2);
-      if (mod === null || mod === undefined) return refuse('python -m with a module built from a variable cannot be verified during the hunt');
-      if (HUNT_TEST_MODULES.has(mod)) return refuse(HUNT_NO_SUITE);
-      if (mod === 'pip') return refuse(`python -m pip is not on the hunt's list; ${HUNT_NO_INSTALL} (python -m pip_audit is the form it runs)`);
-      if (mod === 'pip_audit') {
-        // An interpreter option before -m may take a value (-W ignore, -X dev) that would shift the words after it.
-        if (m !== 0) return refuse('python options before -m pip_audit cannot be verified during the hunt; write python -m pip_audit first');
-        return huntPipAudit(words.slice(words[m] === '-m' ? m + 2 : m + 1), refuse, allow);
-      }
+    const pm = pyModule(words);
+    if (pm === null) return null;
+    if (pm.unreadable) return refuse('the options of python before its script or module cannot be read during the hunt; write python -m <module> or python <script> with plain flags');
+    const mod = pm.mod;
+    if (HUNT_TEST_MODULES.has(mod)) return refuse(HUNT_NO_SUITE);
+    if (/^(pip|ensurepip)(\.|$)/.test(mod)) return refuse(`python -m ${mod} is not on the hunt's list; ${HUNT_NO_INSTALL} (python -m pip_audit is the form it runs)`);
+    if (mod === 'pip_audit') {
+      // An interpreter option that takes a value (-W ignore, -X dev) before -m would shift the words after it.
+      if (!pm.pure) return refuse('python options before -m pip_audit cannot be verified during the hunt; write python -m pip_audit first');
+      return huntPipAudit(words.slice(pm.rest), refuse, allow);
     }
+    if (mod.startsWith('pip_audit')) return refuse(`python -m ${mod} is not on the hunt's list; ${HUNT_NO_INSTALL}`);
     return null;
   }
 
@@ -601,7 +608,7 @@ export function huntCheck(prog0, words, { viaRunner = false, interpreter = '' } 
       if (!lockOnly) return refuse('npm audit must run with --package-lock-only during the hunt: without it npm reads the installed tree, which the hunt does not build (npm audit --package-lock-only --json)');
       return allow();
     }
-    if (is('list', ['ls'])) return allow();
+    if (is('list', ['ls'])) return huntLsOptions(words.slice(1), prog, refuse, allow);
     return notListed(`${prog} ${sub}`, `${prog} audit${isNpm ? ' --package-lock-only --json' : ''}, ${prog} ls`);
   }
 
@@ -617,7 +624,7 @@ export function huntCheck(prog0, words, { viaRunner = false, interpreter = '' } 
       if (infoOnly(words)) return allow();
       return refuse(`${prog} options before the subcommand cannot be verified during the hunt; write ${prog} <command> first`);
     }
-    if (sub === 'list' || sub === 'freeze') return allow();
+    if (sub === 'list' || sub === 'freeze') return huntPipListOptions(prog, sub, words.slice(1), refuse, allow);
     return notListed(`${prog} ${sub}`, forms);
   }
 
@@ -698,6 +705,62 @@ export function huntCheck(prog0, words, { viaRunner = false, interpreter = '' } 
     return allow(parsed.valued.filter(([name]) => name === '--output' || name === '--output-file').map(([, , v]) => v));
   }
   return null;
+}
+
+// Finds the `-m` module of a python command the way the interpreter rule (inlineInterpreterReason) walks
+// the options: a short group that holds `m` ends them, and the module is the rest of that group or the
+// next word. Returns null when the command runs a script, reads stdin or only asks for the version, and
+// { unreadable } for what cannot be read (a long option may take a value as its next word, so one is not
+// skipped blindly). `pure`: only value-less flags (-u, -I, -B ...) came before -m, so `rest` (the index of
+// the first word after the module) is where the module's own arguments begin.
+function pyModule(words) {
+  let pure = true;
+  for (let k = 0; k < words.length; k++) {
+    const v = words[k];
+    if (v === null) return { unreadable: true };
+    if (!v.startsWith('-') || v === '-' || v === '--') return null;
+    if (v.startsWith('--')) {
+      if (v === '--version' || v === '--help') return null;
+      return { unreadable: true };
+    }
+    for (let c = 1; c < v.length; c++) {
+      const ch = v[c];
+      if (ch === 'm') {
+        const attached = v.slice(c + 1);
+        if (attached) return { mod: attached, rest: k + 1, pure };
+        if (words[k + 1] === undefined || words[k + 1] === null) return { unreadable: true };
+        return { mod: words[k + 1], rest: k + 2, pure };
+      }
+      if (ch === 'V' || ch === 'h') return null;
+      if ('WXQ'.includes(ch)) { pure = false; if (c === v.length - 1) k += 1; break; }
+      if (!'bBdEiIOqRsSuvx'.includes(ch)) pure = false;
+    }
+  }
+  return null;
+}
+
+// The options a listing form takes, a fixed set: nothing that names an index, a registry or a file.
+function huntLsOptions(args, prog, refuse, allow) {
+  for (let k = 0; k < args.length; k++) {
+    const v = args[k];
+    if (v === null) return refuse(`${prog} ls with an argument built from a variable or substitution cannot be verified; ${HUNT_NO_INSTALL}`);
+    if (v === '--json' || v === '--all' || v === '--prod' || v === '--omit=dev' || /^--depth=[0-9]+$/.test(v)) continue;
+    if (v === '--depth' && args[k + 1] !== undefined && args[k + 1] !== null && /^[0-9]+$/.test(args[k + 1])) { k += 1; continue; }
+    return refuse(`${prog} ls takes only --json, --depth <n>, --all, --prod and --omit=dev during the hunt ("${v}" is not allowed); ${HUNT_NO_INSTALL}`);
+  }
+  return allow();
+}
+
+function huntPipListOptions(prog, sub, args, refuse, allow) {
+  for (let k = 0; k < args.length; k++) {
+    const v = args[k];
+    if (v === null) return refuse(`${prog} ${sub} with an argument built from a variable or substitution cannot be verified; ${HUNT_NO_INSTALL}`);
+    if (v === '--all') continue;
+    if (/^--format=(columns|freeze|json)$/.test(v)) continue;
+    if (v === '--format' && /^(columns|freeze|json)$/.test(args[k + 1] || '')) { k += 1; continue; }
+    return refuse(`${prog} ${sub} takes only --format (columns, freeze or json) and --all during the hunt ("${v}" is not allowed: an index option or --outdated reaches a host, -r reads a file); ${HUNT_NO_INSTALL}`);
+  }
+  return allow();
 }
 
 function huntPipAudit(words, refuse, allow) {
@@ -936,6 +999,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
           if (x.v.startsWith('-')) continue;
           const eq = x.v.indexOf('=');
           const name = eq === -1 ? x.v : x.v.slice(0, eq);
+          if (hunt && !SAFE_ENV_RE.test(name)) return deny(`a variable exported during ${runKind} (${name}) can redirect the audit tools (a host, a registry, a config file); only the listed harmless variables pass`);
           exportedNames.add(name);
           const value = eq === -1 ? (vars.has(name) ? vars.get(name) : undefined) : x.v.slice(eq + 1);
           if (eq !== -1) vars.set(name, value);
