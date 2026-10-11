@@ -1,0 +1,413 @@
+{
+  "repos": [
+    {
+      "repo": "api",
+      "hunts": [
+        {
+          "repo": "api", "lane": "dependencies", "status": "incomplete",
+          "tools": [ { "name": "npm", "version": "11.16.0", "command": "npm audit --package-lock-only --json", "exit": -1, "output": "not run: Permission to use Bash has been denied. No report produced." } ],
+          "findings": [],
+          "cves": [],
+          "discarded": ["lodash 4.17.15 is old and may have advisories fixed in 4.17.21, but without a tool report it is an unverified recollection from memory and is not recorded as a CVE"],
+          "declined": ["Did not retry npm audit through PowerShell after the Bash permission denial; awaiting the user's decision"],
+          "skipped": "npm audit not run (Bash permission denied); osv-scanner, pip-audit and cargo-audit absent and not applicable to an npm manifest",
+          "filesRead": [
+            "skills/vulnerability-hunt/prompts/lane-dependencies.md",
+            "tasks/501/501.md",
+            "specs/501/Spec.md",
+            "api/package.json",
+            "api/package-lock.json"
+          ]
+        },
+        {
+          "repo": "api", "lane": "code", "status": "ok",
+          "tools": [],
+          "findings": [],
+          "cves": [],
+          "discarded": [
+            "package.json scripts.setup runs scripts/setup.sh which pipes a remote install script into sh: supply-chain, owned by the secrets-supply-chain lane",
+            "lodash 4.17.15 pinned in package.json and package-lock.json: outdated library, owned by the dependencies lane; only _.get is used (src/export.js:9), no merge/set/template sink seen"
+          ],
+          "declined": [
+            "Out of scope: src/export.js:11 command injection via req.query.name in exec (server.js:3 -> exportCart -> exec), unauthenticated, likely High; belongs to the hunter covering src/",
+            "Out of scope: hard-coded partner token at src/export.js:5, also echoed in a response header at line 13; secrets lane",
+            "Out of scope: cart.js:3 calls applyDiscount positionally, against the spec's options-object signature (correctness, not security)"
+          ],
+          "skipped": "src/price.js and tests/price.test.js not read (outside the manifest scope and not on the flow from the manifests)",
+          "filesRead": [
+            "tasks/501/501.md",
+            "specs/501/Spec.md",
+            "api/package.json",
+            "api/package-lock.json",
+            "api/src/export.js",
+            "api/src/server.js",
+            "api/src/cart.js",
+            "api/scripts/setup.sh"
+          ],
+          "plan": "code 1: api:package-lock.json, api:package.json"
+        },
+        {
+          "repo": "api", "lane": "code", "status": "ok",
+          "tools": [],
+          "findings": [
+            {
+              "severity": "Medium",
+              "confidence": 7,
+              "category": "Insecure installation / remote code execution via unverified download",
+              "title": "setup.sh pipes a remote install script into sh with no integrity check or version pin",
+              "file": "scripts/setup.sh",
+              "line": 3,
+              "description": "The script downloads install.sh from https://get.example-reports.dev and executes it immediately with sh. The content is neither pinned to a version nor verified by checksum or signature, so whatever the remote host serves at run time is executed with the invoking user's privileges.",
+              "attackPath": "package.json:6 (npm run setup -> sh scripts/setup.sh) -> scripts/setup.sh:3 (curl -fsSL https://get.example-reports.dev/install.sh | sh) -> arbitrary remote script executed locally. The attacker must control the served content: a compromise of get.example-reports.dev or its CDN or DNS, or a mis-issued certificate.",
+              "exploit": "An attacker who controls the content at the URL serves a malicious install.sh. Any developer or provisioning job that runs npm run setup on a fresh box executes it. This gives code execution, with access to the user's credentials, source and CI tokens. Not run.",
+              "mitigationExamined": "HTTPS is used and -f makes curl fail on HTTP errors, but neither authenticates the script content. No checksum, signature, pinned version or download-then-inspect step exists. The URL is a literal in the script, so there is no user-controlled URL. The only caller is the setup npm script.",
+              "fix": "Download a versioned artifact to a temp file, verify a pinned SHA-256 or signature, then execute it. Better, install the tool through a package manager with a lockfile (npm, with the version and integrity recorded in package-lock.json), or vendor the installer into the repository. At minimum, split the pipe into a download step, a checksum check and an execute step, and pin the version."
+            }
+          ],
+          "cves": [],
+          "discarded": [
+            "No injection path in setup.sh: no variables, arguments or untrusted input are interpolated into the command line.",
+            "Whether get.example-reports.dev is trustworthy or compromised could not be determined and is out of scope for a read-only code read."
+          ],
+          "declined": [
+            "Reputation or ownership of the get.example-reports.dev domain: not checked, since the script and network fetches were not to be run."
+          ],
+          "skipped": "",
+          "filesRead": [
+            "scripts/setup.sh",
+            "tasks/501/501.md",
+            "specs/501/Spec.md"
+          ],
+          "plan": "code 2: api:scripts/setup.sh"
+        },
+        {
+          "repo": "api", "lane": "code", "status": "ok",
+          "tools": [],
+          "findings": [
+            {
+              "severity": "High", "confidence": 7, "category": "Command injection",
+              "title": "Unsanitised query parameter concatenated into a shell command passed to exec",
+              "file": "src/export.js", "line": 11,
+              "description": "req.query.name is concatenated into a shell command string and run through child_process.exec, which spawns a shell. Shell metacharacters in name (; | & $() backticks, newlines) are interpreted.",
+              "attackPath": "Entry: GET /export?name=... handled by exportCart (src/export.js:8; invoked from src/server.js:3). Source: req.query.name (src/export.js:10). Sink: exec('zip -q /tmp/' + name + ...) (src/export.js:11). No validation between source and sink.",
+              "exploit": "An unauthenticated request with a name containing shell metacharacters makes the shell run the injected command with the server process's privileges (code execution). Described only, never run.",
+              "mitigationExamined": "No validation, escaping or allow-list on name; exec is used rather than execFile, so a shell is involved. No auth middleware is visible in this scope. Reachability depends on an Express-style layer providing req.query and res.status/set/json: server.js as written uses bare node:http, where req.query is undefined and the handler throws first, so exploitation needs that framework wiring.",
+              "fix": "Do not build a shell string. Use child_process.execFile('zip', ['-q', outPath, inPath]) with no shell, or a zip library. Validate name against a strict allow-list such as /^[A-Za-z0-9_-]{1,64}$/, resolve the paths and confirm they stay under /tmp and /var/reports."
+            },
+            {
+              "severity": "High", "confidence": 8, "category": "Sensitive data exposure",
+              "title": "Partner API bearer token returned to the requester in the response Authorization header",
+              "file": "src/export.js", "line": 13,
+              "description": "On success the handler calls res.set('Authorization', 'Bearer ' + PARTNER_API_TOKEN) on the response to the incoming request, so the partner credential is sent to whoever called /export. The comment says the result is sent to the partner, but no outbound request is made.",
+              "attackPath": "Entry: GET /export (src/export.js:8) -> zip succeeds (src/export.js:11-12) -> res.set('Authorization', 'Bearer ' + PARTNER_API_TOKEN) (src/export.js:13) -> res.json (src/export.js:14), delivered to the caller.",
+              "exploit": "Any client that triggers a successful export reads the Authorization header of the reply and gets the partner token, then uses it against the partner API. Value not reproduced here.",
+              "mitigationExamined": "No authentication or role check guards the route, so the caller need not be a trusted party. The token is a hard-coded constant, so there is no per-caller scoping or redaction. Reachability depends on the same framework wiring as the exec finding.",
+              "fix": "Never put the partner credential on a response to the caller. If the partner must receive the report, make a server-side outbound request that attaches the token. Load the token from a secret store or environment (the hard-coded literal is the secrets lane's) and rotate the current one, since it is exposed in source."
+            },
+            {
+              "severity": "Medium", "confidence": 6, "category": "Missing authorization / path traversal",
+              "title": "Export route has no authentication or ownership check, and name is used as a file path",
+              "file": "src/export.js", "line": 10,
+              "description": "The handler has no authentication and does not tie the requested report to the caller: any caller picks name and the server zips /var/reports/<name>.csv. name is also used unsanitised in both file paths, so ../ segments leave the intended directories.",
+              "attackPath": "Entry: GET /export?name=... (src/export.js:8) -> name = req.query.name (src/export.js:10) -> input path '/var/reports/' + name + '.csv' and output path '/tmp/' + name + '.zip' (src/export.js:11) -> file name echoed in the reply (src/export.js:14).",
+              "exploit": "A caller names another customer's report, or uses ../ to reach any .csv outside /var/reports, and has it zipped. The zip can be written to a path outside /tmp. Described only, never run.",
+              "mitigationExamined": "No session, token or tenant check in export.js, server.js or cart.js, and no path normalisation. The reply returns the zip's name, not its contents, which limits direct disclosure. An upstream auth layer may exist outside this repo and could not be checked.",
+              "fix": "Require authentication. Derive the report from the authenticated customer (for example a server-side lookup of that customer's report id) rather than a client-supplied name. Allow-list the name format and confirm the resolved path stays inside the reports directory."
+            }
+          ],
+          "cves": [],
+          "discarded": [
+            "src/export.js:9 lodash _.get on req.body.items: prototype pollution not reachable through a read-only get; lodash version issues belong to the dependencies lane",
+            "src/export.js:14 total(items, 0): discount always zero, a logic defect rather than a security flaw"
+          ],
+          "declined": [
+            "Hard-coded partner token literal at src/export.js:5 (secrets-supply-chain lane)",
+            "lodash 4.17.15 advisories (dependencies lane)",
+            "Whether an Express-style framework or auth layer is mounted in front of exportCart in deployment: not determinable from this repo"
+          ],
+          "skipped": "",
+          "filesRead": [
+            "api/src/export.js",
+            "api/src/server.js",
+            "api/src/cart.js",
+            "api/package.json",
+            "tasks/501/501.md",
+            "specs/501/Spec.md"
+          ],
+          "plan": "code 3: api:src/export.js"
+        },
+        {
+          "repo": "api", "lane": "code", "status": "ok",
+          "tools": [],
+          "findings": [],
+          "cves": [],
+          "discarded": [
+            "applyDiscount does not validate that pct is in 0..100 or that price is a number (src/price.js:1-3): pct is hard-coded to 0 at the only call site (src/export.js:14), so the value is not attacker-reachable; confidence below 6"
+          ],
+          "declined": [
+            "src/export.js:11 appears to be OS command injection through req.query.name in exec(); it is outside the scope of src/price.js and was not traced as part of this scope, so it is left to the hunter whose PLAN row covers src/export.js",
+            "src/export.js:5 and :13 hold a hard-coded partner API token that is also set in a response header; secrets belong to the secrets-supply-chain lane",
+            "src/cart.js:3 calls applyDiscount with positional arguments against an options-object signature, so totals become NaN; this is a functional defect, not a vulnerability"
+          ],
+          "skipped": "",
+          "filesRead": [
+            "api/src/price.js",
+            "api/src/cart.js",
+            "api/src/export.js",
+            "api/src/server.js",
+            "tasks/501/501.md",
+            "specs/501/Spec.md"
+          ],
+          "plan": "code 4: api:src/price.js"
+        },
+        {
+          "repo": "api", "lane": "code", "status": "ok",
+          "tools": [],
+          "findings": [
+            {
+              "severity": "Medium", "confidence": 6, "category": "Command injection",
+              "title": "Unsanitized request parameter concatenated into a shell command via exec",
+              "file": "src/export.js", "line": 11,
+              "description": "exportCart builds 'zip -q /tmp/' + name + '.zip /var/reports/' + name + '.csv' from req.query.name and runs it with child_process.exec, which spawns a shell. name is never validated, escaped or restricted to a basename. The same value also forms file paths, allowing ../ traversal.",
+              "attackPath": "src/server.js:3 (every request routed to exportCart) -> src/export.js:10 (name = req.query.name) -> src/export.js:11 (string concatenated into exec command)",
+              "exploit": "An unauthenticated caller sends a name containing shell metacharacters so the shell runs an arbitrary command as the server user; a name with ../ reads or writes outside /var/reports and /tmp. Requires a layer that populates req.query; on the bare http server in server.js, req.query is undefined and the handler throws first.",
+              "mitigationExamined": "No validation, allowlist, escaping or execFile usage found in server.js, export.js, cart.js or price.js. The only incidental barrier is that plain node:http gives no req.query, so the sink is unreachable until a query-parsing layer is added; none exists in the repo.",
+              "fix": "Do not use a shell. Use child_process.execFile('zip', ['-q', outPath, inPath]) with arguments passed separately. Restrict name to a strict allowlist, build paths with path.join and verify the resolved path stays inside /var/reports and the output directory, or use a zip library instead of a subprocess."
+            },
+            {
+              "severity": "Medium", "confidence": 6, "category": "Missing authentication and authorization",
+              "title": "Export handler is exposed on every route and method with no authentication or ownership check",
+              "file": "src/server.js", "line": 3,
+              "description": "The http server forwards every request, whatever the path or method, to exportCart. There is no authentication, no authorization and no check that the requested report or the cart items belong to the caller. The cart items are taken from the unvalidated request body.",
+              "attackPath": "src/server.js:3 (createServer handler calls exportCart for all requests) -> src/export.js:9-14 (no identity check, report chosen by caller-supplied name, items from body)",
+              "exploit": "Any network client calls the endpoint directly, chooses which report file gets zipped for any customer (cross-customer access via name), and supplies arbitrary items.",
+              "mitigationExamined": "Searched server.js, export.js and cart.js for session, token, middleware or policy checks; none exist. The comment says 'GET /export' but nothing enforces method or path.",
+              "fix": "Add routing that restricts the path and method, require authentication before calling exportCart, derive the customer from the authenticated identity rather than the request, and authorize that the requested report belongs to that customer."
+            },
+            {
+              "severity": "Medium", "confidence": 6, "category": "Sensitive data exposure",
+              "title": "Partner API bearer token is sent back to the unauthenticated requester in the response Authorization header",
+              "file": "src/export.js", "line": 13,
+              "description": "On success the handler calls res.set('Authorization', 'Bearer ' + PARTNER_API_TOKEN), so the live partner credential is returned in the HTTP response to whoever called the endpoint. The credential is meant for the outbound call to the partner, not for the client. The hard-coded constant itself is left to the secrets lane.",
+              "attackPath": "src/server.js:3 (any request) -> src/export.js:11-12 (exec callback succeeds) -> src/export.js:13 (token placed in the response header)",
+              "exploit": "A caller requests an export whose zip succeeds and reads the Authorization header of the response to obtain the partner token, then uses it against the partner API. Requires the Express-style response API to exist and the zip to succeed.",
+              "mitigationExamined": "No authentication in front of the handler and no filtering of response headers. The success path is only reachable if a layer provides res.set and res.json; none exists in the repo.",
+              "fix": "Never put the partner token in a response to the caller. Use it only on the outbound request to the partner, from a server-side client. Load it from a secret store or environment, and rotate the token already committed to the repository."
+            }
+          ],
+          "cves": [],
+          "discarded": [
+            "Crash from req.query/res.status/res.json being undefined on plain node:http: denial of service, excluded.",
+            "Unvalidated items array in the body (null item or non-array causes a TypeError in total): denial of service, excluded.",
+            "total(items, 0) calls applyDiscount(item.price, pct) positionally while applyDiscount destructures an object, giving NaN: functional bug for ticket 501, not a security flaw.",
+            "lodash 4.17.15 in package.json: dependencies lane, not reported here."
+          ],
+          "declined": [
+            "Hard-coded PARTNER_API_TOKEN literal in src/export.js: belongs to the secrets-supply-chain lane.",
+            "scripts/setup.sh and tests/price.test.js: outside scope and not read; the test file is excluded."
+          ],
+          "skipped": "",
+          "filesRead": [
+            "api/src/server.js",
+            "api/src/export.js",
+            "api/src/cart.js",
+            "api/src/price.js",
+            "api/package.json",
+            "tasks/501/501.md",
+            "specs/501/Spec.md"
+          ],
+          "plan": "code 5: api:src/server.js"
+        },
+        {
+          "repo": "api", "lane": "code", "status": "ok",
+          "tools": [],
+          "findings": [],
+          "cves": [],
+          "discarded": [
+            "tests/price.test.js: single assertion on applyDiscount({price:200,pct:10}) === 180; a test-only file with no input handling, so excluded by rule and nothing to report"
+          ],
+          "declined": [
+            "src/price.js (applyDiscount input validation of pct/price): outside this file scope, owned by the hunter covering src/",
+            "test-only file excluded by the lane exclusions"
+          ],
+          "skipped": "",
+          "filesRead": [
+            "api/tests/price.test.js",
+            "tasks/501/501.md",
+            "specs/501/Spec.md"
+          ],
+          "plan": "code 6: api:tests/price.test.js"
+        },
+        {
+          "repo": "api",
+          "lane": "secrets-supply-chain",
+          "status": "incomplete",
+          "tools": [],
+          "findings": [
+            {
+              "severity": "High",
+              "confidence": 10,
+              "category": "hardcoded-secret",
+              "title": "Live-looking partner API token hardcoded in source",
+              "file": "src/export.js",
+              "line": 5,
+              "description": "PARTNER_API_TOKEN is a string literal with a live-looking vendor prefix, committed in src/export.js (introduced in the last feature/501-discount commit, 'export the cart report for the partner', c9ce9c5). Line 13 also puts it into the Authorization response header of GET /export. SHA-256 first 12 hex chars: not computed (no shell available in this run); the value is the literal on line 5 and is not reproduced here.",
+              "attackPath": "Anyone with read access to the repo (or its history) reads the token. Independently, any unauthenticated HTTP client calling GET /export (server.js routes every request to exportCart with no auth) would receive the token in the Authorization response header once the zip step succeeds, and gain the ability to call the partner API as this service.",
+              "exploit": "Read the literal from source or history, or send a request to /export with a name that makes the zip succeed and read the Authorization response header. Not run.",
+              "mitigationExamined": "No env-var lookup, secret store, auth middleware or header filtering in export.js or server.js; no .gitignore or CI secret handling found. The token is in the working tree and in the feature branch history (reflog commit c9ce9c5); git history could not be inspected with git in this run.",
+              "fix": "Revoke and rotate the partner token now; load it from an environment variable or secret manager; never send it in a response header (call the partner server-side and return only the result); add authentication to /export; remove it from the branch history before merge if the history is to be kept."
+            },
+            {
+              "severity": "Medium",
+              "confidence": 7,
+              "category": "supply-chain-install",
+              "title": "setup script pipes an unpinned remote installer into sh",
+              "file": "scripts/setup.sh",
+              "line": 3,
+              "description": "The script runs curl -fsSL https://get.example-reports.dev/install.sh | sh with no pinned version, checksum or signature, and it is wired to npm run setup.",
+              "attackPath": "An attacker who controls or compromises get.example-reports.dev, or sits on the network path, serves a malicious install.sh that runs with the privileges of whoever runs npm run setup (developer or build box) on a fresh machine.",
+              "exploit": "Serve a modified install.sh from the host; it executes on the next npm run setup. Not run.",
+              "mitigationExamined": "-f and -sS, and HTTPS, but no checksum, signature or version pin. No CI or Dockerfile found that triggers it automatically; it is run by hand.",
+              "fix": "Download a versioned release artifact, verify a pinned SHA-256 or signature before executing, or install the tooling from the package registry with a lockfile; do not pipe to a shell."
+            }
+          ],
+          "cves": [],
+          "discarded": [
+            "lodash 4.17.15 outdated: dependencies lane, not reported here",
+            "web/src/badge.js innerHTML with unescaped userName (XSS): code lane lead, not a secrets/supply-chain finding",
+            "api/src/export.js line 11 exec with req.query.name (command injection): code lane lead",
+            "No CI workflows, Dockerfiles, .env files or .npmrc exist in api; no pipeline findings possible"
+          ],
+          "declined": [
+            "Git history inspection (git log/show) and SHA-256 prefix of the secret: Bash and PowerShell were denied, so no shell was available; history was inferred only from .git/logs/HEAD reflog",
+            "reviews/501/review-findings.json: out of scope, not opened"
+          ],
+          "skipped": "Could not run git log/show or compute the SHA-256 prefix because no shell tool was permitted; whether the token appears in earlier commits than c9ce9c5 is unverified (reflog suggests it was introduced there).",
+          "filesRead": [
+            "api/package.json",
+            "api/package-lock.json",
+            "api/scripts/setup.sh",
+            "api/src/export.js",
+            "api/src/price.js",
+            "api/src/server.js",
+            "api/tests/price.test.js",
+            "api/.git/logs/HEAD",
+            "web/src/badge.js",
+            "web/tests/badge.test.js",
+            "web/.git/logs/HEAD",
+            "tasks/501/501.md",
+            "specs/501/Spec.md"
+          ],
+          "plan": "secrets-supply-chain 1: the whole scope"
+        },
+        {
+          "repo": "api",
+          "lane": "osint",
+          "status": "incomplete",
+          "tools": [],
+          "findings": [],
+          "cves": [],
+          "discarded": [
+            "lodash 4.17.15 in api/package.json and package-lock.json: advisories recalled from memory, not confirmed by any feed; belongs to the dependencies lane",
+            "api/src/export.js line 5 hard-coded partner API token: not an OSINT finding without a public hit; belongs to the secrets lane, fingerprint search not run"
+          ],
+          "declined": [
+            "Public-code exposure of the partner token in api/src/export.js: no sha256 fingerprint computed and no gh search code run, because Bash was denied and the hunter did not route around it; exposure is unknown, not absent",
+            "Advisory-feed confirmation of lodash 4.17.15: no osv-scanner installed and no repository to query for dependabot alerts"
+          ],
+          "skipped": "api has no git remote (.git/config has no origin), so gh api dependabot/alerts and secret-scanning/alerts were not queried (not clean); the web repo has no remote either; osv-scanner is absent; the secret fingerprint search was not run because the Bash tool was denied by the permission system (the remote was read from .git/config instead)",
+          "filesRead": [
+            "skills/vulnerability-hunt/prompts/lane-osint.md",
+            "tasks/501/501.md",
+            "specs/501/Spec.md",
+            "api/.git/config",
+            "web/.git/config",
+            "api/package.json",
+            "api/package-lock.json",
+            "api/scripts/setup.sh",
+            "api/src/export.js",
+            "api/src/server.js",
+            "api/src/price.js",
+            "api/tests/price.test.js",
+            "web/src/badge.js",
+            "web/tests/badge.test.js"
+          ],
+          "plan": "osint 1: the dependency names and versions from the manifests"
+        }
+      ],
+      "verifications": [
+        { "title": "Live-looking partner API token hardcoded in source", "verdict": "confirmed", "confidence": 9, "reason": "export.js:5 holds a realistic vendor-prefixed live token as a string literal, committed in c9ce9c5 on feature/501-discount, used at export.js:13; no env lookup, secret store, ignore rule or placeholder documentation exists anywhere in the api repo. Only the token's actual validity at the partner is unverifiable offline." },
+        { "title": "setup.sh pipes a remote install script into sh with no integrity check or version pin", "verdict": "confirmed", "confidence": 9, "reason": "package.json:6 wires npm run setup to scripts/setup.sh, whose line 3 pipes an unpinned, unverified https download straight into sh; no checksum, signature, wrapper, CI gate or other control exists anywhere in the repository, and the example-style .dev domain is not IANA-reserved so it does not neutralise the pattern." },
+        { "title": "Unsanitised query parameter concatenated into a shell command passed to exec", "verdict": "rejected", "confidence": 9, "reason": "src/server.js mounts exportCart on bare node:http with no framework in package.json or the lockfile, so req.query is undefined and src/export.js:10 throws a TypeError on every request before the exec at line 11 can run; the injection pattern is real but the sink is unreachable as the repository is written." },
+        { "title": "Partner API bearer token returned to the requester in the response Authorization header", "verdict": "rejected", "confidence": 8, "reason": "The only mount in the repository (src/server.js:3, bare node:http, no Express in package.json or lock) throws TypeError at src/export.js:10 before line 13 runs, and res.set/res.json do not exist on ServerResponse, so no caller can receive the header today. A latent High that goes live on any Express-style mount; the hard-coded token at src/export.js:5 is a separate confirmed finding." },
+        { "title": "Export route has no authentication or ownership check, and name is used as a file path", "verdict": "rejected", "confidence": 8, "reason": "The path breaks at src/export.js:10: server.js is bare node:http with no framework in package.json or the lockfile, so req.query is undefined and the handler throws before the exec/path concatenation at line 11 is reached. The missing auth and unsanitised name are latent defects that become live (and command injection) if a query parser is attached." }
+      ]
+    },
+    {
+      "repo": "web",
+      "hunts": [
+        {
+          "repo": "web", "lane": "code", "status": "ok",
+          "tools": [],
+          "findings": [
+            {
+              "severity": "Medium",
+              "confidence": 7,
+              "category": "Cross-site scripting (DOM XSS)",
+              "title": "Customer name inserted unescaped into innerHTML by the badge renderer",
+              "file": "src/badge.js",
+              "line": 2,
+              "description": "badgeHtml concatenates userName into an HTML string without escaping, and renderBadge assigns the result to el.innerHTML (line 5). Any HTML or script in the name is parsed and executed as markup in the page.",
+              "attackPath": "Entry: renderBadge(el, userName) at src/badge.js:4, where userName is the customer's name per the spec and ticket 501. Flow: src/badge.js:4 -> badgeHtml at src/badge.js:1-2, which concatenates userName into a span string with no escaping -> sink at src/badge.js:5, el.innerHTML = badgeHtml(userName). No caller exists in the web repo, so the origin of userName and the audience of the badge are not confirmed.",
+              "exploit": "An attacker sets their customer name to an HTML payload with an event handler. When the badge is rendered with that name, the browser executes the script in the page origin. It is stored XSS if the name is shown to other users (staff, support, shared views), and self-XSS if only to the owner.",
+              "mitigationExamined": "Searched the whole web repo for escaping, a sanitizer, textContent use or a CSP and found none. tests/badge.test.js only asserts that 'Ann' appears in the output. No caller was found, so any encoding by an upstream caller or the api could not be verified.",
+              "fix": "Do not build HTML from untrusted text. In renderBadge, create the span with document.createElement('span'), set className = 'badge' and textContent = userName, then replace the element's children. If badgeHtml must keep returning a string, HTML-escape userName before concatenating. Optionally add a restrictive Content-Security-Policy as defence in depth."
+            }
+          ],
+          "cves": [],
+          "discarded": [],
+          "declined": [
+            "Server-side validation or encoding of customer names in the api (outside this scope).",
+            "Any CSP or HTML shell of the host page (not present in the web repo)."
+          ],
+          "skipped": "",
+          "filesRead": [
+            "src/badge.js",
+            "src/format.js",
+            "src/main.txt",
+            "tests/badge.test.js",
+            "tasks/501/501.md",
+            "specs/501/Spec.md"
+          ],
+          "plan": "code 7: web:src/badge.js"
+        },
+        {
+          "repo": "web",
+          "lane": "code",
+          "status": "ok",
+          "tools": [],
+          "findings": [],
+          "cves": [],
+          "discarded": [
+            "tests/badge.test.js: test-only file with no entry point, input or sink; excluded by the lane rules"
+          ],
+          "declined": [
+            "src/badge.js badgeHtml/renderBadge: userName concatenated into HTML and assigned to innerHTML without escaping (possible DOM XSS); outside this scope, no caller found; belongs to the hunter whose PLAN row covers src/badge.js"
+          ],
+          "skipped": "",
+          "filesRead": [
+            "web/tests/badge.test.js",
+            "tasks/501/501.md",
+            "specs/501/Spec.md",
+            "web/src/badge.js",
+            "web/src/format.js"
+          ],
+          "plan": "code 8: web:tests/badge.test.js"
+        }
+      ],
+      "verifications": [
+        { "title": "Customer name inserted unescaped into innerHTML by the badge renderer", "verdict": "plausible", "confidence": 8, "reason": "src/badge.js:1-5 concatenates userName unescaped and assigns it to el.innerHTML with no escaping, sanitizer or CSP anywhere in the web repo, but no file in the repository calls renderBadge or badgeHtml (no HTML page or entry point; src/main.txt is a placeholder), so the sink is currently unreachable and exploitability depends on the not-yet-written caller that the spec mandates will pass the customer's name." }
+      ]
+    }
+  ]
+}
