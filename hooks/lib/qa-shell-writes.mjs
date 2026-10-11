@@ -550,6 +550,27 @@ const HUNT_PY_MODULES = new Set([
 const HUNT_PY_MANAGERS = /^(pip[0-9]*(\.[0-9]+)*|uv|poetry|pipenv|pdm)$/;
 const INFO_FLAGS = ['--version', '-v', '-V', '--help', '-h'];
 
+// The reason an audit input path (a manifest folder, a lockfile, a requirements file) is not a plain
+// literal path, or '': no home, glob, expansion or parent-folder segment. The caller then holds the
+// path inside the project (checkProjectDir).
+function literalPathWhy(opt, word, what) {
+  if (word === undefined || word === null || word === '' || word.startsWith('-')) return `${opt} without a literal ${what}`;
+  if (/^~|[*?[\]{}$`]|(^|[\\/])\.\.([\\/]|$)/.test(word)) return `${opt} ${word} (a home, glob, expansion or parent-folder path)`;
+  return '';
+}
+// The { path, form, opt } entries of the valued options in `names` that a huntOptions parse found,
+// or { reason } for the first that is not a literal path.
+function inputPaths(parsed, names, form, what, refuse) {
+  const out = [];
+  for (const [name, , v] of parsed.valued) {
+    if (!names.includes(name)) continue;
+    const why = literalPathWhy(name, v, what);
+    if (why) return { reason: refuse(`${form} during the hunt; ${why}`) };
+    out.push({ path: v, form, opt: name });
+  }
+  return { out };
+}
+
 // Splits `words` (values, null for one built from a variable) by a spec of the options a command may
 // carry: { flags, valued, noPositional }. Returns { bad } (the first thing not on the spec) or
 // { positionals (indexes), valued ([option, value index, value]), seen (the flags given) }.
@@ -642,9 +663,11 @@ export function huntCheck(prog0, words, { viaRunner = false, interpreter = '' } 
     }
     if (is('audit')) {
       const name = isNpm ? 'npm audit' : 'pnpm audit';
+      // The folder of the manifest: npm takes --prefix, pnpm --dir or -C (pnpm has no --prefix).
       const form = isNpm
         ? 'npm audit --package-lock-only [--json] [--audit-level=<level>] [--prefix <folder inside the project>]'
-        : 'pnpm audit [--json] [--audit-level=<level>] [--prefix <folder inside the project>]';
+        : 'pnpm audit [--json] [--audit-level=<level>] [--dir <folder inside the project>]';
+      const dirOpts = isNpm ? ['--prefix'] : ['--dir', '-C'];
       const bad = (what) => refuse(`${name} may run only as ${form} during the hunt; ${what} changes a file or reads more than the report (${name} fix is never run)`);
       const rest = words.slice(1);
       let lockOnly = false;
@@ -657,19 +680,21 @@ export function huntCheck(prog0, words, { viaRunner = false, interpreter = '' } 
         if (v === '--audit-level') { if (rest[k + 1] === undefined || rest[k + 1] === null || !NPM_AUDIT_LEVELS.test(rest[k + 1])) return bad('--audit-level without a level'); k += 1; continue; }
         const m = /^--audit-level=(.*)$/.exec(v);
         if (m && NPM_AUDIT_LEVELS.test(m[1])) continue;
-        // --prefix names the folder of the manifest: a literal path, which the caller then holds inside the project.
-        if (v === '--prefix' || v.startsWith('--prefix=')) {
-          const dirWord = v === '--prefix' ? rest[k + 1] : v.slice('--prefix='.length);
-          if (dirWord === undefined || dirWord === null || dirWord === '' || dirWord.startsWith('-')) return bad('--prefix without a literal folder');
-          if (/^~|[*?[\]{}$`]|(^|[\\/])\.\.([\\/]|$)/.test(dirWord)) return bad(`--prefix ${dirWord} (a home, glob, expansion or parent-folder path)`);
-          prefixes.push(dirWord);
-          if (v === '--prefix') k += 1;
+        // --prefix (npm), --dir or -C (pnpm) names the folder of the manifest: a literal path, which the
+        // caller then holds inside the project.
+        const opt = dirOpts.find((o) => v === o || v.startsWith(`${o}=`));
+        if (opt) {
+          const dirWord = v === opt ? rest[k + 1] : v.slice(opt.length + 1);
+          const why = literalPathWhy(opt, dirWord, 'folder');
+          if (why) return bad(why);
+          prefixes.push({ path: dirWord, form: `${name} may run only as ${form}`, opt });
+          if (v === opt) k += 1;
           continue;
         }
         return bad(v === 'fix' ? 'fix' : `"${v}"`);
       }
       if (isNpm && !lockOnly) return refuse('npm audit must run with --package-lock-only during the hunt: without it npm reads the installed tree, which the hunt does not build (npm audit --package-lock-only --json)');
-      return allow([], prefixes.map((path) => ({ path, form })));
+      return allow([], prefixes);
     }
     if (is('list', ['ls'])) return huntLsOptions(words.slice(1), prog, refuse, allow);
     return notListed(`${prog} ${sub}`, `${prog} audit${isNpm ? ' --package-lock-only --json' : ''}, ${prog} ls`);
@@ -736,7 +761,8 @@ export function huntCheck(prog0, words, { viaRunner = false, interpreter = '' } 
         const what = parsed.bad !== undefined ? parsed.bad : rest[parsed.positionals[0]];
         return refuse(`cargo audit may run only as cargo audit [--json] [--quiet] [--no-fetch] [--file <Cargo.lock>] during the hunt; "${what}" is not allowed (cargo audit fix changes Cargo.toml)`);
       }
-      return allow();
+      const files = inputPaths(parsed, ['--file', '-f'], 'cargo audit may run only as cargo audit [--json] [--quiet] [--no-fetch] [--file <Cargo.lock inside the project>]', 'file', refuse);
+      return files.reason || allow([], files.out);
     }
     if (sub === 'tree') {
       const spec = {
@@ -765,7 +791,8 @@ export function huntCheck(prog0, words, { viaRunner = false, interpreter = '' } 
     if (bad !== undefined) {
       return refuse(`osv-scanner may run only as osv-scanner [scan [source]] [--json] [--format <x>] [--lockfile <file>] [-r] during the hunt; "${bad}" is not allowed (osv-scanner fix rewrites the lockfile)`);
     }
-    return allow(parsed.valued.filter(([name]) => name === '--output' || name === '--output-file').map(([, , v]) => v));
+    const files = inputPaths(parsed, ['-L', '--lockfile'], 'osv-scanner may run only as osv-scanner [--json] [--lockfile <file inside the project>]', 'file', refuse);
+    return files.reason || allow(parsed.valued.filter(([name]) => name === '--output' || name === '--output-file').map(([, , v]) => v), files.out);
   }
   return null;
 }
@@ -845,7 +872,8 @@ function huntPipAudit(words, refuse, allow) {
   if (parsed.valued.some(([name]) => name === '-r' || name === '--requirement') && !parsed.seen.has('--no-deps')) {
     return refuse('pip-audit resolves requirements by installing them; the hunt installs nothing (add --no-deps and pin the requirements)');
   }
-  return allow(parsed.valued.filter(([name]) => name === '-o' || name === '--output').map(([, , v]) => v));
+  const files = inputPaths(parsed, ['-r', '--requirement'], 'pip-audit may run only as pip-audit --no-deps [-r <requirements file inside the project>]', 'file', refuse);
+  return files.reason || allow(parsed.valued.filter(([name]) => name === '-o' || name === '--output').map(([, , v]) => v), files.out);
 }
 
 // ---------- analysis ----------
@@ -954,15 +982,16 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
   };
   // A folder a hunt command is pointed at (npm audit --prefix <dir>): a literal path that resolves inside the
   // project, symlinks and 8.3 names resolved. Anywhere else the tool would read a tree the hunt was not given.
-  const checkProjectDir = (raw, form, dir) => {
+  // The same for an audit input file (cargo audit --file, osv-scanner --lockfile, pip-audit -r).
+  const checkProjectDir = (raw, form, dir, opt = '--prefix') => {
     let p = normPath(raw);
     if (!p.startsWith('/')) {
-      if (dir === null) return deny(`${form} during the hunt; --prefix ${raw} is relative to a directory the command changed to through a variable; use a literal path`);
+      if (dir === null) return deny(`${form} during the hunt; ${opt} ${raw} is relative to a directory the command changed to through a variable; use a literal path`);
       p = `${dir}/${p.replace(/^\.\//, '')}`;
     }
-    if (p.split('/').includes('..')) return deny(`${form} during the hunt; --prefix ${raw} has a parent-directory segment and cannot be verified`);
+    if (p.split('/').includes('..')) return deny(`${form} during the hunt; ${opt} ${raw} has a parent-directory segment and cannot be verified`);
     const real = realCanonical(p, rootC);
-    if (rel(real, rootC, ignoreCase) === null) deny(`${form} during the hunt; --prefix ${raw} is outside the project ${rootC}`);
+    if (rel(real, rootC, ignoreCase) === null) deny(`${form} during the hunt; ${opt} ${raw} is outside the project ${rootC}`);
   };
 
   // A word spelled with an 8.3 alias that resolves to key material, whatever reads it (issue #31).
@@ -1312,7 +1341,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         if (h && h.reason) return deny(h.reason);
         if (h && h.allow) {
           for (const p of h.outputs) checkTarget({ k: 'w', parts: [{ t: 'lit', v: p }] }, dir, `${prog} output file`, container);
-          for (const { path: p, form } of h.prefixes || []) checkProjectDir(p, `${prog} audit may run only as ${form}`, dir);
+          for (const { path: p, form, opt } of h.prefixes || []) checkProjectDir(p, form, dir, opt);
           return;
         }
       }
