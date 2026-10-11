@@ -94,6 +94,7 @@ The same rounds closed the routes the re-reviews found next to them:
 - The Hermes plugin finds `node`, and the bridge finds `bash`, on absolute PATH entries outside the project only, never in the working directory, a relative entry or a folder under the project such as `node_modules/.bin`; the child runs from the plugin's folder.
 - The run's directory reaches the hook out of band, as `ULTRAPOWERS_RUN_DIR` set by the bridge on the spawn, and must be an absolute, existing folder; otherwise the hook reads the project root from the event's top-level `cwd` only, never from a key nested under the tool input.
 - Cursor, which runs the hook from the plugin folder and sends `workspace_roots` instead of `cwd`, roots the hook from the top-level `workspace_roots[0]` and then `CURSOR_PROJECT_DIR`, each only when absolute and existing; a nested copy never does.
+- The hook's search of the event for a run directory, when its own directory holds no run, is linear and reads at most 256 KB and 64 candidates with shell builtins; past that bound it reads the event's top-level fields through node. A 1 MB argument before a nested `cwd` key took minutes, past the hook's timeout, and now takes under a second. The event itself is read in blocks, not one byte per call.
 
 Skills and repository:
 
