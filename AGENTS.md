@@ -70,6 +70,7 @@ bash tests/task-lifecycle/test-task-review.sh
 bash tests/task-lifecycle/test-skill-structure.sh
 node --test tests/task-lifecycle/assemble-review.test.mjs
 node --test tests/task-lifecycle/post-review.test.mjs
+bash tests/vulnerability-hunt/run-tests.sh
 bash tests/autopilot/run-tests.sh
 bash tests/autopilot/test-adapters.sh             # skips a harness CLI that is not installed
 bash tests/qa-gatekeeper/run-tests.sh

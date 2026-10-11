@@ -52,6 +52,7 @@ jobs:
       - run: bash tests/task-lifecycle/test-skill-structure.sh
       - run: node --test tests/task-lifecycle/assemble-review.test.mjs
       - run: node --test tests/task-lifecycle/post-review.test.mjs
+      - run: bash tests/vulnerability-hunt/run-tests.sh
       - run: bash tests/autopilot/run-tests.sh
       - run: bash tests/autopilot/test-adapters.sh
       - run: bash tests/qa-gatekeeper/run-tests.sh
