@@ -517,5 +517,11 @@
   {"name":"deny_brace_git_config","reason":"a glob or brace target cannot be checked","event":{"tool_name":"Bash","tool_input":{"command":"echo x | tee {.git,x}/config"}}},
   {"name":"deny_glob_guardrail","reason":"a glob or brace target cannot be checked","event":{"tool_name":"Bash","tool_input":{"command":"echo x > hooks/qa-guardra[i]l"}}},
   {"name":"deny_glob_github_workflows","reason":"a glob or brace target cannot be checked","event":{"tool_name":"Bash","tool_input":{"command":"echo x > .githu*/workflows/ci.yml"}}},
-  {"name":"allow_literal_src_write","event":{"tool_name":"Bash","tool_input":{"command":"echo x > repo-a/src/x.ts"}}}
+  {"name":"allow_literal_src_write","event":{"tool_name":"Bash","tool_input":{"command":"echo x > repo-a/src/x.ts"}}},
+  {"name":"deny_write_mcp_json","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.mcp.json","content":"{}"}}},
+  {"name":"deny_redirect_mcp_json","reason":"protected path","event":{"tool_name":"Bash","tool_input":{"command":"echo '{}' > .mcp.json"}}},
+  {"name":"deny_write_cursor_mcp_json","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.cursor/mcp.json","content":"{}"}}},
+  {"name":"deny_write_opencode_json","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/opencode.json","content":"{}"}}},
+  {"name":"deny_write_codex_config","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.codex/config.toml","content":"x"}}},
+  {"name":"deny_write_vscode_mcp","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.vscode/mcp.json","content":"{}"}}}
 ]

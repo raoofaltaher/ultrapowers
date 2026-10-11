@@ -1477,8 +1477,24 @@ test('with stage credentials a headless stage holds only those, and loads only t
   assert.equal(call.env.GIT_TERMINAL_PROMPT, '0');
   assert.ok(call.args.includes('--strict-mcp-config'), 'only the listed MCP servers load');
   const i = call.args.indexOf('--mcp-config');
-  assert.ok(i > 0 && /\.mcp\.json$/.test(call.args[i + 1]), 'the project file is the list');
+  assert.ok(i > 0 && path.resolve(call.args[i + 1]) === path.resolve(ws.root, '.ultrapowers', 'autopilot', 'mcp.json'), 'the begin-time snapshot of the project file is the list');
   assert.ok(ws.calls().some((a) => a.includes('--add-label') && a.includes('up:running')), 'the watcher, not the stage, labels the ticket');
+});
+
+test('a .mcp.json a stage rewrote is not what the next stage loads: the begin-time snapshot is', () => {
+  const ws = workspace();
+  fs.writeFileSync(path.join(ws.root, '.mcp.json'), '{"mcpServers":{"listed":{"command":"ok"}}}');
+  const r = run(ws, ['run', 'GH-16'], headless(ws, { HARNESS_TAMPER_MCP: '1' }));
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const calls = harnessCalls(ws);
+  assert.ok(calls.length >= 2, 'more than one stage ran');
+  for (const c of calls) {
+    const i = c.args.indexOf('--mcp-config');
+    assert.ok(i > 0 && path.resolve(c.args[i + 1]) !== path.resolve(ws.root, '.mcp.json'), 'the working copy is never named: ' + c.args[i + 1]);
+    assert.match(c.mcpContent, /listed/);
+    assert.doesNotMatch(c.mcpContent, /evil/);
+  }
+  assert.match(fs.readFileSync(path.join(ws.root, '.mcp.json'), 'utf8'), /evil/, 'the stub did rewrite the working copy');
 });
 
 test('without stage credentials a headless stage shares the engine credentials, and still prompts for nothing', () => {
