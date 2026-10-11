@@ -1050,7 +1050,7 @@ function stageEnvironment(root) {
   if (stageGh || stageGl) {
     // The engine's tokens, and the ssh agent: a push over ssh would not need a token at all.
     // ODOO_API_KEY stays: it is the one Odoo key, and the project's Odoo MCP server reads it.
-    for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GLAB_TOKEN', 'OAUTH_TOKEN', 'SSH_AUTH_SOCK', 'GIT_SSH_COMMAND', 'GIT_SSH']) delete env[k];
+    for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GLAB_TOKEN', 'GITLAB_ACCESS_TOKEN', 'GITLAB_PRIVATE_TOKEN', 'GL_TOKEN', 'CI_JOB_TOKEN', 'OAUTH_TOKEN', 'SSH_AUTH_SOCK', 'GIT_SSH_COMMAND', 'GIT_SSH']) delete env[k];
     for (const d of ['gh', 'glab']) fs.mkdirSync(path.join(noAuth, d), { recursive: true });
     env.GH_CONFIG_DIR = path.join(noAuth, 'gh');
     env.GLAB_CONFIG_DIR = path.join(noAuth, 'glab');

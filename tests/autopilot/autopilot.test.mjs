@@ -1467,11 +1467,12 @@ test('the watcher starts only with stage tokens, or with sharedCredentials said 
 test('with stage credentials a headless stage holds only those, and loads only the project MCP servers', () => {
   const ws = workspace();
   fs.writeFileSync(path.join(ws.root, '.mcp.json'), JSON.stringify({ mcpServers: {} }));
-  const secrets = { GH_TOKEN: 'ghp_secret', GITHUB_TOKEN: 'ghp_secret2', GITLAB_TOKEN: 'glpat', GLAB_TOKEN: 'glpat2' };
+  const secrets = { GH_TOKEN: 'ghp_secret', GITHUB_TOKEN: 'ghp_secret2', GITLAB_TOKEN: 'glpat', GLAB_TOKEN: 'glpat2', GITLAB_ACCESS_TOKEN: 'glpat3', CI_JOB_TOKEN: 'jobtok', GITLAB_PRIVATE_TOKEN: 'glpat4', GL_TOKEN: 'glpat5' };
   const r = run(ws, ['run', 'GH-16', '--once'], headless(ws, { ...secrets, ULTRAPOWERS_STAGE_GH_TOKEN: 'ghs_readonly', ULTRAPOWERS_STAGE_GITLAB_TOKEN: 'gl_readonly' }));
   assert.equal(r.code, 0, r.stdout + r.stderr);
   const call = harnessCalls(ws)[0];
   assert.deepEqual([call.env.GH_TOKEN, call.env.GITHUB_TOKEN, call.env.GITLAB_TOKEN, call.env.GLAB_TOKEN], ['ghs_readonly', null, 'gl_readonly', null], 'the engine tokens are gone, the stage tokens are in');
+  assert.deepEqual([call.env.GITLAB_ACCESS_TOKEN, call.env.CI_JOB_TOKEN, call.env.GITLAB_PRIVATE_TOKEN, call.env.GL_TOKEN], [null, null, null, null], 'the other GitLab token variables are gone too');
   assert.ok(call.env.GH_CONFIG_DIR && fs.existsSync(call.env.GH_CONFIG_DIR) && fs.readdirSync(call.env.GH_CONFIG_DIR).length === 0, 'gh sees an empty config');
   assert.ok(call.env.GLAB_CONFIG_DIR && fs.existsSync(call.env.GLAB_CONFIG_DIR), 'glab sees an empty config');
   assert.equal(call.env.GIT_TERMINAL_PROMPT, '0');

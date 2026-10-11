@@ -16,7 +16,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ENGINE = path.resolve(HERE, '..', '..', '..', 'skills', 'autopilot', 'scripts', 'autopilot.mjs');
 const args = process.argv.slice(2);
 // The credentials a stage must not hold are logged as seen, so a test can check the watcher scrubbed them.
-const seen = Object.fromEntries(['GH_TOKEN', 'GITHUB_TOKEN', 'GITLAB_TOKEN', 'GLAB_TOKEN', 'GH_CONFIG_DIR', 'GLAB_CONFIG_DIR', 'GIT_TERMINAL_PROMPT', 'ODOO_API_KEY', 'ULTRAPOWERS_STAGE_ODOO_API_KEY']
+const seen = Object.fromEntries(['GH_TOKEN', 'GITHUB_TOKEN', 'GITLAB_TOKEN', 'GLAB_TOKEN', 'GITLAB_ACCESS_TOKEN', 'CI_JOB_TOKEN', 'GITLAB_PRIVATE_TOKEN', 'GL_TOKEN', 'GH_CONFIG_DIR', 'GLAB_CONFIG_DIR', 'GIT_TERMINAL_PROMPT', 'ODOO_API_KEY', 'ULTRAPOWERS_STAGE_ODOO_API_KEY']
   .map((k) => [k, process.env[k] ?? null]));
 const mcpIdx = args.indexOf('--mcp-config');
 let mcpContent = null;
