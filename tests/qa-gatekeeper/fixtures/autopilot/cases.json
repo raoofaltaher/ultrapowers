@@ -437,5 +437,15 @@
   {"name":"allow_shell_init_zdotdir_not_zsh","event":{"tool_name":"Bash","tool_input":{"command":"ZDOTDIR=reviews/1234/z bash -c 'ls reviews'"}}},
   {"name":"deny_cmd_c_type_comma_delimiter","event":{"tool_name":"Bash","tool_input":{"command":"cmd /c \"type,..\\x\""}}},
   {"name":"deny_cmd_c_type_equals_delimiter","event":{"tool_name":"Bash","tool_input":{"command":"cmd /c \"type=reviews\\1234\\a.md\""}}},
-  {"name":"deny_cmd_c_dir_semicolon_delimiter","event":{"tool_name":"Bash","tool_input":{"command":"cmd /c \"dir;reviews\""}}}
+  {"name":"deny_cmd_c_dir_semicolon_delimiter","event":{"tool_name":"Bash","tool_input":{"command":"cmd /c \"dir;reviews\""}}},
+  {"name":"deny_reserved_coproc_rm","event":{"tool_name":"Bash","tool_input":{"command":"coproc rm -rf x"}}},
+  {"name":"deny_reserved_coproc_brace_group","event":{"tool_name":"Bash","tool_input":{"command":"coproc { rm -rf x; }"}}},
+  {"name":"deny_reserved_coproc_named_brace_group","event":{"tool_name":"Bash","tool_input":{"command":"coproc W { rm -rf x; }"}}},
+  {"name":"deny_reserved_case_arm","event":{"tool_name":"Bash","tool_input":{"command":"case x in *) rm x;; esac"}}},
+  {"name":"deny_reserved_select_loop","event":{"tool_name":"Bash","tool_input":{"command":"select v in a b; do rm x; done"}}},
+  {"name":"deny_reserved_function_keyword","event":{"tool_name":"Bash","tool_input":{"command":"function f { rm x; }"}}},
+  {"name":"deny_reserved_case_after_and","event":{"tool_name":"Bash","tool_input":{"command":"true && case x in *) rm x;; esac"}}},
+  {"name":"allow_reserved_if_then_git_status","event":{"tool_name":"Bash","tool_input":{"command":"if true; then git status; fi"}}},
+  {"name":"allow_reserved_coproc_read","event":{"tool_name":"Bash","tool_input":{"command":"coproc ls reviews"}}},
+  {"name":"allow_reserved_for_loop_read","event":{"tool_name":"Bash","tool_input":{"command":"for f in a b; do ls reviews; done"}}}
 ]
