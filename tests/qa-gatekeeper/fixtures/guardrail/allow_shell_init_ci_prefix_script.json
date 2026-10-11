@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"CI=1 bash tests/x.sh"}}

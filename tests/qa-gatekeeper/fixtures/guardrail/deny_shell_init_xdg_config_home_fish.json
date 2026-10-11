@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"XDG_CONFIG_HOME=/tmp/x fish -c ls"}}

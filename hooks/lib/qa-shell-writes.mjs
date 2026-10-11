@@ -622,11 +622,9 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       let pgUser = walkEnv.pgUser;
       let psqlEnv = walkEnv.psqlEnv;
       for (const [n, v] of assigns) { if (n === 'PGUSER') pgUser = v; if (PSQL_ENV.has(n)) psqlEnv = true; }
-      // ENV / BASH_ENV name a file the shell sources at start (ksh, sh, bash, zsh) and ZDOTDIR the folder
-      // zsh reads its init files from: set for this command by a prefix or an env wrapper, or exported earlier.
-      const shellInitVars = new Set();
-      // HOME moves every shell's rc and profile files (.bashrc, .zshenv, .profile, .config/fish) to a directory of the caller's choosing.
-      for (const n of ['ENV', 'BASH_ENV', 'ZDOTDIR', 'HOME']) if (assigns.some(([m]) => m === n) || vars.has(n)) shellInitVars.add(n);
+      // The names set or unset for this command by a prefix or an env wrapper (env NAME=x, env -u NAME), or
+      // assigned or exported earlier: a shell program judges them (INIT_VAR_RE) before it runs anything.
+      const shellEnvNames = new Set([...assigns.map(([m]) => m), ...vars.keys()]);
       // A word for analyzePsql: its value, PSQL_VAR + NAME for a pure $NAME, else PSQL_DYN.
       const psqlWord = (x) => {
         if (x.v !== null) return x.v;
@@ -647,14 +645,11 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       if (args.length && args[args.length - 1].v === '}') args = args.slice(0, -1);
       if (args.length === 0 || args[0].v === '}') return;
       // A compound command's keyword is not a program: `then rm x`, `do rm x`, `else rm x`.
-      // `coproc COMMAND`, `coproc { COMMAND; }` and `coproc NAME { COMMAND; }` run the command after the keyword (and the name).
-      while (args.length && args[0].v !== null && ['then', 'do', 'else', 'elif', 'if', 'while', 'until', '!', 'coproc'].includes(args[0].v)) {
-        const coproc = args[0].v === 'coproc';
-        args = args.slice(1);
-        if (coproc && args.length > 1 && args[1].v === '{') args = args.slice(1);
-        if (coproc && args.length && args[0].v === '{') args = args.slice(1);
-      }
+      while (args.length && args[0].v !== null && ['then', 'do', 'else', 'elif', 'if', 'while', 'until', '!'].includes(args[0].v)) args = args.slice(1);
       if (args.length === 0) return;
+      // `coproc NAME COMPOUND` takes NAME as the program when the compound is not a brace group, and the
+      // forms differ too much to model: refused outright, with whatever it would run in the background.
+      if (args[0].v === 'coproc') return deny('a coprocess runs a command in the background that the analyzer does not follow');
       // A reserved word that opens a compound command this walk does not follow (a case, a select loop, a
       // `function` body: the words around the body are not read as its commands): refused.
       if (args[0].v !== null && ['case', 'select', 'function'].includes(args[0].v)) return deny('a compound command the analyzer does not follow');
@@ -750,11 +745,14 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
             // real command sits in one token. Not modelled: refused.
             if (/^(-[A-Za-z0-9]*S|--split-string)/.test(args[0].v)) return deny('env -S hides the command in one token; run the command directly');
             // -u NAME / --unset NAME and -C DIR / --chdir DIR take the next word as their value.
+            if (['-u', '--unset'].includes(args[0].v) && args[1] && args[1].v !== null) shellEnvNames.add(args[1].v);
+            const unsetAttached = /^--unset=(.+)$/.exec(args[0].v) || /^-u([^-].*)$/.exec(args[0].v);
+            if (unsetAttached) shellEnvNames.add(unsetAttached[1]);
             if (['-u', '--unset', '-C', '--chdir'].includes(args[0].v)) { args = args.slice(2); continue; }
             if (args[0].v.startsWith('PGUSER=')) pgUser = args[0].v.slice('PGUSER='.length);
             if (PSQL_ENV.has(args[0].v.split('=')[0])) psqlEnv = true;
-            const initVar = /^(ENV|BASH_ENV|ZDOTDIR|HOME)=/.exec(args[0].v);
-            if (initVar) shellInitVars.add(initVar[1]);
+            const envAssign = /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(args[0].v);
+            if (envAssign) shellEnvNames.add(envAssign[1]);
             args = args.slice(1);
           }
         } else if (prog === 'timeout') {
@@ -988,9 +986,12 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
           return false;
         };
         if (rest.some((x) => x.v !== null && initOpt(x.v))) return deny(INIT_CODE);
-        if ((shellInitVars.has('ENV') || shellInitVars.has('BASH_ENV')) && !['fish', 'csh', 'tcsh'].includes(prog)) return deny(INIT_CODE);
-        if (shellInitVars.has('ZDOTDIR') && prog === 'zsh') return deny(INIT_CODE);
-        if (shellInitVars.has('HOME')) return deny(INIT_CODE);        // -c may be bundled with other short flags (-lc, -ec, -xc); the next word is the command.
+        // A variable that moves where a shell reads its rc and profile files (HOME, ENV, BASH_ENV, ZDOTDIR, XDG_*),
+        // which shell it is or which program it finds (SHELL, PATH), or what is loaded into it (LD_PRELOAD,
+        // LD_LIBRARY_PATH, DYLD_*): set, exported or unset for a shell program, whatever the shell.
+        const INIT_VAR_RE = /^(HOME|ENV|BASH_ENV|ZDOTDIR|XDG_[A-Z_]+|SHELL|PATH|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_[A-Z_]+)$/;
+        if ([...shellEnvNames].some((n) => INIT_VAR_RE.test(n))) return deny(INIT_CODE);
+        // -c may be bundled with other short flags (-lc, -ec, -xc); the next word is the command.
         // fish takes the long spelling too: --command CMD, --command=CMD.
         const eqi = rest.findIndex((x) => x.v !== null && x.v.startsWith('--command='));
         if (eqi !== -1) { walkNested(rest[eqi].v.slice('--command='.length), dir, container, depth + 1, pgUser); return; }

@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"SHELL=/tmp/sh bash -c ls"}}
