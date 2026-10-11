@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"ENV=reviews/1234/x.sh ksh -c ls"}}

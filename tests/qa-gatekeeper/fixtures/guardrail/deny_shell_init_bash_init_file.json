@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"bash --init-file reviews/1234/x.sh -i -c ls"}}

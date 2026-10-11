@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"DEBUG=1 zsh -c 'ls reviews'"}}
