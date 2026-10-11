@@ -5,6 +5,7 @@
 //   STUB_JSON       stdout for `issue view`
 //   STUB_VIEW_EXIT  exit code for `issue view` (default 0), with STUB_STDERR
 //   STUB_SLEEP_MS   delay before answering `issue view`
+//   STUB_PERMISSIONS_JSON  {login: permission} answering `api repos/.../collaborators/<login>/permission` (gh); an unlisted login is 404
 import fs from 'node:fs';
 
 const args = process.argv.slice(2);
@@ -16,6 +17,16 @@ if (args[0] === 'auth') process.exit(Number(process.env.STUB_AUTH_EXIT ?? 0));
 
 // `api …/comments` (gh) and `api …/notes` (glab): the issue's comments, STUB_COMMENTS_JSON or none.
 if (args[0] === 'api') {
+  const collaborator = /\/collaborators\/([^/]+)\/permission$/.exec(args[1] ?? '');
+  if (collaborator) {
+    const permission = JSON.parse(process.env.STUB_PERMISSIONS_JSON ?? '{}')[decodeURIComponent(collaborator[1])];
+    if (!permission) {
+      process.stderr.write('Not Found (HTTP 404)\n');
+      process.exit(1);
+    }
+    process.stdout.write(JSON.stringify({ permission }));
+    process.exit(0);
+  }
   process.stdout.write(process.env.STUB_COMMENTS_JSON ?? (args[1].includes('--slurp') || args.includes('--slurp') ? '[[]]' : '[]'));
   process.exit(0);
 }

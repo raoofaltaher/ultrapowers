@@ -69,10 +69,25 @@
       "Read(**/.env.*.local)",
       "Read(**/.env.production)",
       "Read(~/.ssh/**)",
+      "Read(**/.env.development)",
+      "Read(**/.env.test)",
+      "Read(**/.env.staging)",
+      "Read(**/.env.secret)",
       "Read(~/.aws/**)",
+      "Read(~/.config/gh/**)",
+      "Read(~/.config/glab-cli/**)",
+      "Read(~/.git-credentials)",
+      "Read(~/.netrc)",
+      "Read(~/.npmrc)",
+      "Read(~/.gnupg/**)",
+      "Read(~/.kube/**)",
+      "Read(~/.docker/config.json)",
       "Bash(git log *--ou*)",
       "Bash(git diff *--ou*)",
-      "Bash(git show *--ou*)"
+      "Bash(git show *--ou*)",
+      "Bash(git diff *--no-index*)",
+      "Bash(git blame *--contents*)",
+      "Bash(git show *:.env*)"
     ]
   },
   "hooks": {}

@@ -162,6 +162,14 @@ export const QWEN_PERMISSIONS = {
     'Read(**/.env.production)',
     'Read(~/.ssh/**)',
     'Read(~/.aws/**)',
+    'Read(~/.config/gh/**)',
+    'Read(~/.config/glab-cli/**)',
+    'Read(~/.git-credentials)',
+    'Read(~/.netrc)',
+    'Read(~/.npmrc)',
+    'Read(~/.gnupg/**)',
+    'Read(~/.kube/**)',
+    'Read(~/.docker/config.json)',
   ],
 };
 
@@ -185,6 +193,14 @@ export const OPENCODE_PERMISSION = {
     '*.env.example': 'allow',
     '~/.ssh/**': 'deny',
     '~/.aws/**': 'deny',
+    '~/.config/gh/**': 'deny',
+    '~/.config/glab-cli/**': 'deny',
+    '~/.git-credentials': 'deny',
+    '~/.netrc': 'deny',
+    '~/.npmrc': 'deny',
+    '~/.gnupg/**': 'deny',
+    '~/.kube/**': 'deny',
+    '~/.docker/config.json': 'deny',
   },
 };
 

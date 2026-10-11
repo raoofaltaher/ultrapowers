@@ -485,14 +485,18 @@ test('the rendered Claude Code settings deny reads of secret files and the --out
     'Read(**/.agents/mcp-secrets.env)', 'Read(**/.env)', 'Read(**/.env.local)', 'Read(**/.env.*.local)', 'Read(**/.env.production)',
     'Read(~/.ssh/**)', 'Read(~/.aws/**)',
     'Bash(git log *--ou*)', 'Bash(git diff *--ou*)', 'Bash(git show *--ou*)',
+    'Bash(git diff *--no-index*)', 'Bash(git blame *--contents*)', 'Bash(git show *:.env*)', 'Read(**/.env.development)', 'Read(**/.env.test)', 'Read(**/.env.staging)', 'Read(**/.env.secret)',
+    'Read(~/.config/gh/**)', 'Read(~/.config/glab-cli/**)', 'Read(~/.git-credentials)', 'Read(~/.netrc)', 'Read(~/.npmrc)', 'Read(~/.gnupg/**)', 'Read(~/.kube/**)', 'Read(~/.docker/config.json)',
   ]) {
     assert.ok(deny.includes(rule), `deny has ${rule}`);
   }
-  assert.equal(deny.includes('Read(**/.env.*)'), false, 'example env files stay readable');
   const allow = settings.permissions.allow;
   for (const kept of ['Bash(git log:*)', 'Bash(git diff:*)', 'Bash(git show:*)', 'Bash(go build:*)', 'Bash(go test:*)']) {
     assert.ok(allow.includes(kept), `${kept} stays pre-approved`);
   }
+  // No allow was added; the example env file stays readable because no deny names it.
+  assert.equal(allow.filter((r) => !r.startsWith('Skill(')).length, 26, 'the non-skill allow list is the original 26 entries');
+  assert.equal(allow.includes('Read(**/.env.example)'), false); assert.equal(deny.includes('Read(**/.env.*)'), false, 'example env files stay readable');
 });
 
 // Each harness whose official docs describe a project-level read deny gets one; the others get none
@@ -503,7 +507,7 @@ test('the rendered OpenCode config denies reads of secret files through its perm
   const config = JSON.parse(fs.readFileSync(path.join(root, 'opencode.json'), 'utf8'));
   const read = config.permission?.read;
   assert.ok(read && typeof read === 'object', 'permission.read is a pattern map');
-  for (const pattern of ['*.env', '*.env.*', '~/.ssh/**', '~/.aws/**']) assert.equal(read[pattern], 'deny', `${pattern} is denied`);
+  for (const pattern of ['*.env', '*.env.*', '~/.ssh/**', '~/.aws/**', '~/.config/gh/**', '~/.config/glab-cli/**', '~/.git-credentials', '~/.netrc', '~/.npmrc', '~/.gnupg/**', '~/.kube/**', '~/.docker/config.json']) assert.equal(read[pattern], 'deny', `${pattern} is denied`);
   assert.equal(read['*.env.example'], 'allow', 'example env files stay readable');
   // OpenCode lets the last matching rule win, so the allow rules must precede the denies they override
   // and the example exception must follow the broad *.env.* deny.
@@ -525,6 +529,7 @@ test('the rendered Qwen Code settings deny reads of secret files through permiss
   for (const rule of [
     'Read(**/.agents/mcp-secrets.env)', 'Read(**/.env)', 'Read(**/.env.local)', 'Read(**/.env.*.local)', 'Read(**/.env.production)',
     'Read(~/.ssh/**)', 'Read(~/.aws/**)',
+    'Read(~/.config/gh/**)', 'Read(~/.config/glab-cli/**)', 'Read(~/.git-credentials)', 'Read(~/.netrc)', 'Read(~/.npmrc)', 'Read(~/.gnupg/**)', 'Read(~/.kube/**)', 'Read(~/.docker/config.json)',
   ]) {
     assert.ok(deny.includes(rule), `deny has ${rule}`);
   }
@@ -546,6 +551,7 @@ test('the scaffold writes Cursor ignore and CLI deny rules for secret files, onl
   const cli = JSON.parse(fs.readFileSync(path.join(root, '.cursor', 'cli.json'), 'utf8'));
   for (const rule of [
     'Read(**/.agents/mcp-secrets.env)', 'Read(**/.env)', 'Read(**/.env.local)', 'Read(**/.env.*.local)', 'Read(**/.env.production)',
+    'Read(~/.config/gh/**)', 'Read(~/.config/glab-cli/**)', 'Read(~/.git-credentials)', 'Read(~/.netrc)', 'Read(~/.npmrc)', 'Read(~/.gnupg/**)', 'Read(~/.kube/**)', 'Read(~/.docker/config.json)',
   ]) {
     assert.ok(cli.permissions.deny.includes(rule), `deny has ${rule}`);
   }
