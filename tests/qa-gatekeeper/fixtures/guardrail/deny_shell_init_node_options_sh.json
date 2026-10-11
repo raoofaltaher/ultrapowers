@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"NODE_OPTIONS=--require=/tmp/x.js sh -c ls"}}

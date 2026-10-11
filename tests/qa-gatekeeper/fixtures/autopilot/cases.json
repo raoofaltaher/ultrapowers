@@ -467,5 +467,8 @@
   {"name":"deny_shell_init_env_unset_long_xdg","event":{"tool_name":"Bash","tool_input":{"command":"env --unset=XDG_CONFIG_HOME fish -c ls"}}},
   {"name":"deny_shell_init_xdg_exported_csh","event":{"tool_name":"Bash","tool_input":{"command":"export XDG_DATA_HOME=/tmp/x; tcsh -c ls"}}},
   {"name":"allow_shell_init_ci_prefix_script","event":{"tool_name":"Bash","tool_input":{"command":"CI=1 bash tests/x.sh"}}},
-  {"name":"allow_shell_init_env_unset_other_zsh","event":{"tool_name":"Bash","tool_input":{"command":"env -u DEBUG zsh -c 'ls reviews'"}}}
+  {"name":"allow_shell_init_env_unset_other_zsh","event":{"tool_name":"Bash","tool_input":{"command":"env -u DEBUG zsh -c 'ls reviews'"}}},
+  {"name":"deny_shell_init_ps4_command_substitution","event":{"tool_name":"Bash","tool_input":{"command":"PS4='$(rm x)' bash -x s.sh"}}},
+  {"name":"deny_shell_init_node_options_sh","event":{"tool_name":"Bash","tool_input":{"command":"NODE_OPTIONS=--require=/tmp/x.js sh -c ls"}}},
+  {"name":"deny_shell_init_bash_func_env_wrapper","event":{"tool_name":"Bash","tool_input":{"command":"env BASH_FUNC_ls%%='() { rm x; }' bash -c ls"}}}
 ]

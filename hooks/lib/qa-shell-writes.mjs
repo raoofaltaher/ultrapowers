@@ -739,7 +739,8 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         if (prog === 'command' && args[1] && ['-v', '-V'].includes(args[1].v)) return;
         args = args.slice(1);
         if (prog === 'env') {
-          while (args.length && args[0].v && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(args[0].v) || args[0].v.startsWith('-'))) {
+          // env takes any NAME=value word as an assignment, whatever the characters of NAME (BASH_FUNC_x%%=...).
+          while (args.length && args[0].v && (/^[^=-][^=]*=/.test(args[0].v) || args[0].v.startsWith('-'))) {
             // -S STRING, --split-string[=STRING] or a short cluster holding S (-iS, -vS, -S0): env
             // splits the string into words with its own escapes, comments and $VAR expansion, so the
             // real command sits in one token. Not modelled: refused.
@@ -751,7 +752,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
             if (['-u', '--unset', '-C', '--chdir'].includes(args[0].v)) { args = args.slice(2); continue; }
             if (args[0].v.startsWith('PGUSER=')) pgUser = args[0].v.slice('PGUSER='.length);
             if (PSQL_ENV.has(args[0].v.split('=')[0])) psqlEnv = true;
-            const envAssign = /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(args[0].v);
+            const envAssign = /^([^=-][^=]*)=/.exec(args[0].v);
             if (envAssign) shellEnvNames.add(envAssign[1]);
             args = args.slice(1);
           }
@@ -989,7 +990,9 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         // A variable that moves where a shell reads its rc and profile files (HOME, ENV, BASH_ENV, ZDOTDIR, XDG_*),
         // which shell it is or which program it finds (SHELL, PATH), or what is loaded into it (LD_PRELOAD,
         // LD_LIBRARY_PATH, DYLD_*): set, exported or unset for a shell program, whatever the shell.
-        const INIT_VAR_RE = /^(HOME|ENV|BASH_ENV|ZDOTDIR|XDG_[A-Z_]+|SHELL|PATH|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_[A-Z_]+)$/;
+        // Also the variables whose value the shell or an interpreter executes: SHELLOPTS, PS4, PROMPT_COMMAND,
+        // exported functions (BASH_FUNC_x%%), LD_AUDIT, PERL5OPT, PYTHONSTARTUP, NODE_OPTIONS, RUBYOPT.
+        const INIT_VAR_RE = /^(HOME|ENV|BASH_ENV|ZDOTDIR|XDG_[A-Z_]+|SHELL|PATH|LD_PRELOAD|LD_LIBRARY_PATH|LD_AUDIT|DYLD_[A-Z_]+|SHELLOPTS|PS4|PROMPT_COMMAND|BASH_FUNC_[A-Za-z_]+(%%)?|PERL5OPT|PYTHONSTARTUP|NODE_OPTIONS|RUBYOPT)$/;
         if ([...shellEnvNames].some((n) => INIT_VAR_RE.test(n))) return deny(INIT_CODE);
         // -c may be bundled with other short flags (-lc, -ec, -xc); the next word is the command.
         // fish takes the long spelling too: --command CMD, --command=CMD.

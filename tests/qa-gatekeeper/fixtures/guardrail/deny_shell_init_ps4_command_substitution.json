@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"PS4='$(rm x)' bash -x s.sh"}}

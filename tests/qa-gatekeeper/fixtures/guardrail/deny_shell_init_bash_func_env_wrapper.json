@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"env BASH_FUNC_ls%%='() { rm x; }' bash -c ls"}}
