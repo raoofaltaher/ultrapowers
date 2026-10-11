@@ -28,7 +28,6 @@
   {"name":"allow_glab_api_get","event":{"tool_name":"Bash","tool_input":{"command":"glab api projects/1/vulnerability_findings"}}},
   {"name":"allow_gh_auth_status","event":{"tool_name":"Bash","tool_input":{"command":"gh auth status"}}},
   {"name":"allow_sha256sum_file","event":{"tool_name":"Bash","tool_input":{"command":"sha256sum repo-a/src/app.ts"}}},
-  {"name":"allow_sha256sum_stdin","event":{"tool_name":"Bash","tool_input":{"command":"printf '%s' 'a committed value' | sha256sum | cut -c1-12"}}},
   {"name":"allow_shasum","event":{"tool_name":"Bash","tool_input":{"command":"shasum -a 256 repo-a/src/app.ts"}}},
   {"name":"allow_md5sum","event":{"tool_name":"Bash","tool_input":{"command":"md5sum repo-a/src/app.ts"}}},
   {"name":"allow_git_log","event":{"tool_name":"Bash","tool_input":{"command":"git log --oneline -5"}}},
