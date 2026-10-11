@@ -296,7 +296,13 @@ export function analyzePsql(args, { roRole = 'qa_agent_ro', pgUser, psqlEnv = fa
   if (psqlEnv) return 'psql with PSQLRC, PGSERVICE, PGSERVICEFILE, PGOPTIONS or PGPASSFILE set reads a file the analyzer cannot see; run it with the plain environment';
   // Any short-option cluster holding v (-v, -vn=3, -Atv), and the long forms; a digit-named variable
   // from a psqlrc is the one case a literal slice bound could meet, accepted as the residual risk.
-  if (args.some((a) => a === '--set' || a === '--variable' || /^--(set|variable)=/.test(a) || (/^-[A-Za-z]*v/.test(a) && !a.startsWith('--')))) return 'psql -v, --set and --variable define variables that any :name in the SQL would substitute; lane 4 runs literal SQL only';
+  // psql takes any unambiguous prefix of a long option (--se, --var), so a long option that is a
+  // prefix of set or variable counts too.
+  const definesVariable = (a) => {
+    if (a.startsWith('--')) { const name = a.slice(2).split('=')[0]; return name.length >= 2 && ('set'.startsWith(name) || 'variable'.startsWith(name)); }
+    return /^-[A-Za-z]*v/.test(a);
+  };
+  if (args.some(definesVariable)) return 'psql -v, --set and --variable define variables that any :name in the SQL would substitute; lane 4 runs literal SQL only';
   if (file) return 'psql from a script file (-f) is blocked; the SQL is not inspectable';
   if (sqls.length === 0) return 'psql without an inline -c statement is blocked; lane 4 runs single inline statements only';
   const superuser = (u) => /^postgres$/i.test(String(u).trim());

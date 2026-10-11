@@ -439,7 +439,7 @@ test('an array slice is a read; psql interpolation is refused in its three spell
   for (const sql of ['select :name', "select :'name'", 'select :"name"', 'select a[:n] from t', 'select a[1:n] from t', 'select m[i:j] from t', 'select 1 ] where [ x :v ]', 'select a[b[1:2]:n] from t', 'select a[1:2] from t; select :v', 'select * from t where id = :id']) {
     assert.match(analyze(`psql -U qa_agent_ro -c '${sql}'`, c), /interpolation/, sql);
   }
-  for (const cmd of ['psql -U qa_agent_ro -v n=3 -c "select 1"', 'psql -U qa_agent_ro --set=n=3 -c "select 1"', 'psql -U qa_agent_ro --variable n=3 -c "select 1"', 'psql -U qa_agent_ro -vn=3 -c "select 1"', 'psql -U qa_agent_ro -Atv n=3 -c "select 1"']) {
+  for (const cmd of ['psql -U qa_agent_ro -v n=3 -c "select 1"', 'psql -U qa_agent_ro --set=n=3 -c "select 1"', 'psql -U qa_agent_ro --variable n=3 -c "select 1"', 'psql -U qa_agent_ro -vn=3 -c "select 1"', 'psql -U qa_agent_ro -Atv n=3 -c "select 1"', 'psql -U qa_agent_ro --se n=3 -c "select 1"', 'psql -U qa_agent_ro --var=n=3 -c "select 1"']) {
     assert.match(analyze(cmd, c), /define variables/, cmd);
   }
 });
