@@ -5,7 +5,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 MANIFEST="$REPO_ROOT/.kimi-plugin/plugin.json"
 
-python3 - "$MANIFEST" <<'PY'
+# On Windows, python3 may be the Microsoft Store stub; fall back to python.
+PY_BIN=python3
+python3 -c "import sys" >/dev/null 2>&1 || PY_BIN=python
+"$PY_BIN" - "$MANIFEST" <<'PY'
 import json
 import sys
 from pathlib import Path
