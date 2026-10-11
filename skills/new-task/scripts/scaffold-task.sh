@@ -3,6 +3,11 @@
 #
 #   scaffold-task.sh check  <ID>             validate the id; print EXISTS or absent per folder
 #   scaffold-task.sh create <ID> [title...]  create the four folders, .gitkeep files and the brief
+#   scaffold-task.sh create <ID> --title-file <path>
+#   scaffold-task.sh create <ID> --title-from-json <ticket JSON file>
+#                                            the title of a remote ticket: the first line of the file
+#                                            (trimmed, control characters removed) or the JSON's "title".
+#                                            A remote title is never passed as shell words.
 #   scaffold-task.sh commit <ID>             stage the four folders and commit once
 #                                            (=== COMMITTED === or === NOTHING-TO-COMMIT ===)
 #
@@ -15,7 +20,7 @@ here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 . "$here/ticket-lib.sh"
 
 if [ $# -lt 2 ]; then
-  printf 'usage: scaffold-task.sh check|create|commit <ID> [title...]\n' >&2
+  printf 'usage: scaffold-task.sh check|create|commit <ID> [title... | --title-file <path> | --title-from-json <file>]\n' >&2
   exit 1
 fi
 mode=$1
@@ -53,7 +58,39 @@ case "$mode" in
       printf 'ERROR: tasks/%s exists; create refuses to touch it. Run /ultrapowers:task %s\n' "$id" "$id" >&2
       exit 3
     fi
-    title=$*
+    case "${1:-}" in
+      --title-file)
+        if [ $# -ne 2 ] || [ ! -f "$2" ] || [ ! -r "$2" ]; then
+          printf 'ERROR: --title-file needs one readable file\n' >&2
+          exit 1
+        fi
+        title=$(head -n 1 <"$2" | tr -d '\000-\037\177' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        ;;
+      --title-from-json)
+        if [ $# -ne 2 ] || [ ! -f "$2" ] || [ ! -r "$2" ]; then
+          printf 'ERROR: --title-from-json needs one readable ticket JSON file\n' >&2
+          exit 1
+        fi
+        if ! have_node; then
+          printf 'ERROR: --title-from-json needs node; use --title-file\n' >&2
+          exit 1
+        fi
+        title=$(node -e '
+let t;
+try {
+  t = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8").replace(/^﻿/, "")).title;
+} catch (e) {
+  process.stderr.write("ERROR: " + process.argv[1] + " is not a ticket JSON file\n");
+  process.exit(1);
+}
+t = typeof t === "string" ? t.split(/\r\n|\r|\n/)[0] : "";
+process.stdout.write(t.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").trim());
+' "$2") || exit 1
+        ;;
+      *)
+        title=$*
+        ;;
+    esac
     [ -n "$title" ] || title='title pending'
     for f in $folders; do mkdir -p "$root/$f/$id"; done
     for f in specs plans reviews; do : >"$root/$f/$id/.gitkeep"; done

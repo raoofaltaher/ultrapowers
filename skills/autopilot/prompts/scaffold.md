@@ -4,7 +4,7 @@ The engine created the documents branch. Produce the brief for `<ID>` through th
 
 1. `node "<NEW_TASK_DIR>/scripts/fetch-ticket.mjs" resolve "<ID>"`: it is a remote ticket, or you would not be here.
 2. `node "<NEW_TASK_DIR>/scripts/fetch-ticket.mjs" fetch "<ID>"`. An `error` stops the stage: end with `{"ok":false,"message":"<code>: <message>"}` and write nothing. Never write the brief from the conversation or from memory.
-3. `bash "<NEW_TASK_DIR>/scripts/scaffold-task.sh" create "<ID>" <title words from the ticket>`.
+3. `bash "<NEW_TASK_DIR>/scripts/scaffold-task.sh" create "<ID>" --title-from-json "<ticket JSON file>"`, the file `fetch` printed: never paste the ticket's title into the command.
 4. Fill `tasks/<ID>/<ID>.md` from the ticket as new-task Step 5 says: Context in your own words, Definition of Ready and Done from its acceptance criteria when present, the ticket URL and the `Repository:` hint under Related Documentation. Two short paragraphs at most.
 5. `node "<NEW_TASK_DIR>/scripts/fetch-ticket.mjs" attachments "<ID>" --from "<ticket JSON file>"`: the task's files land in `tasks/<ID>/attachments/` up to the project's cap; the rest stay links.
 6. `node "<NEW_TASK_DIR>/scripts/fetch-ticket.mjs" write-source "<ID>" --from "<ticket JSON file>"`.

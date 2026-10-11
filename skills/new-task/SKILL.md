@@ -67,7 +67,7 @@ If the ticket holds a password, token, key or personal data the brief does not n
 bash "<SKILL_DIR>/scripts/scaffold-task.sh" create "<ID>" <title words>
 ```
 
-This creates `tasks/<ID> specs/<ID> plans/<ID> reviews/<ID>`, a `.gitkeep` in the last three, and the brief `tasks/<ID>/<ID>.md` in the shape below, with the title or `title pending` when none was given. For a remote ticket the title words are the ticket's title, unless your human partner gave one.
+This creates `tasks/<ID> specs/<ID> plans/<ID> reviews/<ID>`, a `.gitkeep` in the last three, and the brief `tasks/<ID>/<ID>.md` in the shape below, with the title or `title pending` when none was given. For a remote ticket the title is the ticket's, unless your human partner gave one: run `bash "<SKILL_DIR>/scripts/scaffold-task.sh" create "<ID>" --title-from-json "<the ticket JSON file from Step 3>"` and never paste the ticket's title into the command, because it is quoted material and the shell would run what it holds.
 
 ## Step 5: Fill the brief
 

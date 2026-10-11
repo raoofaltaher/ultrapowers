@@ -383,6 +383,46 @@ test_new_task() {
         fail "a missing title becomes 'title pending'"
     fi
 
+    # A remote ticket's title reaches create through a file, never as shell words (security).
+    local tjson="$TEST_ROOT/ticket-title.json" tfile="$TEST_ROOT/title.txt"
+    node -e 'require("fs").writeFileSync(process.argv[1], JSON.stringify({ title: process.argv[2] + "\nsecond line\u0001", body: "b" }))' \
+        "$tjson" 'Fix $(touch PWNED_SUB) `touch PWNED_BT` $(echo pwned) "q"'
+    (cd "$proj" && bash "$SCAFFOLD" create 6006 --title-from-json "$tjson" >/dev/null)
+    if [[ "$(head -n 1 "$proj/tasks/6006/6006.md")" == '# 6006 - Fix $(touch PWNED_SUB) `touch PWNED_BT` $(echo pwned) "q"' \
+        && ! -e "$proj/PWNED_SUB" && ! -e "$proj/PWNED_BT" && ! -e "$PWD/PWNED_SUB" && ! -e "$PWD/PWNED_BT" ]]; then
+        pass "--title-from-json writes a hostile ticket title literally, first line only, and runs nothing"
+    else
+        fail "--title-from-json writes a hostile ticket title literally, first line only, and runs nothing"
+        echo "    got: $(head -n 1 "$proj/tasks/6006/6006.md")"
+    fi
+    printf '  Fix $(touch PWNED_SUB) `touch PWNED_BT`\x01\x1b[31m  \nsecond line\n' >"$tfile"
+    (cd "$proj" && bash "$SCAFFOLD" create 6007 --title-file "$tfile" >/dev/null)
+    if [[ "$(head -n 1 "$proj/tasks/6007/6007.md")" == '# 6007 - Fix $(touch PWNED_SUB) `touch PWNED_BT`[31m' \
+        && ! -e "$proj/PWNED_SUB" && ! -e "$proj/PWNED_BT" ]]; then
+        pass "--title-file reads the first line, trims it, drops control characters and runs nothing"
+    else
+        fail "--title-file reads the first line, trims it, drops control characters and runs nothing"
+        echo "    got: $(head -n 1 "$proj/tasks/6007/6007.md" | od -c | head -3)"
+    fi
+    rc=0
+    (cd "$proj" && bash "$SCAFFOLD" create 6008 --title-file "$TEST_ROOT/no-such-file" >/dev/null 2>&1) || rc=$?
+    if [[ "$rc" -eq 1 && ! -e "$proj/tasks/6008" ]]; then
+        pass "an unreadable --title-file stops create before it writes anything"
+    else
+        fail "an unreadable --title-file stops create before it writes anything"
+        echo "    exit: $rc"
+    fi
+    rc=0
+    (cd "$proj" && bash "$SCAFFOLD" create 6009 --title-from-json "$tfile" >/dev/null 2>&1) || rc=$?
+    if [[ "$rc" -eq 1 && ! -e "$proj/tasks/6009" ]]; then
+        pass "--title-from-json on a file that is not JSON stops create before it writes anything"
+    else
+        fail "--title-from-json on a file that is not JSON stops create before it writes anything"
+        echo "    exit: $rc"
+    fi
+    local d
+    for d in 6006 6007; do rm -rf "$proj/tasks/$d" "$proj/specs/$d" "$proj/plans/$d" "$proj/reviews/$d"; done
+
     rc=0
     (cd "$proj" && bash "$SCAFFOLD" commit 4004 >/dev/null 2>&1) || rc=$?
     if [[ "$rc" -eq 1 ]]; then
