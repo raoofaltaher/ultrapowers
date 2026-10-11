@@ -921,19 +921,11 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         return;
       }
       if (prog === 'pwsh' || prog === 'powershell') {
-        // PowerShell takes any unambiguous prefix of an option: -e, -en, -enc ... -EncodedCommand; -c, -co ... -Command.
-        const pfx = (w, full) => w.length > 1 && w[0] === '-' && full.startsWith(w.slice(1).toLowerCase());
-        if (rest.some((x) => x.v !== null && (pfx(x.v, 'encodedcommand') || /^-ec$/i.test(x.v)))) return deny(`${prog} -EncodedCommand hides the command in base64; it cannot be verified`);
-        const ci = rest.findIndex((x) => x.v !== null && (pfx(x.v, 'command') || pfx(x.v, 'commandwithargs') || /^-cwa$/i.test(x.v)));
-        if (ci !== -1) {
-          const tail = rest.slice(ci + 1);
-          if (!tail.length || tail.some((x) => x.v === null)) return deny(`${prog} -Command runs a command built from a variable or missing; it cannot be verified`);
-          walkNested(tail.map((x) => x.v).join(' '), dir, container, depth + 1, pgUser);
-          return;
-        }
-        if (rest.some((x) => x.v !== null && /^-(f|file)$/i.test(x.v))) return;
+        // PowerShell is not analysed at all: -Command (and any prefix of it: -c, -co, -cwa), -EncodedCommand
+        // (-e, -enc, -ec), -File and a script on stdin are all refused. Only a bare -Version / -Help
+        // (nothing to run) is a read.
         if (rest.length && rest.every((x) => x.v !== null && /^-(version|help|\?)$/i.test(x.v))) return;
-        return deny(`${prog} reads its commands from stdin, which cannot be inspected; run the command directly or from a script file`);
+        return deny('a PowerShell command is not analysed; run the read command directly');
       }
       // cmd.exe's own file commands. Flags are /x or /x:value; the destination is the last operand.
       if (['del', 'erase', 'rd', 'md', 'copy', 'xcopy', 'move', 'ren', 'rename'].includes(prog)) {

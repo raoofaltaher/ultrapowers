@@ -368,5 +368,19 @@
   {"name":"deny_patch_nested_qa_marker","event":{"tool_name":"apply_patch","tool_input":{"patch":"*** Begin Patch\n*** Add File: sub/.ultrapowers/qa-active\n+1234\n*** End Patch"}}},
   {"name":"deny_nested_autopilot_marker","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/sub/.ultrapowers/autopilot-active","content":"{}"}}},
   {"name":"allow_write_worktree_ultrapowers_state","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.worktrees/GH-16-x/.ultrapowers/sdd/plan/progress.md","content":"x"}}},
-  {"name":"deny_pipx_run_python_c_wrapped","event":{"tool_name":"Bash","tool_input":{"command":"pipx run python -c 'print(1)'"}}}
+  {"name":"deny_pipx_run_python_c_wrapped","event":{"tool_name":"Bash","tool_input":{"command":"pipx run python -c 'print(1)'"}}},
+  {"name":"deny_pwsh_command_read","event":{"tool_name":"Bash","tool_input":{"command":"pwsh -NoProfile -Command \"Get-ChildItem reviews/1234\""}}},
+  {"name":"deny_pwsh_file","event":{"tool_name":"Bash","tool_input":{"command":"pwsh -NoProfile -File reviews/1234/artifacts/check.ps1"}}},
+  {"name":"deny_pwsh_c_short","event":{"tool_name":"Bash","tool_input":{"command":"pwsh -c \"Get-Date\""}}},
+  {"name":"deny_pwsh_cwa","event":{"tool_name":"Bash","tool_input":{"command":"pwsh -cwa \"Get-Date\""}}},
+  {"name":"deny_pwsh_commandwithargs","event":{"tool_name":"Bash","tool_input":{"command":"pwsh -NoProfile -CommandWithArgs \"Get-Date\""}}},
+  {"name":"deny_pwsh_command_colon","event":{"tool_name":"Bash","tool_input":{"command":"pwsh -Command:\"Get-Date\""}}},
+  {"name":"deny_powershell_command_read","event":{"tool_name":"Bash","tool_input":{"command":"powershell -NoProfile -Command \"Get-Date\""}}},
+  {"name":"deny_powershell_e_short","event":{"tool_name":"Bash","tool_input":{"command":"powershell -e AAAA"}}},
+  {"name":"deny_pwsh_encodedcommand","event":{"tool_name":"Bash","tool_input":{"command":"pwsh -EncodedCommand AAAA"}}},
+  {"name":"deny_pwsh_f_short","event":{"tool_name":"Bash","tool_input":{"command":"pwsh -f reviews/1234/artifacts/check.ps1"}}},
+  {"name":"deny_pwsh_stdin_dash","event":{"tool_name":"Bash","tool_input":{"command":"pwsh -Command -"}}},
+  {"name":"deny_pwsh_stdin_redirect","event":{"tool_name":"Bash","tool_input":{"command":"pwsh -NoProfile < reviews/1234/artifacts/check.ps1"}}},
+  {"name":"deny_pwsh_stdin_pipe_exe","event":{"tool_name":"Bash","tool_input":{"command":"echo Get-Date | pwsh.exe"}}},
+  {"name":"deny_pwsh_in_sh_c","event":{"tool_name":"Bash","tool_input":{"command":"sh -c 'pwsh -Command \"Get-Date\"'"}}}
 ]
