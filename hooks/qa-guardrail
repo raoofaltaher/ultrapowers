@@ -650,6 +650,30 @@ wreason="$(printf '%s\0%s\0%s\0%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$i
   || wreason="the command could not be analysed for writes; it is refused during $run_kind"
 [ -z "$wreason" ] || deny "$wreason"
 
+# Egress shape, whatever the allow-list says. A substitution inside a URL (`$(`, a backtick, `${`) is
+# the exfiltration shape: the data rides in the query or the path, and no host list can see it. An
+# upload or data flag (-d, --data*, -F, --form, -T, --upload-file, -X POST|PUT|PATCH|DELETE, wget
+# --post-data|--post-file|--body-data|--body-file, iwr -Body|-InFile|-Form) sends bytes out: its host
+# must be in qa.hosts.allowed (an empty list names no host). Plain GETs to other hosts stay as before.
+NET_RE="${B}(curl|wget)(\\.exe)?[[:space:]]|invoke-webrequest|invoke-restmethod|${B}(iwr|irm)[[:space:]]"
+if printf '%s' "$lc" | grep -Eq "$NET_RE"; then
+  printf '%s' "$cmd" | grep -Eq '://[^[:space:]]*(\$\(|`|\$\{)' \
+    && deny "a command or variable substitution inside a URL can carry data out in the URL and is blocked; use a literal URL"
+  sends=0
+  printf '%s' "$lc" | grep -Eq "${B}curl(\\.exe)?[[:space:]]" \
+    && printf '%s' "$cmd" | grep -Eq '(^|[[:space:]])-[A-Za-z0-9]*[dFT]|(^|[[:space:]])--(data[a-z-]*|form[a-z-]*|upload-file|json)([[:space:]=]|$)' && sends=1
+  printf '%s' "$lc" | grep -Eq '(^|[[:space:]])(-[a-z0-9]*x|--request|--method)[[:space:]=]*(post|put|patch|delete)|(^|[[:space:]])--(post-data|post-file|body-data|body-file)([[:space:]=]|$)|(^|[[:space:]])-(body|infile|form)([[:space:]]|$)' && sends=1
+  if [ "$sends" -eq 1 ]; then
+    surls="$(printf '%s' "$cmd" | grep -Eoi 'https?://[^/"'"'"'[:space:];&|()<>]+' || true)"
+    [ -n "$surls" ] || deny "an upload or data flag without a literal http(s) URL; the destination cannot be verified"
+    while IFS= read -r u; do
+      [ -n "$u" ] || continue
+      h="$(host_of "$u")"
+      on_list "$allowed" "$h" || deny "an upload or data flag to host '$h', which is not in qa.hosts.allowed, is blocked"
+    done <<< "$surls"
+  fi
+fi
+
 # The ticket tracker's hosts (tickets.sources[].url, .mcpUrl), autopilot profile: a shell call
 # to the tracker is an engine step (a label, a note, a packet), never a stage's. This holds
 # whether or not qa.hosts.allowed lists the host.

