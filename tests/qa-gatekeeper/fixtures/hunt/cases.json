@@ -379,5 +379,22 @@
   {"name":"allow_find_name","event":{"tool_name":"Bash","tool_input":{"command":"find repo-a -name '*.ts' -type f"}}},
   {"name":"allow_rg_pattern","event":{"tool_name":"Bash","tool_input":{"command":"rg -n token repo-a/src"}}},
   {"name":"allow_cargo_audit_json_lane_form","event":{"tool_name":"Bash","tool_input":{"command":"cargo-audit audit --json"}}},
-  {"name":"allow_absolute_system_program","event":{"tool_name":"Bash","tool_input":{"command":"/usr/bin/git log --oneline"}}}
+  {"name":"allow_absolute_system_program","event":{"tool_name":"Bash","tool_input":{"command":"/usr/bin/git log --oneline"}}},
+  {"name":"deny_curl_any_host","reason":"the hunt's network is its audit tools and gh api; curl is refused","event":{"tool_name":"Bash","tool_input":{"command":"curl -s https://example.org/x"}}},
+  {"name":"deny_curl_listed_host","reason":"the hunt's network is its audit tools and gh api; curl is refused","event":{"tool_name":"Bash","tool_input":{"command":"curl -s http://localhost:3000/health"}}},
+  {"name":"deny_wget_any_host","reason":"the hunt's network is its audit tools and gh api; wget is refused","event":{"tool_name":"Bash","tool_input":{"command":"wget -q -O - https://example.org/x"}}},
+  {"name":"deny_curl_quoted_program","reason":"the hunt's network is its audit tools and gh api; curl is refused","event":{"tool_name":"Bash","tool_input":{"command":"c\"ur\"l https://example.org/x"}}},
+  {"name":"deny_curl_in_sh_c","reason":"the hunt's network is its audit tools and gh api; curl is refused","event":{"tool_name":"Bash","tool_input":{"command":"sh -c 'curl https://example.org/x'"}}},
+  {"name":"deny_iwr","reason":"the hunt's network is its audit tools and gh api; iwr is refused","event":{"tool_name":"Bash","tool_input":{"command":"iwr https://example.org/x"}}},
+  {"name":"deny_nc","reason":"the hunt's network is its audit tools and gh api; nc is refused","event":{"tool_name":"Bash","tool_input":{"command":"nc example.org 443"}}},
+  {"name":"deny_ssh","reason":"the hunt's network is its audit tools and gh api; ssh is refused","event":{"tool_name":"Bash","tool_input":{"command":"ssh host id"}}},
+  {"name":"deny_rsync","reason":"the hunt's network is its audit tools and gh api; rsync is refused","event":{"tool_name":"Bash","tool_input":{"command":"rsync -a repo-a host:/tmp/x"}}},
+  {"name":"deny_webfetch_any_host","reason":"the hunt's network is its audit tools and gh api; WebFetch is refused","event":{"tool_name":"WebFetch","tool_input":{"url":"https://example.org/x","prompt":"summarise"}}},
+  {"name":"deny_webfetch_listed_host","reason":"the hunt's network is its audit tools and gh api; WebFetch is refused","event":{"tool_name":"WebFetch","tool_input":{"url":"http://localhost:3000/x","prompt":"summarise"}}},
+  {"name":"deny_websearch","reason":"the hunt's network is its audit tools and gh api; WebSearch is refused","event":{"tool_name":"WebSearch","tool_input":{"query":"cve exploit"}}},
+  {"name":"deny_url_tool_any_name","reason":"the hunt's network is its audit tools and gh api","event":{"tool_name":"mcp__crawler__scrape_page","tool_input":{"url":"https://example.org/x"}}},
+  {"name":"deny_url_tool_urls_array","reason":"the hunt's network is its audit tools and gh api","event":{"tool_name":"mcp__crawler__batch","tool_input":{"urls":["https://example.org/a"]}}},
+  {"name":"allow_grep_word_http","event":{"tool_name":"Bash","tool_input":{"command":"grep -rn http repo-a/src"}}},
+  {"name":"allow_git_grep_curl_word","event":{"tool_name":"Bash","tool_input":{"command":"git grep -n curl -- repo-a"}}},
+  {"name":"allow_grep_tool_pattern_curl","event":{"tool_name":"Grep","tool_input":{"pattern":"curl https://","path":"{{ROOT}}/repo-a/src"}}}
 ]

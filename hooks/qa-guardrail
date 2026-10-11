@@ -748,13 +748,35 @@ on_list() {
   [ -n "$1" ] && [ -n "$2" ] && [[ ",$1," == *",$2,"* ]]
 }
 
+# --- The hunt reaches no URL: its network is its audit tools and gh/glab api, called from the shell, so a
+# fetch or search tool and any tool whose input holds a url is refused whatever qa.hosts lists. The local
+# file readers are not URL tools (a search for a URL string is a file search).
+if [ "$PROFILE" = "hunt" ]; then
+  tool_flat="${tool_lc//[_ :.-]/}"
+  tool_flat="${tool_flat////}"
+  case "$tool_flat" in
+    webfetch|websearch|*googlewebsearch*|*fetchurl*|*urlfetch*|*searchweb*|*webbrowse*|*webread*) deny "the hunt's network is its audit tools and gh api; $tool is refused" ;;
+  esac
+  if [ -n "$url" ]; then
+    case "$tool_lc" in
+      read|grep|glob|ls|lsp|notebookread|read_file|read_many_files|list_directory|grep_search|search_file_content|find_by_name|view_file|list_dir|codebase_search|file_search) ;;
+      *) deny "the hunt's network is its audit tools and gh api; $tool carrying a URL is refused" ;;
+    esac
+  fi
+fi
+
 # --- Any tool that carries a url (navigation, fetch, scrape, crawl, whatever its name), under
 # `url`, `uri`, `link` or a `urls` array: forbidden hosts never; allowed hosts only when a list is set.
+# An autopilot stage has no open egress: a host that no list names is refused (the hook cannot read the
+# ticket's own links, so a host to use is listed in qa.hosts.allowed; the ticket tracker's host stands for them
+# while the list is empty).
 for u in $url; do
   host_of_r "$u"; h="$REPLY"
   on_list "$forbidden" "$h" && deny "host '$h' is on qa.hosts.forbidden"
   if [ -n "$allowed" ]; then
     on_list "$allowed" "$h" || deny "host '$h' is not in qa.hosts.allowed"
+  elif [ "$PROFILE" = "autopilot" ]; then
+    on_list "$tracker_hosts" "$h" || deny "host '$h' is not in qa.hosts.allowed or qa.urls; an autopilot stage reaches only listed hosts (the hook cannot read the ticket's own links, so list the host to use it)"
   fi
 done
 
@@ -879,8 +901,15 @@ printf '%s' "$lc" | grep -Eq "${B}(chmod|chown|chgrp|icacls|takeown)[[:space:]]"
   && deny "permission or ownership change is blocked"
 
 # Remote shells and copies; inline interpreters; raw network redirection.
-printf '%s' "$lc" | grep -Eq "${B}(ssh|scp|sftp|rsync|telnet|nc|ncat|netcat|socat|ftp|tftp|lftp)(\\.exe)?[[:space:]]|${B}openssl(\\.exe)?[[:space:]]+s_(client|server)\\b" \
-  && deny "remote shell or copy is blocked"
+remote_re="${B}(ssh|scp|sftp|rsync|telnet|nc|ncat|netcat|socat|ftp|tftp|lftp)(\\.exe)?[[:space:]]|${B}openssl(\\.exe)?[[:space:]]+s_(client|server)\\b"
+if printf '%s' "$lc" | grep -Eq "$remote_re"; then
+  if [ "$PROFILE" = "hunt" ]; then
+    remote_hit="$(printf '%s' "$lc" | grep -Eo "$remote_re" | head -n 1)"
+    remote_hit="${remote_hit//[^a-z0-9]/}"; remote_hit="${remote_hit%exe}"
+    deny "the hunt's network is its audit tools and gh api; ${remote_hit:-a remote shell or copy} is refused"
+  fi
+  deny "remote shell or copy is blocked"
+fi
 printf '%s' "$lc" | grep -Eq "${B}(python3?|node|nodejs|perl|ruby|php|deno|bun)(\\.exe)?[[:space:]]+(-c|-e|-p|--print|--eval|-)([[:space:]]|\$)" \
   && deny "inline interpreter code is blocked; it is an unbounded egress and execution bypass"
 printf '%s' "$lc" | grep -Eq '/dev/(tcp|udp)/' \
@@ -921,8 +950,10 @@ wreason="$(printf '%s\0%s\0%s\0%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$i
 # upload or data flag (-d, --data*, -F, --form, -T, --upload-file, -X POST|PUT|PATCH|DELETE, wget
 # --post-data|--post-file|--body-data|--body-file, iwr -Body|-InFile|-Form) sends bytes out: its host
 # must be in qa.hosts.allowed (an empty list names no host). Plain GETs to other hosts stay as before.
+# The hunt runs none of these programs (the analyzer above refuses each by name), so the word curl in a
+# search (git grep curl) is no call and the text rules of this section do not apply to it.
 NET_RE="${B}(curl|wget)(\\.exe)?[[:space:]]|invoke-webrequest|invoke-restmethod|${B}(iwr|irm)[[:space:]]"
-if printf '%s' "$lc" | grep -Eq "$NET_RE"; then
+if [ "$PROFILE" != "hunt" ] && printf '%s' "$lc" | grep -Eq "$NET_RE"; then
   printf '%s' "$cmd" | grep -Eq '://[^[:space:]]*(\$\(|`|\$\{)' \
     && deny "a command or variable substitution inside a URL can carry data out in the URL and is blocked; use a literal URL"
   # curl reads more options (a URL, data, a header) from a --config file, which cannot be inspected.
@@ -961,7 +992,7 @@ if [ "$PROFILE" = "autopilot" ] && [ -n "$tracker_hosts" ] \
   done <<< "$turls"
 fi
 
-if [ -n "$allowed" ] && printf '%s' "$lc" | grep -Eq "${B}(curl|wget)(\\.exe)?[[:space:]]|invoke-webrequest|invoke-restmethod|${B}(iwr|irm)[[:space:]]"; then
+if [ "$PROFILE" != "hunt" ] && [ -n "$allowed" ] && printf '%s' "$lc" | grep -Eq "${B}(curl|wget)(\\.exe)?[[:space:]]|invoke-webrequest|invoke-restmethod|${B}(iwr|irm)[[:space:]]"; then
   urls="$(printf '%s' "$cmd" | grep -Eoi 'https?://[^/"'"'"'[:space:];&|()<>]+' || true)"
   [ -n "$urls" ] || deny "curl/wget without a literal http(s) URL; the target cannot be verified"
   while IFS= read -r u; do

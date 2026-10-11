@@ -887,6 +887,8 @@ function huntPipAudit(words, refuse, allow) {
 const HUNT_PROGRAMS = new Set(['cat', 'ls', 'head', 'tail', 'wc', 'grep', 'rg', 'find', 'file', 'stat', 'du', 'sort', 'cut', 'tr', 'diff', 'comm',
   'sha256sum', 'shasum', 'md5sum', 'jq', 'yq', 'basename', 'dirname', 'realpath', 'readlink', 'printf', 'echo', 'true', 'false', 'test', '[', '[[', 'pwd', 'env',
   'git', 'gh', 'glab']);
+// The hunt's network is its audit tools and gh/glab api: a program that opens a connection of its own is refused by name.
+const HUNT_NET_PROGRAMS = new Set(['curl', 'wget', 'iwr', 'irm', 'invoke-webrequest', 'invoke-restmethod', 'http', 'https', 'httpie', 'xh', 'nc', 'ncat', 'netcat', 'telnet', 'ssh', 'scp', 'sftp', 'rsync', 'socat', 'ftp', 'tftp', 'lftp']);
 const HUNT_BUILTINS = new Set(['cd', 'pushd', 'popd', 'set', 'unset', 'local', ':']);
 // The scripts of the plugin that a hunt (or a task review) runs by name when the audited project is the plugin itself.
 const HUNT_OWN_SCRIPTS_RE = /(^|\/)skills\/(vulnerability-hunt\/scripts\/hunt-preflight|task-review\/scripts\/assemble-review)\.mjs$/;
@@ -1419,6 +1421,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       // The hunt: the audit tools it may run, in the forms it may run them, and the commands it refuses
       // (a test suite, a worktree). A listed form is allowed here, after the variable gate and the
       // interpreter rules above and the redirect check at the top, which apply to it as to any command.
+      if (hunt && HUNT_NET_PROGRAMS.has(prog.replace(/.(cmd|bat|ps1)$/, ''))) return deny(`the hunt's network is its audit tools and gh api; ${prog} is refused`);
       if (hunt) {
         const h = huntCheck(prog, rest.map((x) => x.v), { viaRunner, interpreter: interpKind });
         if (h && h.reason) return deny(h.reason);

