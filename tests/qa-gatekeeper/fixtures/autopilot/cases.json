@@ -520,5 +520,11 @@
   {"name":"deny_curl_connect_to","reason":"curl --connect-to","event":{"tool_name":"Bash","tool_input":{"command":"curl --connect-to localhost:3000:evil.example:80 http://localhost:3000/"}}},
   {"name":"deny_curl_schemeless_second_url","reason":"is not a literal http(s) URL","event":{"tool_name":"Bash","tool_input":{"command":"curl http://localhost:3000/ evil.example/x"}}},
   {"name":"deny_curl_proxy_short","reason":"curl -x","event":{"tool_name":"Bash","tool_input":{"command":"curl -x evil.example:8080 http://localhost:3000/"}}},
-  {"name":"allow_curl_listed_host","event":{"tool_name":"Bash","tool_input":{"command":"curl -s http://localhost:3000/health"}}}
+  {"name":"allow_curl_listed_host","event":{"tool_name":"Bash","tool_input":{"command":"curl -s http://localhost:3000/health"}}},
+  {"name":"deny_ln_s_git_dir","reason":"parent-directory segment","event":{"tool_name":"Bash","tool_input":{"command":"ln -s ../../.git tasks/GH-16/g; echo x > tasks/GH-16/g/config"}}},
+  {"name":"deny_ln_s_git_dir_absolute","reason":"is a protected path","event":{"tool_name":"Bash","tool_input":{"command":"ln -s {{ROOT}}/.git repo-a/g && echo x > repo-a/g/config"}}},
+  {"name":"deny_ln_s_claude_settings_dir","reason":"is a protected path","event":{"tool_name":"Bash","tool_input":{"command":"ln -sf {{ROOT}}/.claude repo-a/c"}}},
+  {"name":"deny_ln_s_outside_workspace","reason":"is outside the workspace","event":{"tool_name":"Bash","tool_input":{"command":"ln -s {{ELSEWHERE}} repo-a/e"}}},
+  {"name":"deny_cp_s_git_dir","reason":"is a protected path","event":{"tool_name":"Bash","tool_input":{"command":"cp -s {{ROOT}}/.git repo-a/g"}}},
+  {"name":"allow_ln_s_inside_workspace","event":{"tool_name":"Bash","tool_input":{"command":"ln -s {{ROOT}}/repo-a/src repo-a/src-link"}}}
 ]

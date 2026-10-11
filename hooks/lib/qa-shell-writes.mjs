@@ -13,7 +13,7 @@
 // fails closed on what it cannot resolve (a target built from an unknown variable or a
 // command substitution). A regex hook cannot contain a determined adversary; this closes the
 // ordinary spellings of a write.
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { inside, realCanonical, rel } from './guard-paths.mjs';
 
 const DEVICES = new Set(['/dev/null', '/dev/stdout', '/dev/stderr', '/dev/tty', 'nul', '/dev/fd/1', '/dev/fd/2']);
@@ -2169,14 +2169,41 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         return;
       }
       if (prog === 'rm' || prog === 'unlink') { for (const x of plain.filter((y) => y.v !== '--')) checkTarget(x.w, dir, `${prog} operand`, container); return; }
+      // A symbolic link (ln -s, cp -s, mklink) is a path that later commands write through, and one made in the same
+      // command is not on disk when they are judged: a QA run and a hunt make none, and an autopilot stage's link
+      // target is held to the same rules as a write (inside the workspace, nothing protected).
+      const SYMLINK_WHY = `a symlink during ${runKind} cannot be followed by the guardrail: a later path through it is judged by its spelling, not where the link leads; make no link`;
+      const linkDirOf = (destWord) => {
+        const raw = destWord ? resolveWord(destWord) : null;
+        if (raw === null) return dir;
+        let p = normPath(raw);
+        if (!p.startsWith('/')) { if (dir === null) return null; p = `${dir}/${p.replace(/^\.\//, '')}`; }
+        let isDir = /[\\/]$/.test(raw);
+        if (!isDir) { try { isDir = statSync(realCanonical(p, rootC)).isDirectory(); } catch { isDir = false; } }
+        return isDir ? p : (p.slice(0, p.lastIndexOf('/')) || '/');
+      };
+      if (prog === 'mklink') {
+        if (!autopilot) return deny(SYMLINK_WHY);
+        const ops = rest.filter((x) => x.v === null || !/^\/[A-Za-z]$/.test(x.v));
+        if (ops[0]) checkTarget(ops[0].w, dir, 'mklink link', container);
+        if (ops[1]) checkTarget(ops[1].w, linkDirOf(ops[0] && ops[0].w), 'mklink link target', container);
+        return;
+      }
       if (prog === 'cp' || prog === 'mv' || prog === 'install' || prog === 'ln') {
         const ops = plain.filter((y) => y.v !== '--');
         const ti = rest.findIndex((x) => x.v === '-t' || x.v === '--target-directory');
         const tEq = rest.find((x) => x.v && x.v.startsWith('--target-directory='));
+        const symbolic = (prog === 'ln' || prog === 'cp') && rest.some((x) => x.v !== null && (/^-[A-Za-z]*s[A-Za-z]*$/.test(x.v) || x.v === (prog === 'ln' ? '--symbolic' : '--symbolic-link')));
+        if (symbolic && !autopilot) return deny(SYMLINK_WHY);
         let dest;
         if (tEq) dest = { k: 'w', parts: [{ t: 'lit', v: tEq.v.slice('--target-directory='.length) }] };
         else if (ti !== -1 && rest[ti + 1]) dest = rest[ti + 1].w;
         else if (ops.length >= 2) dest = ops[ops.length - 1].w;
+        if (symbolic) {
+          const targets = dest && ops.length >= 2 && !tEq && ti === -1 ? ops.slice(0, -1) : ops;
+          const linkDir = linkDirOf(dest);
+          for (const x of targets) checkTarget(x.w, linkDir, `${prog} link target`, container);
+        }
         if (dest) checkTarget(dest, dir, `${prog} destination`, container);
         if (prog === 'mv') for (const x of (dest && !tEq && ti === -1 ? ops.slice(0, -1) : ops)) checkTarget(x.w, dir, 'mv source', container);
         return;

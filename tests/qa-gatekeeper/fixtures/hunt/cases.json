@@ -396,5 +396,9 @@
   {"name":"deny_url_tool_urls_array","reason":"the hunt's network is its audit tools and gh api","event":{"tool_name":"mcp__crawler__batch","tool_input":{"urls":["https://example.org/a"]}}},
   {"name":"allow_grep_word_http","event":{"tool_name":"Bash","tool_input":{"command":"grep -rn http repo-a/src"}}},
   {"name":"allow_git_grep_curl_word","event":{"tool_name":"Bash","tool_input":{"command":"git grep -n curl -- repo-a"}}},
-  {"name":"allow_grep_tool_pattern_curl","event":{"tool_name":"Grep","tool_input":{"pattern":"curl https://","path":"{{ROOT}}/repo-a/src"}}}
+  {"name":"allow_grep_tool_pattern_curl","event":{"tool_name":"Grep","tool_input":{"pattern":"curl https://","path":"{{ROOT}}/repo-a/src"}}},
+  {"name":"deny_ln_s_then_write","reason":"a symlink during a vulnerability hunt cannot be followed by the guardrail","event":{"tool_name":"Bash","tool_input":{"command":"ln -s ../.. reviews/audit-2026-10-11/up && echo x > reviews/audit-2026-10-11/up/repo-a/src/app.js"}}},
+  {"name":"deny_ln_s_git_dir","reason":"a symlink during a vulnerability hunt cannot be followed by the guardrail","event":{"tool_name":"Bash","tool_input":{"command":"ln -s ../../.git reviews/audit-2026-10-11/g; echo x > reviews/audit-2026-10-11/g/config"}}},
+  {"name":"deny_ln_sf_cluster","reason":"a symlink during a vulnerability hunt cannot be followed by the guardrail","event":{"tool_name":"Bash","tool_input":{"command":"ln -sfn {{ROOT}}/repo-a reviews/audit-2026-10-11/r"}}},
+  {"name":"deny_cp_s","reason":"a symlink during a vulnerability hunt cannot be followed by the guardrail","event":{"tool_name":"Bash","tool_input":{"command":"cp -s {{ROOT}}/repo-a/x reviews/audit-2026-10-11/x"}}}
 ]

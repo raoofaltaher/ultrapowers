@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"mklink /D reviews/1234/up ../.."},"reason":"a symlink during a QA run cannot be followed by the guardrail"}
