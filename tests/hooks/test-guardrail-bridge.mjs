@@ -374,3 +374,26 @@ test('guardrail-cli bounds the working directory of a Gemini dir_path and an Ant
   const inside = runCli({ toolCall: { name: 'run_command', args: { CommandLine: 'git status', Cwd: path.join(root, 'repo-a') } }, workspacePaths: [root], cwd: root }, ['--antigravity']);
   assert.deepEqual(JSON.parse(inside.stdout), { decision: 'allow' });
 });
+
+test('deny_decoy_file_path_key: a call that names two different files under two path spellings is refused', () => {
+  const root = project({ marker: 'hunt' });
+  const inside = path.join(root, 'reviews', 'audit-2026-10-11', 'x.md');
+  const target = path.join(root, 'repo-a', 'src', 'app.js');
+  // Pi writes `path`, OpenCode `filePath`; the event would carry the first spelling as file_path.
+  for (const input of [{ path: target, file_path: inside, content: 'x' }, { filePath: target, path: inside, content: 'x' }, { notebook_path: target, file_path: inside }]) {
+    // The bridge refuses before it runs the hook (a hook dir with no hook proves the check is its own).
+    const own = runGuardrail({ toolName: 'write', input, cwd: root, hookDir: path.join(root, 'no-hook-here') });
+    assert.equal(own.deny, true, JSON.stringify(own));
+    assert.equal(own.prefix, 'HUNT-GUARDRAIL');
+    assert.match(own.reason, /the call names two different targets/);
+    const full = runGuardrail({ toolName: 'write', input, cwd: root });
+    assert.equal(full.deny, true, JSON.stringify(full));
+    assert.match(full.reason, /the call names two different targets/);
+  }
+  // A Copilot-shaped string input is read the same way.
+  const str = runGuardrail({ toolName: 'write', input: JSON.stringify({ path: target, file_path: inside }), cwd: root, hookDir: path.join(root, 'no-hook-here') });
+  assert.match(str.reason, /the call names two different targets/);
+  // The same file under two spellings (one relative, one absolute) is one target.
+  const same = runGuardrail({ toolName: 'write', input: { path: 'reviews/audit-2026-10-11/x.md', file_path: inside, content: 'x' }, cwd: root });
+  assert.deepEqual(same, { deny: false });
+});

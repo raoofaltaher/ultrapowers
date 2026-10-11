@@ -388,6 +388,14 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
     if (hit) { writeRaw = str(hit[1]); break; }
   }
   if (!writeRaw && fileName && str(inp.dir_path)) writeRaw = str(inp.dir_path).replace(/[\\/]+$/, "") + "/" + fileName;
+  // A call that spells its file twice (path, file_path, filePath, notebook_path) under different
+  // targets: the rules above judge one spelling, the tool may write the other.
+  const spellings = Object.entries(inp).filter(([k, v]) => ["filepath", "notebookpath", "path"].includes(fold(k)) && str(v)).map(([, v]) => str(v));
+  const targets = new Set(spellings.map((p) => { const r = resolve(p).real; return ignoreCase ? r.toLowerCase() : r; }));
+  if (targets.size > 1) {
+    process.stdout.write(["twotargets:" + spellings.join(", "), "", "", "", "", "", "", "", ""].join("\0") + "\0");
+    process.exit(0);
+  }
   const w = writeRaw ? resolve(writeRaw) : { real: "", rel: "" };
   const keyReal = pathFields.map((p) => { const r = resolve(p); return r.rel ? r.rel.slice(2) : r.real; }).filter(Boolean);
   // The files a patch names (Codex apply_patch, Droid ApplyPatch), each as raw, rel and real.
@@ -422,6 +430,7 @@ case "$parse_status" in
   badconfig:*) deny "the project config .agents/ultrapowers.json cannot be read (${parse_status#badconfig:}); every call is refused while a run marker exists under .ultrapowers/" ;;
   shapeless) deny "the tool event has no readable tool name or input; an uninspectable call is refused during $run_kind" ;;
   badmarker) deny "the run marker holds a ticket or audit id with a parent segment or a path separator; every call is refused while it does" ;;
+  twotargets:*) deny "the call names two different targets (${parse_status#twotargets:}); one call writes one file" ;;
 esac
 [ "$parse_status" = "ok" ] || deny "the tool event could not be parsed; an uninspectable call is refused during $run_kind"
 

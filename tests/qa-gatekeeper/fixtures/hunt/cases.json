@@ -316,5 +316,8 @@
   {"name":"deny_git_C_from_variable","reason":"cannot be verified","event":{"tool_name":"Bash","tool_input":{"command":"git -C $D log"}}},
   {"name":"allow_git_grep_plain","event":{"tool_name":"Bash","tool_input":{"command":"git grep -n foo -- repo-a"}}},
   {"name":"allow_git_C_inside","event":{"tool_name":"Bash","tool_input":{"command":"git -C repo-a log --oneline -3"}}},
-  {"name":"allow_git_diff_no_ext_diff","event":{"tool_name":"Bash","tool_input":{"command":"git diff --no-ext-diff --stat"}}}
+  {"name":"allow_git_diff_no_ext_diff","event":{"tool_name":"Bash","tool_input":{"command":"git diff --no-ext-diff --stat"}}},
+  {"name":"deny_decoy_file_path_key","reason":"the call names two different targets","event":{"tool_name":"write","tool_input":{"path":"repo-a/src/app.js","file_path":"reviews/audit-2026-10-11/x.md","content":"x"}}},
+  {"name":"deny_decoy_filePath_key","reason":"the call names two different targets","event":{"tool_name":"write","tool_input":{"filePath":"{{ROOT}}/repo-a/src/app.js","path":"{{ROOT}}/reviews/audit-2026-10-11/x.md","content":"x"}}},
+  {"name":"allow_two_path_keys_same_target","event":{"tool_name":"write","tool_input":{"path":"reviews/audit-2026-10-11/x.md","file_path":"{{ROOT}}/reviews/audit-2026-10-11/x.md","content":"x"}}}
 ]

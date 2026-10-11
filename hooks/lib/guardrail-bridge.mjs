@@ -206,6 +206,18 @@ export function runGuardrail({ toolName, input, cwd, dirs = [], hookDir = HOOK_D
   if (callAbsAll.length > 1 && new Set(callAbsAll.map(fold)).size > 1) {
     return { deny: true, prefix, reason: `the call names two working directories (${callAbsAll.join(', ')}); one call runs in one directory` };
   }
+  // The event carries one file spelling (file_path, copied from the first of the harness's keys), and
+  // the tool may write another: Pi writes `path`, OpenCode `filePath`. Two spellings that name
+  // different files are refused; the same file under two spellings is one target.
+  let given = input;
+  if (typeof given === 'string') { try { given = JSON.parse(given); } catch { given = null; } }
+  if (given && typeof given === 'object' && !Array.isArray(given)) {
+    const base = callAbs ?? (givenCwd || startDir);
+    const spellings = ['path', 'file_path', 'filePath', 'notebook_path'].map((k) => given[k]).filter((v) => typeof v === 'string' && v !== '');
+    if (new Set(spellings.map((p) => fold(path.resolve(base, p)))).size > 1) {
+      return { deny: true, prefix, reason: `the call names two different targets (${spellings.join(', ')}); one call writes one file` };
+    }
+  }
   // The marker was found from the session cwd; the command itself runs in the call's directory, so
   // the hook resolves a relative target there (a bare autopilot.json inside tasks/<ID> is the state file).
   if (callAbs) event.cwd = realish(callAbs);

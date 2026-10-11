@@ -507,5 +507,6 @@
   {"name":"deny_ansi_c_quote_target","reason":"cannot be verified","event":{"tool_name":"Bash","tool_input":{"command":"echo x > $'.github'/workflows/ci.yml"}}},
   {"name":"deny_git_grep_open_files_in_pager","reason":"open-files-in-pager","event":{"tool_name":"Bash","tool_input":{"command":"git grep -Otouch foo"}}},
   {"name":"deny_git_ext_diff","reason":"--ext-diff","event":{"tool_name":"Bash","tool_input":{"command":"git diff --ext-diff"}}},
-  {"name":"deny_git_C_outside","reason":"outside the project","event":{"tool_name":"Bash","tool_input":{"command":"git -C /tmp/ap-elsewhere status"}}}
+  {"name":"deny_git_C_outside","reason":"outside the project","event":{"tool_name":"Bash","tool_input":{"command":"git -C /tmp/ap-elsewhere status"}}},
+  {"name":"deny_decoy_file_path_key","reason":"the call names two different targets","event":{"tool_name":"write","tool_input":{"path":".github/workflows/ci.yml","file_path":"repo-a/src/x.ts","content":"x"}}}
 ]
