@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"wget -T 5 -t 2 -q -O - http://localhost:3000/health"}}

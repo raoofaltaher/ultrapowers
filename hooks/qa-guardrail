@@ -632,7 +632,9 @@ printf '%s' "$lc" | grep -Eq "${B}(printenv|env)[[:space:]]*(\$|[;&|])" \
 # The process environment is also a file: /proc/<pid>/environ holds every variable.
 printf '%s' "$lc" | grep -Eq '/proc/[^/[:space:]]+/environ' \
   && deny "reading a process environment (/proc/<pid>/environ) is blocked; check a variable with \${NAME:+set} instead"
-printf '%s' "$lc" | grep -Eq '(curl|wget)[^;&|]*(-t |--upload-file|--data-binary[[:space:]]*@|-d[[:space:]]*@|-f[[:space:]][^;&|]*@)' \
+# (-t is curl's -T upload only: wget's -T is its timeout and -t its retry count.)
+{ printf '%s' "$lc" | grep -Eq '(curl|wget)[^;&|]*(--upload-file|--data-binary[[:space:]]*@|-d[[:space:]]*@|-f[[:space:]][^;&|]*@)' \
+  || printf '%s' "$lc" | grep -Eq 'curl[^;&|]*-t '; } \
   && deny "outbound file upload is blocked"
 
 # Egress allow-list (active when qa.hosts.allowed is set): curl/wget reach only listed hosts,
