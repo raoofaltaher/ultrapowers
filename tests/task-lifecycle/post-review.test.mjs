@@ -446,3 +446,19 @@ test('GitLab: screenshots are uploaded to the project and embedded from the uplo
     assert.ok(out.notes.some((n) => /upload failed/.test(n)));
   } finally { rmSync(s2.root, { recursive: true, force: true }); }
 });
+
+test('a non-Error thrown by upload is noted, not fatal, and a file linked twice is uploaded once', async () => {
+  const id = 'GL-7';
+  const ticket = fakeTracker('ticket');
+  ticket.upload = async (file) => { ticket.calls.push({ op: 'upload', file }); throw 'boom'; };
+  const qa = '# QA\n\nVerdict: PASS — ok.\n\n![a](artifacts/a.png)\n\n![again](artifacts/a.png)\n';
+  const s = setup({ id, qa, artifacts: { 'a.png': Buffer.from('png') }, trackers: { ticket }, entries: [] });
+  try {
+    s.deps.forgeFor = (dir) => (dir === s.root ? { provider: 'gitlab', host: 'gitlab.example.com', path: 'acme/docs' } : null);
+    const out = await postReview({ id, root: s.root, marker: MARKER, resolution: ticketOf(id) }, s.deps);
+    assert.equal(ticket.calls.filter((c) => c.op === 'upload').length, 1, 'one upload for one file');
+    const qaComment = ticket.calls.filter((c) => c.op === 'comment').find((c) => c.body.startsWith('**QA-REPORT.md**'));
+    assert.equal((qaComment.body.match(/upload failed: boom/g) || []).length, 2);
+    assert.ok(out.notes.some((n) => n === 'artifacts/a.png: upload failed: boom'));
+  } finally { rmSync(s.root, { recursive: true, force: true }); }
+});

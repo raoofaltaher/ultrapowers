@@ -304,12 +304,13 @@ class GitLabTracker {
   }
 
   // A file uploaded to the project (POST /projects/:id/uploads). The answer's `url` is the
-  // project-relative path that renders in issue and merge-request notes, private projects included.
+  // project-relative path that renders in issue and merge-request notes, private projects included;
+  // `markdown` is what GitLab suggests, kept for the caller that wants it.
   async upload(filePath) {
     const out = await run(this.r, this.env, ['api', `projects/${this.enc}/uploads`, '-X', 'POST', '-F', `file=@${filePath}`]);
     const answer = parseJson(out.stdout, 'glab api uploads');
     if (!answer || typeof answer.url !== 'string') throw new AutopilotError('tracker-failed', 'glab api uploads returned no url');
-    return { url: answer.url, markdown: answer.markdown ?? `![${path.basename(filePath)}](${answer.url})`, fullPath: answer.full_path ?? null };
+    return { url: answer.url, markdown: typeof answer.markdown === "string" ? answer.markdown : null };
   }
 
   async prComment(url, body) {

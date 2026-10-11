@@ -399,3 +399,15 @@ test('gitlab upload posts the file to the project uploads API and returns its ur
 test('github and odoo trackers have no upload: the call fails with no-upload', async () => {
   await assert.rejects(trackerFor(GH, env({})).upload('x.png'), (err) => err.code === 'no-upload');
 });
+
+test('odoo upload rejects with no-upload, and a glab answer without markdown still yields the url', async () => {
+  await assert.rejects(trackerFor({ provider: 'odoo', url: 'https://erp.example.com', db: 'erp', login: 'bot', path: '34', number: 1, host: 'erp.example.com' }, { ...process.env, ODOO_API_KEY: 'k' }).upload('x.png'), (err) => err.code === 'no-upload');
+  const e = env({ 'api projects/acme%2Fplatform%2Fweb/uploads -X POST -F file=@': { stdout: { url: '/uploads/abc/shot.png' } } });
+  const file = path.join(os.tmpdir(), `shot2-${process.pid}.png`);
+  fs.writeFileSync(file, 'png');
+  try {
+    const up = await trackerFor(GL, e).upload(file);
+    assert.equal(up.url, '/uploads/abc/shot.png');
+    assert.equal(up.markdown, null);
+  } finally { fs.rmSync(file, { force: true }); }
+});

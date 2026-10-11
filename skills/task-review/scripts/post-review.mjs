@@ -8,8 +8,9 @@
 // code. Network access is only what those two modules do; a local ticket is refused.
 //
 //   - reviews/<ticket>/ is committed to the documents branch (the branch checked out in the project
-//     root, which must start with "<ticket>-") and pushed. On GitHub and GitLab each screenshot is
-//     embedded from its URL on that pushed branch, percent-encoded.
+//     root, which must start with "<ticket>-") and pushed. On GitHub each screenshot is linked from
+//     that branch through the blob URL with ?raw=true (a logged-in viewer with access sees it on a
+//     private repository); on GitLab it is uploaded to the project and embedded from the upload.
 //   - On Odoo the screenshots are attached to the chatter message (OdooTracker.attach) under
 //     their own names.
 //   - A report longer than the tracker's comment limit goes as numbered parts, in order, each under
@@ -219,8 +220,9 @@ async function commentsFor(documents, { id, mode, base, limit, root, imageQuery 
           const up = await tracker.upload(artifactPath(file.name));
           uploaded.set(file.name, up.url);
         } catch (error) {
-          failed.set(file.name, error.message);
-          notes.push(`artifacts/${file.name}: upload failed: ${error.message}`);
+          const reason = error instanceof Error ? error.message : String(error);
+          failed.set(file.name, reason);
+          notes.push(`artifacts/${file.name}: upload failed: ${reason}`);
         }
       }
     }
