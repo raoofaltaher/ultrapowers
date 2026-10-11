@@ -66,7 +66,7 @@ Only after every reviewer has returned (a QA run's guardrail would deny the revi
 node "<SKILL_DIR>/scripts/assemble-review.mjs" "<ID>" --findings "reviews/<ID>/review-findings.json" --qa "reviews/<ID>/QA-REPORT.md"
 ```
 
-It writes `reviews/<ID>/TASK-REVIEW.md` from [templates/TASK-REVIEW.md](templates/TASK-REVIEW.md): `FAIL` on any Critical finding, a security `FAIL` or a QA `FAIL`, `BLOCKED` on a QA `PRECONDITION-FAILED` or `INCOMPLETE`, `PASS-WITH-ISSUES` on Important findings or a security or QA `PASS-WITH-ISSUES`, else `PASS`. It reads `reviews/<ID>/security-findings.json` when the hunt wrote it. Do not hand-edit the verdict. Tell your human partner the verdict, the finding counts and the path, in four lines at most.
+It writes `reviews/<ID>/TASK-REVIEW.md` from [templates/TASK-REVIEW.md](templates/TASK-REVIEW.md): `FAIL` on any Critical finding, a security `FAIL` or a QA `FAIL`, `BLOCKED` on a QA `PRECONDITION-FAILED` or `INCOMPLETE`, `PASS-WITH-ISSUES` on Important findings or a security or QA `PASS-WITH-ISSUES`, else `PASS`. It reads `reviews/<ID>/security-findings.json` when the hunt wrote it; a security `INCOMPLETE` never blocks and is named in the verdict. Do not hand-edit the verdict. Tell your human partner the verdict, the finding counts and the path, in four lines at most.
 
 ## Step 6: Post (only with `--post`)
 
@@ -104,5 +104,4 @@ It refuses a local ticket, commits and pushes `reviews/<ID>/` to the documents b
 | "There is no subagent tool here, so the code review is skipped" | The review does not need a subagent, only a reader. Perform `prompts/review.md` yourself per repository and record in `declined` that it ran inline. A report with no code review is not a pass. |
 | "CI already runs npm audit, so the dependency and security pass is a duplicate" | A scanner elsewhere is not this branch's lockfile read here. Run the hunt; a runtime CVE found only here is the finding the review exists for. |
 | "The audit tool will not reach the registry, there is no network, so I'll list the advisories from memory" | You did not run it, so you do not know. Run the tool, record the exact failure, and the lane is INCOMPLETE. No advisory id comes from memory. |
-| "The hunt could not run, so I'll skip Step 5's security part" | INCOMPLETE is the hunt's verdict and the assembler names it. Run Step 5 with what exists. |
 | "I'll invent a verdict word that fits better" | Four values exist: PASS, PASS-WITH-ISSUES, FAIL, BLOCKED. The script writes them. |
