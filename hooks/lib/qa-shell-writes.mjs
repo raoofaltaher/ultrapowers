@@ -929,16 +929,17 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         const tail = rest.slice(1);
         if (!tail.length || tail.some((x) => x.v === null)) return deny(CMD_MSG);
         const text = tail.map((x) => x.v).join(' ').trim();
-        if (/["'&|<>%!^()\r\n\0]/.test(text)) return deny(CMD_MSG);
+        // , ; and = are argument delimiters to cmd (`type,a.txt`, `type=x`): cmd splits the words differently.
+        if (/["'&|<>%!^(),;=\r\n\0]/.test(text)) return deny(CMD_MSG);
         const words = text.split(/\s+/);
         const verb = words[0].toLowerCase();
         if (verb === 'dir') return;
         if (verb === 'ver' && words.length === 1) return;
         if (verb === 'where' && words.length === 2 && /^[A-Za-z0-9_.-]+$/.test(words[1])) return;
-        if (verb === 'type' && words.length === 2 && !/[*?]/.test(words[1])) {
-          let p = normPath(words[1].replace(/\\/g, '/'));
-          if (!p.startsWith('/')) p = dir === null ? '' : `${dir}/${p.replace(/^\.\//, '')}`;
-          if (p && !p.split('/').includes('..')) {
+        // type takes one plain relative path (no wildcard, no drive, no leading separator) inside the project.
+        if (verb === 'type' && words.length === 2 && !/[*?]/.test(words[1]) && !/^([A-Za-z]:|[\\/])/.test(words[1]) && dir !== null) {
+          const p = `${dir}/${normPath(words[1].replace(/\\/g, '/')).replace(/^\.\//, '')}`;
+          if (!p.split('/').includes('..')) {
             const real = realCanonical(p, rootC);
             const inner = rel(real, rootC, ignoreCase);
             if (inner !== null && !KEY_RE.test(inner.toLowerCase())) return;
@@ -978,8 +979,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         };
         if (rest.some((x) => x.v !== null && initOpt(x.v))) return deny(INIT_CODE);
         if ((shellInitVars.has('ENV') || shellInitVars.has('BASH_ENV')) && !['fish', 'csh', 'tcsh'].includes(prog)) return deny(INIT_CODE);
-        if (shellInitVars.has('ZDOTDIR') && prog === 'zsh') return deny(INIT_CODE);
-        // -c may be bundled with other short flags (-lc, -ec, -xc); the next word is the command.
+        if (shellInitVars.has('ZDOTDIR') && prog === 'zsh') return deny(INIT_CODE);        // -c may be bundled with other short flags (-lc, -ec, -xc); the next word is the command.
         // fish takes the long spelling too: --command CMD, --command=CMD.
         const eqi = rest.findIndex((x) => x.v !== null && x.v.startsWith('--command='));
         if (eqi !== -1) { walkNested(rest[eqi].v.slice('--command='.length), dir, container, depth + 1, pgUser); return; }

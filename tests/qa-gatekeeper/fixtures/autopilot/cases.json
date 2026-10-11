@@ -434,5 +434,8 @@
   {"name":"deny_shell_init_zsh_zdotdir_prefix","event":{"tool_name":"Bash","tool_input":{"command":"ZDOTDIR=reviews/1234/z zsh -c ls"}}},
   {"name":"deny_shell_init_zsh_zdotdir_env_wrapper","event":{"tool_name":"Bash","tool_input":{"command":"env ZDOTDIR=reviews/1234/z zsh -c ls"}}},
   {"name":"deny_shell_init_zsh_zdotdir_exported","event":{"tool_name":"Bash","tool_input":{"command":"export ZDOTDIR=reviews/1234/z; zsh -c ls"}}},
-  {"name":"allow_shell_init_zdotdir_not_zsh","event":{"tool_name":"Bash","tool_input":{"command":"ZDOTDIR=reviews/1234/z bash -c 'ls reviews'"}}}
+  {"name":"allow_shell_init_zdotdir_not_zsh","event":{"tool_name":"Bash","tool_input":{"command":"ZDOTDIR=reviews/1234/z bash -c 'ls reviews'"}}},
+  {"name":"deny_cmd_c_type_comma_delimiter","event":{"tool_name":"Bash","tool_input":{"command":"cmd /c \"type,..\\x\""}}},
+  {"name":"deny_cmd_c_type_equals_delimiter","event":{"tool_name":"Bash","tool_input":{"command":"cmd /c \"type=reviews\\1234\\a.md\""}}},
+  {"name":"deny_cmd_c_dir_semicolon_delimiter","event":{"tool_name":"Bash","tool_input":{"command":"cmd /c \"dir;reviews\""}}}
 ]
