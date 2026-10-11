@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { assemble } from '../../skills/task-review/scripts/assemble-review.mjs';
+import { assemble, decideSecurity } from '../../skills/task-review/scripts/assemble-review.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(HERE, '../../skills/task-review/scripts/assemble-review.mjs');
@@ -118,9 +118,226 @@ test('two repositories each get a section, a TDD assessment and findings by seve
   assert.ok(r.markdown.indexOf('Api break') < r.markdown.indexOf('Api nit'), 'Critical before Minor within a repository');
 });
 
+// The vulnerability hunt (Step 3b): reviews/<ID>/security-findings.json, as vulnerability-hunter writes it.
+const vuln = (severity, title, extra = {}) => ({
+  severity, confidence: 9, category: 'command_injection', title, file: 'src/export.js', line: 11,
+  description: `${title}: description`, attackPath: `${title}: attack path`, exploit: `${title}: exploit`,
+  mitigationExamined: `${title}: mitigation`, fix: `${title}: fix`, ...extra,
+});
+const cve = (severity, runtime, extra = {}) => ({
+  package: 'lodash', version: '4.17.15', advisory: 'GHSA-35jh-r3h4-6jhm', severity, fixedIn: '4.17.21', runtime,
+  proof: runtime ? "src/export.js:2 require('lodash')" : 'required only by tests/report.test.js', ...extra,
+});
+// One lane block, as the hunter returns it.
+const hunt = (repo, lane, extra = {}) => ({
+  repo, lane, status: 'ok', tools: [], findings: [], cves: [], discarded: [], declined: [], skipped: '', filesRead: [], ...extra,
+});
+const npmAudit = { name: 'npm audit', version: '10.8.2', command: 'npm audit --json', exit: 1, output: '{}' };
+const verify = (title, verdict) => ({ title, verdict, confidence: 8, reason: `${title}: read the code, ${verdict}` });
+const sec = (hunts, verifications = [], repo = 'api') => ({ repos: [{ repo, hunts, verifications }] });
+const runSec = (securityFindings, findings = [repoBlock('api')], qaText = qa('Verdict: PASS — ok.'), securityText = null) =>
+  assemble({ id: '501', findings: { repos: findings }, qaText, securityFindings, securityText, now: NOW });
+
+test('a confirmed High finding fails the review even when the code review and QA pass', () => {
+  const r = runSec(sec([hunt('api', 'code', { findings: [vuln('High', 'Shell command built from req.query.name')] })], [verify('Shell command built from req.query.name', 'confirmed')]));
+  assert.equal(r.verdict, 'FAIL');
+  assert.match(r.markdown, /^Verdict: FAIL — .*High security finding.*Shell command built from req\.query\.name/m);
+  assert.match(r.markdown, /security: FAIL/);
+});
+
+test('a plausible High finding keeps its severity, fails the review and is marked plausible', () => {
+  const r = runSec(sec([hunt('api', 'code', { findings: [vuln('High', 'Exec sink')] })], [verify('Exec sink', 'plausible')]));
+  assert.equal(r.verdict, 'FAIL');
+  assert.match(r.markdown, /\*\*Exec sink\*\* `src\/export\.js:11` \(confidence 9, plausible; command_injection\)/);
+});
+
+test('a Medium finding gives PASS-WITH-ISSUES', () => {
+  const r = runSec(sec([hunt('api', 'secrets-supply-chain', { findings: [vuln('Medium', 'Token in a constant')] })], [verify('Token in a constant', 'confirmed')]));
+  assert.equal(r.verdict, 'PASS-WITH-ISSUES');
+  assert.match(r.markdown, /^Verdict: PASS-WITH-ISSUES — .*Medium security finding/m);
+  assert.match(r.markdown, /security: PASS-WITH-ISSUES/);
+});
+
+test('a critical CVE in a runtime dependency fails the review', () => {
+  const r = runSec(sec([hunt('api', 'dependencies', { cves: [cve('critical', true)] })]));
+  assert.equal(r.verdict, 'FAIL');
+  assert.match(r.markdown, /^Verdict: FAIL — .*lodash 4\.17\.15/m);
+});
+
+test('a high CVE in a runtime dependency fails; a moderate one gives PASS-WITH-ISSUES', () => {
+  assert.equal(runSec(sec([hunt('api', 'dependencies', { cves: [cve('high', true)] })])).verdict, 'FAIL');
+  assert.equal(runSec(sec([hunt('api', 'dependencies', { cves: [cve('moderate', true)] })])).verdict, 'PASS-WITH-ISSUES');
+});
+
+test('a critical CVE in a test-only dependency gives PASS-WITH-ISSUES, not FAIL', () => {
+  const r = runSec(sec([hunt('api', 'dependencies', { cves: [cve('critical', false)] })]));
+  assert.equal(r.verdict, 'PASS-WITH-ISSUES');
+  assert.match(r.markdown, /\| lodash \| 4\.17\.15 \| GHSA-35jh-r3h4-6jhm \| critical \| 4\.17\.21 \| test only \|/);
+});
+
+test('a low CVE, a Low finding and a moderate test-only CVE never change the verdict', () => {
+  const r = runSec(sec([
+    hunt('api', 'code', { findings: [vuln('Low', 'Verbose error message')] }),
+    hunt('api', 'dependencies', { cves: [cve('low', true), cve('moderate', false, { package: 'mocha', version: '9.0.0' })] }),
+  ]));
+  assert.equal(r.verdict, 'PASS');
+});
+
+test('a rejected High finding has no effect on the verdict and leaves the report', () => {
+  const r = runSec(sec([hunt('api', 'code', { findings: [vuln('High', 'Path traversal in the report name')] })], [verify('Path traversal in the report name', 'rejected')]));
+  assert.equal(r.verdict, 'PASS');
+  assert.doesNotMatch(r.markdown, /Path traversal in the report name/);
+  assert.match(r.markdown, /rejected by verification: 1/);
+  assert.match(r.markdown, /0 High, 0 Medium and 0 Low findings/);
+});
+
+test('a finding below confidence 6 is a discarded lead, not a finding', () => {
+  const r = runSec(sec([hunt('api', 'code', { findings: [vuln('High', 'Weak lead', { confidence: 5 })], discarded: ['an older lead'] })]));
+  assert.equal(r.verdict, 'PASS');
+  assert.doesNotMatch(r.markdown, /Weak lead/);
+  assert.match(r.markdown, /#### Discarded leads\n\n2 leads below confidence 6/);
+});
+
+test('a dependencies lane with status incomplete and no CVEs is security INCOMPLETE; the review verdict is unchanged and the Summary says so', () => {
+  const incomplete = sec([hunt('api', 'dependencies', { status: 'incomplete', tools: [{ ...npmAudit, exit: 1, output: 'ENOLOCK' }] })]);
+  const r = runSec(incomplete);
+  assert.equal(r.verdict, 'PASS', 'a security INCOMPLETE does not block');
+  const summary = r.markdown.slice(r.markdown.indexOf('## Summary'), r.markdown.indexOf('## Code review'));
+  assert.match(summary, /security: INCOMPLETE/);
+  assert.match(r.markdown, /^Verdict: PASS — .*vulnerability hunt .*INCOMPLETE/m);
+  assert.equal(r.security.verdict, 'INCOMPLETE');
+  // Next to a QA gate that ended blocked, or a finding, nothing moves either.
+  assert.equal(runSec(incomplete, [repoBlock('api')], null).verdict, 'BLOCKED');
+  assert.equal(runSec(incomplete, [repoBlock('api', [finding('Important', 'Gap')])]).verdict, 'PASS-WITH-ISSUES');
+  // A dependencies block that found nothing but finished is a pass, and one with no manifest is not a failure.
+  assert.equal(runSec(sec([hunt('api', 'dependencies', { skipped: 'no manifest' })])).security.verdict, 'PASS');
+});
+
+test('a repository whose hunts hold no dependencies lane is security INCOMPLETE; the review verdict is unchanged', () => {
+  const noDeps = sec([hunt('api', 'code', { findings: [vuln('Low', 'Verbose error message')] })]);
+  const r = runSec(noDeps);
+  assert.equal(r.security.verdict, 'INCOMPLETE');
+  assert.equal(r.verdict, 'PASS', 'a security INCOMPLETE does not block');
+  assert.match(r.markdown, /^Verdict: PASS — .*vulnerability hunt is INCOMPLETE .*did not run/m);
+  assert.match(r.markdown, /security: INCOMPLETE/);
+  assert.equal(decideSecurity({ repos: [] }.repos).verdict, 'PASS', 'no repository, nothing missing');
+  assert.equal(decideSecurity(sec([]).repos).verdict, 'INCOMPLETE', 'a repository with no hunts has no dependencies block');
+  assert.equal(runSec(noDeps, [repoBlock('api', [finding('Important', 'Gap')])]).verdict, 'PASS-WITH-ISSUES');
+  assert.equal(runSec(sec([hunt('api', 'code', { findings: [vuln('Medium', 'Open redirect')] })])).security.verdict, 'PASS-WITH-ISSUES', 'a finding outranks INCOMPLETE');
+});
+
+test('a High finding stays FAIL when the dependencies lane is incomplete', () => {
+  const r = runSec(sec([hunt('api', 'dependencies', { status: 'incomplete' }), hunt('api', 'code', { findings: [vuln('High', 'Exec sink')] })], [verify('Exec sink', 'confirmed')]));
+  assert.equal(r.verdict, 'FAIL');
+  assert.equal(r.security.verdict, 'FAIL');
+});
+
+test('no hunt file leaves the verdict unchanged and says there was no vulnerability hunt', () => {
+  const without = run([repoBlock('api', [finding('Important', 'Gap')])], qa('Verdict: PASS — ok.'));
+  assert.equal(without.verdict, 'PASS-WITH-ISSUES');
+  assert.match(without.markdown, /## Vulnerability hunt and audit\n\n> No vulnerability hunt/);
+  assert.match(without.markdown, /security: no vulnerability hunt/);
+  assert.equal(without.security, null);
+  assert.equal(run([repoBlock('api')], qa('Verdict: PASS — ok.')).verdict, 'PASS');
+  assert.equal(run([repoBlock('api')], null).verdict, 'BLOCKED', 'the QA rule stays as it is');
+  assert.equal(decideSecurity(null), null);
+});
+
+test('decideSecurity returns the verdict, the counts and a sentence naming the deciding item', () => {
+  const s = decideSecurity(sec([
+    hunt('api', 'code', { findings: [vuln('High', 'Exec sink'), vuln('Medium', 'Open redirect'), vuln('Low', 'Verbose error'), vuln('High', 'Refuted sink')] }),
+    hunt('api', 'dependencies', { cves: [cve('critical', true), cve('moderate', true, { package: 'minimist', version: '1.2.0', advisory: 'GHSA-xvch-5gv4-984h' }), cve('critical', false, { package: 'mocha', version: '9.0.0', advisory: 'GHSA-test' })] }),
+  ], [verify('Exec sink', 'confirmed'), verify('Open redirect', 'confirmed'), verify('Refuted sink', 'rejected')]).repos);
+  assert.equal(s.verdict, 'FAIL');
+  assert.deepEqual({ high: s.counts.high, medium: s.counts.medium, low: s.counts.low, cvesRuntimeCritical: s.counts.cvesRuntimeCritical, cvesRuntimeModerate: s.counts.cvesRuntimeModerate },
+    { high: 1, medium: 1, low: 1, cvesRuntimeCritical: 1, cvesRuntimeModerate: 1 });
+  assert.match(s.sentence, /Exec sink/);
+  assert.match(s.sentence, /lodash 4\.17\.15/);
+});
+
+test('a verification matches its finding by title within the same repository only', () => {
+  const two = {
+    repos: [
+      { repo: 'api', hunts: [hunt('api', 'code', { findings: [vuln('High', 'Exec sink')] })], verifications: [] },
+      { repo: 'web', hunts: [hunt('web', 'code', { findings: [vuln('High', 'Exec sink')] })], verifications: [verify('Exec sink', 'rejected')] },
+    ],
+  };
+  const s = decideSecurity(two.repos);
+  assert.equal(s.counts.high, 1, 'the rejection in web does not clear the finding in api');
+  const r = runSec(two);
+  assert.match(r.markdown, /### api[\s\S]*unverified[\s\S]*### web/);
+  // The match is trimmed and case-sensitive.
+  assert.equal(decideSecurity(sec([hunt('api', 'code', { findings: [vuln('High', 'Exec sink')] })], [verify('  Exec sink ', 'rejected')]).repos).counts.high, 0);
+  assert.equal(decideSecurity(sec([hunt('api', 'code', { findings: [vuln('High', 'Exec sink')] })], [verify('exec sink', 'rejected')]).repos).counts.high, 1);
+});
+
+test('the hunt section renders per repository: CVE table, findings by severity, skipped, discarded, files read, tools, declined', () => {
+  const r = runSec(sec([
+    hunt('api', 'dependencies', { tools: [npmAudit], cves: [cve('high', true)], filesRead: ['package.json', 'package-lock.json', 'src/export.js'] }),
+    hunt('api', 'code', { findings: [vuln('High', 'Exec sink'), vuln('Low', 'Error text sent to the client')], discarded: ['regex built from input'], filesRead: ['src/export.js', 'src/server.js'], declined: ['src/vendor/minified.js: minified, not judged'] }),
+    hunt('api', 'secrets-supply-chain', { findings: [vuln('Medium', 'Partner token in source', { category: 'hardcoded_secret', file: 'src/export.js', line: 5 }), vuln('Medium', 'curl piped to sh', { file: 'scripts/setup.sh', line: 3 })], filesRead: ['src/export.js', 'scripts/setup.sh'] }),
+    hunt('api', 'ai-surface', { skipped: 'no model client library and no prompt template (searched for openai, anthropic, langchain, prompt)' }),
+  ], [verify('Exec sink', 'confirmed'), verify('Partner token in source', 'confirmed'), verify('curl piped to sh', 'plausible')]));
+  const md = r.markdown;
+  const start = md.indexOf('## Vulnerability hunt and audit');
+  assert.ok(md.indexOf('## Code review') < start && start < md.indexOf('## QA gate'), 'the section sits between Code review and QA gate');
+  const section = md.slice(start, md.indexOf('## QA gate'));
+  assert.match(section, /### api\n/);
+  assert.match(section, /\| Package \| Version \| Advisory \| Severity \| Fixed in \| Runtime \|/);
+  assert.match(section, /\| lodash \| 4\.17\.15 \| GHSA-35jh-r3h4-6jhm \| high \| 4\.17\.21 \| runtime \|/);
+  assert.ok(section.indexOf('#### High') < section.indexOf('#### Medium') && section.indexOf('#### Medium') < section.indexOf('#### Low'));
+  assert.match(section, /1\. \*\*Exec sink\*\* `src\/export\.js:11` \(confidence 9, confirmed; command_injection\)/);
+  for (const field of ['Description: Exec sink: description', 'Attack path: Exec sink: attack path', 'Mitigation examined: Exec sink: mitigation', 'Fix: Exec sink: fix']) {
+    assert.ok(section.includes(field), `missing: ${field}`);
+  }
+  assert.match(section, /\*\*curl piped to sh\*\* `scripts\/setup\.sh:3` \(confidence 9, plausible; command_injection\)/);
+  assert.match(section, /\*\*Error text sent to the client\*\*.*\(confidence 9, not verified: Low; command_injection\)/);
+  assert.match(section, /#### Skipped lanes\n\n- ai-surface: no model client library/);
+  assert.match(section, /#### Discarded leads\n\n1 lead below confidence 6; rejected by verification: 0\./);
+  assert.match(section, /#### Files read\n\n5 files\./);
+  assert.match(section, /#### Tools used\n\n\| Tool \| Version \| Exit \|\n\|---\|---\|---\|\n\| npm audit \| 10\.8\.2 \| 1 \|/);
+  assert.match(section, /#### Declined to judge\n\n- src\/vendor\/minified\.js: minified, not judged/);
+  assert.match(md, /security: FAIL \(1 High, 2 Medium and 1 Low findings; 1 CVE, 1 critical or high in a runtime dependency\)/);
+});
+
+test('the hunt section quotes the report verdict and prints a disagreement as a note without resolving it', () => {
+  const security = sec([hunt('api', 'code', { findings: [vuln('Medium', 'Open redirect')] })], [verify('Open redirect', 'confirmed')]);
+  const agree = runSec(security, [repoBlock('api')], qa('Verdict: PASS — ok.'), '# Security report — 501\nVerdict: PASS-WITH-ISSUES — an open redirect.\n');
+  assert.match(agree.markdown, /> Verdict: PASS-WITH-ISSUES — an open redirect\./);
+  assert.doesNotMatch(agree.markdown, /disagree/i);
+  const differ = runSec(security, [repoBlock('api')], qa('Verdict: PASS — ok.'), '# Security report — 501\nVerdict: PASS — nothing found.\n');
+  assert.match(differ.markdown, /> Verdict: PASS — nothing found\./);
+  assert.match(differ.markdown, /disagree/i);
+  assert.equal(differ.verdict, 'PASS-WITH-ISSUES', 'the findings file decides, not the report line');
+  assert.equal(differ.security.verdict, 'PASS-WITH-ISSUES');
+});
+
+test('a High or Medium finding with no verification counts as plausible and is marked unverified', () => {
+  const r = runSec(sec([hunt('api', 'code', { findings: [vuln('Medium', 'Unverified sink'), vuln('High', 'Unverified high')] })]));
+  assert.equal(r.verdict, 'FAIL');
+  assert.match(r.markdown, /\*\*Unverified sink\*\*.*\(confidence 9, unverified; command_injection\)/);
+});
+
+test('a CVE reported by two lanes appears once', () => {
+  const r = runSec(sec([hunt('api', 'dependencies', { cves: [cve('moderate', true)] }), hunt('api', 'code', { cves: [cve('moderate', true)] })]));
+  assert.equal(r.markdown.match(/\| lodash \|/g).length, 1);
+});
+
+test('hunt severities are matched without regard to case; an unknown one is refused', () => {
+  assert.equal(runSec(sec([hunt('api', 'code', { findings: [vuln('high', 'x')] })], [verify('x', 'confirmed')])).verdict, 'FAIL');
+  assert.throws(() => runSec(sec([hunt('api', 'code', { findings: [vuln('Critical', 'x')] })])), /severity/i);
+  assert.throws(() => runSec(sec([hunt('api', 'dependencies', { cves: [cve('severe', true)] })])), /severity/i);
+  assert.throws(() => runSec(sec([hunt('api', 'code', { findings: [vuln('High', 'x')] })], [verify('x', 'maybe')])), /verdict/i);
+  assert.throws(() => runSec({ hunts: [] }), /repos/);
+});
+
 test('every heading of the template appears in a full report', () => {
   const headings = readFileSync(TEMPLATE, 'utf8').split('\n').filter((l) => /^#{1,4} /.test(l) && !l.includes('<'));
-  const r = run([repoBlock('api', [finding('Critical', 'a'), finding('Important', 'b'), finding('Minor', 'c')])], qa('Verdict: PASS — ok.', '![s](artifacts/s.png)'));
+  const security = sec([
+    hunt('api', 'dependencies', { tools: [npmAudit], cves: [cve('low', true)] }),
+    hunt('api', 'code', { findings: [vuln('High', 'h'), vuln('Medium', 'm'), vuln('Low', 'l')] }),
+  ], [verify('h', 'confirmed'), verify('m', 'confirmed')]);
+  const r = runSec(security, [repoBlock('api', [finding('Critical', 'a'), finding('Important', 'b'), finding('Minor', 'c')])], qa('Verdict: PASS — ok.', '![s](artifacts/s.png)'));
   for (const h of headings) assert.ok(r.markdown.includes(h + '\n'), `missing heading: ${h}`);
 });
 
@@ -158,6 +375,38 @@ test('the CLI treats a QA report that does not exist as a blocked gate', () => {
     const out = cli(root, ['501', '--findings', 'reviews/501/review-findings.json', '--qa', 'reviews/501/QA-REPORT.md']);
     assert.equal(out.status, 0, out.stderr);
     assert.match(readFileSync(join(root, 'reviews', '501', 'TASK-REVIEW.md'), 'utf8'), /^Verdict: BLOCKED — /m);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('the CLI takes the hunt from --security, and from reviews/<ID>/security-findings.json by default', () => {
+  const root = project();
+  try {
+    writeFileSync(join(root, 'reviews', '501', 'review-findings.json'), JSON.stringify({ repos: [repoBlock('api')] }));
+    writeFileSync(join(root, 'reviews', '501', 'QA-REPORT.md'), qa('Verdict: PASS — ok.'));
+    const runtimeCve = sec([hunt('api', 'dependencies', { cves: [cve('high', true)] })]);
+    writeFileSync(join(root, 'hunt.json'), JSON.stringify(runtimeCve));
+    let out = cli(root, ['501', '--findings', 'reviews/501/review-findings.json', '--security', 'hunt.json']);
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(out.stdout, /Verdict: FAIL/);
+
+    out = cli(root, ['501', '--findings', 'reviews/501/review-findings.json']);
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(out.stdout, /Verdict: PASS —/, 'no hunt file: the verdict is unchanged');
+    assert.match(readFileSync(join(root, 'reviews', '501', 'TASK-REVIEW.md'), 'utf8'), /No vulnerability hunt/);
+
+    writeFileSync(join(root, 'reviews', '501', 'security-findings.json'), JSON.stringify(runtimeCve));
+    out = cli(root, ['501', '--findings', 'reviews/501/review-findings.json']);
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(out.stdout, /Verdict: FAIL/, 'the default hunt file is read');
+
+    writeFileSync(join(root, 'reviews', '501', 'SECURITY-REPORT.md'), '# Security report — 501\nVerdict: FAIL — lodash 4.17.15, GHSA-35jh-r3h4-6jhm.\n');
+    out = cli(root, ['501', '--findings', 'reviews/501/review-findings.json']);
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(readFileSync(join(root, 'reviews', '501', 'TASK-REVIEW.md'), 'utf8'), /> Verdict: FAIL — lodash 4\.17\.15/, 'the default hunt report is quoted');
+
+    assert.equal(cli(root, ['501', '--findings', 'reviews/501/review-findings.json', '--security', 'missing.json']).status, 2, 'a named hunt file that does not exist');
+    writeFileSync(join(root, 'reviews', '501', 'security-findings.json'), '{ not json');
+    assert.equal(cli(root, ['501', '--findings', 'reviews/501/review-findings.json']).status, 2, 'a default hunt file that is not JSON');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
