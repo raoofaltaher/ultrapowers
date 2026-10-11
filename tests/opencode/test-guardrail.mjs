@@ -41,4 +41,17 @@ const idle = project(false);
 const idleHooks = await mod.UltrapowersPlugin({ client: null, directory: idle });
 await idleHooks['tool.execute.before']({ tool: 'bash', sessionID: 's2', callID: 'c5' }, { args: { command: 'git push origin main' } });
 
+// A headless stage (ULTRAPOWERS_AUTOPILOT_INSIDE=1) is guarded even when the marker is gone.
+process.env.ULTRAPOWERS_AUTOPILOT_INSIDE = '1';
+try {
+  await assert.rejects(
+    idleHooks['tool.execute.before']({ tool: 'bash', sessionID: 's2', callID: 'c6' }, { args: { command: 'git push origin main' } }),
+    /AUTOPILOT-GUARDRAIL DENY: git push is never allowed/,
+    'ULTRAPOWERS_AUTOPILOT_INSIDE=1 keeps the envelope without the marker',
+  );
+  await idleHooks['tool.execute.before']({ tool: 'bash', sessionID: 's2', callID: 'c7' }, { args: { command: 'git status' } });
+} finally {
+  delete process.env.ULTRAPOWERS_AUTOPILOT_INSIDE;
+}
+
 console.log('opencode guardrail: PASS');

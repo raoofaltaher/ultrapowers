@@ -242,7 +242,11 @@ def _guardrail_cli(skills_dir):
 
 
 def _run_active(start_dir):
-    """The deny prefix of the run marker at or above start_dir (the QA profile wins), or None."""
+    """The deny prefix of the run marker at or above start_dir (the QA profile wins), or None.
+
+    A headless watcher stage carries ULTRAPOWERS_AUTOPILOT_INSIDE=1: without a marker the run is
+    then an autopilot stage, and the hook decides (outside any project it denies), as in the hook.
+    """
     current = os.path.realpath(start_dir)
     while True:
         base = os.path.join(current, ".ultrapowers")
@@ -252,7 +256,7 @@ def _run_active(start_dir):
             return "AUTOPILOT-GUARDRAIL"
         parent = os.path.dirname(current)
         if parent == current:
-            return None
+            return "AUTOPILOT-GUARDRAIL" if os.environ.get("ULTRAPOWERS_AUTOPILOT_INSIDE") == "1" else None
         current = parent
 
 

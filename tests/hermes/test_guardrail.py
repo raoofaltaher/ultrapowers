@@ -63,6 +63,17 @@ def test_outside_a_run_nothing_is_checked(hook, tmp_path, monkeypatch):
     assert hook("terminal", {"command": "git push origin main"}, "t5") is None
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is needed to run the guardrail")
+def test_inside_flag_keeps_the_envelope_without_the_marker(hook, tmp_path, monkeypatch):
+    root = _project(tmp_path, active=False)
+    monkeypatch.chdir(root)
+    monkeypatch.setenv("ULTRAPOWERS_AUTOPILOT_INSIDE", "1")
+    verdict = hook("terminal", {"command": "git push origin main"}, "t8")
+    assert verdict and verdict.get("action") == "block"
+    assert verdict.get("message", "").startswith("AUTOPILOT-GUARDRAIL DENY: git push is never allowed")
+    assert hook("terminal", {"command": "git status"}, "t9") is None
+
+
 def test_plugin_yaml_declares_the_hook():
     here = os.path.dirname(os.path.abspath(__file__))
     text = open(os.path.join(here, "..", "..", ".hermes-plugin", "plugin.yaml"), encoding="utf-8").read()

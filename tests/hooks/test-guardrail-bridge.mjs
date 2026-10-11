@@ -162,3 +162,49 @@ test('the bridge verdict and every entry point keep the profile prefix: QA for a
   const ag = runCli({ toolCall: { name: 'run_command', args: { CommandLine: 'git push origin qa', Cwd: qa } }, workspacePaths: [qa], cwd: qa }, ['--antigravity']);
   assert.match(JSON.parse(ag.stdout).reason, /^QA-GUARDRAIL DENY: /);
 });
+
+// ---- ULTRAPOWERS_AUTOPILOT_INSIDE: the run is active without the marker, as in the hook ----
+function withInside(fn) {
+  const prev = process.env.ULTRAPOWERS_AUTOPILOT_INSIDE;
+  process.env.ULTRAPOWERS_AUTOPILOT_INSIDE = '1';
+  try {
+    return fn();
+  } finally {
+    if (prev === undefined) delete process.env.ULTRAPOWERS_AUTOPILOT_INSIDE;
+    else process.env.ULTRAPOWERS_AUTOPILOT_INSIDE = prev;
+  }
+}
+const runCliInside = (event, extra = [], cwd = event.cwd) => spawnSync(process.execPath, [CLI, ...extra], { input: JSON.stringify(event), encoding: 'utf8', cwd: cwd ?? undefined, env: { ...process.env, ULTRAPOWERS_AUTOPILOT_INSIDE: '1' } });
+
+test('ULTRAPOWERS_AUTOPILOT_INSIDE=1 with the marker gone: the bridge runs the hook as an autopilot stage', () => {
+  const root = project({ marker: 'none' });
+  const push = withInside(() => runGuardrail({ toolName: 'bash', input: { command: 'git push origin x' }, cwd: path.join(root, 'repo-a') }));
+  assert.equal(push.deny, true, JSON.stringify(push));
+  assert.equal(push.prefix, 'AUTOPILOT-GUARDRAIL');
+  assert.match(push.reason, /git push is never allowed/);
+  assert.deepEqual(withInside(() => runGuardrail({ toolName: 'bash', input: { command: 'git status' }, cwd: root })), { deny: false });
+  // without the flag the same project is inert
+  assert.deepEqual(runGuardrail({ toolName: 'bash', input: { command: 'git push origin x' }, cwd: root }), { deny: false });
+});
+
+test('ULTRAPOWERS_AUTOPILOT_INSIDE=1 outside any ultrapowers project: every call is denied', () => {
+  const idle = fs.mkdtempSync(path.join(os.tmpdir(), 'inside-idle-'));
+  const r = withInside(() => runGuardrail({ toolName: 'bash', input: { command: 'ls' }, cwd: idle, hookDir: '/nonexistent' }));
+  assert.equal(r.deny, true);
+  assert.equal(r.prefix, 'AUTOPILOT-GUARDRAIL');
+  assert.match(r.reason, /outside any ultrapowers project/);
+});
+
+test('guardrail-cli and --antigravity honour ULTRAPOWERS_AUTOPILOT_INSIDE=1 like the hook', () => {
+  const root = project({ marker: 'none' });
+  const kimi = runCliInside({ tool_name: 'Bash', tool_input: { command: 'git push origin x' }, cwd: root });
+  assert.equal(kimi.status, 2, kimi.stderr);
+  assert.match(kimi.stderr, /^AUTOPILOT-GUARDRAIL DENY: git push is never allowed/);
+  assert.equal(runCliInside({ tool_name: 'Bash', tool_input: { command: 'git status' }, cwd: root }).status, 0);
+  const ag = runCliInside({ toolCall: { name: 'run_command', args: { CommandLine: 'git push origin x', Cwd: root } }, workspacePaths: [root] }, ['--antigravity'], root);
+  assert.equal(JSON.parse(ag.stdout).decision, 'deny', ag.stdout + ag.stderr);
+  const idle = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-inside-idle-'));
+  const out = runCliInside({ tool_name: 'Bash', tool_input: { command: 'ls' }, cwd: idle });
+  assert.equal(out.status, 2);
+  assert.match(out.stderr, /outside any ultrapowers project/);
+});

@@ -32,14 +32,15 @@ const loadBridge = () => {
   if (!bridgePromise) bridgePromise = import(pathToFileURL(BRIDGE).href).then((m) => m, () => null);
   return bridgePromise;
 };
-// The deny prefix of the run marker at or above startDir (the QA profile wins), or null.
+// The deny prefix of the run marker at or above startDir (the QA profile wins), or null. With
+// ULTRAPOWERS_AUTOPILOT_INSIDE=1 (a headless stage) the run is active without the marker too.
 const runPrefix = (startDir) => {
   let dir = path.resolve(startDir || process.cwd());
   for (;;) {
     if (fs.existsSync(path.join(dir, '.ultrapowers', 'qa-active'))) return 'QA-GUARDRAIL';
     if (fs.existsSync(path.join(dir, '.ultrapowers', 'autopilot-active'))) return 'AUTOPILOT-GUARDRAIL';
     const parent = path.dirname(dir);
-    if (parent === dir) return null;
+    if (parent === dir) return process.env.ULTRAPOWERS_AUTOPILOT_INSIDE === '1' ? 'AUTOPILOT-GUARDRAIL' : null;
     dir = parent;
   }
 };

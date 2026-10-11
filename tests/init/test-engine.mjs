@@ -648,3 +648,38 @@ test('the Gemini project hook names the run profile and the marker when the exte
   assert.match(auto.stderr, /^AUTOPILOT-GUARDRAIL DENY: .*\.ultrapowers[\\/]autopilot-active/);
   assert.equal(hookRun(tmpRepo()).status, 0);
 });
+
+// ---- the Gemini guardrail launcher (templates/.gemini/hooks/ultrapowers-guardrail.mjs.tmpl) ----
+const GEMINI_LAUNCHER = path.join(repoRoot, 'templates', '.gemini', 'hooks', 'ultrapowers-guardrail.mjs.tmpl');
+function geminiLaunch(event, { pluginRoot, env = {}, cwd } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gemini-launcher-'));
+  const launcher = path.join(dir, 'ultrapowers-guardrail.mjs');
+  fs.copyFileSync(GEMINI_LAUNCHER, launcher);
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'gemini-home-'));
+  return spawnSync(process.execPath, [launcher], {
+    input: JSON.stringify(event),
+    encoding: 'utf8',
+    cwd: cwd ?? event.cwd,
+    env: { ...process.env, HOME: home, USERPROFILE: home, ULTRAPOWERS_PLUGIN_ROOT: pluginRoot ?? '', ULTRAPOWERS_AUTOPILOT_INSIDE: '', ...env },
+  });
+}
+function geminiProject() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gemini-project-'));
+  fs.mkdirSync(path.join(root, '.agents'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'p', autopilot: { mode: 'gated' } }));
+  return root;
+}
+
+test('Gemini launcher: ULTRAPOWERS_AUTOPILOT_INSIDE=1 keeps the envelope without the marker', () => {
+  const root = geminiProject();
+  const push = { hook_event_name: 'BeforeTool', tool_name: 'run_shell_command', tool_input: { command: 'git push origin x' }, cwd: root };
+  assert.equal(geminiLaunch(push, { pluginRoot: repoRoot }).status, 0, 'no marker, no flag: inert');
+  const denied = geminiLaunch(push, { pluginRoot: repoRoot, env: { ULTRAPOWERS_AUTOPILOT_INSIDE: '1' } });
+  assert.equal(denied.status, 2, denied.stderr);
+  assert.match(denied.stderr, /AUTOPILOT-GUARDRAIL DENY: git push is never allowed/);
+  // the extension missing: the flag alone makes the run active, so the call is refused
+  const missing = geminiLaunch(push, { env: { ULTRAPOWERS_AUTOPILOT_INSIDE: '1' } });
+  assert.equal(missing.status, 2, missing.stderr);
+  assert.match(missing.stderr, /extension was not found/);
+  assert.equal(geminiLaunch(push, {}).status, 0, 'the extension missing outside a run: inert');
+});

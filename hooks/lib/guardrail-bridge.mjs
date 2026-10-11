@@ -2,8 +2,9 @@
 // hook, so their plugin calls this before every tool: it runs hooks/qa-guardrail with the same
 // event JSON a shell-hook harness sends ({ tool_name, tool_input, cwd }) and reports the
 // verdict. One rule of the hook is kept here too: nothing is spawned unless a run marker
-// (.ultrapowers/qa-active or .ultrapowers/autopilot-active) exists at or above the cwd, so an
-// ordinary session pays a directory walk and no process. Node built-ins only.
+// (.ultrapowers/qa-active or .ultrapowers/autopilot-active) exists at or above the cwd, or the
+// session is a headless stage (ULTRAPOWERS_AUTOPILOT_INSIDE=1), so an ordinary session pays a
+// directory walk and no process. Node built-ins only.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -34,6 +35,43 @@ export function markerPrefix(startDir) {
   const root = markerRoot(startDir);
   if (!root) return null;
   return fs.existsSync(path.join(root, '.ultrapowers', 'qa-active')) ? 'QA-GUARDRAIL' : 'AUTOPILOT-GUARDRAIL';
+}
+
+// A headless watcher stage carries ULTRAPOWERS_AUTOPILOT_INSIDE=1: the hook then treats the run
+// as an autopilot stage even when the marker file is gone, and so does every entry point.
+export const insideFlag = () => process.env.ULTRAPOWERS_AUTOPILOT_INSIDE === '1';
+
+// The nearest directory at or above `startDir` holding .agents/ultrapowers.json, or null.
+export function projectRoot(startDir) {
+  let dir;
+  try {
+    dir = fs.realpathSync(path.resolve(startDir));
+  } catch {
+    return null;
+  }
+  for (;;) {
+    if (fs.existsSync(path.join(dir, '.agents', 'ultrapowers.json'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+// The active run seen from any of `dirs`: { prefix, root, dir } with `dir` the candidate it was
+// found from, or null when no run is active. A marker wins; with ULTRAPOWERS_AUTOPILOT_INSIDE=1
+// and no marker the run is an autopilot stage rooted at the nearest project (root null: none).
+export function activeRun(dirs) {
+  const list = dirs.filter((d) => typeof d === 'string' && d !== '');
+  for (const d of list) {
+    const root = markerRoot(d);
+    if (root) return { prefix: markerPrefix(d), root, dir: d };
+  }
+  if (!insideFlag()) return null;
+  for (const d of list) {
+    const root = projectRoot(d);
+    if (root) return { prefix: 'AUTOPILOT-GUARDRAIL', root, dir: d };
+  }
+  return { prefix: 'AUTOPILOT-GUARDRAIL', root: null, dir: list[0] ?? process.cwd() };
 }
 
 // The text every harness shows for a deny: the profile's prefix, then the reason.
@@ -88,8 +126,12 @@ function bashBinary() {
 // (no bash, no hook file): an active run without its brake fails closed, as the hook itself does.
 export function runGuardrail({ toolName, input, cwd, hookDir = HOOK_DIR, timeoutMs = 15000 }) {
   const startDir = cwd && String(cwd) ? String(cwd) : process.cwd();
-  const prefix = markerPrefix(startDir);
-  if (!prefix) return { deny: false };
+  const run = activeRun([startDir]);
+  if (!run) return { deny: false };
+  const { prefix } = run;
+  if (!run.root) {
+    return { deny: true, prefix, reason: 'an autopilot stage is running (ULTRAPOWERS_AUTOPILOT_INSIDE) outside any ultrapowers project; the call cannot be verified' };
+  }
   const hook = path.join(hookDir, 'qa-guardrail');
   const bash = bashBinary();
   if (!bash || !fs.existsSync(hook)) {

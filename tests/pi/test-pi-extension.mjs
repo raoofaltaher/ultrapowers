@@ -228,3 +228,21 @@ test('the extension runs the ultrapowers guardrail before a tool call while a ru
   const inert = await toolCall({ type: 'tool_call', toolCallId: '4', toolName: 'bash', input: { command: 'git push origin main' } }, { cwd: idle });
   assert.equal(inert, undefined, 'no run marker: nothing is checked');
 });
+
+test('the extension keeps the envelope when ULTRAPOWERS_AUTOPILOT_INSIDE=1 and the marker is gone', async () => {
+  const { handlers } = await loadExtension();
+  const toolCall = firstHandler(handlers, 'tool_call');
+  const root = mkdtempSync(join(tmpdir(), 'pi-inside-'));
+  mkdirSync(join(root, '.agents'), { recursive: true });
+  writeFileSync(join(root, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'p', autopilot: { mode: 'gated' } }));
+  process.env.ULTRAPOWERS_AUTOPILOT_INSIDE = '1';
+  try {
+    const denied = await toolCall({ type: 'tool_call', toolCallId: '5', toolName: 'bash', input: { command: 'git push origin x' } }, { cwd: root });
+    assert.equal(denied?.block, true);
+    assert.match(denied.reason, /^AUTOPILOT-GUARDRAIL DENY: git push is never allowed/);
+    const outside = await toolCall({ type: 'tool_call', toolCallId: '6', toolName: 'bash', input: { command: 'ls' } }, { cwd: mkdtempSync(join(tmpdir(), 'pi-inside-idle-')) });
+    assert.equal(outside?.block, true, 'outside any project the call cannot be verified');
+  } finally {
+    delete process.env.ULTRAPOWERS_AUTOPILOT_INSIDE;
+  }
+});
