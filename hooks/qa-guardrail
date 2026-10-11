@@ -698,6 +698,10 @@ if printf '%s' "$lc" | grep -Eq "$NET_RE"; then
   printf '%s' "$lc" | grep -Eq "${B}curl(\\.exe)?[[:space:]]" \
     && printf '%s' "$cmd" | grep -Eq '(^|[[:space:]])(-[A-Za-z0-9]*K|--config)([[:space:]=]|$)' \
     && deny "curl --config (-K) reads its options from a file that cannot be inspected; give the options on the command line"
+  # wget reads its URLs from a file or stdin with -i / --input-file: the host check never sees them.
+  printf '%s' "$lc" | grep -Eq "${B}wget(\\.exe)?[[:space:]]" \
+    && printf '%s' "$cmd" | grep -Eq '(^|[[:space:]])(-[A-Za-z0-9]*i|--input-file)([[:space:]=]|$)' \
+    && deny "wget --input-file (-i) reads its URLs from a file that cannot be inspected; give the URL on the command line"
   sends=0
   printf '%s' "$lc" | grep -Eq "${B}curl(\\.exe)?[[:space:]]" \
     && printf '%s' "$cmd" | grep -Eq '(^|[[:space:]])-[A-Za-z0-9]*[dFT]|(^|[[:space:]])--(data[a-z-]*|form[a-z-]*|upload-file|json)([[:space:]=]|$)' && sends=1
