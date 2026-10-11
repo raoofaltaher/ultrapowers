@@ -86,26 +86,85 @@ try {
 }
 
 // V2: setup() registers the same guard through ctx.tool.hook('execute.before'). The V2 event
-// carries the call's arguments as `input`; a denied call throws with the hook's reason.
+// carries the call's arguments as `input` (`args` is accepted too) and V2's built-in tools are
+// named shell, patch, write and edit. A denied call throws with the hook's reason; during a run an
+// event with no argument object is refused; with no run it passes.
 const v2Hooks = new Map();
-const v2Ctx = (directory) => ({
+const v2Ctx = (directory, tool) => ({
   directory,
   skill: { transform: async () => ({ dispose: async () => {} }) },
   session: { hook: async () => ({ dispose: async () => {} }) },
-  tool: { hook: async (name, callback) => { v2Hooks.set(name, callback); return { dispose: async () => {} }; } },
+  tool: tool ?? { hook: async (name, callback) => { v2Hooks.set(name, callback); return { dispose: async () => {} }; } },
 });
+// console.error calls made while `fn` runs.
+const logged = async (fn) => {
+  const original = console.error;
+  const lines = [];
+  console.error = (...a) => { lines.push(a.map(String).join(' ')); };
+  try { await fn(); } finally { console.error = original; }
+  return lines;
+};
 await mod.default.setup(v2Ctx(hunt));
 const v2Before = v2Hooks.get('execute.before');
 assert.equal(typeof v2Before, 'function', 'V2 registers execute.before through ctx.tool.hook');
 await assert.rejects(
-  v2Before({ tool: 'bash', sessionID: 's4', id: 'v1', input: { command: 'git push origin x' } }),
+  v2Before({ tool: 'shell', sessionID: 's4', id: 'v1', input: { command: 'git push origin x' } }),
   /HUNT-GUARDRAIL DENY: /,
   'V2: a push during a hunt is refused',
 );
-await v2Before({ tool: 'bash', sessionID: 's4', id: 'v2', input: { command: 'npm audit --package-lock-only --json' } });
+await v2Before({ tool: 'shell', sessionID: 's4', id: 'v2', input: { command: 'npm audit --package-lock-only --json' } });
+for (const [tool, input] of [
+  ['write', { filePath: path.join(hunt, 'repo-a', 'src', 'x.ts'), content: 'x' }],
+  ['edit', { filePath: path.join(hunt, 'repo-a', 'src', 'x.ts'), oldString: 'a', newString: 'b' }],
+  ['patch', { patchText: ['*** Begin Patch', '*** Add File: repo-a/src/x.ts', '+x', '*** End Patch'].join('\n') }],
+  ['shell', { command: 'echo x > repo-a/src/x.ts' }],
+]) {
+  await assert.rejects(
+    v2Before({ tool, sessionID: 's4', id: 'v-src', input }),
+    /HUNT-GUARDRAIL DENY: /,
+    `V2: a source write through ${tool} during a hunt is refused`,
+  );
+}
+// `args` is accepted when `input` is absent.
+await assert.rejects(
+  v2Before({ tool: 'shell', sessionID: 's4', id: 'v-args', args: { command: 'git push origin x' } }),
+  /HUNT-GUARDRAIL DENY: /,
+  'V2: args is read when input is missing',
+);
+// No argument object during a run: refused with the run's prefix, whatever the missing shape.
+for (const event of [{ tool: 'shell' }, { tool: 'write', input: 'x' }, { tool: 'shell', input: ['git', 'push'] }, { tool: 'shell', input: null }, undefined]) {
+  await assert.rejects(
+    v2Before(event),
+    /^Error: HUNT-GUARDRAIL DENY: the V2 tool event carried no arguments; refused during a run$/,
+    `V2: an event without arguments is refused during a hunt (${JSON.stringify(event)})`,
+  );
+}
+// No run: inert, with or without arguments.
 await mod.default.setup(v2Ctx(idle));
-await v2Hooks.get('execute.before')({ tool: 'bash', sessionID: 's5', id: 'v3', input: { command: 'git push origin main' } });
-// A V2 ctx without a tool domain still sets up (the bootstrap and the skills do not depend on it).
-await mod.default.setup({ ...v2Ctx(idle), tool: undefined });
+const v2Idle = v2Hooks.get('execute.before');
+await v2Idle({ tool: 'shell', sessionID: 's5', id: 'v3', input: { command: 'git push origin main' } });
+await v2Idle({ tool: 'shell', sessionID: 's5', id: 'v4' });
+
+// A V2 ctx without a tool domain, or whose tool domain has no hook, still sets up and says that
+// the run guardrail is not registered on this host.
+for (const tool of [{}, { hook: 'nope' }]) {
+  const lines = await logged(() => mod.default.setup({ ...v2Ctx(idle), tool }));
+  assert.equal(lines.filter((l) => /run guardrail is not registered on this host/.test(l)).length, 1, `one log line when the host has no tool hook (${JSON.stringify(tool)})`);
+}
+const noDomain = await logged(() => mod.default.setup({ ...v2Ctx(idle), tool: undefined }));
+assert.equal(noDomain.filter((l) => /run guardrail is not registered on this host/.test(l)).length, 1, 'one log line when the host has no tool domain');
+// The hook present: no such line.
+const registered = await logged(() => mod.default.setup(v2Ctx(idle)));
+assert.deepEqual(registered.filter((l) => /not registered on this host/.test(l)), [], 'no warning when the hook registers');
+
+// Registration that throws or rejects is logged and setup goes on (skills and bootstrap are
+// registered before it, so they are unaffected).
+let skillsRegistered = 0;
+for (const hook of [() => { throw new Error('boom'); }, async () => { throw new Error('boom'); }]) {
+  const ctx = { ...v2Ctx(idle, { hook }), skill: { transform: async () => { skillsRegistered += 1; return { dispose: async () => {} }; } } };
+  const lines = await logged(() => mod.default.setup(ctx));
+  assert.equal(lines.filter((l) => /tool guard registration failed/.test(l)).length, 1, 'a failing registration is logged once');
+}
+assert.equal(skillsRegistered, 2, 'setup registered the skills before the guard and went on');
 
 console.log('opencode guardrail: PASS');

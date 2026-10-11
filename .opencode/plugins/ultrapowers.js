@@ -56,6 +56,24 @@ export const guardTool = (directory) => async (input, output) => {
   if (verdict.deny) throw new Error(bridge.denyText(verdict));
 };
 
+// The V2 spelling of the same guard. V2's before-execute event carries the call's arguments as
+// `input` (`args` is accepted too); a plain object is judged like V1's output.args. During a run
+// an event with no such object cannot be judged and is refused; with no run it passes, as in V1.
+// A `directory` that is not a string falls back to the process cwd in the bridge, and a call's own
+// workdir is still checked there.
+const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const guardV2Tool = (directory) => {
+  const guard = guardTool(directory);
+  return async (event) => {
+    const args = isPlainObject(event?.input) ? event.input : isPlainObject(event?.args) ? event.args : null;
+    if (args) return guard({ tool: event?.tool, sessionID: event?.sessionID, callID: event?.id }, { args });
+    const bridge = await loadBridge();
+    const run = bridge ? bridge.activeRun(directory || process.cwd(), [process.cwd()]) : null;
+    const prefix = bridge ? run?.prefix : runPrefix(directory);
+    if (prefix) throw new Error(prefix + ' DENY: the V2 tool event carried no arguments; refused during a run');
+  };
+};
+
 // Skills directory shared by V1 (config hook) and V2 (setup/ctx.skill.transform)
 const ultrapowersSkillsDir = path.resolve(__dirname, '../../skills');
 
@@ -602,13 +620,15 @@ async function setup(ctx) {
   }
 
   // 3. The guardrail of a run: V2's tool domain has the same before-execute hook V1 calls
-  // tool.execute.before. The V2 event carries the call's arguments as `input`. A thrown error
-  // stops the call before the tool runs; the V2 promise adapter reports it as a failure of the
-  // call rather than as a Tool.Error with this reason. Inert outside a run, as in V1.
+  // tool.execute.before (as read in the OpenCode source, not run on a live V2). A thrown error is
+  // expected to stop the call before the tool runs; the V2 promise adapter reports it as a failure
+  // of the call rather than as a Tool.Error with this reason. Inert outside a run, as in V1. A host
+  // without the hook leaves a run unguarded, so that is logged.
   try {
     if (ctx.tool && typeof ctx.tool.hook === 'function') {
-      const guard = guardTool(projectDir);
-      await ctx.tool.hook('execute.before', (event) => guard({ tool: event?.tool, sessionID: event?.sessionID, callID: event?.id }, { args: event?.input }));
+      await ctx.tool.hook('execute.before', guardV2Tool(projectDir));
+    } else {
+      console.error("[ultrapowers] the run guardrail is not registered on this host: ctx.tool.hook('execute.before') is unavailable, so a QA run, a vulnerability hunt or an autopilot stage runs without it");
     }
   } catch (err) {
     console.error('[ultrapowers] tool guard registration failed:', err);
