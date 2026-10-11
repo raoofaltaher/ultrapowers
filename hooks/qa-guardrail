@@ -668,7 +668,7 @@ if printf '%s' "$lc" | grep -Eq "$NET_RE"; then
   sends=0
   printf '%s' "$lc" | grep -Eq "${B}curl(\\.exe)?[[:space:]]" \
     && printf '%s' "$cmd" | grep -Eq '(^|[[:space:]])-[A-Za-z0-9]*[dFT]|(^|[[:space:]])--(data[a-z-]*|form[a-z-]*|upload-file|json)([[:space:]=]|$)' && sends=1
-  printf '%s' "$lc" | grep -Eq '(^|[[:space:]])(-[a-z0-9]*x|--request|--method)[[:space:]=]*(post|put|patch|delete)|(^|[[:space:]])--(post-data|post-file|body-data|body-file)([[:space:]=]|$)|(^|[[:space:]])-(body|infile|form)([[:space:]]|$)' && sends=1
+  printf '%s' "$lc" | grep -Eq '(^|[[:space:]])(-[a-z0-9]*x|--request|--method|-method)[[:space:]=]*(post|put|patch|delete)|(^|[[:space:]])--(post-data|post-file|body-data|body-file)([[:space:]=]|$)|(^|[[:space:]])-(body|infile|form)([[:space:]]|$)' && sends=1
   if [ "$sends" -eq 1 ]; then
     surls="$(printf '%s' "$cmd" | grep -Eoi 'https?://[^/"'"'"'[:space:];&|()<>]+' || true)"
     [ -n "$surls" ] || deny "an upload or data flag without a literal http(s) URL; the destination cannot be verified"
