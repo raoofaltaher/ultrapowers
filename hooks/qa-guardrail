@@ -80,6 +80,14 @@ norm_path_r() {
 }
 norm_path() { norm_path_r "$1"; printf '%s' "$REPLY"; }
 
+# Lowercase in REPLY with no process (a fork costs tens of milliseconds on Windows, and the loops
+# over a call's paths, patch files and URLs must not grow with their number).
+lower_r() {
+  local s="$1" i
+  for ((i = 0; i < 26; i++)); do s="${s//${UPPER:i:1}/${LOWER:i:1}}"; done
+  REPLY="$s"
+}
+
 # Walk up from $1 looking for a run marker; REPLY is the directory that holds it and
 # PROFILE is `qa` or `autopilot` (qa wins when both markers exist in the same directory).
 PROFILE=""
@@ -412,9 +420,8 @@ KEY_RE='(^|/)\.ssh(/|$)|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws(/|$)|mcp-se
 if [ -n "$keypaths" ]; then
   while IFS= read -r kp; do
     [ -n "$kp" ] || continue
-    kl="$(lower "$(norm_path "$kp")")"
-    kl="${kl//.env.example/}"
-    printf '%s' "$kl" | grep -Eq "$KEY_RE" && deny "key material ($kp) is never read, searched, uploaded or written during $run_kind"
+    norm_path_r "$kp"; lower_r "$REPLY"; kl="${REPLY//.env.example/}"
+    [[ "$kl" =~ $KEY_RE ]] && deny "key material ($kp) is never read, searched, uploaded or written during $run_kind"
   done <<< "$keypaths"
 fi
 # The same paths again in their real spelling: an 8.3 short name or a symlink names the key file
@@ -422,9 +429,8 @@ fi
 if [ -n "$keypaths_real" ]; then
   while IFS= read -r kp; do
     [ -n "$kp" ] || continue
-    kl="$(lower "$kp")"
-    kl="${kl//.env.example/}"
-    printf '%s' "$kl" | grep -Eq "$KEY_RE" && deny "key material ($kp) is never read, searched, uploaded or written during $run_kind"
+    lower_r "$kp"; kl="${REPLY//.env.example/}"
+    [[ "$kl" =~ $KEY_RE ]] && deny "key material ($kp) is never read, searched, uploaded or written during $run_kind"
   done <<< "$keypaths_real"
 fi
 
@@ -519,23 +525,26 @@ case "$patch_mode" in
     while IFS=$'\001' read -r ppath prel preal; do
       [ -n "$ppath" ] || continue
       pcheck="${prel:-$preal}"
-      pl="$(lower "${pcheck#./}")"
-      printf '%s' "$pl" | grep -Eq "$PROTECTED_RE" \
+      # No process per record (see lower_r): a patch may name hundreds of files.
+      lower_r "${pcheck#./}"; pl="$REPLY"
+      [[ "$pl" =~ $PROTECTED_RE ]] \
         && deny "the patch writes a protected path ($ppath); never allowed during $run_kind"
       if [ "$PROFILE" = "autopilot" ]; then
-        printf '%s' "${pl//.env.example/}" | grep -Eq "$AUTOPILOT_PROTECTED_RE" \
+        pl_noex="${pl//.env.example/}"
+        [[ "$pl_noex" =~ $AUTOPILOT_PROTECTED_RE ]] \
           && deny "the patch writes a protected path ($ppath); CI, hooks, settings and the project config stay as they are"
         [ -n "$known_lc" ] && [ "${pl%/}" = "$known_lc" ] \
           && deny "the patch writes the QA baseline ($ppath); a stage never edits its own known-issues file"
       fi
-      case "$(lower "$(norm_path "$ppath")")" in
+      norm_path_r "$ppath"; lower_r "$REPLY"
+      case "$REPLY" in
         ..|../*|*/../*|*/..) deny "the patch names a path with a parent-directory segment ($ppath)" ;;
       esac
       if [ "$PROFILE" = "autopilot" ]; then
         [ -n "$prel" ] || deny "the patch writes outside the workspace $root ($ppath)"
       else
         prc="${prel#./}"
-        [ "$ignore_case" = "1" ] && prc="$(lower "$prc")"
+        if [ "$ignore_case" = "1" ]; then lower_r "$prc"; prc="$REPLY"; fi
         case "$prc" in reviews/*|.ultrapowers/*) ;; *) deny "a patch during a QA run is limited to reviews/ and .ultrapowers/ ($ppath)" ;; esac
       fi
     done <<< "$patch_recs"
@@ -586,18 +595,25 @@ case "$tool_lc" in
   *run_code*|*execute_code*|*executecode*|*browser_evaluate*|*evaluate_script*|*javascript_tool*) deny "arbitrary in-page code execution is never allowed during $run_kind; it is an egress and exfiltration path no host list can see" ;;
 esac
 
-host_of() {
-  printf '%s' "$1" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#^[^/?@]*@##; s#[/?].*$##; s#:[0-9]+$##' | tr '[:upper:]' '[:lower:]'
+# The host of a URL in REPLY: scheme, userinfo, path and port removed, lowercase. Builtins only, so
+# a call carrying hundreds of URLs costs no process per URL.
+host_of_r() {
+  local s="$1" a
+  if [[ "$s" =~ ^[a-zA-Z][a-zA-Z0-9+.-]*:// ]]; then s="${s#*://}"; fi
+  if [[ "$s" =~ ^[^/?@]*@ ]]; then s="${s#*@}"; fi
+  a="${s%%[/?]*}"
+  if [[ "$a" =~ :[0-9]+$ ]]; then a="${a%:*}"; fi
+  lower_r "$a"
 }
 on_list() {
   # $1 comma-separated list, $2 host
-  [ -n "$1" ] && [ -n "$2" ] && printf ',%s,' "$1" | grep -qF ",$2,"
+  [ -n "$1" ] && [ -n "$2" ] && [[ ",$1," == *",$2,"* ]]
 }
 
 # --- Any tool that carries a url (navigation, fetch, scrape, crawl, whatever its name), under
 # `url`, `uri`, `link` or a `urls` array: forbidden hosts never; allowed hosts only when a list is set.
 for u in $url; do
-  h="$(host_of "$u")"
+  host_of_r "$u"; h="$REPLY"
   on_list "$forbidden" "$h" && deny "host '$h' is on qa.hosts.forbidden"
   if [ -n "$allowed" ]; then
     on_list "$allowed" "$h" || deny "host '$h' is not in qa.hosts.allowed"
@@ -768,7 +784,7 @@ if printf '%s' "$lc" | grep -Eq "$NET_RE"; then
     [ -n "$surls" ] || deny "an upload or data flag without a literal http(s) URL; the destination cannot be verified"
     while IFS= read -r u; do
       [ -n "$u" ] || continue
-      h="$(host_of "$u")"
+      host_of_r "$u"; h="$REPLY"
       on_list "$allowed" "$h" || deny "an upload or data flag to host '$h', which is not in qa.hosts.allowed, is blocked"
     done <<< "$surls"
   fi
@@ -782,7 +798,7 @@ if [ "$PROFILE" = "autopilot" ] && [ -n "$tracker_hosts" ] \
   turls="$(printf '%s' "$cmd" | grep -Eoi 'https?://[^/"'"'"'[:space:];&|()<>]+' || true)"
   while IFS= read -r u; do
     [ -n "$u" ] || continue
-    h="$(host_of "$u")"
+    host_of_r "$u"; h="$REPLY"
     on_list "$tracker_hosts" "$h" && deny "calls to the ticket tracker ($h) are engine steps; a stage reads the ticket through its tracker tools and never writes it from the shell"
   done <<< "$turls"
 fi
@@ -795,7 +811,7 @@ if [ -n "$allowed" ] && printf '%s' "$lc" | grep -Eq "${B}(curl|wget)(\\.exe)?[[
     case "$u" in
       *'$'*|*'`'*) deny "the URL's host part is built from a variable or command substitution ($u); use a literal URL" ;;
     esac
-    h="$(host_of "$u")"
+    host_of_r "$u"; h="$REPLY"
     on_list "$allowed" "$h" || deny "host '$h' is not in qa.hosts.allowed"
   done <<< "$urls"
 fi

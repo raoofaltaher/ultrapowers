@@ -168,6 +168,30 @@ else
   fail "a 500-segment command is denied in under 5 s (exit ${result%%|*}, $((t_end - t_start)) s)"
 fi
 
+# The same for a command with 300 URLs and a patch naming 200 files: no process per item.
+urls_cmd="curl -s"
+for ((i = 0; i < 300; i++)); do urls_cmd+=" http://localhost:3000/p$i"; done
+urls_cmd+=" http://elsewhere.example.org/"
+t_start="$(date +%s)"
+result="$(run_hook "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$urls_cmd\"}}" "$ROOT")"
+t_end="$(date +%s)"
+if [[ "${result%%|*}" -eq 2 && $((t_end - t_start)) -lt 5 ]]; then
+  pass "a 300-URL command is denied in under 5 s ($((t_end - t_start)) s)"
+else
+  fail "a 300-URL command is denied in under 5 s (exit ${result%%|*}, $((t_end - t_start)) s)"
+fi
+patch_text='*** Begin Patch\n'
+for ((i = 0; i < 200; i++)); do patch_text+="*** Add File: reviews/1234/a$i.md\\n+x\\n"; done
+patch_text+='*** Add File: repo-a/src/x.js\n+x\n*** End Patch'
+t_start="$(date +%s)"
+result="$(run_hook "{\"tool_name\":\"apply_patch\",\"tool_input\":{\"patch\":\"$patch_text\"}}" "$ROOT")"
+t_end="$(date +%s)"
+if [[ "${result%%|*}" -eq 2 && $((t_end - t_start)) -lt 5 ]]; then
+  pass "a 200-file patch is denied in under 5 s ($((t_end - t_start)) s)"
+else
+  fail "a 200-file patch is denied in under 5 s (exit ${result%%|*}, $((t_end - t_start)) s)"
+fi
+
 echo "qa-guardrail: a config with a byte order mark keeps its host lists"
 BOMROOT="$TEST_ROOT/bomproject"
 mkdir -p "$BOMROOT/.agents" "$BOMROOT/.ultrapowers"
