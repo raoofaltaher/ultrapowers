@@ -355,6 +355,40 @@ test('end qa refuses a report path outside reviews/<ID>/', () => {
   assert.equal(dir.json.error.code, 'bad-result');
 });
 
+// A reviews/<ID> folder that is a symbolic link (a junction on Windows) out of the project: a
+// report behind it resolves inside the link's own real path, so the folder itself is refused.
+test('end qa refuses a report whose reviews/<ID> folder links out of the project', (t) => {
+  const ws = workspace();
+  throughPlan(ws);
+  run(ws, ['packet', 'GH-16']);
+  ws.setMap(approvedBy('alice'));
+  run(ws, ['next', 'GH-16']);
+  run(ws, ['begin', 'GH-16', 'execute']);
+  run(ws, ['end', 'GH-16', 'execute', '--result', JSON.stringify({ ok: true })]);
+  run(ws, ['begin', 'GH-16', 'qa']);
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'autopilot-outside-'));
+  fs.writeFileSync(path.join(outside, 'QA-REPORT.md'), '# QA\n\nVerdict: PASS\n');
+  const folder = path.join(ws.root, 'reviews', 'GH-16');
+  fs.rmSync(folder, { recursive: true, force: true });
+  fs.mkdirSync(path.dirname(folder), { recursive: true });
+  try {
+    fs.symlinkSync(outside, folder, process.platform === 'win32' ? 'junction' : 'dir');
+  } catch (error) {
+    if (error.code === 'EPERM' || error.code === 'EACCES') { t.skip('no right to create a folder link here'); return; }
+    throw error;
+  }
+  try {
+    const r = run(ws, ['end', 'GH-16', 'qa', '--result', JSON.stringify({ ok: true, verdict: 'PASS', report: 'reviews/GH-16/QA-REPORT.md' })]);
+    assert.equal(r.code, 2, r.stdout);
+    assert.equal(r.json.error.code, 'bad-result');
+    assert.match(r.json.error.message, /reviews\/GH-16/);
+    assert.equal(state(ws).qa, undefined, 'no report path was recorded');
+  } finally {
+    fs.rmSync(folder, { force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
 test('pr refuses after a QA FAIL verdict', () => {
   const ws = workspace();
   throughPlan(ws);

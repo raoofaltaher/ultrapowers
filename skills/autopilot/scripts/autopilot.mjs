@@ -20,6 +20,7 @@ import {
   nextStage, acquireLock, releaseLock, liveLock, readLock, lockPath,
   writeActiveMarker, clearActiveMarker, readActiveMarker, verifyApproval,
   renderPacket, assumptionsFrom, scopeFrom, freezeScope, pushAllowed, loadSecretsFile, packetId, hashLine,
+  reviewFolderProblem,
 } from './autopilot-lib.mjs';
 import { trackerFor } from './tracker.mjs';
 import { HARNESSES, GUARDED_HARNESSES, PLUGIN_ROOT } from './harnesses.mjs';
@@ -873,13 +874,15 @@ async function runEnd(opts) {
 // The report a stage names is posted on the ticket and the pull requests, so it may only be a
 // markdown file directly under the ticket's reviews folder, and, where it exists in the working
 // tree, a regular file that resolves inside that folder: no path step out, no symbolic link, no
-// directory.
+// directory. The folder itself must be the project's own reviews/<ID>, not a link out of it.
 function assertReportPath(ctx, id, report) {
   const folder = `reviews/${id}/`;
   const name = report.startsWith(folder) ? report.slice(folder.length) : '';
   if (!/^[A-Za-z0-9._-]+\.md$/.test(name)) {
     throw new AutopilotError('bad-result', `${id}: the QA report must be a .md file under ${folder}, not ${report}`);
   }
+  const folderProblem = reviewFolderProblem(ctx.root, id);
+  if (folderProblem) throw new AutopilotError('bad-result', `${id}: ${folderProblem}`);
   const full = path.join(ctx.root, report);
   const stat = fs.lstatSync(full, { throwIfNoEntry: false });
   if (!stat) return;
