@@ -430,3 +430,13 @@ test('a dollar sign is only a standalone dollar quote; anywhere else the SQL can
     assert.match(analyze(`psql -U qa_agent_ro -c '${sql}'`, c), /cannot be verified/, sql);
   }
 });
+
+test('an array slice is a read; psql interpolation is refused in its three spellings (GH-35)', () => {
+  const c = { cwd: '/p', root: '/p', ticket: '1234', profile: 'qa', ignoreCase: false, roRole: 'qa_agent_ro' };
+  for (const sql of ['select a[1:n] from t', 'select arr[2:3] from t', 'select m[i:j] from t', 'select 1::int', "select a[1:2]::text from t"]) {
+    assert.equal(analyze(`psql -U qa_agent_ro -c '${sql}'`, c), '', sql);
+  }
+  for (const sql of ['select :name', "select :'name'", 'select :"name"', 'select a[:n] from t', 'select * from t where id = :id']) {
+    assert.match(analyze(`psql -U qa_agent_ro -c '${sql}'`, c), /interpolation/, sql);
+  }
+});

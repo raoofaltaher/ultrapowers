@@ -227,7 +227,11 @@ function analyzeSql(sql) {
   const text = stripLiterals(sql);
   if (text === null) return 'an unterminated quote, or a dollar sign outside a standalone dollar quote, in the SQL cannot be verified; lane 4 is read-only';
   if (/\\[A-Za-z!]/.test(text)) return 'a psql meta-command (a backslash command) is blocked; it can run a shell, read a file or repeat a statement';
-  if (/(^|[^:]):[A-Za-z_]/.test(text)) return 'psql variable interpolation (:name) is blocked; the SQL must be literal and inspectable';
+  // An array slice ([1:n], [i:j]) is a read: a colon inside square brackets with a word character
+  // on both sides is blanked before the interpolation check. The check then covers psql's three
+  // spellings on the stripped text: :name, :'name' (left as :'' by the stripper) and :"name".
+  const sliced = text.replace(/\[[^\]]*\]/g, (m) => m.replace(/(\w)\s*:\s*(?=\w)/g, '$1 '));
+  if (/(^|[^:]):(['"]|[A-Za-z_])/.test(sliced)) return 'psql variable interpolation (:name, :\'name\' or :"name") is blocked; the SQL must be literal and inspectable';
   for (const piece of text.split(';')) {
     const st = piece.trim().toLowerCase();
     if (!st) continue;
