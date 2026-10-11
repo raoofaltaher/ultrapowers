@@ -146,9 +146,12 @@ function normalizeSecurity(security) {
       for (const f of Array.isArray(hunt?.filesRead) ? hunt.filesRead : []) files.add(String(f));
       for (const f of Array.isArray(hunt?.findings) ? hunt.findings : []) {
         const severity = huntSeverity(f?.severity, f?.title);
-        const confidence = Number(f?.confidence);
-        if (!(confidence >= CONFIDENCE_FLOOR)) { discarded += 1; continue; }
         const title = String(f?.title ?? '(untitled)');
+        // A missing or non-numeric confidence is an error, never a discarded lead: that would fail open.
+        const raw = f?.confidence;
+        const confidence = raw === null || raw === undefined || raw === '' || typeof raw === 'boolean' ? NaN : Number(raw);
+        if (!Number.isFinite(confidence)) throw new Error(`security finding ${JSON.stringify(title)} has no numeric confidence`);
+        if (confidence < CONFIDENCE_FLOOR) { discarded += 1; continue; }
         const check = verdictFor.get(title.trim());
         if (check?.verdict === 'rejected') { rejected += 1; continue; }
         // A High or Medium finding the agent did not verify counts as plausible and is marked so.
@@ -168,7 +171,11 @@ function normalizeSecurity(security) {
           // A CVE is runtime unless the hunter proved it test-only.
           runtime: c?.runtime !== false, proof: String(c?.proof ?? ''),
         };
-        cves.set(`${entry.package}@${entry.version}#${entry.advisory}`, entry);
+        // The same advisory from two lanes is one row; it is runtime when either lane says so.
+        const id = `${entry.package}@${entry.version}#${entry.advisory}`;
+        const seen = cves.get(id);
+        if (seen?.runtime) entry.runtime = true;
+        cves.set(id, entry);
       }
     }
     return {

@@ -198,6 +198,27 @@ test('a finding below confidence 6 is a discarded lead, not a finding', () => {
   assert.match(r.markdown, /#### Discarded leads\n\n2 leads below confidence 6/);
 });
 
+test('a finding with a missing or non-numeric confidence is an error, never a discarded lead', () => {
+  const missing = vuln('High', 'No confidence');
+  delete missing.confidence;
+  assert.throws(() => runSec(sec([hunt('api', 'code', { findings: [missing] })])), /finding "No confidence" has no numeric confidence/);
+  for (const bad of [null, '', 'high', true, NaN]) {
+    assert.throws(() => runSec(sec([hunt('api', 'code', { findings: [vuln('Medium', 'Bad confidence', { confidence: bad })] })])), /no numeric confidence/, `confidence ${String(bad)}`);
+  }
+  assert.throws(() => decideSecurity(sec([hunt('api', 'code', { findings: [missing] })]).repos), /no numeric confidence/);
+  assert.equal(runSec(sec([hunt('api', 'code', { findings: [vuln('High', 'Numeric string', { confidence: '9' })] })])).verdict, 'FAIL', 'a numeric string is a number');
+});
+
+test('a CVE listed by two lanes with runtime true then false stays runtime and fails the review', () => {
+  for (const order of [[true, false], [false, true]]) {
+    const r = runSec(sec(order.map((runtime, i) => hunt('api', i === 0 ? 'dependencies' : 'code', { cves: [cve('critical', runtime)] }))));
+    assert.equal(r.security.verdict, 'FAIL', `runtime order ${order}`);
+    assert.equal(r.verdict, 'FAIL');
+    assert.equal(r.markdown.match(/\| lodash \|/g).length, 1);
+    assert.match(r.markdown, /\| critical \| 4\.17\.21 \| runtime \|/);
+  }
+});
+
 test('a dependencies lane with status incomplete and no CVEs is security INCOMPLETE; the review verdict is unchanged and the Summary says so', () => {
   const incomplete = sec([hunt('api', 'dependencies', { status: 'incomplete', tools: [{ ...npmAudit, exit: 1, output: 'ENOLOCK' }] })]);
   const r = runSec(incomplete);
