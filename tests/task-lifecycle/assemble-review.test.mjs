@@ -202,7 +202,7 @@ test('a finding with a missing or non-numeric confidence is an error, never a di
   const missing = vuln('High', 'No confidence');
   delete missing.confidence;
   assert.throws(() => runSec(sec([hunt('api', 'code', { findings: [missing] })])), /finding "No confidence" has no numeric confidence/);
-  for (const bad of [null, '', 'high', true, NaN]) {
+  for (const bad of [null, '', '  ', '\t', 'high', true, NaN]) {
     assert.throws(() => runSec(sec([hunt('api', 'code', { findings: [vuln('Medium', 'Bad confidence', { confidence: bad })] })])), /no numeric confidence/, `confidence ${String(bad)}`);
   }
   assert.throws(() => decideSecurity(sec([hunt('api', 'code', { findings: [missing] })]).repos), /no numeric confidence/);
@@ -214,6 +214,16 @@ test('a CVE listed by two lanes with runtime true then false stays runtime and f
     const r = runSec(sec(order.map((runtime, i) => hunt('api', i === 0 ? 'dependencies' : 'code', { cves: [cve('critical', runtime)] }))));
     assert.equal(r.security.verdict, 'FAIL', `runtime order ${order}`);
     assert.equal(r.verdict, 'FAIL');
+    assert.equal(r.markdown.match(/\| lodash \|/g).length, 1);
+    assert.match(r.markdown, /\| critical \| 4\.17\.21 \| runtime \|/);
+  }
+});
+
+test('a CVE listed by two lanes with different severities keeps the highest, in either order', () => {
+  for (const order of [['critical', 'moderate'], ['moderate', 'critical']]) {
+    const cves = order.map((severity) => cve(severity, true, { fixedIn: severity === 'critical' ? '4.17.21' : '4.17.19' }));
+    const r = runSec(sec(cves.map((c, i) => hunt('api', i === 0 ? 'dependencies' : 'code', { cves: [c] }))));
+    assert.equal(r.security.verdict, 'FAIL', `severity order ${order}`);
     assert.equal(r.markdown.match(/\| lodash \|/g).length, 1);
     assert.match(r.markdown, /\| critical \| 4\.17\.21 \| runtime \|/);
   }

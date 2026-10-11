@@ -147,9 +147,11 @@ function normalizeSecurity(security) {
       for (const f of Array.isArray(hunt?.findings) ? hunt.findings : []) {
         const severity = huntSeverity(f?.severity, f?.title);
         const title = String(f?.title ?? '(untitled)');
-        // A missing or non-numeric confidence is an error, never a discarded lead: that would fail open.
+        // A missing, blank or non-numeric confidence is an error, never a discarded lead: that would
+        // fail open (Number('  ') is 0).
         const raw = f?.confidence;
-        const confidence = raw === null || raw === undefined || raw === '' || typeof raw === 'boolean' ? NaN : Number(raw);
+        const blank = raw === null || raw === undefined || (typeof raw === 'string' && raw.trim() === '');
+        const confidence = blank || typeof raw === 'boolean' ? NaN : Number(raw);
         if (!Number.isFinite(confidence)) throw new Error(`security finding ${JSON.stringify(title)} has no numeric confidence`);
         if (confidence < CONFIDENCE_FLOOR) { discarded += 1; continue; }
         const check = verdictFor.get(title.trim());
@@ -171,11 +173,13 @@ function normalizeSecurity(security) {
           // A CVE is runtime unless the hunter proved it test-only.
           runtime: c?.runtime !== false, proof: String(c?.proof ?? ''),
         };
-        // The same advisory from two lanes is one row; it is runtime when either lane says so.
+        // The same advisory from two lanes is one row; it is runtime when either lane says so, and it
+        // keeps the highest severity reported, with that report's fixedIn and proof.
         const id = `${entry.package}@${entry.version}#${entry.advisory}`;
         const seen = cves.get(id);
-        if (seen?.runtime) entry.runtime = true;
-        cves.set(id, entry);
+        const runtime = entry.runtime || Boolean(seen?.runtime);
+        const kept = seen && CVE_SEVERITIES.indexOf(seen.severity) < CVE_SEVERITIES.indexOf(entry.severity) ? seen : entry;
+        cves.set(id, { ...kept, runtime });
       }
     }
     return {
