@@ -17,7 +17,12 @@ function cygpath(p) {
     try { execFileSync('cygpath', ['-m', '/'], { stdio: 'pipe', windowsHide: true }); cygpathOk = true; } catch { cygpathOk = false; }
   }
   if (!cygpathOk) return null;
-  try { return execFileSync('cygpath', ['-m', p], { stdio: 'pipe', windowsHide: true, encoding: 'utf8' }).trim() || null; } catch { return null; }
+  // cygpath reads a colon as the separator of a path list and drops it (`f:x` becomes `fx`): the colons
+  // of the name (an NTFS stream, `f::$DATA`) are carried through as a placeholder character.
+  try {
+    const out = execFileSync('cygpath', ['-m', String(p).replace(/:/g, '@@COLON@@')], { stdio: 'pipe', windowsHide: true, encoding: 'utf8' }).trim();
+    return out ? out.replace(/@@COLON@@/g, ':') : null;
+  } catch { return null; }
 }
 
 // A Git Bash form (`/c/x`, `/tmp/x`) or a Windows form becomes the platform's native absolute
@@ -53,7 +58,23 @@ export function realCanonical(p, cwd) {
   }
   let real = head;
   try { real = realpathSync.native(head); } catch { real = head; }
-  return canonicalForm([real, ...tail].join('/'));
+  return winNames(canonicalForm([real, ...tail].join('/')));
+}
+
+// Windows resolves names the text does not show: a trailing dot or space of a component is dropped
+// (`.husky./x` is `.husky/x`) and `name:stream` or `name::$DATA` is the file `name`. A component that
+// does not exist yet is appended as written, so the same folding is applied to every component.
+// Off Windows nothing changes.
+function winNames(p) {
+  if (!win32) return p;
+  const parts = p.split('/');
+  const out = parts.map((seg, i) => {
+    if (seg === '' || seg === '.' || seg === '..') return seg;
+    if (i === 0 && /^[A-Za-z]:$/.test(seg)) return seg;
+    const folded = seg.replace(/:.*$/, '').replace(/[. ]+$/, '');
+    return folded || seg;
+  });
+  return out.join('/');
 }
 
 // True when a probe file written under <root>/.ultrapowers/ is found again under a different-case

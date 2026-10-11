@@ -273,5 +273,13 @@
   {"name":"deny_cmd_c_del_hook","event":{"tool_name":"Bash","tool_input":{"command":"cmd /c \"del .husky\\pre-commit\""}}},
   {"name":"deny_pwsh_command_redirect_hook","event":{"tool_name":"Bash","tool_input":{"command":"pwsh -NoProfile -Command \"echo x > .husky/pre-commit\""}}},
   {"name":"allow_cmd_c_copy_in_repo","event":{"tool_name":"Bash","tool_input":{"command":"cmd /c \"copy repo-a\\src\\a.ts repo-a\\src\\b.ts\""}}},
+  {"name":"deny_write_trailing_dot_folder_winshort","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.husky./pre-commit","content":"x"}}},
+  {"name":"deny_write_trailing_space_folder_winshort","event":{"tool_name":"Edit","tool_input":{"file_path":"{{ROOT}}/.git /config","old_string":"a","new_string":"b"}}},
+  {"name":"deny_write_stream_data_winshort","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/tasks/GH-16/autopilot.json::$DATA","content":"x"}}},
+  {"name":"deny_write_named_stream_winshort","event":{"tool_name":"MultiEdit","tool_input":{"file_path":"{{ROOT}}/tasks/GH-16/stage-log.jsonl:x","edits":[]}}},
+  {"name":"deny_patch_trailing_dot_folder_winshort","event":{"tool_name":"apply_patch","tool_input":{"patch":"*** Begin Patch\n*** Update File: .husky./pre-commit\n@@\n+x\n*** End Patch"}}},
+  {"name":"deny_shell_trailing_dot_folder_winshort","event":{"tool_name":"Bash","tool_input":{"command":"echo x > .husky./pre-commit"}}},
+  {"name":"deny_shell_stream_winshort","event":{"tool_name":"Bash","tool_input":{"command":"echo x > tasks/GH-16/autopilot.json:x"}}},
+  {"name":"deny_shell_stream_data_winshort","event":{"tool_name":"Bash","tool_input":{"command":"echo x > 'tasks/GH-16/autopilot.json::$DATA'"}}},
   {"name":"allow_write_nested_agents_md","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/repo-a/AGENTS.md","content":"x"}}}
 ]
