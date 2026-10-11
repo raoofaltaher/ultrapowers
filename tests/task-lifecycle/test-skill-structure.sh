@@ -67,6 +67,21 @@ const s = m.capabilities.skills.find((x) => x.id === "task-review");
 process.exit(s && s.path === "skills/task-review/SKILL.md" ? 0 : 1);
 ' "$REPO_ROOT/.muse-plugin/plugin.json"; then pass "the Muse manifest lists task-review"; else fail "the Muse manifest lists task-review"; fi
 
+# new-task Step 4: the local and the remote create commands are separate blocks, and the remote one
+# takes the title from the saved JSON, never from pasted words.
+NEW_TASK_MD="$REPO_ROOT/skills/new-task/SKILL.md"
+step4="$(awk '/^## Step 4: Create$/{f=1;next} /^## Step 5/{f=0} f' "$NEW_TASK_MD")"
+if grep -q '^For a local ticket:$' <<<"$step4" && grep -q '^For a remote ticket:$' <<<"$step4" \
+    && [[ "$(grep -c '^```bash$' <<<"$step4")" -eq 2 ]] \
+    && [[ "$(grep -c 'create "<ID>" <title words>' <<<"$step4")" -eq 1 ]] \
+    && ! grep -q '<title words>.*--title-from-json\|--title-from-json.*<title words>' <<<"$step4" \
+    && grep -q -- '--title-from-json "<ticket JSON file>"' <<<"$step4"; then
+    pass "new-task Step 4 has one block for a local ticket and one for a remote ticket"
+else
+    fail "new-task Step 4 has one block for a local ticket and one for a remote ticket"
+fi
+if grep -q 'the JSON `fetch` printed, which Step 3 saved to a file outside the project' "$REPO_ROOT/skills/autopilot/prompts/scaffold.md"; then pass "the scaffold prompt names the saved JSON file"; else fail "the scaffold prompt names the saved JSON file"; fi
+
 echo ""
 if [[ "$FAILURES" -ne 0 ]]; then
     echo "FAILED: $FAILURES assertion(s)."
