@@ -237,6 +237,17 @@ else
   fail "Muse manifest runs every hook with bash"
 fi
 
+# A guardrail call under load took up to 2 s; every other harness registers it with 30 s.
+if node -e '
+const m = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+const g = m.capabilities.hooks.find((h) => h.id === "qa-guardrail");
+process.exit(g && g.event === "PreToolUse" && g.timeoutMs === 30000 ? 0 : 1);
+' "$REPO_ROOT/.muse-plugin/plugin.json"; then
+  pass "Muse manifest gives the guardrail hook a 30 s timeout"
+else
+  fail "Muse manifest gives the guardrail hook a 30 s timeout"
+fi
+
 echo "Robustness"
 # Cursor sends workspace_roots and no cwd.
 cursor_input="$(printf '{"conversation_id":"c1","workspace_roots":["%s"],"hook_event_name":"sessionStart"}' "$TEST_ROOT/proj")"

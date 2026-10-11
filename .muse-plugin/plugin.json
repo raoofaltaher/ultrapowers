@@ -172,7 +172,7 @@
           "bash",
           "hooks/qa-guardrail"
         ],
-        "timeoutMs": 5000
+        "timeoutMs": 30000
       }
     ],
     "mcpServers": [],
