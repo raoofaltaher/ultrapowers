@@ -18,7 +18,8 @@ import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolveTicket, TicketError } from './ticket-sources.mjs';
 import { createOdooClient, discoverDb, htmlToText, odooIso } from '../../autopilot/scripts/odoo.mjs';
-import { loadSecretsFile, AutopilotError } from '../../autopilot/scripts/autopilot-lib.mjs';
+import { loadSecretsFile, AutopilotError, activeMarkerPath, effectiveAutopilot } from '../../autopilot/scripts/autopilot-lib.mjs';
+import { trackerFor } from '../../autopilot/scripts/tracker.mjs';
 
 const MARKER = path.join('.agents', 'ultrapowers.json');
 const CLI = {
@@ -273,6 +274,42 @@ function safeName(name) {
   return String(name ?? 'attachment').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/^\.+/, '_').slice(0, 120) || 'attachment';
 }
 
+// The autopilot form: a stage of the engine is running (the run marker is there, or the headless
+// stage says so). The manual form keeps every comment as quoted material; the autopilot stages act on
+// the ticket unattended, so there only an author the changes stage would listen to is read: write,
+// maintain or admin access and, when autopilot.approvers is set, listed there (autopilot.mjs,
+// writeChangesComments). Anyone can comment on a public repository.
+function inAutopilotForm(root) {
+  return process.env.ULTRAPOWERS_AUTOPILOT_INSIDE === '1' || fs.existsSync(activeMarkerPath(root));
+}
+
+async function collaboratorMessages(root, marker, resolution, messages) {
+  let approvers;
+  try {
+    approvers = (effectiveAutopilot(marker).approvers ?? []).map((a) => String(a).toLowerCase());
+  } catch (err) {
+    throw new FetchError('bad-tickets', `autopilot configuration: ${err.message}`);
+  }
+  const tracker = trackerFor(resolution, process.env);
+  const verdicts = new Map();
+  const kept = [];
+  for (const m of messages) {
+    const author = String(m.author ?? '');
+    if (!author) continue;
+    if (!verdicts.has(author)) {
+      let permission;
+      try {
+        permission = await tracker.permission(author);
+      } catch (err) {
+        throw new FetchError('cli-failed', `the permission of ${author} could not be read, so the comments cannot be filtered: ${firstLine(err.message)}`);
+      }
+      verdicts.set(author, ['write', 'maintain', 'admin'].includes(permission) && (approvers.length === 0 || approvers.includes(author.toLowerCase())));
+    }
+    if (verdicts.get(author)) kept.push(m);
+  }
+  return kept;
+}
+
 function withReads(ticket, messages) {
   ticket.messages = messages;
   ticket.links = collectLinks([ticket.body, ...messages.map((m) => m.body)]);
@@ -321,7 +358,7 @@ async function odooClientFor(resolution) {
   return createOdooClient({ url: resolution.url, db, login: resolution.login, apiKey: process.env.ODOO_API_KEY });
 }
 
-async function fetchOdoo(resolution) {
+async function fetchOdoo(resolution, ctx) {
   try {
     const c = await odooClientFor(resolution);
     const n = Number(resolution.number);
@@ -359,16 +396,21 @@ async function fetchOdoo(resolution) {
       via: 'rpc',
       attachments: files.map((f) => ({ id: f.id, name: f.name, mimetype: f.mimetype ?? null, size: f.file_size ?? null, url: addressOf(f) })),
     };
-    return withReads(ticket, messages);
+    return withReads(ticket, await filterMessages(ctx, resolution, messages));
   } catch (err) {
     throw fetchErrorFrom(err);
   }
 }
 
-async function fetchTicket(resolution) {
+async function filterMessages(ctx, resolution, messages) {
+  if (!ctx || !inAutopilotForm(ctx.root)) return messages;
+  return collaboratorMessages(ctx.root, ctx.marker, resolution, messages);
+}
+
+async function fetchTicket(resolution, ctx) {
   if (resolution.provider === 'local') return resolution;
   if (resolution.provider === 'odoo') {
-    return process.env.ODOO_API_KEY && resolution.login ? fetchOdoo(resolution) : mcpAnswer(resolution);
+    return process.env.ODOO_API_KEY && resolution.login ? fetchOdoo(resolution, ctx) : mcpAnswer(resolution);
   }
   if (resolution.transport === 'mcp') return mcpAnswer(resolution);
   const cli = CLI[resolution.provider];
@@ -395,7 +437,7 @@ async function fetchTicket(resolution) {
   if (resolution.provider === 'github' && /\/pull\/\d+/.test(ticket.url)) {
     throw new FetchError('not-found', `${resolution.path}#${resolution.number} is a pull request, not an issue`);
   }
-  return withReads(ticket, await commentsFor(resolution));
+  return withReads(ticket, await filterMessages(ctx, resolution, await commentsFor(resolution)));
 }
 
 // Downloads the ticket's attachments under the cap into tasks/<ID>/attachments/ and records, in the
@@ -630,12 +672,13 @@ export async function main(argv) {
       throw new FetchError('no-marker', `no ${MARKER.replace(/\\/g, '/')} in ${root}`);
     }
     loadSecretsFile(root, process.env);
-    const resolution = resolveTicket(readMarker(root), opts.id);
+    const marker = readMarker(root);
+    const resolution = resolveTicket(marker, opts.id);
     const id = resolution.id ?? opts.id;
     if (isUrl && resolution.provider === 'local') throw new FetchError('bad-ticket', `${opts.id} matches no configured ticket source`);
     let result;
     if (opts.command === 'resolve') result = resolution.provider === 'local' ? resolution : { ...resolution, transportOnThisMachine: await transportOnThisMachine(resolution) };
-    else if (opts.command === 'fetch') result = await fetchTicket(resolution);
+    else if (opts.command === 'fetch') result = await fetchTicket(resolution, { root, marker });
     else if (opts.command === 'attachments') result = await downloadAttachments(root, resolution, id, { ...opts, from: path.resolve(opts.from) });
     else result = writeSource(root, resolution, id, { ...opts, from: path.resolve(opts.from) });
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
