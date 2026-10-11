@@ -13,6 +13,7 @@
       "Bash(git branch --list:*)",
       "Bash(git branch --show-current:*)",
       "Bash(git blame:*)",
+      "Read(**/.env.example)",
       "Bash(git rev-parse:*)",
       "Bash(docker ps:*)",
       "Bash(docker logs:*)",
@@ -69,10 +70,22 @@
       "Read(**/.env.*.local)",
       "Read(**/.env.production)",
       "Read(~/.ssh/**)",
+      "Read(**/.env.*)",
       "Read(~/.aws/**)",
+      "Read(~/.config/gh/**)",
+      "Read(~/.config/glab-cli/**)",
+      "Read(~/.git-credentials)",
+      "Read(~/.netrc)",
+      "Read(~/.npmrc)",
+      "Read(~/.gnupg/**)",
+      "Read(~/.kube/**)",
+      "Read(~/.docker/config.json)",
       "Bash(git log *--ou*)",
       "Bash(git diff *--ou*)",
-      "Bash(git show *--ou*)"
+      "Bash(git show *--ou*)",
+      "Bash(git diff *--no-index*)",
+      "Bash(git blame *--contents*)",
+      "Bash(git show *:.env*)"
     ]
   },
   "hooks": {}

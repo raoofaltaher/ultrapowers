@@ -1,7 +1,7 @@
 {
   ".gemini/hooks/ultrapowers-guardrail.mjs": "2.1.0",
   "AGENTS.md": "2.0.0",
-  "CLAUDE.md": "2.0.2",
+  "CLAUDE.md": "2.1.0",
   "GEMINI.md": "1.0.0",
   "README.md": "2.1.0",
   "tasks/README.md": "1.0.0",
@@ -18,8 +18,8 @@
   ".codex/config.toml": "2.0.2",
   ".cursor/mcp.json": "2.0.2",
   ".gemini/settings.json": "2.0.2",
-  ".qwen/settings.json": "2.0.2",
-  "opencode.json": "2.0.2",
+  ".qwen/settings.json": "2.1.0",
+  "opencode.json": "2.1.0",
   ".factory/mcp.json": "2.0.2",
   ".kimi/mcp.json": "2.0.2",
   ".vscode/mcp.json": "2.0.2",
@@ -35,6 +35,6 @@
   ".agents/memory/README.md": "1.0.0",
   ".agents/memory/MEMORY.md": "1.0.0",
   "qa/known-issues.md": "2.0.0",
-  ".cursor/cli.json": "2.0.2",
+  ".cursor/cli.json": "2.1.0",
   ".cursorignore": "2.0.2"
 }
