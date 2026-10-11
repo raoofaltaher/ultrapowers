@@ -146,11 +146,22 @@ IFS= read -r -d '' event || true
 # Antigravity, Hermes and the Gemini project hook) and passes the directory it found the run from
 # out of band, never inside the event. It must be an absolute, existing directory, or every call
 # is refused. Unset (Claude Code, Cursor, Muse, Codex, Copilot CLI, Droid, Qwen Code, Devin), the
-# scan starts from the hook's own cwd, the session directory the harness runs it in.
+# scan starts from the hook's own cwd, the session directory the harness runs it in; then the
+# top-level cwd, then the top-level workspace_roots[0] (Cursor's event carries the project there and
+# no cwd, and runs the hook from the plugin folder), then CURSOR_PROJECT_DIR, the last two only when
+# absolute and existing. Each is set by the harness; a copy nested under tool_input never counts.
 #
-# No process is started for an inert session: the top-level cwd is read through node
-# (hooks/lib/event-fields.mjs) only when some "cwd" string in the event text leads to a marker.
+# No process is started for an inert session: the top-level fields are read through node
+# (hooks/lib/event-fields.mjs) only when some "cwd" or "workspace_roots" string in the event text
+# leads to a marker.
 root=""
+root_start=""
+abs_dir_r() { # $1 a path: REPLY its normalized form when absolute and an existing directory, else fail
+  REPLY=""
+  case "$1" in /*|[A-Za-z]:/*|[A-Za-z]:\\*) ;; *) return 1 ;; esac
+  norm_path_r "$1"
+  [ -d "$REPLY" ] || { REPLY=""; return 1; }
+}
 if [ -n "${ULTRAPOWERS_RUN_DIR+x}" ]; then
   case "$ULTRAPOWERS_RUN_DIR" in
     /*|[A-Za-z]:/*|[A-Za-z]:\\*) ;;
@@ -166,14 +177,15 @@ else
   if find_root_r "$scan_start"; then
     root="$REPLY"
   else
-    # A superset filter with builtins only: every "cwd" string in the text, the nested ones too.
-    # Only when one of them leads to a marker is the real top-level cwd read, and only it counts.
+    # A superset filter with builtins only: every "cwd" string and every first "workspace_roots"
+    # entry in the text, the nested ones too. Only when one of them leads to a marker are the real
+    # top-level fields read, and only they count.
     rest="$event"
-    cwd_re='"cwd"[[:space:]]*:[[:space:]]*"([^"]*)"'
+    cwd_re='"(cwd|workspace_roots)"[[:space:]]*:[[:space:]]*\[?[[:space:]]*"([^"]*)"'
     hit=""
     while [[ "$rest" =~ $cwd_re ]]; do
       rest="${rest#*"${BASH_REMATCH[0]}"}"
-      candidate="${BASH_REMATCH[1]}"
+      candidate="${BASH_REMATCH[2]}"
       [ -n "$candidate" ] || continue
       norm_path_r "$candidate"
       if find_root_r "$REPLY"; then hit=1; break; fi
@@ -186,12 +198,22 @@ else
       ef_src="${ef_src//\\/$ef_slash}"
       case "$ef_src" in */*) ef_js="${ef_src%/*}/lib/event-fields.mjs" ;; *) ef_js="lib/event-fields.mjs" ;; esac
       if command -v cygpath >/dev/null 2>&1; then ef_js="$(cygpath -m "$ef_js" 2>/dev/null || printf '%s' "$ef_js")"; fi
-      top_cwd="$(printf '%s' "$event" | node "$ef_js" cwd)" || deny "the tool event could not be parsed for its top-level cwd; an uninspectable call is refused"
+      top_fields="$(printf '%s' "$event" | node "$ef_js" cwd 'workspace_roots[0]')" || deny "the tool event could not be parsed for its top-level cwd; an uninspectable call is refused"
+      case "$top_fields" in
+        *$'\n'*) top_cwd="${top_fields%%$'\n'*}"; top_ws="${top_fields#*$'\n'}" ;;
+        *) top_cwd="$top_fields"; top_ws="" ;;
+      esac
       if [ -n "$top_cwd" ]; then
         norm_path_r "$top_cwd"
         if find_root_r "$REPLY"; then root="$REPLY"; fi
       fi
+      if [ -z "$root" ] && abs_dir_r "$top_ws" && find_root_r "$REPLY"; then
+        root="$REPLY"; abs_dir_r "$top_ws"; root_start="$REPLY"
+      fi
     fi
+  fi
+  if [ -z "$root" ] && [ -n "${CURSOR_PROJECT_DIR:-}" ] && abs_dir_r "$CURSOR_PROJECT_DIR" && find_root_r "$REPLY"; then
+    root="$REPLY"; abs_dir_r "$CURSOR_PROJECT_DIR"; root_start="$REPLY"
   fi
 fi
 # A headless watcher stage carries ULTRAPOWERS_AUTOPILOT_INSIDE=1 in its environment: the
@@ -475,6 +497,9 @@ esac
 # Prefer the event's real cwd for the root and for resolving relative paths: on Windows the
 # harness spells it `S:\proj` while the process cwd is `/s/proj`; both normalize alike.
 base_cwd="$(norm_path "$PWD")"
+# A root found from workspace_roots[0] or CURSOR_PROJECT_DIR: the hook runs from the plugin folder
+# there, so relative paths resolve against the project directory the harness named.
+[ -n "$root_start" ] && base_cwd="$root_start"
 if [ -n "$event_cwd" ]; then
   ev_norm="$(norm_path "$event_cwd")"
   if [ -d "$ev_norm" ]; then
