@@ -184,6 +184,9 @@ export function runGuardrail({ toolName, input, cwd, dirs = [], hookDir = HOOK_D
   if (callAbs && !within(realish(callAbs), run.root)) {
     return { deny: true, prefix, reason: `the call's working directory ${callAbs} is outside the project root ${run.root}; during a run a call works inside the project` };
   }
+  // The marker was found from the session cwd; the command itself runs in the call's directory, so
+  // the hook resolves a relative target there (a bare autopilot.json inside tasks/<ID> is the state file).
+  if (callAbs) event.cwd = realish(callAbs);
   const hook = path.join(hookDir, 'qa-guardrail');
   const bash = bashBinary();
   if (!bash || !fs.existsSync(hook)) {

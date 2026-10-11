@@ -272,6 +272,18 @@ test('a per-call working directory outside the project root is denied by the ent
   assert.deepEqual(runGuardrail({ toolName: 'bash', input: { command: 'ls', workdir: outside }, cwd: idle, hookDir: '/nonexistent' }), { deny: false });
 });
 
+test('a relative target is resolved against the per-call working directory, not the session cwd', () => {
+  const root = project();
+  // From inside tasks/<ID>, a bare "autopilot.json" is the state file; from the root it would be a harmless new file.
+  const stateDir = path.join(root, 'tasks', 'GH-16');
+  fs.mkdirSync(stateDir, { recursive: true });
+  const v = runGuardrail({ toolName: 'bash', input: { command: 'echo x > autopilot.json', workdir: stateDir }, cwd: root });
+  assert.equal(v.deny, true, JSON.stringify(v));
+  assert.match(v.reason, /autopilot\.json|protected/);
+  const marker = runGuardrail({ toolName: 'bash', input: { command: 'rm autopilot-active', workdir: path.join(root, '.ultrapowers') }, cwd: root });
+  assert.equal(marker.deny, true, JSON.stringify(marker));
+});
+
 test('guardrail-cli bounds the working directory of a Gemini dir_path and an Antigravity Cwd', () => {
   const root = project();
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-workdir-outside-'));
