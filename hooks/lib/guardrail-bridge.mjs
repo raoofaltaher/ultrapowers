@@ -160,13 +160,14 @@ function within(p, root) {
 // Git for Windows bash, found the way hooks/run-hook.cmd finds it; `bash` on PATH elsewhere.
 // The WSL launcher in System32 is never used: it fails when no distribution is installed.
 // The PATH search takes absolute entries only and skips the working directory (`cwd`, the
-// project during a run), so a bash planted in the project is never the one that runs the hook.
+// project during a run) and every entry inside the project (`project`, e.g. node_modules/.bin under
+// npm run), so a bash planted in the project is never the one that runs the hook.
 const WIN_CANDIDATES = () => [
   'C:\\Program Files\\Git\\bin\\bash.exe',
   'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
   process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe') : null,
 ].filter(Boolean);
-export function bashBinary({ env = process.env, cwd = process.cwd(), candidates } = {}) {
+export function bashBinary({ env = process.env, cwd = process.cwd(), project = null, candidates } = {}) {
   const win = process.platform === 'win32';
   if (win) for (const c of candidates ?? WIN_CANDIDATES()) if (fs.existsSync(c)) return c;
   const fold = (p) => (win ? p.toLowerCase() : p);
@@ -179,6 +180,7 @@ export function bashBinary({ env = process.env, cwd = process.cwd(), candidates 
     let real = dir;
     try { real = fs.realpathSync.native(dir); } catch { /* keep as written */ }
     if (fold(real) === here) continue;
+    if (project && (within(real, realish(project)) || within(path.resolve(dir), path.resolve(project)))) continue;
     // The WSL launcher in System32 is never used: it fails when no distribution is installed.
     if (win && dir.toLowerCase().startsWith(system32)) continue;
     const c = path.join(dir, win ? 'bash.exe' : 'bash');
@@ -234,7 +236,7 @@ export function runGuardrail({ toolName, input, cwd, dirs = [], hookDir = HOOK_D
   // the hook resolves a relative target there (a bare autopilot.json inside tasks/<ID> is the state file).
   if (callAbs) event.cwd = realish(callAbs);
   const hook = path.join(hookDir, 'qa-guardrail');
-  const bash = bashBinary();
+  const bash = bashBinary({ project: run.root });
   if (!bash || !fs.existsSync(hook)) {
     return { deny: true, prefix, reason: `the ultrapowers guardrail could not run (${!bash ? 'no bash' : 'hook missing'}); a tool call during a run is refused without it` };
   }

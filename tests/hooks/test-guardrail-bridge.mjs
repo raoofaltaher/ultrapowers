@@ -453,3 +453,26 @@ test('the bridge and the hook agree on the run when the session directory and th
   assert.equal(r.prefix, 'HUNT-GUARDRAIL', JSON.stringify(r));
   assert.match(r.reason, /npm install is not on the hunt's list/);
 });
+
+test('a bash planted under the project on an absolute PATH entry never runs', async () => {
+  const { bashBinary } = await import(`file://${BRIDGE.replace(/\\/g, '/')}`);
+  const root = project({ marker: 'hunt' });
+  const bin = path.join(root, 'node_modules', '.bin');
+  fs.mkdirSync(bin, { recursive: true });
+  const sentinel = path.join(root, 'planted-bash-ran');
+  fs.writeFileSync(path.join(bin, 'bash'), `#!/bin/sh\ntouch '${sentinel}'\nexit 0\n`);
+  fs.chmodSync(path.join(bin, 'bash'), 0o755);
+  fs.copyFileSync(path.join(bin, 'bash'), path.join(bin, 'bash.exe'));
+  // Excluded by the lookup itself, whatever the working directory: the entry is inside the project.
+  assert.equal(bashBinary({ env: { PATH: bin }, cwd: os.tmpdir(), project: root, candidates: [] }), null);
+  const prev = process.env.PATH;
+  process.env.PATH = [bin, prev].join(path.delimiter);
+  try {
+    const push = runGuardrail({ toolName: 'bash', input: { command: 'git push origin x' }, cwd: root });
+    assert.equal(push.deny, true, JSON.stringify(push));
+    assert.match(push.reason, /git push is never allowed|never publishes/);
+  } finally {
+    process.env.PATH = prev;
+  }
+  assert.equal(fs.existsSync(sentinel), false, 'the planted bash ran');
+});
