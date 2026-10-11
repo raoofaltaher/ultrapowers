@@ -495,6 +495,25 @@ test('the rendered Claude Code settings deny reads of secret files and the --out
   }
 });
 
+// Each harness whose official docs describe a project-level read deny gets one; the others get none
+// (README, "init" step). OpenCode: https://opencode.ai/docs/permissions/ (last matching rule wins).
+test('the rendered OpenCode config denies reads of secret files through its permission.read block', () => {
+  const root = tmpRepo();
+  run(['scaffold', '--root', root, '--name', 'Sec', '--date', '2026-10-11', '--platform', 'linux'], { env: { CONTEXT7_API_KEY: '' } });
+  const config = JSON.parse(fs.readFileSync(path.join(root, 'opencode.json'), 'utf8'));
+  const read = config.permission?.read;
+  assert.ok(read && typeof read === 'object', 'permission.read is a pattern map');
+  for (const pattern of ['*.env', '*.env.*', '~/.ssh/**', '~/.aws/**']) assert.equal(read[pattern], 'deny', `${pattern} is denied`);
+  assert.equal(read['*.env.example'], 'allow', 'example env files stay readable');
+  // OpenCode lets the last matching rule win, so the allow rules must precede the denies they override
+  // and the example exception must follow the broad *.env.* deny.
+  const keys = Object.keys(read);
+  assert.ok(keys.indexOf('*.env.example') > keys.indexOf('*.env.*'), 'the example exception follows *.env.*');
+  assert.equal(keys[0], '*', 'the catch-all comes first');
+  assert.equal(read['*'], 'allow');
+  assert.equal(config.mcp !== undefined, true, 'the MCP servers are still written');
+});
+
 test('the tasks README describes the brief new-task writes', () => {
   const readme = fs.readFileSync(path.join(repoRoot, 'templates', 'tasks', 'README.md.tmpl'), 'utf8');
   for (const section of ['Context', 'Definition of Ready', 'Definition of Done', 'Related Documentation']) {

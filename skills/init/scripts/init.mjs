@@ -155,6 +155,20 @@ function geminiFamilyJson(schema) {
   });
 }
 
+// OpenCode's permission.read maps path patterns to allow, ask or deny, and the last matching rule
+// wins (https://opencode.ai/docs/permissions/). So the catch-all comes first, the env-file denies
+// next, the example-file exception after them, and the home-directory key folders last.
+export const OPENCODE_PERMISSION = {
+  read: {
+    '*': 'allow',
+    '*.env': 'deny',
+    '*.env.*': 'deny',
+    '*.env.example': 'allow',
+    '~/.ssh/**': 'deny',
+    '~/.aws/**': 'deny',
+  },
+};
+
 function opencodeJson(servers) {
   const mcp = {};
   for (const [id, server] of Object.entries(servers)) {
@@ -169,7 +183,7 @@ function opencodeJson(servers) {
     if (hasKeys(server.env)) entry.environment = mapSecrets(server.env, opencodeRef);
     mcp[id] = entry;
   }
-  return toJson({ $schema: 'https://opencode.ai/config.json', mcp });
+  return toJson({ $schema: 'https://opencode.ai/config.json', permission: OPENCODE_PERMISSION, mcp });
 }
 
 function vscodeJson(servers) {
