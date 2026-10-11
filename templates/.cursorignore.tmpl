@@ -1,0 +1,8 @@
+# Cursor never reads these files: not the Agent, Tab or Inline Edit, and not an @ mention.
+# It does not stop a terminal command or an MCP tool the Agent runs; .cursor/cli.json covers the CLI.
+# Example env files stay readable.
+.agents/mcp-secrets.env
+.env
+.env.local
+.env.*.local
+.env.production

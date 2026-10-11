@@ -534,6 +534,31 @@ test('the rendered Qwen Code settings deny reads of secret files through permiss
   assert.equal(gemini.permissions, undefined, 'Gemini CLI documents no project-level read deny, so none is written');
 });
 
+// Cursor: .cursorignore (https://cursor.com/docs/context/ignore-files) blocks the Agent from the files;
+// .cursor/cli.json permissions.deny (https://cursor.com/docs/cli/reference/permissions) blocks the CLI.
+test('the scaffold writes Cursor ignore and CLI deny rules for secret files, only when cursor is a harness', () => {
+  const root = tmpRepo();
+  const report = run(['scaffold', '--root', root, '--name', 'Sec', '--date', '2026-10-11', '--platform', 'linux'], { env: { CONTEXT7_API_KEY: '' } });
+  assert.ok(report.written.includes('.cursorignore'));
+  assert.ok(report.written.includes('.cursor/cli.json'));
+  const ignore = fs.readFileSync(path.join(root, '.cursorignore'), 'utf8').split('\n').filter((l) => l && !l.startsWith('#'));
+  assert.deepEqual(ignore, ['.agents/mcp-secrets.env', '.env', '.env.local', '.env.*.local', '.env.production']);
+  const cli = JSON.parse(fs.readFileSync(path.join(root, '.cursor', 'cli.json'), 'utf8'));
+  for (const rule of [
+    'Read(**/.agents/mcp-secrets.env)', 'Read(**/.env)', 'Read(**/.env.local)', 'Read(**/.env.*.local)', 'Read(**/.env.production)',
+  ]) {
+    assert.ok(cli.permissions.deny.includes(rule), `deny has ${rule}`);
+  }
+  assert.equal(cli.permissions.deny.includes('Read(**/.env.*)'), false, 'example env files stay readable');
+
+  const other = tmpRepo();
+  const without = run(['scaffold', '--root', other, '--name', 'Sec', '--date', '2026-10-11', '--platform', 'linux', '--harnesses', 'claude-code'], { env: { CONTEXT7_API_KEY: '' } });
+  assert.equal(without.written.includes('.cursorignore'), false);
+  assert.equal(without.written.includes('.cursor/cli.json'), false);
+  assert.ok(without.omitted.includes('.cursorignore'));
+  assert.ok(without.omitted.includes('.cursor/cli.json'));
+});
+
 test('the tasks README describes the brief new-task writes', () => {
   const readme = fs.readFileSync(path.join(repoRoot, 'templates', 'tasks', 'README.md.tmpl'), 'utf8');
   for (const section of ['Context', 'Definition of Ready', 'Definition of Done', 'Related Documentation']) {

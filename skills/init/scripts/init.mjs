@@ -42,6 +42,8 @@ export const TARGET_HARNESS = {
   [OUTPUT_STYLE_TARGET]: 'claude-code',
   '.codex/config.toml': 'codex',
   '.cursor/mcp.json': 'cursor',
+  '.cursor/cli.json': 'cursor',
+  '.cursorignore': 'cursor',
   '.github/copilot-instructions.md': 'copilot',
   '.vscode/settings.json': 'copilot',
   '.vscode/mcp.json': 'copilot',
