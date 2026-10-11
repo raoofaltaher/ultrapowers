@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"mkdir -p reviews/1234/artifacts/suites && touch reviews/1234/artifacts/suites/.keep"}}

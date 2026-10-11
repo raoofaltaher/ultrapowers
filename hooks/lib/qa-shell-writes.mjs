@@ -855,6 +855,17 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         return;
       }
       if (prog === 'tee') { for (const x of plain) checkTarget(x.w, dir, 'tee target', container); return; }
+      if (prog === 'mkdir' || prog === 'touch') {
+        // The operands are the paths made; -m MODE, -d DATE, -t STAMP and -r REFERENCE take a value.
+        const valued = prog === 'mkdir' ? new Set(['-m', '--mode']) : new Set(['-d', '--date', '-t', '-r', '--reference', '--time']);
+        for (let k = 0; k < rest.length; k++) {
+          const v = rest[k].v;
+          if (v !== null && valued.has(v)) { k++; continue; }
+          if (v !== null && (v === '--' || v.startsWith('-'))) continue;
+          checkTarget(rest[k].w, dir, `${prog} operand`, container);
+        }
+        return;
+      }
       if (prog === 'rm' || prog === 'unlink') { for (const x of plain.filter((y) => y.v !== '--')) checkTarget(x.w, dir, `${prog} operand`, container); return; }
       if (prog === 'cp' || prog === 'mv' || prog === 'install' || prog === 'ln') {
         const ops = plain.filter((y) => y.v !== '--');
