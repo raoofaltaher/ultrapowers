@@ -1,7 +1,6 @@
 import json
 import os
 import re
-import shutil
 from pathlib import Path
 
 BOOTSTRAP_MARKER = "ultrapowers:using-ultrapowers bootstrap for hermes"
@@ -262,6 +261,32 @@ def _run_active(start_dir):
         current = parent
 
 
+def _node_binary(cwd):
+    """The node executable from the absolute PATH entries, or None.
+
+    Never the project's: a relative entry (`.`, `bin`) and an entry that is the working directory
+    are skipped, so a node or node.cmd planted in the project is not run. shutil.which is not used:
+    on Windows it searches the current directory first unless NoDefaultCurrentDirectoryInExePath is
+    set in this process's environment.
+    """
+    here = os.path.normcase(os.path.realpath(cwd)) if cwd else None
+    if os.name == "nt":
+        exts = [e for e in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";") if e]
+    else:
+        exts = [""]
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        entry = entry.strip().strip('"')
+        if not entry or not os.path.isabs(entry):
+            continue
+        if here and os.path.normcase(os.path.realpath(entry)) == here:
+            continue
+        for ext in exts:
+            cand = os.path.join(entry, "node" + ext)
+            if os.path.isfile(cand) and os.access(cand, os.X_OK):
+                return cand
+    return None
+
+
 def _guardrail_verdict(skills_dir, tool_name, args, cwd):
     """Runs the ultrapowers guardrail for one tool call: None to allow, or a Hermes block directive.
 
@@ -280,12 +305,15 @@ def _guardrail_verdict(skills_dir, tool_name, args, cwd):
     import subprocess
 
     cli = _guardrail_cli(skills_dir)
-    node = shutil.which("node")
+    node = _node_binary(cwd)
     if not cli or not node:
         return {"action": "block", "message": f"{prefix} DENY: the ultrapowers guardrail could not run (node or the hook is missing); a tool call during a run is refused without it"}
     event = json.dumps({"hook_event_name": "PreToolUse", "tool_name": tool_name, "tool_input": {} if args is None else args, "cwd": cwd})
+    # The child runs from the plugin's folder (the event carries the session cwd), and on Windows it
+    # does not search its current directory for the programs it starts.
+    env = dict(os.environ, NoDefaultCurrentDirectoryInExePath="1")
     try:
-        proc = subprocess.run([node, cli], input=event, capture_output=True, text=True, timeout=20, cwd=cwd)
+        proc = subprocess.run([node, cli], input=event, capture_output=True, text=True, timeout=20, cwd=os.path.dirname(os.path.abspath(__file__)), env=env)
     except (OSError, subprocess.SubprocessError) as exc:
         return {"action": "block", "message": f"{prefix} DENY: the ultrapowers guardrail could not run ({exc}); a tool call during a run is refused without it"}
     if proc.returncode == 0:
