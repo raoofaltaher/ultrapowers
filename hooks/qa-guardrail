@@ -290,6 +290,17 @@ for (const key of ["file_path", "notebook_path", "path", "source", "destination"
 for (const key of ["paths", "files"]) {
   if (Array.isArray(inp[key])) for (const v of inp[key]) if (str(v)) pathFields.push(str(v));
 }
+// Every string value of the input that is a URL by itself (a navigation target, a page to scrape, a
+// fetch address) under whatever key or nesting a harness spells it; text that merely contains a
+// URL (a file body, a prompt) is not an address.
+const urlValues = [];
+const scanUrls = (v, depth) => {
+  if (depth > 6) return;
+  if (typeof v === "string") { if (/^\s*[a-z][a-z0-9+.-]*:\/\/\S+\s*$/i.test(v)) urlValues.push(v.trim()); }
+  else if (Array.isArray(v)) { for (const x of v) scanUrls(x, depth + 1); }
+  else if (v && typeof v === "object") { for (const x of Object.values(v)) scanUrls(x, depth + 1); }
+};
+scanUrls(inp, 0);
 // A patch tool may carry its patch under another field than command (Codex, Hermes); only a
 // patch tool reads those fields, so free text of another tool is never taken for a command.
 const isPatchTool = /patch/i.test(toolName);
@@ -349,7 +360,7 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
   }
   process.stdout.write([
     "ok", toolName, command, writeRaw,
-    [inp.url, inp.uri, inp.link].concat(Array.isArray(inp.urls) ? inp.urls : [inp.urls]).map(str).filter(Boolean).join(" "), str(ev.cwd), allowed.join(","), norm(hosts.forbidden).join(","), ticket,
+    [...new Set([inp.url, inp.uri, inp.link].concat(Array.isArray(inp.urls) ? inp.urls : [inp.urls]).map(str).concat(urlValues).filter(Boolean))].join(" "), str(ev.cwd), allowed.join(","), norm(hosts.forbidden).join(","), ticket,
     pathFields.join("\n"), trackerHosts.join(","), ignoreCase ? "1" : "0",
     w.real, w.rel, keyReal.join("\n"), patchRecs.join("\n"), roleVars.join(","),
     str((qa.db && typeof qa.db === "object" ? qa.db : {}).roRole).trim() || "qa_agent_ro",

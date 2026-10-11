@@ -1,0 +1,1 @@
+{"tool_name":"scrape","tool_input":{"pages":["http://localhost:3000/","http://prod.example.com/"]}}
