@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Guardrail lane 4: an array slice such as `a[1:n]` passes as a read; psql interpolation is refused in its three spellings, `:name`, `:'name'` and `:"name"` (#35).
+- Guardrail lane 4: an array slice with integer bounds such as `a[2:3]` passes as a read; a bound that is a name stays refused, because psql would substitute a variable of that name; `psql -v`, `--set` and `--variable` are refused; psql interpolation is refused in its three spellings, `:name`, `:'name'` and `:"name"` (#35).
 - `task-review --post`: screenshots render on a private repository. GitHub comments link the file on the documents branch through the blob URL with `?raw=true`, which GitHub serves to a logged-in viewer with access; GitLab comments upload the file to the project through its uploads API and embed what it returns, with the raw link as the fallback when an upload fails (#34).
 
 ## v2.0.0 (2026-10-10)

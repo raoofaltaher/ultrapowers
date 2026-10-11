@@ -227,11 +227,13 @@ function analyzeSql(sql) {
   const text = stripLiterals(sql);
   if (text === null) return 'an unterminated quote, or a dollar sign outside a standalone dollar quote, in the SQL cannot be verified; lane 4 is read-only';
   if (/\\[A-Za-z!]/.test(text)) return 'a psql meta-command (a backslash command) is blocked; it can run a shell, read a file or repeat a statement';
-  // An array slice ([1:n], [i:j]) is a read: a colon inside square brackets with a word character
-  // on both sides is blanked before the interpolation check. The check then covers psql's three
-  // spellings on the stripped text: :name, :'name' (left as :'' by the stripper) and :"name".
-  const sliced = text.replace(/\[[^\]]*\]/g, (m) => m.replace(/(\w)\s*:\s*(?=\w)/g, '$1 '));
-  if (/(^|[^:]):(['"]|[A-Za-z_])/.test(sliced)) return 'psql variable interpolation (:name, :\'name\' or :"name") is blocked; the SQL must be literal and inspectable';
+  // An array slice with integer bounds ([1:3]) is a read: that colon is blanked before the
+  // interpolation check. A bound that is a name ([1:n], [i:j]) stays refused: psql would substitute
+  // a variable of that name, set through -v or a psqlrc, and the analyzer cannot see it. The check
+  // covers psql's three spellings on the stripped text: :name, :'name' (left as :'' by the
+  // stripper) and :"name".
+  const sliced = text.replace(/\[[^\]]*\]/g, (m) => m.replace(/(\d)\s*:\s*(?=\d)/g, '$1 '));
+  if (/(^|[^:]):(['"]|[A-Za-z_])/.test(sliced)) return 'psql variable interpolation (:name, :\'name\' or :"name") is blocked; the SQL must be literal and inspectable (an array slice needs integer bounds, [1:3])';
   for (const piece of text.split(';')) {
     const st = piece.trim().toLowerCase();
     if (!st) continue;
@@ -292,6 +294,7 @@ export function analyzePsql(args, { roRole = 'qa_agent_ro', pgUser, psqlEnv = fa
   const role = roRole || 'qa_agent_ro';
   const { sqls, targets, positionals, user, file } = parsePsql(args);
   if (psqlEnv) return 'psql with PSQLRC, PGSERVICE, PGSERVICEFILE, PGOPTIONS or PGPASSFILE set reads a file the analyzer cannot see; run it with the plain environment';
+  if (args.some((a) => a === '-v' || a === '--set' || a === '--variable' || /^-[A-Za-z]*v./.test(a) || /^--(set|variable)=/.test(a))) return 'psql -v, --set and --variable define variables that any :name in the SQL would substitute; lane 4 runs literal SQL only';
   if (file) return 'psql from a script file (-f) is blocked; the SQL is not inspectable';
   if (sqls.length === 0) return 'psql without an inline -c statement is blocked; lane 4 runs single inline statements only';
   const superuser = (u) => /^postgres$/i.test(String(u).trim());

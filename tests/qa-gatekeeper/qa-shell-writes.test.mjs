@@ -433,10 +433,13 @@ test('a dollar sign is only a standalone dollar quote; anywhere else the SQL can
 
 test('an array slice is a read; psql interpolation is refused in its three spellings (GH-35)', () => {
   const c = { cwd: '/p', root: '/p', ticket: '1234', profile: 'qa', ignoreCase: false, roRole: 'qa_agent_ro' };
-  for (const sql of ['select a[1:n] from t', 'select arr[2:3] from t', 'select m[i:j] from t', 'select 1::int', "select a[1:2]::text from t"]) {
+  for (const sql of ['select arr[2:3] from t', 'select a[1 : 10] from t', 'select 1::int', "select a[1:2]::text from t"]) {
     assert.equal(analyze(`psql -U qa_agent_ro -c '${sql}'`, c), '', sql);
   }
-  for (const sql of ['select :name', "select :'name'", 'select :"name"', 'select a[:n] from t', 'select * from t where id = :id']) {
+  for (const sql of ['select :name', "select :'name'", 'select :"name"', 'select a[:n] from t', 'select a[1:n] from t', 'select m[i:j] from t', 'select 1 ] where [ x :v ]', 'select a[b[1:2]:n] from t', 'select a[1:2] from t; select :v', 'select * from t where id = :id']) {
     assert.match(analyze(`psql -U qa_agent_ro -c '${sql}'`, c), /interpolation/, sql);
+  }
+  for (const cmd of ['psql -U qa_agent_ro -v n=3 -c "select 1"', 'psql -U qa_agent_ro --set=n=3 -c "select 1"', 'psql -U qa_agent_ro --variable n=3 -c "select 1"', 'psql -U qa_agent_ro -vn=3 -c "select 1"']) {
+    assert.match(analyze(cmd, c), /define variables/, cmd);
   }
 });
