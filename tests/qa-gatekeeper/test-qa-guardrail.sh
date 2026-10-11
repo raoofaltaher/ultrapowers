@@ -156,6 +156,39 @@ else
   fail "event cwd activates the guardrail (exit ${result%%|*})"
 fi
 
+echo "qa-guardrail: the marker is found from a nested clone and from a call's own working directory"
+mkdir -p "$ROOT/repo-a/src"
+for variant in \
+  "event cwd in a nested clone|{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push origin qa\"},\"cwd\":\"$ROOT/repo-a/src\"}|$TEST_ROOT/elsewhere" \
+  "tool workdir in a nested clone|{\"tool_name\":\"bash\",\"tool_input\":{\"command\":\"git push origin qa\",\"workdir\":\"$ROOT/repo-a/src\"}}|$TEST_ROOT/elsewhere" \
+  "tool working_directory|{\"tool_name\":\"terminal\",\"tool_input\":{\"command\":\"git push origin qa\",\"working_directory\":\"$ROOT/repo-a\"}}|$TEST_ROOT/elsewhere" \
+  "process cwd in a nested clone|{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push origin qa\"}}|$ROOT/repo-a/src"; do
+  label="${variant%%|*}"; rest="${variant#*|}"; event="${rest%|*}"; dir="${rest##*|}"
+  result="$(run_hook "$event" "$dir")"
+  if [[ "${result%%|*}" -eq 2 ]]; then pass "marker found: $label"; else fail "marker found: $label (exit ${result%%|*})"; fi
+done
+# A relative cwd has no parent to climb to; a hook that never returns is killed at its timeout and a
+# killed hook lets the call through, so the walk must end.
+if command -v timeout >/dev/null 2>&1; then
+  result="$(cd "$TEST_ROOT/elsewhere" && printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"rel/dir","workdir":"src"}' | timeout 10 bash "$HOOK" 2>&1; echo "|$?")"
+  if [[ "$result" == "|0" ]]; then pass "a relative event cwd ends the marker walk"; else fail "a relative event cwd ends the marker walk (got: $result)"; fi
+fi
+
+echo "qa-guardrail: an active run with node missing from PATH denies"
+mkdir -p "$TEST_ROOT/nonode"
+for tool in grep sed tr cygpath; do
+  if command -v "$tool" >/dev/null 2>&1; then
+    printf '#!%s\nexec "%s" "$@"\n' "$BASH" "$(command -v "$tool")" > "$TEST_ROOT/nonode/$tool"
+    chmod +x "$TEST_ROOT/nonode/$tool"
+  fi
+done
+result="$(cd "$ROOT" && printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"}}' | PATH="$TEST_ROOT/nonode" "$BASH" "$HOOK" 2>&1; echo "|$?")"
+if [[ "${result##*|}" -eq 2 && "$result" == *"QA-GUARDRAIL DENY: node is required"* ]]; then
+  pass "no node during a run: a deny that names node, not a silent allow"
+else
+  fail "no node during a run: a deny that names node, not a silent allow (got: $result)"
+fi
+
 echo "qa-guardrail: the hook's time does not grow with the size of the command"
 # Claude Code lets a call through when its hook is killed at the registration timeout (30 s), so a
 # command of ~500 segments followed by a protected write must still be denied, and quickly.

@@ -108,6 +108,10 @@ find_root_r() {
     fi
     case "$d" in
       /|.|"") return 1 ;;
+      # A relative path with no slash left has no parent to climb to (a hook that never returns
+      # is killed at its timeout, and a killed hook lets the call through).
+      */*) ;;
+      *) return 1 ;;
     esac
     d="${d%/*}"
     [ -n "$d" ] || d="/"
@@ -127,10 +131,13 @@ if find_root_r "$REPLY"; then
   root="$REPLY"
 else
   rest="$event"
-  cwd_re='"cwd"[[:space:]]*:[[:space:]]*"([^"]*)"'
+  # The directory a call runs in: the event cwd and a call's own working directory (OpenCode
+  # workdir, Hermes working_directory, Gemini dir_path, Antigravity Cwd). A call may name a project
+  # under run from a process that sits elsewhere, with no cwd in the event.
+  cwd_re='"(cwd|workdir|working_directory|workingDirectory|dir_path|Cwd)"[[:space:]]*:[[:space:]]*"([^"]*)"'
   while [[ "$rest" =~ $cwd_re ]]; do
     rest="${rest#*"${BASH_REMATCH[0]}"}"
-    candidate="${BASH_REMATCH[1]}"
+    candidate="${BASH_REMATCH[2]}"
     [ -n "$candidate" ] || continue
     norm_path_r "$candidate"
     if find_root_r "$REPLY"; then
