@@ -1036,6 +1036,28 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       if (['pkill', 'killall', 'killall5', 'skill', 'taskkill', 'stop-process'].includes(prog) || (prog === 'fuser' && rest.some((x) => x.v !== null && /^-[a-zA-Z]*k/.test(x.v)))) {
         return deny('killing processes by name is blocked; the stack stays as found');
       }
+      if (autopilot && (prog === 'gh' || prog === 'glab')) {
+        // The tracker belongs to the engine: a stage runs the read verbs below and nothing else. The
+        // hook's text rules read the bare spellings of the write verbs; this reads the words as the
+        // CLI does (quoting undone), and an unknown group or verb (alias set, extension install, run
+        // rerun, gist create ...) is refused rather than judged by a deny-list.
+        const READ = prog === 'gh'
+          ? { issue: ['view', 'list', 'status'], pr: ['view', 'list', 'status', 'diff', 'checks'], repo: ['view', 'list', 'clone'], run: ['view', 'list', 'watch', 'download'], workflow: ['view', 'list'], release: ['view', 'list', 'download'], label: ['list'], gist: ['view', 'list'], project: ['view', 'list', 'field-list', 'item-list'], cache: ['list'], secret: ['list'], variable: ['list', 'get'], ruleset: ['list', 'view', 'check'], config: ['get', 'list'], alias: ['list'], extension: ['list', 'search', 'browse'], auth: ['status'], 'ssh-key': ['list'], 'gpg-key': ['list'], org: ['list'], api: '*', search: '*', status: '*', browse: '*', help: '*', version: '*', completion: '*' }
+          : { issue: ['view', 'list'], mr: ['view', 'list', 'diff'], ci: ['status', 'view', 'list', 'trace', 'lint', 'get'], repo: ['view', 'list', 'clone'], release: ['view', 'list'], label: ['list'], variable: ['list', 'get'], auth: ['status'], api: '*', help: '*', version: '*', completion: '*' };
+        let g = 0;
+        while (g < rest.length && rest[g].v !== null && rest[g].v.startsWith('-')) g += ['-R', '--repo', '--hostname'].includes(rest[g].v) ? 2 : 1;
+        const group = rest[g];
+        if (!group) return; // only flags: --version, --help
+        if (group.v === null) return deny(`the ${prog} command is built from a variable or substitution and cannot be verified; spell it out`);
+        const spec = Object.prototype.hasOwnProperty.call(READ, group.v) ? READ[group.v] : undefined;
+        if (spec === undefined) return deny(`${prog} ${group.v} is not on the autopilot read allow-list; the engine writes to the tracker between stages`);
+        if (spec === '*') return;
+        const verbWord = rest.slice(g + 1).find((x) => x.v === null || !x.v.startsWith('-'));
+        if (!verbWord) return;
+        if (verbWord.v === null) return deny(`the ${prog} ${group.v} verb is built from a variable or substitution and cannot be verified; spell it out`);
+        if (!spec.includes(verbWord.v)) return deny(`${prog} ${group.v} ${verbWord.v} is not on the autopilot read allow-list; the engine writes to the tracker between stages`);
+        return;
+      }
       if (prog === 'kill') {
         // Every target is a pid written out in the command: the analyzer cannot know which pids the
         // stage started, so a variable ($!, $PID), a substitution (kill $(pgrep x), $(cat pid)), a

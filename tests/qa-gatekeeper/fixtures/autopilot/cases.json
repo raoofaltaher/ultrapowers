@@ -298,5 +298,17 @@
   {"name":"deny_kubectl_context_option_delete","event":{"tool_name":"Bash","tool_input":{"command":"kubectl --context prod delete pod api"}}},
   {"name":"deny_docker_noun_verb_variable","event":{"tool_name":"Bash","tool_input":{"command":"docker container \"$X\" api"}}},
   {"name":"allow_kubectl_get","event":{"tool_name":"Bash","tool_input":{"command":"kubectl -n ns get pods -o json"}}},
+  {"name":"deny_gh_quoted_group_comment","event":{"tool_name":"Bash","tool_input":{"command":"gh \"issue\" comment 16 -b done"}}},
+  {"name":"deny_gh_split_quote_verb","event":{"tool_name":"Bash","tool_input":{"command":"gh issue com''ment 16 -b done"}}},
+  {"name":"deny_gh_alias_set","event":{"tool_name":"Bash","tool_input":{"command":"gh alias set up '!git push'"}}},
+  {"name":"deny_gh_extension_install","event":{"tool_name":"Bash","tool_input":{"command":"gh extension install owner/gh-tool"}}},
+  {"name":"deny_gh_run_rerun","event":{"tool_name":"Bash","tool_input":{"command":"gh run rerun 123"}}},
+  {"name":"deny_gh_gist_create","event":{"tool_name":"Bash","tool_input":{"command":"gh gist create notes.md"}}},
+  {"name":"deny_gh_auth_login","event":{"tool_name":"Bash","tool_input":{"command":"gh auth login --with-token"}}},
+  {"name":"deny_gh_group_from_variable","event":{"tool_name":"Bash","tool_input":{"command":"gh \"$G\" comment 16"}}},
+  {"name":"deny_glab_quoted_mr_merge","event":{"tool_name":"Bash","tool_input":{"command":"glab \"mr\" merge 3"}}},
+  {"name":"deny_glab_ci_run_quoted","event":{"tool_name":"Bash","tool_input":{"command":"glab ci \"run\""}}},
+  {"name":"allow_gh_pr_view_and_checks","event":{"tool_name":"Bash","tool_input":{"command":"gh pr view 3 --json title; gh pr checks 3; gh run list -L 5; gh search issues bug"}}},
+  {"name":"allow_glab_ci_status","event":{"tool_name":"Bash","tool_input":{"command":"glab ci status; glab issue list"}}},
   {"name":"allow_write_nested_agents_md","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/repo-a/AGENTS.md","content":"x"}}}
 ]
