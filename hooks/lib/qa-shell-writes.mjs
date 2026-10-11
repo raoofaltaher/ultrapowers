@@ -448,8 +448,6 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
   const areaText = autopilot ? 'the workspace' : `reviews/${ticket || '<id>'}/ and .ultrapowers/`;
   const runKind = autopilot ? 'an autopilot stage' : 'a QA run';
   const vars = new Map();
-  // Variables assigned from a command substitution (P=$(pgrep node)): a later `kill $P` is a kill by name.
-  const taint = new Set();
   // PGUSER handed down to a nested shell (`PGUSER=x sh -c '...'`, `docker exec -e PGUSER=x ... sh -c`),
   // or exported by an earlier command; psqlEnv: one of PSQL_ENV was set the same ways.
   const walkEnv = { pgUser: undefined, psqlEnv: false };
@@ -583,7 +581,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         const m = first && first.t === 'lit' ? /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(first.v) : null;
         if (!m) break;
         const rest = { k: 'w', parts: [{ t: 'lit', v: first.v.slice(m[0].length) }, ...words[a].parts.slice(1)] };
-        assigns.push([m[1], resolveWord(rest), rest]);
+        assigns.push([m[1], resolveWord(rest)]);
         a++;
       }
       // The PGUSER given to this command (a leading assignment, an env wrapper or a docker -e):
@@ -605,7 +603,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         if (reason) deny(reason);
       };
       let args = words.slice(a).map((w) => ({ w, v: resolveWord(w) }));
-      if (args.length === 0) { for (const [n, v, aw] of assigns) { if (v === null) { vars.delete(n); if (aw.parts.some((p) => p.t === 'dyn')) taint.add(n); else taint.delete(n); } else { vars.set(n, v); taint.delete(n); } } return; }
+      if (args.length === 0) { for (const [n, v] of assigns) { if (v === null) vars.delete(n); else vars.set(n, v); } return; }
       // A brace group's braces are not a program.
       if (args[0].v === '{') args = args.slice(1);
       if (args.length && args[args.length - 1].v === '}') args = args.slice(0, -1);
@@ -1039,18 +1037,23 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         return deny('killing processes by name is blocked; the stack stays as found');
       }
       if (prog === 'kill') {
+        // Every target is a pid written out in the command: the analyzer cannot know which pids the
+        // stage started, so a variable ($!, $PID), a substitution (kill $(pgrep x), $(cat pid)), a
+        // process group (-123, 0) and -1 (every process, however it is spelled) are refused.
+        let operands = false;
         for (let k = 0; k < rest.length; k++) {
           const v = rest[k].v;
           if (v === null) {
-            // A variable naming a pid ($PID, $!, "$SUITE_PID") is how a run stops its own suite; a
-            // substitution (kill $(pgrep ...)) or a variable assigned from one is a kill by name.
-            const parts = rest[k].w.parts;
-            if (parts.some((p) => p.t === 'dyn' || (p.t === 'var' && taint.has(p.v)))) return deny('kill with a pid built from a substitution (kill $(pgrep ...)) is a kill by name; kill takes a literal pid or a pid variable');
-            continue;
+            return deny('kill with a target that is not written out (a variable, a substitution, a file) is a kill by name or by a pid nobody can see; kill takes a literal pid');
           }
-          if (['-s', '-n', '--signal'].includes(v)) { k++; continue; }
-          if (/^-([A-Za-z]+|[0-9]+)$/.test(v) && !/^-1$/.test(v) || v === '-l' || v === '-L' || v === '--list') continue;
-          if (!/^[1-9][0-9]*$/.test(v)) return deny(`kill ${v} is not a literal pid; a group, every process or a name is blocked`);
+          if (!operands) {
+            if (v === '--') { operands = true; continue; }
+            if (['-s', '-n', '--signal'].includes(v)) { k++; continue; } // the signal's name or number
+            if (v === '-l' || v === '-L' || v === '--list' || v === '-t' || v === '--table') return;
+            if (v.startsWith('--signal=')) continue;
+            if (/^-([A-Za-z]+|[0-9]+)$/.test(v) && v !== '-1') continue;
+          }
+          if (!/^[1-9][0-9]*$/.test(v)) return deny(`kill ${v} is not a literal pid; a process group, every process (-1) or a name is blocked`);
         }
         return;
       }

@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"kill -TERM 4242; kill -s KILL 4243; kill -9 4244; kill -0 4245; kill -- 4246; kill --signal=TERM 4247; kill -l"}}
