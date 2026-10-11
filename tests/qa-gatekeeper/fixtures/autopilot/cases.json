@@ -427,5 +427,12 @@
   {"name":"deny_cmd_c_where_bad_word","event":{"tool_name":"Bash","tool_input":{"command":"cmd /c \"where a;b\""}}},
   {"name":"deny_cmd_k_dir","event":{"tool_name":"Bash","tool_input":{"command":"cmd /k dir"}}},
   {"name":"deny_cmd_d_c_dir","event":{"tool_name":"Bash","tool_input":{"command":"cmd /d /c dir"}}},
-  {"name":"deny_cmd_c_dir_variable_tail","event":{"tool_name":"Bash","tool_input":{"command":"cmd /c $TAIL"}}}
+  {"name":"deny_cmd_c_dir_variable_tail","event":{"tool_name":"Bash","tool_input":{"command":"cmd /c $TAIL"}}},
+  {"name":"deny_shell_init_fish_C_attached_value","event":{"tool_name":"Bash","tool_input":{"command":"fish -Cecho -c ls"}}},
+  {"name":"deny_shell_init_fish_C_attached_quoted","event":{"tool_name":"Bash","tool_input":{"command":"fish -C\"echo x\" -c ls"}}},
+  {"name":"deny_shell_init_fish_cluster_attached","event":{"tool_name":"Bash","tool_input":{"command":"fish -lC'echo x' -c ls"}}},
+  {"name":"deny_shell_init_zsh_zdotdir_prefix","event":{"tool_name":"Bash","tool_input":{"command":"ZDOTDIR=reviews/1234/z zsh -c ls"}}},
+  {"name":"deny_shell_init_zsh_zdotdir_env_wrapper","event":{"tool_name":"Bash","tool_input":{"command":"env ZDOTDIR=reviews/1234/z zsh -c ls"}}},
+  {"name":"deny_shell_init_zsh_zdotdir_exported","event":{"tool_name":"Bash","tool_input":{"command":"export ZDOTDIR=reviews/1234/z; zsh -c ls"}}},
+  {"name":"allow_shell_init_zdotdir_not_zsh","event":{"tool_name":"Bash","tool_input":{"command":"ZDOTDIR=reviews/1234/z bash -c 'ls reviews'"}}}
 ]

@@ -622,9 +622,10 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       let pgUser = walkEnv.pgUser;
       let psqlEnv = walkEnv.psqlEnv;
       for (const [n, v] of assigns) { if (n === 'PGUSER') pgUser = v; if (PSQL_ENV.has(n)) psqlEnv = true; }
-      // ENV / BASH_ENV name a file the shell sources at start (ksh, zsh, sh, bash): set for this command
-      // by a prefix or an env wrapper, or exported earlier.
-      let shellInitEnv = assigns.some(([n]) => n === 'ENV' || n === 'BASH_ENV') || vars.has('ENV') || vars.has('BASH_ENV');
+      // ENV / BASH_ENV name a file the shell sources at start (ksh, sh, bash, zsh) and ZDOTDIR the folder
+      // zsh reads its init files from: set for this command by a prefix or an env wrapper, or exported earlier.
+      const shellInitVars = new Set();
+      for (const n of ['ENV', 'BASH_ENV', 'ZDOTDIR']) if (assigns.some(([m]) => m === n) || vars.has(n)) shellInitVars.add(n);
       // A word for analyzePsql: its value, PSQL_VAR + NAME for a pure $NAME, else PSQL_DYN.
       const psqlWord = (x) => {
         if (x.v !== null) return x.v;
@@ -742,7 +743,8 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
             if (['-u', '--unset', '-C', '--chdir'].includes(args[0].v)) { args = args.slice(2); continue; }
             if (args[0].v.startsWith('PGUSER=')) pgUser = args[0].v.slice('PGUSER='.length);
             if (PSQL_ENV.has(args[0].v.split('=')[0])) psqlEnv = true;
-            if (/^(BASH_)?ENV=/.test(args[0].v)) shellInitEnv = true;
+            const initVar = /^(ENV|BASH_ENV|ZDOTDIR)=/.exec(args[0].v);
+            if (initVar) shellInitVars.add(initVar[1]);
             args = args.slice(1);
           }
         } else if (prog === 'timeout') {
@@ -967,14 +969,16 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
           if (/^--(rcfile|init-file)(=|$)/.test(v)) return true;
           if (/^--init-command(=|$)/.test(v)) return true;
           if (prog === 'fish') {
-            if (/^-[A-Za-z]*C[A-Za-z]*$/.test(v)) return true;
+            // fish takes the value attached to the option: -Cecho, -C"echo x", -lCecho (letters up to a C).
+            if (/^-[A-Za-z]*C/.test(v)) return true;
             const m = /^--([a-z-]+)(=|$)/.exec(v);
             if (m && m[1].length >= 2 && 'init-command'.startsWith(m[1])) return true;
           }
           return false;
         };
         if (rest.some((x) => x.v !== null && initOpt(x.v))) return deny(INIT_CODE);
-        if (shellInitEnv && !['fish', 'csh', 'tcsh'].includes(prog)) return deny(INIT_CODE);
+        if ((shellInitVars.has('ENV') || shellInitVars.has('BASH_ENV')) && !['fish', 'csh', 'tcsh'].includes(prog)) return deny(INIT_CODE);
+        if (shellInitVars.has('ZDOTDIR') && prog === 'zsh') return deny(INIT_CODE);
         // -c may be bundled with other short flags (-lc, -ec, -xc); the next word is the command.
         // fish takes the long spelling too: --command CMD, --command=CMD.
         const eqi = rest.findIndex((x) => x.v !== null && x.v.startsWith('--command='));
