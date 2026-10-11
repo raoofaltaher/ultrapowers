@@ -15,7 +15,7 @@ import { inside, realCanonical, rel } from './guard-paths.mjs';
 
 const DEVICES = new Set(['/dev/null', '/dev/stdout', '/dev/stderr', '/dev/tty', 'nul', '/dev/fd/1', '/dev/fd/2']);
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
-const WRAPPERS = new Set(['nohup', 'command', 'exec', 'time', 'sudo', 'nice', 'stdbuf', 'setsid', 'busybox', 'builtin', 'unbuffer']);
+const WRAPPERS = new Set(['nohup', 'command', 'exec', 'time', 'sudo', 'nice', 'stdbuf', 'setsid', 'busybox', 'builtin', 'unbuffer', 'ionice', 'doas', 'flock', 'taskset', 'chrt']);
 // Options of a wrapper that take a value, so the word after them is not the program.
 const WRAPPER_VALUE_OPTS = new Set(['-n', '--adjustment', '-o', '-e', '-i']);
 const SUDO_VALUE_OPTS = new Set(['-g', '-p', '-C', '-D', '-h', '-r', '-t', '-T', '-U', '--group', '--prompt', '--host', '--role', '--type', '--other-user']);
@@ -598,6 +598,29 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
             }
           }
           args = args.slice(k);
+        } else if (prog === 'flock') {
+          // flock [options] LOCKFILE COMMAND...  or  flock [options] LOCKFILE -c 'COMMAND'
+          args = skipOptions(args, new Set(['-w', '--timeout', '-E', '--conflict-exit-code']));
+          const ci = args.findIndex((x) => x.v === '-c' || x.v === '--command');
+          if (ci !== -1) {
+            if (!args[ci + 1] || args[ci + 1].v === null) return deny('flock -c runs a command built from a variable; it cannot be verified');
+            walkNested(args[ci + 1].v, dir, container, depth + 1, pgUser);
+            return;
+          }
+          args = args.slice(1);
+        } else if (prog === 'taskset') {
+          // taskset MASK COMMAND...  or  taskset -c LIST COMMAND...
+          const listed = args.some((x) => x.v === '-c' || x.v === '--cpu-list');
+          args = skipOptions(args, new Set(['-c', '--cpu-list']));
+          if (!listed) args = args.slice(1);
+        } else if (prog === 'chrt') {
+          // chrt [options] PRIORITY COMMAND...
+          args = skipOptions(args, new Set());
+          args = args.slice(1);
+        } else if (prog === 'ionice') {
+          args = skipOptions(args, new Set(['-c', '--class', '-n', '--classdata', '-p', '--pid', '-P', '--pgid', '-u', '--uid']));
+        } else if (prog === 'doas') {
+          args = skipOptions(args, new Set(['-u', '-C']));
         } else {
           args = skipOptions(args, WRAPPER_VALUE_OPTS);
         }

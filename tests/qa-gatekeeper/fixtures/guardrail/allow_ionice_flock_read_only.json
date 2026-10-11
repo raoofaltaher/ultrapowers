@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"ionice -c3 git log --oneline -3; flock -w 5 reviews/1234/.lock git status --short; taskset -c 0 git diff --stat"}}

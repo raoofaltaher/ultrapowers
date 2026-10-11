@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"flock reviews/1234/.lock -c 'echo x > repo-a/src/app.js'"}}

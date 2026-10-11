@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"taskset -c 0,1 mv a.txt repo-a/src/app.js"}}
