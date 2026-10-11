@@ -1,0 +1,43 @@
+{
+  "repos": [
+    {
+      "repo": ".", "base": "main", "branch": "GH-34-private-screenshots", "head": "7884173",
+      "findings": [
+        { "severity": "Minor", "title": "path used but not imported in tracker.mjs", "file": "skills/autopilot/scripts/tracker.mjs", "line": 312,
+          "problem": "GitLabTracker.upload falls back to path.basename when glab's answer has no markdown field, but node:path is never imported, so that branch throws a ReferenceError that is reported as 'upload failed'.",
+          "rootCause": "The fallback branch is never exercised (the stub always returns markdown, real GitLab always does too) and the import was missed.",
+          "fix": "Add import path from 'node:path', or drop the markdown fallback since callers only use url." },
+        { "severity": "Minor", "title": "Catch assumes an Error", "file": "skills/task-review/scripts/post-review.mjs", "line": 238,
+          "problem": "A non-Error thrown from tracker.upload yields 'upload failed: undefined'; a thrown null/undefined raises a TypeError inside the catch and aborts the post, against the never-abort-for-a-picture rule.",
+          "rootCause": "The catch reads error.message unconditionally.",
+          "fix": "Use error instanceof Error ? error.message : String(error)." },
+        { "severity": "Minor", "title": "Stale header comment and out-of-order mode docs", "file": "skills/task-review/scripts/post-review.mjs", "line": 10,
+          "problem": "File header still says screenshots are embedded from the pushed branch URL on GitHub and GitLab; the rewriteLinks doc lists the upload mode after the return line.",
+          "rootCause": "Documentation not updated with the behavior change.",
+          "fix": "Describe blob links on GitHub and uploads on GitLab, and reorder the mode list." },
+        { "severity": "Minor", "title": "upload return shape differs from spec and is partly unused", "file": "skills/autopilot/scripts/tracker.mjs", "line": 312,
+          "problem": "Spec says upload returns the markdown; code returns {url, markdown, fullPath} and only url is used.",
+          "rootCause": "Implementation diverged from spec during coding.",
+          "fix": "Trim the unused fields or update the spec." },
+        { "severity": "Minor", "title": "Test gaps around upload", "file": "tests/autopilot/tracker.test.mjs", "line": 400,
+          "problem": "The test named for github and odoo covers only GitHub; there is no test for the failed-upload branch with base null, for a file linked twice, for a non-Error throw, or for the markdown-missing fallback.",
+          "rootCause": "Tests cover the happy path and one fallback; the other branches added in rewriteLinks and upload are unexercised.",
+          "fix": "Add the missing cases, including OdooTracker.upload rejecting with no-upload." }
+      ],
+      "tdd": { "verdict": "partial", "notes": "Tests and code share one commit so test-first cannot be shown from history, but the changed and added tests assert output behavior and would fail on main (blob/?raw=true, /uploads/ embeds, failed-upload fallback, glab api argv). Gaps: OdooTracker.upload, base-null failed upload, duplicate link, non-Error throw, markdown fallback (which hides the missing path import). No real-glab or live-forge test." },
+      "strengths": [
+        "GitHub path matches spec: linkBase blob URL, ?raw=true only on images; tracker.upload is never reached for GitHub",
+        "Upload failure falls back to the raw link with a note and never aborts the post",
+        "Security invariants kept: insideArtifacts and the real-path check precede every read and upload",
+        "execFile with an argv element makes spaces in paths safe; path.sep use is correct on Windows",
+        "Uploads are deduplicated per decoded name; part limits still hold",
+        "SKILL.md sentence and release-notes entry match the code; old-URL tests updated, not weakened"
+      ],
+      "declined": [
+        "Real rendering of blob ?raw=true images on a private GitHub repository",
+        "Real glab uploads API behavior and Windows path handling in glab",
+        "Release number 2.0.1 and version bump, which are not in this diff"
+      ]
+    }
+  ]
+}
