@@ -766,7 +766,33 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         if (script.v === null) return deny(`${prog} runs a script named by a variable; it cannot be verified`);
         return;
       }
-      if (prog === 'docker' || prog === 'docker-compose') {
+      if (prog === 'docker' || prog === 'docker-compose' || prog === 'podman' || prog === 'podman-compose' || prog === 'nerdctl') {
+        // The subcommand is the first word after the global options (-H HOST, --context NAME, -f FILE,
+        // -p NAME ...), however it is quoted: the text rules of the hook read `docker rm`, this reads
+        // `docker -H tcp://h "rm"`.
+        const GLOBAL_VALUED = new Set(['-H', '--host', '-c', '--context', '--config', '-l', '--log-level', '--tlscacert', '--tlscert', '--tlskey', '--namespace', '-n', '--address', '-a']);
+        const COMPOSE_VALUED = new Set(['-f', '--file', '-p', '--project-name', '--profile', '--env-file', '--project-directory', '--ansi', '--parallel', '--progress']);
+        const skipGlobals = (list, valued) => { let g = 0; while (g < list.length && list[g].v !== null && list[g].v.startsWith('-')) g += valued.has(list[g].v) ? 2 : 1; return g; };
+        const composeProg = prog === 'docker-compose' || prog === 'podman-compose';
+        const topIdx = skipGlobals(rest, composeProg ? COMPOSE_VALUED : GLOBAL_VALUED);
+        const top = rest[topIdx];
+        if (top && top.v === null) return deny(`the ${prog} subcommand is built from a variable or substitution and cannot be verified; spell it out`);
+        let sub = top ? top.v : '';
+        let noun = '';
+        if (composeProg || sub === 'compose') {
+          const from = composeProg ? topIdx : topIdx + 1;
+          const subIdx = composeProg ? topIdx : from + skipGlobals(rest.slice(from), COMPOSE_VALUED);
+          noun = 'compose';
+          sub = rest[subIdx] && rest[subIdx].v !== null ? rest[subIdx].v : (rest[subIdx] ? null : '');
+        } else if (['container', 'volume', 'network', 'image', 'system', 'builder', 'service', 'stack', 'node', 'secret', 'config'].includes(sub)) {
+          noun = sub;
+          sub = rest[topIdx + 1] && rest[topIdx + 1].v !== null ? rest[topIdx + 1].v : '';
+        }
+        const REMOVE = noun === 'compose' ? ['down', 'stop', 'rm'] : ['rm', 'kill', 'stop', 'prune', 'rmi', 'remove', 'down'];
+        const CHANGE = noun === 'compose' ? ['up', 'build', 'restart', 'start', 'kill', 'pause', 'unpause', 'create'] : ['restart', 'start', 'pause', 'unpause', 'update'];
+        if (sub === null) return deny(`the ${prog} subcommand is built from a variable or substitution and cannot be verified; spell it out`);
+        if (REMOVE.includes(sub)) return deny('container stop, remove, down or prune is never allowed; the stack stays as found');
+        if (CHANGE.includes(sub)) return deny('restarting, starting, rebuilding or pausing containers is never allowed; the stack stays as found');
         const ei = rest.findIndex((x) => x.v === 'exec' || x.v === 'run');
         if (ei === -1) return;
         const after = rest.slice(ei + 1);

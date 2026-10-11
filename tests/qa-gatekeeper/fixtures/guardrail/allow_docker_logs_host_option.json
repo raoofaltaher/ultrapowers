@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"docker -H unix:///var/run/docker.sock logs --tail 20 api"}}

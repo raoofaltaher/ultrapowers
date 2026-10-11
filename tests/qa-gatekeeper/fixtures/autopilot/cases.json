@@ -281,5 +281,9 @@
   {"name":"deny_shell_trailing_dot_folder_winshort","event":{"tool_name":"Bash","tool_input":{"command":"echo x > .husky./pre-commit"}}},
   {"name":"deny_shell_stream_winshort","event":{"tool_name":"Bash","tool_input":{"command":"echo x > tasks/GH-16/autopilot.json:x"}}},
   {"name":"deny_shell_stream_data_winshort","event":{"tool_name":"Bash","tool_input":{"command":"echo x > 'tasks/GH-16/autopilot.json::$DATA'"}}},
+  {"name":"deny_docker_host_option_stop","event":{"tool_name":"Bash","tool_input":{"command":"docker -H unix:///var/run/docker.sock stop api"}}},
+  {"name":"deny_docker_quoted_subcommand_rm","event":{"tool_name":"Bash","tool_input":{"command":"docker \"rm\" api"}}},
+  {"name":"deny_podman_stop","event":{"tool_name":"Bash","tool_input":{"command":"podman stop api"}}},
+  {"name":"allow_docker_logs_host_option","event":{"tool_name":"Bash","tool_input":{"command":"docker -H unix:///var/run/docker.sock logs --tail 20 api"}}},
   {"name":"allow_write_nested_agents_md","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/repo-a/AGENTS.md","content":"x"}}}
 ]

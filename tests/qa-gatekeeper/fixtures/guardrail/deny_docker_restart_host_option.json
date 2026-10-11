@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"docker -H tcp://h:2375 restart api"}}
