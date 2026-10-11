@@ -157,6 +157,16 @@ assert.equal(noDomain.filter((l) => /run guardrail is not registered on this hos
 const registered = await logged(() => mod.default.setup(v2Ctx(idle)));
 assert.deepEqual(registered.filter((l) => /not registered on this host/.test(l)), [], 'no warning when the hook registers');
 
+// A V1-shaped ctx (V1 also calls default.setup, without the skill and session domains) stays
+// silent: no log line, no guard registered, even with a tool domain and a run marker present.
+for (const v1 of [{ client: null, directory: hunt }, { directory: hunt, skill: {} }, { directory: hunt, skill: { transform: async () => ({}) } }, { directory: hunt, session: { hook: async () => ({}) } }]) {
+  let hooked = 0;
+  const ctx = { ...v1, tool: { hook: async () => { hooked += 1; return { dispose: async () => {} }; } } };
+  const lines = await logged(() => mod.default.setup(ctx));
+  assert.deepEqual(lines, [], `a V1-shaped ctx logs nothing (${Object.keys(v1).join(',')})`);
+  assert.equal(hooked, 0, `a V1-shaped ctx registers no guard (${Object.keys(v1).join(',')})`);
+}
+
 // Registration that throws or rejects is logged and setup goes on (skills and bootstrap are
 // registered before it, so they are unaffected).
 let skillsRegistered = 0;

@@ -77,9 +77,30 @@ test('2. the bridge, the OpenCode plugin, the Hermes plugin and the Gemini templ
     const text = read(rel);
     for (const m of MARKERS) assert.ok(text.includes(`${m}-active`), `${rel} does not name ${m}-active`);
   }
-  for (const rel of [OPENCODE, HERMES, GEMINI]) {
-    const text = read(rel);
-    for (const p of PREFIXES) assert.ok(text.includes(`${p}-GUARDRAIL`), `${rel} does not name ${p}-GUARDRAIL`);
+  // The prefixes are read from the code, not from a comment that lists them.
+  for (const [rel, opts] of [[OPENCODE, { slashes: true }], [HERMES, { hashes: true }], [GEMINI, { slashes: true }]]) {
+    const text = code(rel, opts);
+    for (const p of PREFIXES) assert.ok(text.includes(`${p}-GUARDRAIL`), `${rel} does not name ${p}-GUARDRAIL in its code`);
+  }
+});
+
+test('2d. the OpenCode, Hermes and Gemini walks give each marker its own prefix, line by line', () => {
+  // A file that names every marker and every prefix could still return HUNT-GUARDRAIL for the QA
+  // marker; the pairing is pinned per line: the first prefix at or after the marker's code line,
+  // before the next marker's line, is that marker's.
+  for (const [rel, opts] of [[OPENCODE, { slashes: true }], [HERMES, { hashes: true }], [GEMINI, { slashes: true }]]) {
+    const lines = code(rel, opts).split('\n');
+    for (const m of MARKERS) {
+      const at = lines.findIndex((l) => new RegExp(`['"]${m}-active['"]`).test(l));
+      assert.notEqual(at, -1, `${rel}: no code line names '${m}-active'`);
+      let found = null;
+      for (let i = at; i < lines.length && i < at + 3; i += 1) {
+        if (i > at && /['"][a-z]+-active['"]/.test(lines[i])) break;
+        const p = /([A-Z]+)-GUARDRAIL/.exec(lines[i]);
+        if (p) { found = p[1]; break; }
+      }
+      assert.equal(found, PREFIX_OF[m], `${rel}: ${m}-active must give ${PREFIX_OF[m]}-GUARDRAIL (got ${found})`);
+    }
   }
 });
 
