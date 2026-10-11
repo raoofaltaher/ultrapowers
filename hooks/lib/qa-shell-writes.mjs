@@ -347,6 +347,84 @@ export function analyzePsql(args, { roRole = 'qa_agent_ro', pgUser, psqlEnv = fa
   return '';
 }
 
+// ---------- inline interpreters ----------
+// An interpreter given code on its command line or on stdin is an unbounded execution and egress path
+// (python -c, node -e, perl -ne, php -r, a heredoc into python3): the hook's text rule saw only the
+// bare first-option spellings. This reads the interpreter's own options (python3.11, -Sc, -pe,
+// -Mstrict -e, --eval=, a script on stdin) and returns the reason, or '' for a script file or a module.
+const INLINE_WHY = 'inline interpreter code is blocked; it is an unbounded egress and execution bypass';
+const STDIN_WHY = 'an interpreter reading its code from stdin (a pipe, a heredoc, -) cannot be inspected; run a script file';
+export function interpreterKind(p) {
+  if (/^(python(\d+(\.\d+)*)?w?|py|pypy\d*(\.\d+)*)$/.test(p)) return 'python';
+  if (/^(node|nodejs|bun|tsx|ts-node|ts-node-esm|ts-node-script|tsm)$/.test(p)) return 'js';
+  if (p === 'deno') return 'deno';
+  if (p === 'perl' || p === 'ruby') return 'perlish';
+  if (['php', 'lua', 'luajit', 'rscript', 'julia', 'groovy', 'elixir', 'osascript'].includes(p)) return 'evalflag';
+  return '';
+}
+function inlineInterpreterReason(kind, prog, rest, { inPlaceOk = false } = {}) {
+  const words = rest.map((x) => x.v);
+  if (words.some((v) => v === null)) return `${prog} with an argument built from a variable or substitution cannot be verified`;
+  if (kind === 'python') {
+    for (let k = 0; k < words.length; k++) {
+      const v = words[k];
+      if (!v.startsWith('-')) return '';
+      if (v === '-') return STDIN_WHY;
+      if (v.startsWith('--')) { if (v === '--version' || v === '--help') return ''; continue; }
+      for (let c = 1; c < v.length; c++) {
+        const ch = v[c];
+        if (ch === 'c') return INLINE_WHY;
+        if (ch === 'm') return '';
+        if (ch === 'V' || ch === 'h') return '';
+        if ('WXQ'.includes(ch)) { if (c === v.length - 1) k++; break; }
+      }
+    }
+    return STDIN_WHY;
+  }
+  if (kind === 'js') {
+    const VALUED = new Set(['-r', '--require', '--import', '--loader', '--experimental-loader', '--env-file', '-C', '--conditions', '--input-type', '--title']);
+    for (let k = 0; k < words.length; k++) {
+      const v = words[k];
+      if (!v.startsWith('-')) return '';
+      if (v === '-') return STDIN_WHY;
+      if (/^--(eval|print)(=|$)/.test(v) || /^-(pe|ep|e|p)(?![A-Za-z-])/.test(v)) return INLINE_WHY;
+      if (['--version', '-v', '--help', '-h', '--test', '--check', '-c', '--run'].includes(v) || v.startsWith('--test-') || v.startsWith('--run=')) return '';
+      if (VALUED.has(v)) k++;
+    }
+    return prog === 'bun' ? '' : STDIN_WHY;
+  }
+  if (kind === 'deno') {
+    const sub = words.find((v) => !v.startsWith('-'));
+    return sub === 'eval' ? INLINE_WHY : sub === 'repl' ? STDIN_WHY : '';
+  }
+  if (kind === 'perlish') {
+    // Short options cluster; M, m, I, d, D, x, F, C, W, r, K, E(ruby) take the rest of the word, i is a suffix.
+    const REST_OF_WORD = prog === 'perl' ? 'MmIdDxFCi' : 'rICKTFWxEi';
+    const NEXT_WORD = prog === 'perl' ? 'I' : 'rIC';
+    let hasScript = false;
+    for (let k = 0; k < words.length; k++) {
+      const v = words[k];
+      if (!v.startsWith('-')) { hasScript = true; break; }
+      if (v === '-') return STDIN_WHY;
+      if (v.startsWith('--')) { if (v === '--version' || v === '--help') return ''; continue; }
+      for (let c = 1; c < v.length; c++) {
+        const ch = v[c];
+        if (ch === 'e' || (prog === 'perl' && ch === 'E')) return inPlaceOk && words.some((w) => /^-[A-Za-z]*i/.test(w) || w.startsWith('--in-place')) ? '' : INLINE_WHY;
+        if (ch === 'v' || ch === 'h' || ch === 'c') return '';
+        if (REST_OF_WORD.includes(ch)) { if (c === v.length - 1 && NEXT_WORD.includes(ch)) k++; break; }
+      }
+    }
+    return hasScript ? '' : STDIN_WHY;
+  }
+  if (kind === 'evalflag') {
+    const flags = { php: /^-[a-zA-Z]*[rRBE]$/, lua: /^-[a-zA-Z]*e$/, luajit: /^-[a-zA-Z]*e$/, rscript: /^-e$/, julia: /^-[a-zA-Z]*[eE]$|^--(eval|print)$/, groovy: /^-[a-zA-Z]*e$/, elixir: /^(-e|--eval)$/, osascript: /^-[a-zA-Z]*e$/ }[prog];
+    if (words.some((v) => v === '-' ) ) return STDIN_WHY;
+    if (flags && words.some((v) => flags.test(v))) return INLINE_WHY;
+    return '';
+  }
+  return '';
+}
+
 // ---------- analysis ----------
 const ENV_DUMP = 'dumping the environment is blocked; check a variable with ${NAME:+set} instead';
 // A stage reads no tracker credential and nothing named like a secret out of the environment.
@@ -652,6 +730,11 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       if (PG_TOOLS.has(prog)) return deny(`${prog} is not run during ${runKind}; lane 4 reaches the database through psql -c as the read-only role only`);
       const rest = args.slice(1);
       const plain = rest.filter((x) => !(x.v || '').startsWith('-'));
+      const interpKind = interpreterKind(prog);
+      if (interpKind) {
+        const why = inlineInterpreterReason(interpKind, prog, rest, { inPlaceOk: autopilot });
+        if (why) return deny(why);
+      }
       if (prog === 'psql') {
         psqlCheck(rest);
         // -o and -L write a file: the same area rule as a redirect.

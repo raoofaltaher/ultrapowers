@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"echo 'print(1)' | python3"}}

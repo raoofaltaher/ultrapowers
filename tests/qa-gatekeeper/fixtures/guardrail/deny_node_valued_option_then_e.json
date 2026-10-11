@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"node -r ./x.js --input-type=module -e '1'"}}

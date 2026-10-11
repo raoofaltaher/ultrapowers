@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"python3 reviews/1234/artifacts/check.py; python3.12 -m pytest -q; node reviews/1234/artifacts/check.mjs; node --test tests/x.test.mjs; perl reviews/1234/artifacts/x.pl; node --version; python3 -V"}}
