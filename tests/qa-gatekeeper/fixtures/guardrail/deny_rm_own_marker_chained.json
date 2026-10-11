@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"rm .ultrapowers/qa-active && echo done"},"reason":"the run marker"}

@@ -288,5 +288,19 @@
   {"name":"deny_ansi_c_quote_dotdot_target","reason":"cannot be verified","event":{"tool_name":"Bash","tool_input":{"command":"echo x > reviews/audit-2026-10-11/$'..'/$'..'/repo-a/src/a.js"}}},
   {"name":"deny_locale_quote_dotdot_target","reason":"cannot be verified","event":{"tool_name":"Bash","tool_input":{"command":"echo x > reviews/audit-2026-10-11/$\"..\"/$\"..\"/repo-a/src/a.js"}}},
   {"name":"deny_ansi_c_quote_program_name","reason":"the program of a command is built from a variable","event":{"tool_name":"Bash","tool_input":{"command":"$'tee' repo-a/src/a.js"}}},
-  {"name":"deny_locale_quote_subst_inside","reason":"a command substitution cannot be analysed","event":{"tool_name":"Bash","tool_input":{"command":"echo $\"$(echo x > repo-a/src/a.js)\""}}}
+  {"name":"deny_locale_quote_subst_inside","reason":"a command substitution cannot be analysed","event":{"tool_name":"Bash","tool_input":{"command":"echo $\"$(echo x > repo-a/src/a.js)\""}}},
+  {"name":"deny_rm_own_marker_chained","reason":"the run marker","event":{"tool_name":"Bash","tool_input":{"command":"rm .ultrapowers/hunt-active && echo done"}}},
+  {"name":"deny_rm_own_marker_two_operands","reason":"the run marker","event":{"tool_name":"Bash","tool_input":{"command":"rm .ultrapowers/hunt-active reviews/audit-2026-10-11/x.md"}}},
+  {"name":"deny_rm_other_marker","reason":"the run marker","event":{"tool_name":"Bash","tool_input":{"command":"rm .ultrapowers/qa-active"}}},
+  {"name":"deny_redirect_into_marker","reason":"the run marker","event":{"tool_name":"Bash","tool_input":{"command":"echo .. > .ultrapowers/hunt-active"}}},
+  {"name":"deny_mv_marker","reason":"the run marker","event":{"tool_name":"Bash","tool_input":{"command":"mv .ultrapowers/hunt-active reviews/audit-2026-10-11/x"}}},
+  {"name":"deny_rm_marker_glob","reason":"the run marker","event":{"tool_name":"Bash","tool_input":{"command":"rm .ultrapowers/*-active"}}},
+  {"name":"deny_tar_into_ultrapowers","reason":"the run marker","event":{"tool_name":"Bash","tool_input":{"command":"tar -xf reviews/audit-2026-10-11/a.tar -C .ultrapowers"}}},
+  {"name":"deny_write_tool_on_marker","reason":"the run marker","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.ultrapowers/hunt-active","content":"x"}}},
+  {"name":"deny_write_tool_on_other_marker","reason":"the run marker","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.ultrapowers/qa-active","content":"x"}}},
+  {"name":"deny_patch_marker","reason":"the run marker","event":{"tool_name":"apply_patch","tool_input":{"patch":"*** Begin Patch\n*** Delete File: .ultrapowers/hunt-active\n*** End Patch"}}},
+  {"name":"deny_rm_f_other_marker","reason":"forced delete","event":{"tool_name":"Bash","tool_input":{"command":"rm -f .ultrapowers/qa-active"}}},
+  {"name":"allow_rm_own_marker_sole_command","event":{"tool_name":"Bash","tool_input":{"command":"rm .ultrapowers/hunt-active"}}},
+  {"name":"allow_rm_f_own_marker_absolute_quoted","event":{"tool_name":"Bash","tool_input":{"command":"rm -f \"{{ROOT}}/.ultrapowers/hunt-active\""}}},
+  {"name":"allow_write_other_ultrapowers_state","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.ultrapowers/sdd/x.md","content":"x"}}}
 ]

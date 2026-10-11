@@ -228,6 +228,14 @@ else
   fail "a 200-file patch is denied in under 5 s (exit ${result%%|*}, $((t_end - t_start)) s)"
 fi
 
+echo "qa-guardrail: a marker whose ticket would widen the write area refuses every call"
+for bad in '..' '1234/../..' 'a\b'; do
+  printf '%s' "$bad" > "$ROOT/.ultrapowers/qa-active"
+  result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"ls"}}' "$ROOT")"
+  if [[ "${result%%|*}" -eq 2 && "$result" == *"the run marker holds"* ]]; then pass "deny_marker_value: a marker holding '$bad' refuses every call"; else fail "deny_marker_value: a marker holding '$bad' refuses every call (got $result)"; fi
+done
+printf '%s' "1234" > "$ROOT/.ultrapowers/qa-active"
+
 echo "qa-guardrail: a config with a byte order mark keeps its host lists"
 BOMROOT="$TEST_ROOT/bomproject"
 mkdir -p "$BOMROOT/.agents" "$BOMROOT/.ultrapowers"

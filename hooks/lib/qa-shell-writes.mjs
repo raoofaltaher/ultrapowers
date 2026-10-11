@@ -851,6 +851,9 @@ function huntPipAudit(words, refuse, allow) {
 // ---------- analysis ----------
 const ENV_DUMP = 'dumping the environment is blocked; check a variable with ${NAME:+set} instead';
 const SUBST_WHY = 'a command substitution cannot be analysed; spell the command out (run the inner command as its own call)';
+// The run markers of the QA and hunt profiles: the gatekeeper's switches, never the run's to change.
+const MARKER_RE = /(^|\/)\.ultrapowers\/(qa-active|hunt-active)$/;
+const MARKER_WHY = 'is the run marker; the run marker is not the run\'s to change, the gatekeeper ends the run (with rm of its own marker as a call of its own)';
 // A stage reads no tracker credential and nothing named like a secret out of the environment.
 const TRACKER_VARS = /^(GH_TOKEN|GITHUB_TOKEN|GITLAB_TOKEN|GLAB_TOKEN|ODOO_API_KEY|ULTRAPOWERS_STAGE_.*)$/i;
 const SECRET_VARS = /TOKEN|KEY|SECRET|PASS|CREDENTIAL|AUTH|COOKIE|SESSION|PRIVATE/i;
@@ -934,6 +937,16 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     }
     if (p.split('/').includes('..')) return deny(`${what} (${raw}) has a parent-directory segment and cannot be verified`);
     const real = realCanonical(p, rootC);
+    // QA run and hunt: both run markers are protected from every write, move and removal (one sole
+    // `rm` of the run's own marker excepted, before the walk), and so is what can reach them: a
+    // pattern under .ultrapowers/ (rm .ultrapowers/*-active) and .ultrapowers/ itself as the folder
+    // something is extracted into.
+    if (!autopilot) {
+      const innerL = (rel(real, rootC, ignoreCase) ?? real).toLowerCase();
+      if (MARKER_RE.test(innerL) || /(^|\/)\.ultrapowers\/_$/.test(innerL) || (/[*?[{]/.test(raw) && /(^|\/)\.ultrapowers(\/|$)/i.test(p))) {
+        return deny(`${what} (${raw}) ${MARKER_WHY}`);
+      }
+    }
     // A directory named as the target (cp x .husky, mkdir .github) receives its content inside it:
     // the patterns name the contents of a protected folder, so the folder is judged as one.
     if (protectedPath(real) || protectedPath(`${real}/_`)) return deny(`${what} (${raw}) is a protected path; the config, hooks, CI, settings and key material are never written during ${runKind}`);
@@ -1965,6 +1978,10 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     flush();
   };
 
+  // The one way a QA run or a hunt ends: the gatekeeper removes its own marker with a call whose
+  // entire command is `rm [-f] <marker>` (one literal operand, no other word, no chaining). The
+  // other profile's marker, and every other spelling, stay refused by checkTarget.
+  if (!autopilot && ownMarkerRemoval(String(command), normPath(cwd), rootC, hunt ? 'hunt-active' : 'qa-active', ignoreCase)) return '';
   try {
     walk(String(command), normPath(cwd), false, 0);
   } catch (error) {
@@ -1975,6 +1992,24 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
   if (psqlCount.words > psqlCount.inspected) deny(`psql appears where the analyzer did not inspect it (${psqlCount.words} named, ${psqlCount.inspected} inspected); lane 4 runs psql directly, with -c`);
   if (flags) { flags.psql = psqlCount.inspected; flags.psqlWords = psqlCount.words; }
   return reason;
+}
+
+// True when `command` is exactly `rm <path>` or `rm -f <path>`, every word plain literal text, and
+// <path> (relative to cwd) is the marker `name` of the project at rootC.
+export function ownMarkerRemoval(command, cwd, rootC, name, ignoreCase) {
+  const toks = tokenize(command);
+  if (toks.subs.length || toks.some((t) => t.k !== 'w')) return false;
+  if (!toks.every((t) => t.parts.every((p) => p.t === 'lit'))) return false;
+  const words = toks.map((t) => t.parts.map((p) => p.v).join(''));
+  if (words[0] !== 'rm') return false;
+  const ops = words[1] === '-f' ? words.slice(2) : words.slice(1);
+  if (ops.length !== 1 || ops[0].startsWith('-') || /[*?[\]{}~$`]/.test(ops[0])) return false;
+  let p = normPath(ops[0]);
+  if (!p.startsWith('/')) p = `${cwd}/${p.replace(/^\.\//, '')}`;
+  if (p.split('/').includes('..')) return false;
+  const want = realCanonical(`${rootC}/.ultrapowers/${name}`, rootC);
+  const got = realCanonical(p, rootC);
+  return ignoreCase ? got.toLowerCase() === want.toLowerCase() : got === want;
 }
 
 function main() {

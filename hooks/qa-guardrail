@@ -300,6 +300,12 @@ if (!ticket) {
   // The autopilot marker is JSON: { ticket, branch, scope }. Its ticket id serves the same role.
   try { ticket = str(JSON.parse(fs.readFileSync(path.join(root, ".ultrapowers", "autopilot-active"), "utf8")).ticket).trim(); } catch (e) { ticket = ""; }
 }
+// The ticket or audit id names the write area reviews/<id>/: an id with a parent segment or a path
+// separator would widen it, so a marker holding one is refused for every call.
+if (ticket && (ticket.includes("..") || /[\/\\]/.test(ticket))) {
+  process.stdout.write(["badmarker", "", "", "", "", "", "", "", ""].join("\0") + "\0");
+  process.exit(0);
+}
 // Facts about the run marker for every deny message: how long ago it was written, and the stage
 // an autopilot marker records. A marker that outlived its run is for the human partner to end.
 let markerAge = "";
@@ -415,6 +421,7 @@ case "$parse_status" in
   noresolver:*) deny "the path resolver hooks/lib/guard-paths.mjs cannot be loaded (${parse_status#noresolver:}); every call is refused during $run_kind" ;;
   badconfig:*) deny "the project config .agents/ultrapowers.json cannot be read (${parse_status#badconfig:}); every call is refused while a run marker exists under .ultrapowers/" ;;
   shapeless) deny "the tool event has no readable tool name or input; an uninspectable call is refused during $run_kind" ;;
+  badmarker) deny "the run marker holds a ticket or audit id with a parent segment or a path separator; every call is refused while it does" ;;
 esac
 [ "$parse_status" = "ok" ] || deny "the tool event could not be parsed; an uninspectable call is refused during $run_kind"
 
@@ -472,6 +479,10 @@ AUTOPILOT_PROTECTED_RE='(^|/)\.github/|(^|/)\.gitlab-ci\.yml$|(^|/)hooks/(qa-gua
 # record and the agents' rules: a stage that edits its own baseline hides a failure from the QA
 # gate. The baseline's path is qa.knownIssues (default qa/known-issues.md, matched above).
 known_lc="$(lower "$known_issues")"
+# The QA and hunt run markers: never written, moved or removed by the run through a file tool or a
+# patch (a sole `rm` of the run's own marker, from the shell, is how the gatekeeper ends it).
+MARKER_RE='(^|/)\.ultrapowers/(qa-active|hunt-active)$'
+MARKER_WHY="is the run marker; the run marker is not the run's to change, the gatekeeper ends the run (with rm of its own marker as a call of its own)"
 # --- MCP tools of a tracker or of git, autopilot profile: reads pass, writes belong to the
 # engine between stages (the approve label among them). A tool name with a read verb is a read.
 # This rule comes before the file-tool gate: a tracker tool that carries a `path` argument
@@ -552,6 +563,8 @@ case "$patch_mode" in
       lower_r "${pcheck#./}"; pl="$REPLY"
       [[ "$pl" =~ $PROTECTED_RE ]] \
         && deny "the patch writes a protected path ($ppath); never allowed during $run_kind"
+      [ "$PROFILE" != "autopilot" ] && [[ "$pl" =~ $MARKER_RE ]] \
+        && deny "the patch target ($ppath) $MARKER_WHY"
       if [ "$PROFILE" = "autopilot" ]; then
         pl_noex="${pl//.env.example/}"
         [[ "$pl_noex" =~ $AUTOPILOT_PROTECTED_RE ]] \
@@ -583,6 +596,8 @@ if [ "$is_write_tool" -eq 1 ]; then
   wl="$(lower "${wcheck#./}")"
   printf '%s' "$wl" | grep -Eq "$PROTECTED_RE" \
     && deny "write to a protected path ($wpath) is never allowed during $run_kind"
+  [ "$PROFILE" != "autopilot" ] && [[ "$wl" =~ $MARKER_RE ]] \
+    && deny "the write target ($wpath) $MARKER_WHY"
   if [ "$PROFILE" = "autopilot" ]; then
     printf '%s' "${wl//.env.example/}" | grep -Eq "$AUTOPILOT_PROTECTED_RE" \
       && deny "write to a protected path ($wpath) is never allowed during an autopilot stage: CI, hooks, settings and the project config stay as they are"
@@ -738,7 +753,17 @@ if printf '%s' "$lc" | grep -Eq '\bpsql\b'; then
 fi
 
 # Destructive filesystem: short and long rm options, find -delete, disk tools, device writes.
-printf '%s' "$lc" | grep -Eq "${B}rm[[:space:]]+-[a-z]*[rf]|${B}rm[[:space:]]+--(recursive|force|dir)|${B}(rmdir|shred|mkfs|dd)[[:space:]]|>[[:space:]]*/dev/(sd|nvme)|${B}find[[:space:]][^;&|]*[[:space:]]-delete\\b|${B}(rd|rmdir)[[:space:]]+/s|${B}del[[:space:]][^;&|]*/[sfq]\\b|remove-item[^;&|]*[[:space:]]-(recurse|force)" \
+# One exception, QA run and hunt: a call whose entire command is `rm -f <the run's own marker>` (the
+# write analyzer below confirms the operand is that marker; anything else stays refused).
+own_marker="qa-active"
+[ "$PROFILE" = "hunt" ] && own_marker="hunt-active"
+sole_rm_re='^[[:space:]]*rm[[:space:]]+-f[[:space:]]+("[^"$`\\]*"|'"'"'[^'"'"']*'"'"'|[^[:space:];&|<>()$`"'"'"'\\]+)[[:space:]]*$'
+sole_rm=0
+if [ "$PROFILE" != "autopilot" ] && [[ "$cmd" =~ $sole_rm_re ]]; then
+  op="${BASH_REMATCH[1]}"; op="${op#[\"\']}"; op="${op%[\"\']}"
+  [[ "$op" == ".ultrapowers/$own_marker" || "$op" == */".ultrapowers/$own_marker" ]] && sole_rm=1
+fi
+[ "$sole_rm" -eq 0 ] && printf '%s' "$lc" | grep -Eq "${B}rm[[:space:]]+-[a-z]*[rf]|${B}rm[[:space:]]+--(recursive|force|dir)|${B}(rmdir|shred|mkfs|dd)[[:space:]]|>[[:space:]]*/dev/(sd|nvme)|${B}find[[:space:]][^;&|]*[[:space:]]-delete\\b|${B}(rd|rmdir)[[:space:]]+/s|${B}del[[:space:]][^;&|]*/[sfq]\\b|remove-item[^;&|]*[[:space:]]-(recurse|force)" \
   && deny "recursive or forced delete is blocked"
 # PowerShell file cmdlets write, move or delete files; the file tools are gated to
 # reviews/<id>/ and .ultrapowers/, these are not.

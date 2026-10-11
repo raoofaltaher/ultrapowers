@@ -164,11 +164,18 @@ result="$(run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$RO
 if [[ "${result%%|*}" -eq 2 ]]; then pass "a code write is refused with hunt-active and autopilot-active"; else fail "a code write is refused with hunt-active and autopilot-active (got $result)"; fi
 rm -f "$AP_MARKER"
 
-echo "hunt profile: the marker can be written and removed by the run itself"
+echo "hunt profile: the marker is never rewritten; only a sole rm of it ends the run"
+# The skill writes the marker before the run (no marker yet, the hook is inert); during the run no
+# hunter or gatekeeper call rewrites it.
 result="$(run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$ROOT/.ultrapowers/hunt-active\",\"content\":\"audit-2026-10-11\"}}" "$ROOT")"
-if [[ "${result%%|*}" -eq 0 ]]; then pass "the hunt writes its own marker"; else fail "the hunt writes its own marker (got $result)"; fi
+if [[ "${result%%|*}" -eq 2 && "$result" == *"the run marker"* ]]; then pass "a write of the marker during the hunt is refused"; else fail "a write of the marker during the hunt is refused (got $result)"; fi
 result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"rm .ultrapowers/hunt-active"}}' "$ROOT")"
-if [[ "${result%%|*}" -eq 0 ]]; then pass "the hunt removes its own marker"; else fail "the hunt removes its own marker (got $result)"; fi
+if [[ "${result%%|*}" -eq 0 ]]; then pass "the hunt removes its own marker with a sole rm"; else fail "the hunt removes its own marker with a sole rm (got $result)"; fi
+for bad in '..' 'audit/../..' 'a\b'; do
+  printf '%s' "$bad" > "$MARKER"
+  result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"ls"}}' "$ROOT")"
+  if [[ "${result%%|*}" -eq 2 && "$result" == *"the run marker holds"* ]]; then pass "deny_marker_value: a marker holding '$bad' refuses every call"; else fail "deny_marker_value: a marker holding '$bad' refuses every call (got $result)"; fi
+done
 printf '%s' 'audit-2026-10-11' > "$MARKER"
 
 echo "hunt profile: no marker, everything passes silently"
