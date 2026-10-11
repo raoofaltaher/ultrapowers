@@ -382,5 +382,12 @@
   {"name":"deny_pwsh_stdin_dash","event":{"tool_name":"Bash","tool_input":{"command":"pwsh -Command -"}}},
   {"name":"deny_pwsh_stdin_redirect","event":{"tool_name":"Bash","tool_input":{"command":"pwsh -NoProfile < reviews/1234/artifacts/check.ps1"}}},
   {"name":"deny_pwsh_stdin_pipe_exe","event":{"tool_name":"Bash","tool_input":{"command":"echo Get-Date | pwsh.exe"}}},
-  {"name":"deny_pwsh_in_sh_c","event":{"tool_name":"Bash","tool_input":{"command":"sh -c 'pwsh -Command \"Get-Date\"'"}}}
+  {"name":"deny_pwsh_in_sh_c","event":{"tool_name":"Bash","tool_input":{"command":"sh -c 'pwsh -Command \"Get-Date\"'"}}},
+  {"name":"deny_cmd_c_percent_expansion","event":{"tool_name":"Bash","tool_input":{"command":"cmd /c \"echo %TEMP% > x\""}}},
+  {"name":"deny_cmd_c_percent_read","event":{"tool_name":"Bash","tool_input":{"command":"cmd /c \"echo %TEMP%\""}}},
+  {"name":"deny_cmd_c_caret_escape","event":{"tool_name":"Bash","tool_input":{"command":"cmd /c \"dir ^> x\""}}},
+  {"name":"deny_cmd_c_caret_escape_in_area","event":{"tool_name":"Bash","tool_input":{"command":"cmd /c \"dir reviews\\1234 ^> reviews\\1234\\artifacts\\o.txt\""}}},
+  {"name":"deny_cmd_k_bang_delayed_expansion","event":{"tool_name":"Bash","tool_input":{"command":"cmd.exe /v:on /k \"set A=dir& echo !A!\""}}},
+  {"name":"deny_cmd_c_percent_unquoted","event":{"tool_name":"Bash","tool_input":{"command":"cmd /c echo %COMSPEC%"}}},
+  {"name":"allow_cmd_c_dir_plain","event":{"tool_name":"Bash","tool_input":{"command":"cmd /c dir"}}}
 ]

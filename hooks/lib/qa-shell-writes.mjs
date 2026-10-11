@@ -917,6 +917,9 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         if (ci === -1) return deny('cmd without /c reads its commands from stdin, which cannot be inspected; run the command directly');
         const tail = rest.slice(ci + 1);
         if (!tail.length || tail.some((x) => x.v === null)) return deny('cmd /c runs a command built from a variable or missing; it cannot be verified');
+        // %VAR% expansion, !VAR! delayed expansion and ^ escapes change the command after this walk has
+        // read it (`%COMSPEC%`, `echo ^> x`): none is modelled, so a tail holding one is refused.
+        if (tail.some((x) => /[%!^]/.test(x.v))) return deny('a cmd tail with %, ! or ^ is not analysed (variable expansion, delayed expansion and caret escapes are not modelled); run the command directly');
         walkNested(tail.map((x) => x.v).join(' ').replace(/\\/g, '/'), dir, container, depth + 1, pgUser);
         return;
       }

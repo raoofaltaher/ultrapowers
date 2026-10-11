@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"cmd.exe /v:on /k \"set A=dir& echo !A!\""}}
