@@ -48,6 +48,14 @@ function run(resolution, env, args, stdin) {
   });
 }
 
+// GitLab runs a note or description line that starts at column 0 with / and a word (/merge, /approve,
+// /close, /label, /assign, /target_branch, ...) as a quick action under the posting account. The text
+// the engine posts is written by an agent, so every such line gets a zero-width space in front: GitLab
+// renders the text and runs nothing. Fenced code blocks too, since the fence may not survive.
+export function neutralizeQuickActions(text) {
+  return String(text ?? '').replace(/^\/(?=[A-Za-z])/gm, '​/');
+}
+
 function parseJson(text, what) {
   try {
     return JSON.parse(text);
@@ -260,7 +268,7 @@ class GitLabTracker {
   }
 
   async comment(number, body) {
-    const out = await run(this.r, this.env, ['issue', 'note', String(number), '-R', this.path, '-m', body]);
+    const out = await run(this.r, this.env, ['issue', 'note', String(number), '-R', this.path, '-m', neutralizeQuickActions(body)]);
     return lastUrl(out.stdout);
   }
 
@@ -292,7 +300,7 @@ class GitLabTracker {
 
   async createPr({ head, base, title, body, draft = false }) {
     const heading = draft && !/^draft:/i.test(title) ? `Draft: ${title}` : title;
-    const out = await run(this.r, this.env, ['mr', 'create', '-R', this.path, '--source-branch', head, '--target-branch', base, '--title', heading, '--description', body, '--yes']);
+    const out = await run(this.r, this.env, ['mr', 'create', '-R', this.path, '--source-branch', head, '--target-branch', base, '--title', heading, '--description', neutralizeQuickActions(body), '--yes']);
     return lastUrl(out.stdout);
   }
 
@@ -316,7 +324,7 @@ class GitLabTracker {
   async prComment(url, body) {
     const m = /^https?:\/\/[^/]+\/(.+?)\/-\/merge_requests\/(\d+)/.exec(String(url ?? ''));
     if (!m) throw new AutopilotError('tracker-failed', `${url} is not a GitLab merge request URL`);
-    const out = await run(this.r, this.env, ['mr', 'note', m[2], '-R', m[1], '-m', body]);
+    const out = await run(this.r, this.env, ['mr', 'note', m[2], '-R', m[1], '-m', neutralizeQuickActions(body)]);
     return lastUrl(out.stdout);
   }
 }

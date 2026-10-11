@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { trackerFor } from '../../skills/autopilot/scripts/tracker.mjs';
+import { trackerFor, neutralizeQuickActions } from '../../skills/autopilot/scripts/tracker.mjs';
 import { startOdooFake, odooSeedWithTask } from './fixtures/odoo-fake.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -410,4 +410,39 @@ test('odoo upload rejects with no-upload, and a glab answer without markdown sti
     assert.equal(up.url, '/uploads/abc/shot.png');
     assert.equal(up.markdown, null);
   } finally { fs.rmSync(file, { force: true }); }
+});
+
+// --- GitLab quick actions: a posted line that starts with / is never run as one.
+
+test('neutralizeQuickActions puts a zero-width space before a slash word at column 0, fenced or not', () => {
+  const ZW = '​';
+  const body = ['/merge', '  /merge', 'a/merge', '/ 5', '```', '/approve', '```', 'text', '/label ~bug'].join('\n');
+  const out = neutralizeQuickActions(body).split('\n');
+  assert.equal(out[0], `${ZW}/merge`);
+  assert.equal(out[1], '  /merge', 'an indented line is not a quick action');
+  assert.equal(out[2], 'a/merge');
+  assert.equal(out[3], '/ 5', 'a slash not followed by a letter is left alone');
+  assert.equal(out[5], `${ZW}/approve`, 'inside a fence too');
+  assert.equal(out[8], `${ZW}/label ~bug`);
+  assert.equal(neutralizeQuickActions('no slash here'), 'no slash here');
+  assert.equal(neutralizeQuickActions('x\r\n/close'), `x\r\n${ZW}/close`);
+});
+
+test('the glab write methods send a neutralized body; the gh ones are untouched', async () => {
+  const ZW = '​';
+  const text = 'Report\n/merge\n/assign @me';
+  const clean = `Report\n${ZW}/merge\n${ZW}/assign @me`;
+  const g = env({ 'issue note 7 -R acme/platform/web -m': { stdout: 'https://gitlab.example.com/acme/platform/web/-/issues/7#note_1\n' } });
+  await trackerFor(GL, g).comment(7, text);
+  assert.equal(g.calls()[0].args.at(-1), clean);
+  const m = env({ 'mr note 4 -R acme/platform/web -m': { stdout: 'https://gitlab.example.com/acme/platform/web/-/merge_requests/4#note_8\n' } });
+  await trackerFor(GL, m).prComment('https://gitlab.example.com/acme/platform/web/-/merge_requests/4', text);
+  assert.equal(m.calls()[0].args.at(-1), clean);
+  const c = env({ 'mr create -R acme/platform/web': { stdout: 'https://gitlab.example.com/acme/platform/web/-/merge_requests/3\n' } });
+  await trackerFor(GL, c).createPr({ head: 'h', base: 'main', title: 't', body: text });
+  const args = c.calls()[0].args;
+  assert.equal(args[args.indexOf('--description') + 1], clean);
+  const gh = env({ 'issue comment 16 -R o/r --body-file -': { stdout: 'https://github.com/o/r/issues/16#issuecomment-1\n' } });
+  await trackerFor(GH, gh).comment(16, text);
+  assert.equal(gh.calls()[0].stdin, text, 'GitHub has no quick actions; the body is verbatim');
 });
