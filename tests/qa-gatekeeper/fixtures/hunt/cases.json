@@ -346,5 +346,10 @@
   {"name":"deny_nested_cwd_decoy_bridge","reason":"is outside the project","dir":"{{ELSEWHERE}}","env":{"ULTRAPOWERS_RUN_DIR":"{{ROOT}}"},"event":{"tool_name":"Bash","tool_input":{"command":"npm install left-pad","cwd":"{{DECOY}}"},"cwd":"{{ROOT}}"}},
   {"name":"deny_nested_run_dir_decoy_direct","reason":"npm install is not on the hunt's list","dir":"{{ELSEWHERE}}","event":{"tool_name":"Bash","tool_input":{"command":"npm install left-pad","ultrapowers_run_dir":"{{DECOY}}"},"cwd":"{{ROOT}}"}},
   {"name":"deny_nested_cwd_decoy_direct","reason":"is outside the project","dir":"{{ELSEWHERE}}","event":{"tool_name":"Bash","tool_input":{"command":"npm install left-pad","cwd":"{{DECOY}}"},"cwd":"{{ROOT}}"}},
-  {"name":"deny_write_tool_dotgit_file","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/repo-a/.git","content":"gitdir: /tmp/x"}}}
+  {"name":"deny_write_tool_dotgit_file","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/repo-a/.git","content":"gitdir: /tmp/x"}}},
+  {"name":"deny_mcp_github_comment","reason":"writes through MCP tools are never run during","event":{"tool_name":"mcp__github__add_issue_comment","tool_input":{"owner":"o","repo":"r","issue_number":1,"body":"x"}}},
+  {"name":"deny_mcp_odoo_post_message","reason":"writes through MCP tools are never run during","event":{"tool_name":"mcp__claude_ai_Odoo__post_message","tool_input":{"model":"project.task","res_id":1,"body":"x"}}},
+  {"name":"deny_mcp_outlook_send_mail","reason":"writes through MCP tools are never run during","event":{"tool_name":"mcp__claude_ai_Microsoft_365__outlook_send_mail","tool_input":{"to":"a@example.com","body":"x"}}},
+  {"name":"allow_mcp_github_get_issue","event":{"tool_name":"mcp__github__get_issue","tool_input":{"owner":"o","repo":"r","issue_number":1}}},
+  {"name":"allow_mcp_odoo_search_records","event":{"tool_name":"mcp__claude_ai_Odoo__search_records","tool_input":{"model":"project.task","domain":[]}}}
 ]

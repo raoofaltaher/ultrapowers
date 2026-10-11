@@ -1,0 +1,1 @@
+{"tool_name":"mcp__claude_ai_Microsoft_365__outlook_send_mail","tool_input":{"to":"a@example.com","body":"x"},"reason":"writes through MCP tools are never run during"}

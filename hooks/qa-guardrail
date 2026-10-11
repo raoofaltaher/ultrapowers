@@ -583,7 +583,7 @@ known_lc="$(lower "$known_issues")"
 # patch (a sole `rm` of the run's own marker, from the shell, is how the gatekeeper ends it).
 MARKER_RE='(^|/)\.ultrapowers/(qa-active|hunt-active)$'
 MARKER_WHY="is the run marker; the run marker is not the run's to change, the gatekeeper ends the run (with rm of its own marker as a call of its own)"
-# --- MCP tools of a tracker or of git, autopilot profile: reads pass, writes belong to the
+# --- MCP tools of a tracker, of mail or chat, or of git (git: autopilot only): reads pass; in an autopilot stage writes belong to the
 # engine between stages (the approve label among them). A tool name with a read verb is a read.
 # This rule comes before the file-tool gate: a tracker tool that carries a `path` argument
 # (create_or_update_file, delete_file) is a tracker write, not a workspace write.
@@ -591,7 +591,7 @@ MARKER_WHY="is the run marker; the run marker is not the run's to change, the ga
 # (OpenCode), mcp_<server>_<tool> (Hermes), MCP:<tool> (Cursor, no server). The name is judged
 # normalised: lowercase, `-`, `:`, `.`, `/` and spaces as `_`, a leading `mcp` marker removed.
 # Shell builtins only until a tracker word is seen.
-if [ "$PROFILE" = "autopilot" ]; then
+if [ -n "$PROFILE" ]; then
   tool_norm="$tool_lc"
   tool_norm="${tool_norm//-/_}"; tool_norm="${tool_norm//:/_}"; tool_norm="${tool_norm//./_}"
   tool_norm="${tool_norm// /_}"; tool_norm="${tool_norm//\//_}"
@@ -600,18 +600,22 @@ if [ "$PROFILE" = "autopilot" ]; then
   case "$tool_norm" in mcp_*) tool_norm="${tool_norm#mcp}" ;; esac
   while [[ "$tool_norm" == *__* ]]; do tool_norm="${tool_norm//__/_}"; done
   while [[ "$tool_norm" == _* ]]; do tool_norm="${tool_norm#_}"; done
-  tracker_re='github|gitlab|glab|jira|linear|odoo|bitbucket|azure_?devops|^tickets_'
+  tracker_re='github|gitlab|glab|jira|linear|odoo|bitbucket|azure_?devops|^tickets_|outlook|microsoft_365|gmail|slack|teams'
   # Cursor's MCP:<tool> carries no server name: the object of the tool says it is a tracker's.
   object_re='(^|_)(issue|issues|pull_request|pull_requests|merge_request|merge_requests|pr|mr|comment|comments|label|labels|milestone|discussion|work_item|workitem|ticket)(_|$)'
   if [[ "$tool_norm" =~ $tracker_re ]] || { [ "$tool_server_less" -eq 1 ] && [[ "$tool_norm" =~ $object_re ]]; }; then
     read_re='(^|_)(get|list|search|read|view|fetch|show|describe|find|query|resolve)(_|$)'
-    write_re='(create|update|edit|add|remove|delete|merge|comment|note|label|close|reopen|post|save|accept|push|fork|assign|transfer|lock|approve|submit|publish|manage|link|call|execute|write|unlink|method)'
+    write_re='(create|update|edit|add|remove|delete|merge|comment|note|label|close|reopen|post|save|accept|push|fork|assign|transfer|lock|approve|submit|publish|manage|link|call|execute|write|unlink|method|send|reply|chat)'
     if ! [[ "$tool_norm" =~ $read_re ]] && [[ "$tool_norm" =~ $write_re ]]; then
-      deny "tracker writes through MCP tools are never run by an autopilot stage; the engine writes back between stages"
+      if [ "$PROFILE" = "autopilot" ]; then
+        deny "tracker writes through MCP tools are never run by an autopilot stage; the engine writes back between stages"
+      else
+        deny "tracker and mail writes through MCP tools are never run during $run_kind; the run reads, it does not post"
+      fi
     fi
   fi
   git_mcp_re='(^|_)git_git_(push|reset)|^git_(push|reset)'
-  if [[ "$tool_norm" =~ $git_mcp_re ]]; then
+  if [ "$PROFILE" = "autopilot" ] && [[ "$tool_norm" =~ $git_mcp_re ]]; then
     deny "git push and git reset through an MCP tool are never run by an autopilot stage"
   fi
 fi
