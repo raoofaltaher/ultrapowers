@@ -19,12 +19,16 @@ try {
   input = '';
 }
 
+// The run marker at or above start (the QA profile wins): its deny prefix and path, or null.
 function runActive(start) {
   let dir = path.resolve(start || process.cwd());
   for (;;) {
-    if (fs.existsSync(path.join(dir, '.ultrapowers', 'qa-active')) || fs.existsSync(path.join(dir, '.ultrapowers', 'autopilot-active'))) return true;
+    const qa = path.join(dir, '.ultrapowers', 'qa-active');
+    if (fs.existsSync(qa)) return { prefix: 'QA-GUARDRAIL', marker: qa };
+    const autopilot = path.join(dir, '.ultrapowers', 'autopilot-active');
+    if (fs.existsSync(autopilot)) return { prefix: 'AUTOPILOT-GUARDRAIL', marker: autopilot };
     const parent = path.dirname(dir);
-    if (parent === dir) return false;
+    if (parent === dir) return null;
     dir = parent;
   }
 }
@@ -36,8 +40,9 @@ if (!cli) {
   } catch {
     // an unreadable event is judged by the process cwd
   }
-  if (runActive(cwd)) {
-    process.stderr.write('AUTOPILOT-GUARDRAIL DENY: the ultrapowers extension was not found; a tool call during a run is refused without its guardrail\n');
+  const active = runActive(cwd);
+  if (active) {
+    process.stderr.write(`${active.prefix} DENY: the ultrapowers extension was not found, and ${active.marker} marks a run; a tool call during a run is refused without its guardrail\n`);
     process.exit(2);
   }
   process.exit(0);

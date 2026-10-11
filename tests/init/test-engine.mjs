@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -561,4 +561,26 @@ test('the QA preflight reads brand logo paths under brand-book/ and brandbook/ a
     const result = validateConfig({ brand: { logoPaths: [`${folder}/logos/logo-primary.svg`], tokenPaths: [], compareRoute: '/' } }, {});
     assert.equal(result.gates.visualBrand.active, true, folder);
   }
+});
+
+test('the Gemini project hook names the run profile and the marker when the extension is missing', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ultrapowers-home-'));
+  const hook = path.join(home, 'ultrapowers-guardrail.mjs');
+  fs.copyFileSync(path.join(repoRoot, 'templates', '.gemini', 'hooks', 'ultrapowers-guardrail.mjs.tmpl'), hook);
+  const env = { ...process.env, HOME: home, USERPROFILE: home };
+  delete env.ULTRAPOWERS_PLUGIN_ROOT;
+  const hookRun = (root) => spawnSync(process.execPath, [hook], { input: JSON.stringify({ cwd: root }), encoding: 'utf8', env });
+  const withMarker = (marker) => {
+    const root = tmpRepo();
+    fs.mkdirSync(path.join(root, '.ultrapowers'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.ultrapowers', marker), '');
+    return hookRun(root);
+  };
+  const qa = withMarker('qa-active');
+  assert.equal(qa.status, 2);
+  assert.match(qa.stderr, /^QA-GUARDRAIL DENY: .*\.ultrapowers[\\/]qa-active/);
+  const auto = withMarker('autopilot-active');
+  assert.equal(auto.status, 2);
+  assert.match(auto.stderr, /^AUTOPILOT-GUARDRAIL DENY: .*\.ultrapowers[\\/]autopilot-active/);
+  assert.equal(hookRun(tmpRepo()).status, 0);
 });
