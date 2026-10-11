@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"ls"},"env":{"ULTRAPOWERS_RUN_DIR":"{{ROOT}}/no-such-dir"},"reason":"does not name an existing directory"}

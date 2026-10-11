@@ -114,7 +114,23 @@ def test_a_non_dict_args_reaches_the_hook_and_is_refused(hook, tmp_path, monkeyp
     assert hook("terminal", None, "t7") is None
 
 
-@pytest.mark.parametrize("marker,prefix", [("qa-active", "QA-GUARDRAIL DENY: "), ("autopilot-active", "AUTOPILOT-GUARDRAIL DENY: ")])
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is needed to run the guardrail")
+def test_a_hunt_marker_blocks_a_push_with_the_hunt_prefix_and_passes_an_audit(hook, tmp_path, monkeypatch):
+    root = _project(tmp_path, active=False)
+    (root / ".ultrapowers" / "hunt-active").write_text("audit-2026-10-11\n", encoding="utf-8")
+    monkeypatch.chdir(root)
+    verdict = hook("terminal", {"command": "git push origin x"}, "t13")
+    assert verdict and verdict.get("action") == "block"
+    assert verdict.get("message", "").startswith("HUNT-GUARDRAIL DENY: ")
+    assert hook("terminal", {"command": "npm audit --package-lock-only --json"}, "t14") is None
+    blocked = hook("write_file", {"path": str(root / "repo-a" / "src" / "x.ts"), "content": "x"}, "t15")
+    assert blocked and blocked.get("action") == "block"
+
+
+@pytest.mark.parametrize(
+    "marker,prefix",
+    [("qa-active", "QA-GUARDRAIL DENY: "), ("hunt-active", "HUNT-GUARDRAIL DENY: "), ("autopilot-active", "AUTOPILOT-GUARDRAIL DENY: ")],
+)
 def test_the_plugins_own_fail_closed_denies_carry_the_profile_prefix(tmp_path, monkeypatch, marker, prefix):
     import subprocess
 
@@ -124,12 +140,12 @@ def test_the_plugins_own_fail_closed_denies_carry_the_profile_prefix(tmp_path, m
     verdict = lambda: plugin._guardrail_verdict(str(root), "terminal", {"command": "git status"}, str(root))
 
     # The node binary or the hook is missing.
-    monkeypatch.setattr(plugin.shutil, "which", lambda name: None)
+    monkeypatch.setattr(plugin, "_node_binary", lambda cwd: None)
     missing = verdict()
     assert missing["action"] == "block" and missing["message"].startswith(prefix), missing
 
     # The hook cannot be spawned, and it exits with something other than 0 or 2.
-    monkeypatch.setattr(plugin.shutil, "which", lambda name: "node")
+    monkeypatch.setattr(plugin, "_node_binary", lambda cwd: "node")
     monkeypatch.setattr(plugin, "_guardrail_cli", lambda skills_dir: "guardrail-cli.mjs")
 
     def spawn_fails(*args, **kwargs):
@@ -145,12 +161,38 @@ def test_the_plugins_own_fail_closed_denies_carry_the_profile_prefix(tmp_path, m
     assert "exit 1" in crashed["message"]
 
 
-def test_the_qa_profile_wins_when_both_markers_exist(tmp_path):
+def test_the_marker_order_is_qa_then_hunt_then_autopilot(tmp_path):
     plugin = _load_plugin()
     root = _project(tmp_path)
+    (root / ".ultrapowers" / "hunt-active").write_text("audit-2026-10-11\n", encoding="utf-8")
     (root / ".ultrapowers" / "qa-active").write_text("{}", encoding="utf-8")
     assert plugin._run_active(str(root)) == "QA-GUARDRAIL"
     (root / ".ultrapowers" / "qa-active").unlink()
+    assert plugin._run_active(str(root)) == "HUNT-GUARDRAIL"
+    (root / ".ultrapowers" / "hunt-active").unlink()
     assert plugin._run_active(str(root)) == "AUTOPILOT-GUARDRAIL"
     (root / ".ultrapowers" / "autopilot-active").unlink()
     assert plugin._run_active(str(root)) is None
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is needed to run the guardrail")
+def test_a_node_planted_in_the_project_is_never_run(tmp_path, monkeypatch):
+    """A node.cmd or node in the project directory, reachable through the current directory or a
+    relative PATH entry, is not the node the guardrail runs: the real hook decides the call."""
+    plugin = _load_plugin()
+    root = _project(tmp_path)
+    sentinel = root / "decoy-ran.txt"
+    if os.name == "nt":
+        (root / "node.cmd").write_text(f'@echo off\r\necho ran> "{sentinel}"\r\nexit /b 0\r\n', encoding="utf-8")
+    else:
+        decoy = root / "node"
+        decoy.write_text(f'#!/bin/sh\necho ran > "{sentinel}"\nexit 0\n', encoding="utf-8")
+        decoy.chmod(0o755)
+    monkeypatch.chdir(root)
+    monkeypatch.setenv("PATH", os.pathsep.join([".", "bin", os.environ.get("PATH", "")]))
+    verdict = plugin._guardrail_verdict(plugin._skills_dir(), "terminal", {"command": "git push origin GH-16-x"}, str(root))
+    assert not sentinel.exists(), "the decoy node in the project directory ran"
+    assert verdict and verdict.get("action") == "block", verdict
+    assert "git push is never allowed" in verdict.get("message", ""), verdict
+    found = plugin._node_binary(str(root))
+    assert found and os.path.isabs(found) and os.path.dirname(os.path.realpath(found)) != os.path.realpath(str(root)), found

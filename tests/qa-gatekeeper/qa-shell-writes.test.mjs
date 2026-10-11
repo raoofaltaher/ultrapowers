@@ -48,10 +48,10 @@ test('in-place editors and truncate are denied', () => {
 });
 
 test('only read-only git subcommands run', () => {
-  for (const cmd of ['git -C repo-a apply fix.patch', 'git commit -am fix', 'git checkout .', 'git stash', 'git clean -d -f', 'git clean --force -d', 'git -C repo-a reset --hard HEAD~1', 'git add -A', 'git branch -D x', 'git fetch origin']) {
+  for (const cmd of ['git -C repo-a apply fix.patch', 'git commit -am fix', 'git checkout .', 'git stash', 'git clean -d -f', 'git clean --force -d', 'git -C repo-a reset --hard HEAD~1', 'git add -A', 'git branch -D x', 'git fetch origin', 'git -c color.ui=never ls-files', 'git -c core.fsmonitor=x status', 'git grep -Ox y', 'git diff --ext-diff', 'git -C /elsewhere log']) {
     assert.ok(denied(cmd), cmd);
   }
-  for (const cmd of ['git -C repo-a diff --stat main...HEAD', 'git status --porcelain', 'git -C repo-a log --oneline -5', 'git branch --show-current', 'git rev-parse --abbrev-ref HEAD', 'git --no-pager -C repo-a show HEAD --stat', 'git -c color.ui=never ls-files', 'git stash list']) {
+  for (const cmd of ['git -C repo-a diff --stat main...HEAD', 'git status --porcelain', 'git -C repo-a log --oneline -5', 'git branch --show-current', 'git rev-parse --abbrev-ref HEAD', 'git --no-pager -C repo-a show HEAD --stat', 'git stash list']) {
     assert.ok(allowed(cmd), cmd);
   }
 });
@@ -93,8 +93,8 @@ test('the lanes\' own commands still pass', () => {
     'mv /p/reviews/1234/run-state.json /p/.ultrapowers/run-state-1234.previous.json',
     'mv /p/reviews/1234/artifacts /p/.ultrapowers/artifacts-1234-20260101T000000Z',
     "mkdir -p /p/reviews/1234/artifacts/suites/app && nohup bash run-suite.sh /p/app /p/reviews/1234/artifacts/suites/app 'node s.mjs {{out}}/j.xml' > /dev/null 2>&1 & echo $!",
-    "printf '%s' 1234 > /p/.ultrapowers/qa-active",
-    'rm /p/.ultrapowers/qa-active /p/.ultrapowers/qa-token.json',
+    'rm /p/.ultrapowers/qa-active',
+    'rm /p/.ultrapowers/qa-token.json',
     'ls -la 2>/dev/null',
     'echo done &> /dev/null',
     "curl -s -X POST --data '{\"name\":\"<script>alert(1)</script>\"}' -H 'Content-Type: application/json' http://localhost/api/items",
@@ -462,4 +462,13 @@ test('an array slice is a read; psql interpolation is refused in its three spell
   for (const cmd of ['psql -U qa_agent_ro -v n=3 -c "select 1"', 'psql -U qa_agent_ro --set=n=3 -c "select 1"', 'psql -U qa_agent_ro --variable n=3 -c "select 1"', 'psql -U qa_agent_ro -vn=3 -c "select 1"', 'psql -U qa_agent_ro -Atv n=3 -c "select 1"', 'psql -U qa_agent_ro --se n=3 -c "select 1"', 'psql -U qa_agent_ro --var=n=3 -c "select 1"']) {
     assert.match(analyze(cmd, c), /define variables/, cmd);
   }
+});
+
+test('the run markers are protected; only a sole rm of the run\'s own marker passes', () => {
+  for (const cmd of ["printf '%s' 1234 > /p/.ultrapowers/qa-active", 'rm /p/.ultrapowers/qa-active /p/.ultrapowers/qa-token.json', 'rm /p/.ultrapowers/qa-active; ls', 'rm /p/.ultrapowers/hunt-active', 'mv /p/.ultrapowers/qa-active /p/reviews/1234/x', 'rm /p/.ultrapowers/*-active']) {
+    assert.match(analyze(cmd, ctx), /the run marker/, cmd);
+  }
+  assert.equal(analyze('rm -f /p/.ultrapowers/qa-active', ctx), '');
+  assert.equal(analyze('rm .ultrapowers/hunt-active', { ...ctx, profile: 'hunt' }), '');
+  assert.match(analyze('rm .ultrapowers/qa-active', { ...ctx, profile: 'hunt' }), /the run marker/);
 });

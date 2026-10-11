@@ -1,0 +1,1 @@
+{"tool_name":"Shell","tool_input":{"command":"git push origin qa"},"workspace_roots":["repo-a"],"dir":"{{ELSEWHERE}}"}

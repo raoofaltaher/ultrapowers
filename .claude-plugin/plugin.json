@@ -15,5 +15,6 @@
     "collaboration",
     "best-practices",
     "workflows"
-  ]
+  ],
+  "agents": ["./agents/qa-specialist.md", "./agents/vulnerability-hunter.md"]
 }

@@ -98,7 +98,8 @@ const fold = (s, ignoreCase) => (ignoreCase ? String(s).toLowerCase() : String(s
 export function inside(target, area, ignoreCase) {
   const t = fold(target, ignoreCase);
   const a = fold(area, ignoreCase);
-  return t === a || t.startsWith(`${a}/`);
+  // A drive root (P:/) already ends in the separator.
+  return t === a || t.startsWith(a.endsWith('/') ? a : `${a}/`);
 }
 
 export function rel(target, root, ignoreCase) {

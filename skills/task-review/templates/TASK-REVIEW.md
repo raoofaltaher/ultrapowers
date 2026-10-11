@@ -10,7 +10,7 @@ Verdict: <PASS | PASS-WITH-ISSUES | FAIL | BLOCKED> — <one sentence naming the
 
 ## Summary
 
-<counts of Critical, Important and Minor findings across the repositories; the QA verdict; what decided the verdict>
+<counts of Critical, Important and Minor findings across the repositories; the QA verdict; "security: <PASS | PASS-WITH-ISSUES | FAIL | INCOMPLETE>" with the hunt's High, Medium and Low findings and its CVEs, those critical or high in a runtime dependency counted apart, or "security: no vulnerability hunt"; what decided the verdict>
 
 ## Code review
 
@@ -34,6 +34,52 @@ Verdict: <PASS | PASS-WITH-ISSUES | FAIL | BLOCKED> — <one sentence naming the
 #### Strengths
 
 #### Declined to judge
+
+## Vulnerability hunt and audit
+
+<the vulnerability hunt's own verdict line quoted unchanged, with a note when it differs from the verdict computed from security-findings.json; then one block per hunted repository; when reviews/<ID>/security-findings.json does not exist, the one line "> No vulnerability hunt: ..." instead>
+
+### <repo>
+
+| Package | Version | Advisory | Severity | Fixed in | Runtime |
+|---|---|---|---|---|---|
+| <package> | <version> | <GHSA or CVE id> | <critical, high, moderate or low> | <version> | <runtime or test only> |
+
+#### High
+
+1. **<title>** `<file>:<line>` (confidence <6-10>, <confirmed | plausible | unverified>; <category>)
+   - Description: <what is vulnerable>
+   - Attack path: <the source, each hop, the sink>
+   - Exploit: <a concrete input, when the hunter gave one>
+   - Mitigation examined: <the checks on the way and why they do not stop it>
+   - Fix: <how to fix, described, not applied>
+   - Verification: <the filter's reason>
+
+#### Medium
+
+#### Low
+
+#### Skipped lanes
+
+<- lane: the hunter's reason, such as no manifest, or no model client library and no prompt template>
+
+#### Discarded leads
+
+<n leads below confidence 6; rejected by verification: m.>
+
+#### Files read
+
+<n files.>
+
+#### Tools used
+
+| Tool | Version | Exit |
+|---|---|---|
+| <name> | <version> | <exit code> |
+
+#### Declined to judge
+
+<- what the hunters declined to judge, one line each>
 
 ## QA gate
 

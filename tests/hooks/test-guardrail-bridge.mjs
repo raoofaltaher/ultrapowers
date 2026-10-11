@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BRIDGE = path.resolve(HERE, '..', '..', 'hooks', 'lib', 'guardrail-bridge.mjs');
-const { runGuardrail, guardrailEvent, markerRoot } = await import(`file://${BRIDGE.replace(/\\/g, '/')}`);
+const { runGuardrail, guardrailEvent, markerRoot, markerPrefix } = await import(`file://${BRIDGE.replace(/\\/g, '/')}`);
 
 function project({ marker = 'autopilot' } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrail-bridge-'));
@@ -19,8 +19,50 @@ function project({ marker = 'autopilot' } = {}) {
   fs.writeFileSync(path.join(root, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'p', autopilot: { mode: 'gated' }, qa: { urls: {}, hosts: { allowed: [], forbidden: ['prod.example.com'] } } }));
   if (marker === 'autopilot') fs.writeFileSync(path.join(root, '.ultrapowers', 'autopilot-active'), JSON.stringify({ ticket: 'GH-16', branch: 'GH-16-x', scope: ['.'], stage: 'execute' }));
   if (marker === 'qa') fs.writeFileSync(path.join(root, '.ultrapowers', 'qa-active'), 'GH-16\n');
+  if (marker === 'hunt') fs.writeFileSync(path.join(root, '.ultrapowers', 'hunt-active'), 'audit-2026-10-11\n');
   return root;
 }
+
+test('inside a vulnerability hunt a push is denied with the HUNT prefix, an audit passes and a source write is denied', () => {
+  const root = project({ marker: 'hunt' });
+  assert.equal(markerRoot(path.join(root, 'repo-a', 'src')), fs.realpathSync.native(root));
+  assert.equal(markerPrefix(path.join(root, 'repo-a', 'src')), 'HUNT-GUARDRAIL');
+  const push = runGuardrail({ toolName: 'bash', input: { command: 'git push origin x' }, cwd: root });
+  assert.equal(push.deny, true, JSON.stringify(push));
+  assert.equal(push.prefix, 'HUNT-GUARDRAIL');
+  assert.match(push.reason, /git push is never allowed|never publishes/);
+  assert.deepEqual(runGuardrail({ toolName: 'bash', input: { command: 'npm audit --package-lock-only --json' }, cwd: root }), { deny: false });
+  const src = runGuardrail({ toolName: 'write', input: { filePath: path.join(root, 'repo-a', 'src', 'x.ts'), content: 'x' }, cwd: root });
+  assert.equal(src.deny, true, JSON.stringify(src));
+  assert.equal(src.prefix, 'HUNT-GUARDRAIL');
+});
+
+test('the marker order is QA, then hunt, then autopilot', () => {
+  const root = project({ marker: 'autopilot' });
+  const at = path.join(root, 'repo-a');
+  assert.equal(markerPrefix(at), 'AUTOPILOT-GUARDRAIL');
+  fs.writeFileSync(path.join(root, '.ultrapowers', 'hunt-active'), 'audit-2026-10-11\n');
+  assert.equal(markerPrefix(at), 'HUNT-GUARDRAIL');
+  fs.writeFileSync(path.join(root, '.ultrapowers', 'qa-active'), 'GH-16\n');
+  assert.equal(markerPrefix(at), 'QA-GUARDRAIL');
+});
+
+test('a hook deny line under the HUNT profile keeps its prefix and reason', () => {
+  const root = project({ marker: 'hunt' });
+  const hookDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-hook-'));
+  fs.writeFileSync(path.join(hookDir, 'qa-guardrail'), '#!/usr/bin/env bash\necho "HUNT-GUARDRAIL DENY: x" >&2\nexit 2\n');
+  const r = runGuardrail({ toolName: 'bash', input: { command: 'ls' }, cwd: root, hookDir });
+  assert.deepEqual(r, { deny: true, prefix: 'HUNT-GUARDRAIL', reason: 'x' });
+});
+
+test('a HUNT deny line wins over the prefix of the marker it was found from', () => {
+  const root = project({ marker: 'autopilot' });
+  const hookDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-hook-'));
+  fs.writeFileSync(path.join(hookDir, 'qa-guardrail'), '#!/usr/bin/env bash\necho "HUNT-GUARDRAIL DENY: x" >&2\nexit 2\n');
+  const r = runGuardrail({ toolName: 'bash', input: { command: 'ls' }, cwd: root, hookDir });
+  assert.equal(r.prefix, 'HUNT-GUARDRAIL');
+  assert.equal(r.reason, 'x');
+});
 
 test('guardrailEvent speaks the shell-hook contract for OpenCode and Pi inputs', () => {
   const oc = guardrailEvent({ toolName: 'write', input: { filePath: '/p/a.ts', content: 'x' }, cwd: '/p' });
@@ -82,6 +124,15 @@ test('guardrail-cli answers exit 2 and the reason on stderr for a deny, exit 0 f
   assert.equal(allow.status, 0, allow.stderr);
   const kimi = runCli({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: path.join(root, 'tasks', 'GH-16', 'stage-log.jsonl'), content: 'x' }, cwd: root });
   assert.equal(kimi.status, 2);
+});
+
+test('guardrail-cli under a hunt marker denies a push with the HUNT prefix and allows an audit', () => {
+  const root = project({ marker: 'hunt' });
+  const deny = runCli({ tool_name: 'Bash', tool_input: { command: 'git push origin x' }, cwd: root });
+  assert.equal(deny.status, 2, deny.stderr);
+  assert.match(deny.stderr, /^HUNT-GUARDRAIL DENY: /);
+  const audit = runCli({ tool_name: 'Bash', tool_input: { command: 'npm audit --package-lock-only --json' }, cwd: root });
+  assert.equal(audit.status, 0, audit.stderr);
 });
 
 test('guardrail-cli --antigravity reads its payload and answers its JSON', () => {
@@ -322,4 +373,106 @@ test('guardrail-cli bounds the working directory of a Gemini dir_path and an Ant
   assert.match(out.reason, /outside the project root/);
   const inside = runCli({ toolCall: { name: 'run_command', args: { CommandLine: 'git status', Cwd: path.join(root, 'repo-a') } }, workspacePaths: [root], cwd: root }, ['--antigravity']);
   assert.deepEqual(JSON.parse(inside.stdout), { decision: 'allow' });
+});
+
+test('deny_decoy_file_path_key: a call that names two different files under two path spellings is refused', () => {
+  const root = project({ marker: 'hunt' });
+  const inside = path.join(root, 'reviews', 'audit-2026-10-11', 'x.md');
+  const target = path.join(root, 'repo-a', 'src', 'app.js');
+  // Pi writes `path`, OpenCode `filePath`; the event would carry the first spelling as file_path.
+  for (const input of [{ path: target, file_path: inside, content: 'x' }, { filePath: target, path: inside, content: 'x' }, { notebook_path: target, file_path: inside }]) {
+    // The bridge refuses before it runs the hook (a hook dir with no hook proves the check is its own).
+    const own = runGuardrail({ toolName: 'write', input, cwd: root, hookDir: path.join(root, 'no-hook-here') });
+    assert.equal(own.deny, true, JSON.stringify(own));
+    assert.equal(own.prefix, 'HUNT-GUARDRAIL');
+    assert.match(own.reason, /the call names two different targets/);
+    const full = runGuardrail({ toolName: 'write', input, cwd: root });
+    assert.equal(full.deny, true, JSON.stringify(full));
+    assert.match(full.reason, /the call names two different targets/);
+  }
+  // A Copilot-shaped string input is read the same way.
+  const str = runGuardrail({ toolName: 'write', input: JSON.stringify({ path: target, file_path: inside }), cwd: root, hookDir: path.join(root, 'no-hook-here') });
+  assert.match(str.reason, /the call names two different targets/);
+  // The same file under two spellings (one relative, one absolute) is one target.
+  const same = runGuardrail({ toolName: 'write', input: { path: 'reviews/audit-2026-10-11/x.md', file_path: inside, content: 'x' }, cwd: root });
+  assert.deepEqual(same, { deny: false });
+});
+
+test('the bridge resolves bash from absolute PATH entries, never the project directory', async () => {
+  const mod = await import(`file://${BRIDGE.replace(/\\/g, '/')}`);
+  assert.equal(typeof mod.bashBinary, 'function', 'bashBinary is exported');
+  const root = project({ marker: 'hunt' });
+  const name = process.platform === 'win32' ? 'bash.exe' : 'bash';
+  // A decoy in the project directory, reachable through `.`, a relative entry, or the entry that is the cwd.
+  fs.mkdirSync(path.join(root, 'bin'), { recursive: true });
+  for (const d of [root, path.join(root, 'bin')]) { fs.writeFileSync(path.join(d, name), '#!/bin/sh\nexit 0\n'); fs.chmodSync(path.join(d, name), 0o755); }
+  const PATH = ['.', 'bin', root].join(path.delimiter);
+  assert.equal(mod.bashBinary({ env: { PATH }, cwd: root, candidates: [] }), null);
+  // An absolute entry elsewhere is used.
+  const tools = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-bash-'));
+  fs.writeFileSync(path.join(tools, name), '#!/bin/sh\nexit 0\n'); fs.chmodSync(path.join(tools, name), 0o755);
+  assert.equal(mod.bashBinary({ env: { PATH: [PATH, tools].join(path.delimiter) }, cwd: root, candidates: [] }), path.join(tools, name));
+  // The real call still runs the hook (spawned from the plugin folder) and judges the call.
+  const push = runGuardrail({ toolName: 'bash', input: { command: 'git push origin x' }, cwd: root });
+  assert.equal(push.deny, true, JSON.stringify(push));
+  assert.match(push.reason, /git push is never allowed|never publishes/);
+});
+
+// ---- the run directory reaches the hook out of band; a tool argument never picks the root ----
+test('a nested ultrapowers_run_dir or cwd naming a decoy project never roots the hook', () => {
+  // The decoy: another project with its own autopilot marker and no forbidden host.
+  const decoy = project();
+  fs.writeFileSync(path.join(decoy, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'decoy', qa: { urls: {}, hosts: { allowed: [], forbidden: [] } } }));
+  const curl = 'curl -s https://prod.example.com/';
+  // ULTRAPOWERS_AUTOPILOT_INSIDE=1, no marker: the project's forbidden host still holds.
+  const inside = project({ marker: 'none' });
+  for (const key of ['ultrapowers_run_dir', 'cwd']) {
+    const r = withInside(() => runGuardrail({ toolName: 'bash', input: { command: curl, [key]: decoy }, cwd: inside }));
+    assert.equal(r.deny, true, `${key}: ${JSON.stringify(r)}`);
+    assert.equal(r.prefix, 'AUTOPILOT-GUARDRAIL');
+  }
+  // A hunt: the decoy's autopilot profile never replaces the hunt's.
+  const hunt = project({ marker: 'hunt' });
+  for (const key of ['ultrapowers_run_dir', 'cwd']) {
+    const r = runGuardrail({ toolName: 'bash', input: { command: 'npm install left-pad', [key]: decoy }, cwd: hunt });
+    assert.equal(r.deny, true, `${key}: ${JSON.stringify(r)}`);
+    assert.equal(r.prefix, 'HUNT-GUARDRAIL', `${key}: ${JSON.stringify(r)}`);
+  }
+});
+
+test('the bridge and the hook agree on the run when the session directory and the call directory differ', () => {
+  // The session directory holds a hunt marker; the call's directory, inside it, holds its own
+  // autopilot marker. The bridge finds the hunt from the session directory, and the hook judges the
+  // same run: the deny carries the HUNT prefix, and npm install (legal in a stage) is refused.
+  const root = project({ marker: 'hunt' });
+  const nested = path.join(root, 'repo-a');
+  fs.mkdirSync(path.join(nested, '.ultrapowers'), { recursive: true });
+  fs.writeFileSync(path.join(nested, '.ultrapowers', 'autopilot-active'), JSON.stringify({ ticket: 'GH-16', branch: 'GH-16-x', scope: ['.'], stage: 'execute' }));
+  const r = runGuardrail({ toolName: 'bash', input: { command: 'npm install left-pad', workdir: nested }, cwd: root });
+  assert.equal(r.deny, true, JSON.stringify(r));
+  assert.equal(r.prefix, 'HUNT-GUARDRAIL', JSON.stringify(r));
+  assert.match(r.reason, /npm install is not on the hunt's list/);
+});
+
+test('a bash planted under the project on an absolute PATH entry never runs', async () => {
+  const { bashBinary } = await import(`file://${BRIDGE.replace(/\\/g, '/')}`);
+  const root = project({ marker: 'hunt' });
+  const bin = path.join(root, 'node_modules', '.bin');
+  fs.mkdirSync(bin, { recursive: true });
+  const sentinel = path.join(root, 'planted-bash-ran');
+  fs.writeFileSync(path.join(bin, 'bash'), `#!/bin/sh\ntouch '${sentinel}'\nexit 0\n`);
+  fs.chmodSync(path.join(bin, 'bash'), 0o755);
+  fs.copyFileSync(path.join(bin, 'bash'), path.join(bin, 'bash.exe'));
+  // Excluded by the lookup itself, whatever the working directory: the entry is inside the project.
+  assert.equal(bashBinary({ env: { PATH: bin }, cwd: os.tmpdir(), project: root, candidates: [] }), null);
+  const prev = process.env.PATH;
+  process.env.PATH = [bin, prev].join(path.delimiter);
+  try {
+    const push = runGuardrail({ toolName: 'bash', input: { command: 'git push origin x' }, cwd: root });
+    assert.equal(push.deny, true, JSON.stringify(push));
+    assert.match(push.reason, /git push is never allowed|never publishes/);
+  } finally {
+    process.env.PATH = prev;
+  }
+  assert.equal(fs.existsSync(sentinel), false, 'the planted bash ran');
 });

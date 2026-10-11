@@ -127,6 +127,10 @@
         "path": "skills/verification-before-completion/SKILL.md"
       },
       {
+        "id": "vulnerability-hunt",
+        "path": "skills/vulnerability-hunt/SKILL.md"
+      },
+      {
         "id": "writing-plans",
         "path": "skills/writing-plans/SKILL.md"
       },

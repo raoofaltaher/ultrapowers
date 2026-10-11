@@ -219,11 +219,14 @@ else
 fi
 
 # --- no usable bash: the guardrail fails closed while a run is active (issue 12) ---
-# Every other hook keeps exiting 0 (above); qa-guardrail is the brake of a QA run or an autopilot
+# Every other hook keeps exiting 0 (above); qa-guardrail is the brake of a QA run, a hunt or an autopilot
 # stage, and a brake that silently vanishes is worse than a refused call.
 qa_proj="$TEST_ROOT/qa-project"
 mkdir -p "$qa_proj/.ultrapowers" "$qa_proj/sub/deeper"
 printf '1234' > "$qa_proj/.ultrapowers/qa-active"
+hunt_proj="$TEST_ROOT/hunt-project"
+mkdir -p "$hunt_proj/.ultrapowers" "$hunt_proj/sub"
+printf 'audit-2026-10-11' > "$hunt_proj/.ultrapowers/hunt-active"
 ap_proj="$TEST_ROOT/ap-project"
 mkdir -p "$ap_proj/.ultrapowers" "$ap_proj/sub"
 printf '{"ticket":"GH-16"}' > "$ap_proj/.ultrapowers/autopilot-active"
@@ -244,6 +247,12 @@ if [[ "$RC" -eq 2 && "$OUT" == *"QA-GUARDRAIL DENY: no bash found"* ]]; then
     pass "no bash and a QA marker above the cwd: qa-guardrail exits 2 with the QA deny"
 else
     fail "no bash and a QA marker above the cwd: qa-guardrail exits 2 with the QA deny (rc=$RC, out=$OUT)"
+fi
+run_nobash "$hunt_proj/sub" qa-guardrail
+if [[ "$RC" -eq 2 && "$OUT" == *"HUNT-GUARDRAIL DENY: no bash found"* ]]; then
+    pass "no bash and a hunt marker: qa-guardrail exits 2 with the hunt deny"
+else
+    fail "no bash and a hunt marker: qa-guardrail exits 2 with the hunt deny (rc=$RC, out=$OUT)"
 fi
 run_nobash "$ap_proj/sub" qa-guardrail
 if [[ "$RC" -eq 2 && "$OUT" == *"AUTOPILOT-GUARDRAIL DENY: no bash found"* ]]; then

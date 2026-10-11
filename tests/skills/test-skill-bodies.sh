@@ -77,6 +77,15 @@ for f in README.md docs/autopilot-watcher.md skills/init/scripts/init.mjs skills
 done
 
 echo ""
+echo "=== Test: the vulnerability hunt door states its rules (spec 2026-10-11) ==="
+expect skills/vulnerability-hunt/SKILL.md '^agent: vulnerability-hunter$' 'vulnerability-hunt forks into the vulnerability-hunter agent'
+expect skills/vulnerability-hunt/SKILL.md 'usage: /ultrapowers:vulnerability-hunt \[ticket\] \[repo\.\.\.\] \[--full-audit\] \[--post\]' 'vulnerability-hunt prints its usage line'
+expect skills/vulnerability-hunt/SKILL.md 'Running the hunt contract inline: this harness does not fork' 'vulnerability-hunt announces the inline contract'
+expect skills/vulnerability-hunt/SKILL.md '[Tt]here is no network in this review' 'vulnerability-hunt has the Red Flags row for an assumed absent network'
+expect skills/vulnerability-hunt/SKILL.md 'CI already runs `npm audit`' 'vulnerability-hunt has the Red Flags row for a scanner elsewhere'
+expect skills/vulnerability-hunt/SKILL.md '[Nn]o manifest, so the lane failed' 'vulnerability-hunt has the Red Flags row for a missing manifest'
+
+echo ""
 echo "=== Test: executing-plans leaves no background task running at hand-back (issue #40) ==="
 expect skills/executing-plans/SKILL.md 'moved to the background' 'executing-plans rules on a call the harness moved to the background'
 expect skills/executing-plans/SKILL.md 'waiting on input' 'executing-plans names the interpreter waiting on stdin'

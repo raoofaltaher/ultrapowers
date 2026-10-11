@@ -7,7 +7,7 @@ description: Use when a ticket's implementation is done and your human partner w
 
 ## Overview
 
-Review a ticket's finished work end to end: a code review of every repository it touched, then the QA gate, then one verdict in `reviews/<ID>/TASK-REVIEW.md`. With `--post`, the full reports go to the tracker.
+Review a ticket's finished work end to end: a code review of every repository it touched, then the vulnerability hunt, then the QA gate, then one verdict in `reviews/<ID>/TASK-REVIEW.md`. With `--post`, the full reports go to the tracker.
 
 **Core principle:** the review reads and reports; it never changes the code, never merges, and never posts unless `--post` is in the invocation.
 
@@ -52,6 +52,10 @@ A reviewer that returns no JSON block, or findings without root-cause notes, is 
 
 **Without a subagent tool:** read [prompts/review.md](prompts/review.md) and perform that review yourself, one repository after another, whole files and their callers, and write the same JSON block for each. Add a `declined` entry for what an inline reviewer cannot do, such as `reviewed inline by the session that ran the task; no separate most-capable model was named`, and say in your verdict message that a review by the session that ran it is weaker than a fresh reviewer: your human partner decides whether that is enough before merge.
 
+## Step 3b: The vulnerability hunt
+
+After every reviewer has returned and before the QA gate, run `ultrapowers:vulnerability-hunt <ID> <repo words>`; it writes `reviews/<ID>/SECURITY-REPORT.md` and `security-findings.json`, which Step 5 folds in. Its verdict stands as written. A hunt that could not run is INCOMPLETE in the report, not a reason to skip Step 5.
+
 ## Step 4: The QA gate
 
 Only after every reviewer has returned (a QA run's guardrail would deny the reviewers' reads), run `ultrapowers:qa-specialist` for `<ID>`: the qa-specialist agent drives it and writes `reviews/<ID>/QA-REPORT.md`. Its verdict stands as written, including `PRECONDITION-FAILED` and `INCOMPLETE`; a blocked gate does not stop the report.
@@ -62,7 +66,7 @@ Only after every reviewer has returned (a QA run's guardrail would deny the revi
 node "<SKILL_DIR>/scripts/assemble-review.mjs" "<ID>" --findings "reviews/<ID>/review-findings.json" --qa "reviews/<ID>/QA-REPORT.md"
 ```
 
-It writes `reviews/<ID>/TASK-REVIEW.md` from [templates/TASK-REVIEW.md](templates/TASK-REVIEW.md): `FAIL` on any Critical finding or a QA `FAIL`, `BLOCKED` on a QA `PRECONDITION-FAILED` or `INCOMPLETE`, `PASS-WITH-ISSUES` on Important findings or a QA `PASS-WITH-ISSUES`, else `PASS`. Do not hand-edit the verdict. Tell your human partner the verdict, the finding counts and the path, in four lines at most.
+It writes `reviews/<ID>/TASK-REVIEW.md` from [templates/TASK-REVIEW.md](templates/TASK-REVIEW.md): `FAIL` on any Critical finding, a security `FAIL` or a QA `FAIL`, `BLOCKED` on a QA `PRECONDITION-FAILED` or `INCOMPLETE`, `PASS-WITH-ISSUES` on Important findings or a security or QA `PASS-WITH-ISSUES`, else `PASS`. It reads `reviews/<ID>/security-findings.json` when the hunt wrote it; a security `INCOMPLETE` never blocks and is named in the verdict. Do not hand-edit the verdict. Tell your human partner the verdict, the finding counts and the path, in four lines at most.
 
 ## Step 6: Post (only with `--post`)
 
@@ -79,9 +83,10 @@ It refuses a local ticket, commits and pushes `reviews/<ID>/` to the documents b
 3. Run the preflight; stop on ERROR, NO-WORK or NO-CODE; confirm the repositories
 4. Dispatch one reviewer per repository, most capable model, whole files (inline, with a `declined` entry, when there is no subagent tool)
 5. Collect the findings file
-6. Run the QA gate after the reviewers
-7. Assemble `TASK-REVIEW.md`; report the verdict
-8. With `--post` only, post; otherwise say `--post` posts it
+6. Run the vulnerability hunt after the reviewers, before the QA gate
+7. Run the QA gate after the reviewers
+8. Assemble `TASK-REVIEW.md`; report the verdict
+9. With `--post` only, post; otherwise say `--post` posts it
 
 ## Red Flags
 
@@ -97,4 +102,6 @@ It refuses a local ticket, commits and pushes `reviews/<ID>/` to the documents b
 | "No ticket branch, but I'll review `main` so there is something to show" | No branch means nothing to review. Report that and stop. |
 | "QA could not run, so I'll leave the verdict to the code review" | The assembler turns a blocked gate into `BLOCKED` and keeps the findings. Do not pick a verdict yourself. |
 | "There is no subagent tool here, so the code review is skipped" | The review does not need a subagent, only a reader. Perform `prompts/review.md` yourself per repository and record in `declined` that it ran inline. A report with no code review is not a pass. |
+| "CI already runs npm audit, so the dependency and security pass is a duplicate" | A scanner elsewhere is not this branch's lockfile read here. Run the hunt; a runtime CVE found only here is the finding the review exists for. |
+| "The audit tool will not reach the registry, there is no network, so I'll list the advisories from memory" | You did not run it, so you do not know. Run the tool, record the exact failure, and the lane is INCOMPLETE. No advisory id comes from memory. |
 | "I'll invent a verdict word that fits better" | Four values exist: PASS, PASS-WITH-ISSUES, FAIL, BLOCKED. The script writes them. |

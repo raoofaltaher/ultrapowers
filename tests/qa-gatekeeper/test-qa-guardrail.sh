@@ -9,6 +9,11 @@
 # .agents/mcp-secrets.env); fixtures ending in _winshort run only where the volume has short names.
 # Fixtures ending in _casesens run in a second project whose folder is case-sensitive ({{ROOT}} is
 # then that project); they skip where no case-sensitive folder can be made.
+# {{ELSEWHERE}} is a directory outside the project and {{DECOY}} another project that holds its
+# own autopilot marker and a config with no forbidden host. A fixture may carry two more top-level
+# keys the hook ignores: "dir" (the directory the hook runs from, default the project) and "env"
+# (an object of environment variables set for that one run, e.g. {"ULTRAPOWERS_RUN_DIR":"{{ROOT}}"}
+# the way the bridge sets it). Pass 2 ignores both and runs from the project.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -46,6 +51,11 @@ cat > "$ROOT/.agents/ultrapowers.json" <<'JSON'
 }
 JSON
 printf '%s' "1234" > "$ROOT/.ultrapowers/qa-active"
+ELSEWHERE="$TEST_ROOT/elsewhere"
+DECOY="$TEST_ROOT/decoy"
+mkdir -p "$DECOY/.agents" "$DECOY/.ultrapowers"
+printf '%s' '{"name":"decoy","pluginVersion":"1.0.0","qa":{"hosts":{"allowed":[],"forbidden":[]}}}' > "$DECOY/.agents/ultrapowers.json"
+printf '%s' '{"ticket":"GH-99","branch":"GH-99-x","scope":["."]}' > "$DECOY/.ultrapowers/autopilot-active"
 
 # A second project in a case-sensitive folder, for the _casesens fixtures.
 FIXTURE_PATHS="$SCRIPT_DIR/fixture-paths.mjs"
@@ -86,7 +96,24 @@ render() {
   text="${text//\{\{WINROOT\}\}/$WINROOT_JSON}"
   text="${text//\{\{WINSHORT_SECRETS\}\}/$WINSHORT_SECRETS}"
   text="${text//\{\{WINSHORT\}\}/$WINSHORT}"
+  text="${text//\{\{ELSEWHERE\}\}/$ELSEWHERE}"
+  text="${text//\{\{DECOY\}\}/$DECOY}"
   printf '%s' "$text"
+}
+
+# A rendered fixture's "dir" (in REPLY, empty when none) and "env" (in RUN_ENV, NAME=value words).
+RUN_ENV=()
+fixture_dir_env() {
+  local event="$1" envs pair_re='"([A-Za-z_][A-Za-z0-9_]*)":"([^"]*)"'
+  REPLY=""; RUN_ENV=()
+  [[ "$event" =~ \"dir\":\"([^\"]*)\" ]] && REPLY="${BASH_REMATCH[1]}"
+  if [[ "$event" =~ \"env\":\{([^\}]*)\} ]]; then
+    envs="${BASH_REMATCH[1]}"
+    while [[ "$envs" =~ $pair_re ]]; do
+      RUN_ENV+=("${BASH_REMATCH[1]}=${BASH_REMATCH[2]}")
+      envs="${envs#*"${BASH_REMATCH[0]}"}"
+    done
+  fi
 }
 
 skip_fixture() {
@@ -102,7 +129,7 @@ skip_fixture() {
 run_hook() {
   # $1 rendered event, $2 working dir; prints "<code>|<stderr>|<stdout>"
   local event="$1" dir="$2" out err code
-  out="$(cd "$dir" && printf '%s' "$event" | bash "$HOOK" 2>"$TEST_ROOT/stderr.txt")"
+  out="$(cd "$dir" && printf '%s' "$event" | env ${RUN_ENV[@]+"${RUN_ENV[@]}"} bash "$HOOK" 2>"$TEST_ROOT/stderr.txt")"
   code=$?
   err="$(cat "$TEST_ROOT/stderr.txt")"
   printf '%s|%s|%s' "$code" "$err" "$out"
@@ -121,14 +148,20 @@ for f in "$FIXTURES"/*.json; do
   event="$(render "$f")"
   run_root="$ROOT"
   case "$name" in *_casesens) run_root="$CSROOT" ;; esac
+  fixture_dir_env "$event"
+  [[ -n "$REPLY" ]] && run_root="$REPLY"
   result="$(run_hook "$event" "$run_root")"
+  RUN_ENV=()
   code="${result%%|*}"
   rest="${result#*|}"
   err="${rest%%|*}"
+  # A fixture may carry a top-level "reason" (the hook ignores it): the deny must hold that text.
+  want=""
+  if [[ "$event" =~ \"reason\":\"([^\"]*)\" ]]; then want="${BASH_REMATCH[1]}"; fi
   case "$name" in
     deny_*)
       if [[ "$code" -eq 2 ]] && printf '%s' "$err" | grep -q '^QA-GUARDRAIL DENY: '; then
-        pass "$name denied"
+        if [[ -n "$want" && "$err" != *"$want"* ]]; then fail "$name is denied for another reason than '$want' (stderr: $err)"; else pass "$name denied"; fi
       else
         fail "$name denied (exit $code, stderr: $err)"
       fi ;;
@@ -156,16 +189,19 @@ else
   fail "event cwd activates the guardrail (exit ${result%%|*})"
 fi
 
-echo "qa-guardrail: the marker is found from a nested clone and from a call's own working directory"
+echo "qa-guardrail: the marker is found from a nested clone, and from the run directory the bridge names"
 mkdir -p "$ROOT/repo-a/src"
-for variant in \
-  "event cwd in a nested clone|{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push origin qa\"},\"cwd\":\"$ROOT/repo-a/src\"}|$TEST_ROOT/elsewhere" \
-  "tool workdir in a nested clone|{\"tool_name\":\"bash\",\"tool_input\":{\"command\":\"git push origin qa\",\"workdir\":\"$ROOT/repo-a/src\"}}|$TEST_ROOT/elsewhere" \
-  "tool working_directory|{\"tool_name\":\"terminal\",\"tool_input\":{\"command\":\"git push origin qa\",\"working_directory\":\"$ROOT/repo-a\"}}|$TEST_ROOT/elsewhere" \
-  "process cwd in a nested clone|{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push origin qa\"}}|$ROOT/repo-a/src"; do
-  label="${variant%%|*}"; rest="${variant#*|}"; event="${rest%|*}"; dir="${rest##*|}"
-  result="$(run_hook "$event" "$dir")"
+for variant in   "event cwd in a nested clone|{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push origin qa\"},\"cwd\":\"$ROOT/repo-a/src\"}|$TEST_ROOT/elsewhere|"   "ULTRAPOWERS_RUN_DIR in a nested clone|{\"tool_name\":\"bash\",\"tool_input\":{\"command\":\"git push origin qa\",\"workdir\":\"$ROOT/repo-a/src\"}}|$TEST_ROOT/elsewhere|$ROOT/repo-a/src"   "process cwd in a nested clone|{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push origin qa\"}}|$ROOT/repo-a/src|"; do
+  label="${variant%%|*}"; rest="${variant#*|}"; event="${rest%%|*}"; rest="${rest#*|}"; dir="${rest%%|*}"; rd="${rest#*|}"
+  RUN_ENV=(); [[ -n "$rd" ]] && RUN_ENV=("ULTRAPOWERS_RUN_DIR=$rd")
+  result="$(run_hook "$event" "$dir")"; RUN_ENV=()
   if [[ "${result%%|*}" -eq 2 ]]; then pass "marker found: $label"; else fail "marker found: $label (exit ${result%%|*})"; fi
+done
+# A key under tool_input never roots the hook: the root comes from the hook's cwd (or the bridge's
+# ULTRAPOWERS_RUN_DIR) and the event's top-level cwd alone.
+for key in workdir working_directory cwd ultrapowers_run_dir dir_path Cwd; do
+  result="$(run_hook "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push origin qa\",\"$key\":\"$ROOT/repo-a\"}}" "$TEST_ROOT/elsewhere")"
+  if [[ "${result%%|*}" -eq 0 ]]; then pass "tool_input.$key does not root the hook"; else fail "tool_input.$key does not root the hook (got $result)"; fi
 done
 # A relative cwd has no parent to climb to; a hook that never returns is killed at its timeout and a
 # killed hook lets the call through, so the walk must end.
@@ -224,6 +260,45 @@ if [[ "${result%%|*}" -eq 2 && $((t_end - t_start)) -lt 5 ]]; then
 else
   fail "a 200-file patch is denied in under 5 s (exit ${result%%|*}, $((t_end - t_start)) s)"
 fi
+
+echo "qa-guardrail: the marker prefilter is linear and bounded"
+# The prefilter runs when the hook's cwd holds no run. A model-controlled argument of 1 MB before a
+# nested "cwd" key took minutes when each match was stripped with ${rest#*match}, and a hook killed
+# at its timeout lets the call through on some harnesses. It must answer in under 2 s; past its
+# 256 KB bound the top-level fields are read through node, so a top-level cwd after the argument
+# still roots the hook.
+big_arg="$(printf '%*s' 1048576 '' | tr ' ' 'a')"
+ms_now() { local t="${EPOCHREALTIME/[.,]/}"; REPLY=$((t / 1000)); }
+ms_now; t0="$REPLY"
+result="$(run_hook "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"echo $big_arg\",\"cwd\":\"$ROOT\"}}" "$ELSEWHERE")"
+ms_now; elapsed=$((REPLY - t0))
+if [[ "${result%%|*}" -eq 0 && "$elapsed" -lt 2000 ]]; then
+  pass "a 1 MB argument before a nested cwd is answered in under 2 s, unrooted ($elapsed ms)"
+else
+  fail "a 1 MB argument before a nested cwd is answered in under 2 s, unrooted (exit ${result%%|*}, $elapsed ms)"
+fi
+result="$(run_hook "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push origin $big_arg\"},\"cwd\":\"$ROOT\"}" "$ELSEWHERE")"
+if [[ "${result%%|*}" -eq 2 && "$result" == *"QA-GUARDRAIL DENY: git push is never allowed"* ]]; then
+  pass "a top-level cwd past the 256 KB bound still roots the hook"
+else
+  fail "a top-level cwd past the 256 KB bound still roots the hook (exit ${result%%|*})"
+fi
+many_keys=""
+for ((i = 0; i < 2000; i++)); do many_keys+="\"cwd\":\"/nowhere/$i\","; done
+result="$(run_hook "{\"tool_name\":\"Bash\",\"tool_input\":{$many_keys\"command\":\"git push origin qa\"},\"cwd\":\"$ROOT\"}" "$ELSEWHERE")"
+if [[ "${result%%|*}" -eq 2 ]]; then
+  pass "a top-level cwd after 2000 nested cwd keys still roots the hook"
+else
+  fail "a top-level cwd after 2000 nested cwd keys still roots the hook (exit ${result%%|*})"
+fi
+
+echo "qa-guardrail: a marker whose ticket would widen the write area refuses every call"
+for bad in '..' '1234/../..' 'a\b'; do
+  printf '%s' "$bad" > "$ROOT/.ultrapowers/qa-active"
+  result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"ls"}}' "$ROOT")"
+  if [[ "${result%%|*}" -eq 2 && "$result" == *"the run marker holds"* ]]; then pass "deny_marker_value: a marker holding '$bad' refuses every call"; else fail "deny_marker_value: a marker holding '$bad' refuses every call (got $result)"; fi
+done
+printf '%s' "1234" > "$ROOT/.ultrapowers/qa-active"
 
 echo "qa-guardrail: a config with a byte order mark keeps its host lists"
 BOMROOT="$TEST_ROOT/bomproject"

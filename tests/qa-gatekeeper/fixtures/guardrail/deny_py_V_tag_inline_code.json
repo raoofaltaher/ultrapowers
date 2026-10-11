@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"py -V:3.12 -c \"print(1)\""}}

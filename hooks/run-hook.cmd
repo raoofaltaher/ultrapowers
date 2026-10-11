@@ -38,7 +38,7 @@ if not defined BASH_EXE if defined SystemRoot for /f "delims=" %%B in ('"%System
 
 REM No bash found - exit silently rather than error
 REM (plugin still works, just without SessionStart context injection).
-REM The one exception is the guardrail: it is the brake of a QA run or an autopilot stage, and a
+REM The one exception is the guardrail: it is the brake of a QA run, a hunt or an autopilot stage, and a
 REM brake that silently vanishes lets every call through. With a run active it fails closed.
 if not defined BASH_EXE if /i "%~1"=="qa-guardrail" goto :guard_closed
 if not defined BASH_EXE exit /b 0
@@ -50,11 +50,13 @@ REM exit code.
 exit /b %ERRORLEVEL%
 
 REM Fail closed for the guardrail: walk up from the working directory looking for a run marker
-REM (the QA marker first, as in the hook), then the watcher stage's environment flag.
+REM (the QA marker first, then the hunt marker, as in the hook), then the watcher stage's environment
+REM flag. The hunt shares the QA label: no label of its own to find, only its message.
 :guard_closed
 set "GUARD_DIR=%CD%"
 :guard_walk
 if exist "%GUARD_DIR%\.ultrapowers\qa-active" goto :guard_qa
+if exist "%GUARD_DIR%\.ultrapowers\hunt-active" set "GUARD_MSG=HUNT-GUARDRAIL DENY: no bash found; a tool call during a vulnerability hunt" & goto :guard_qa
 if exist "%GUARD_DIR%\.ultrapowers\autopilot-active" goto :guard_autopilot
 set "GUARD_PARENT="
 for %%P in ("%GUARD_DIR%\..") do set "GUARD_PARENT=%%~fP"
@@ -66,7 +68,8 @@ goto :guard_walk
 if "%ULTRAPOWERS_AUTOPILOT_INSIDE%"=="1" goto :guard_autopilot
 exit /b 0
 :guard_qa
-echo QA-GUARDRAIL DENY: no bash found; a tool call during a QA run is refused without the guardrail 1>&2
+if not defined GUARD_MSG set "GUARD_MSG=QA-GUARDRAIL DENY: no bash found; a tool call during a QA run"
+echo %GUARD_MSG% is refused without the guardrail 1>&2
 exit /b 2
 :guard_autopilot
 echo AUTOPILOT-GUARDRAIL DENY: no bash found; a tool call during an autopilot stage is refused without the guardrail 1>&2

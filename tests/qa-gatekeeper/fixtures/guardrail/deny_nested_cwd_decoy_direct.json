@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"git commit -m x","cwd":"{{DECOY}}"},"cwd":"{{ROOT}}","dir":"{{ELSEWHERE}}","reason":"is outside the project"}

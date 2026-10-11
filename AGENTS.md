@@ -59,6 +59,7 @@ bash tests/hooks/test-team-memory-hooks.sh
 bash tests/hooks/test-executable-bits.sh
 bash tests/hooks/test-run-hook-cmd-windows.sh     # Windows only; skips elsewhere
 node --test tests/hooks/test-guardrail-bridge.mjs
+node --test tests/hooks/test-guardrail-entrypoints-parity.mjs
 bash tests/init/run-tests.sh
 node --test tests/team-memory/memory-lint.test.mjs
 bash tests/team-memory/test-templates.sh
@@ -71,9 +72,10 @@ bash tests/task-lifecycle/test-task-review.sh
 bash tests/task-lifecycle/test-skill-structure.sh
 node --test tests/task-lifecycle/assemble-review.test.mjs
 node --test tests/task-lifecycle/post-review.test.mjs
+bash tests/vulnerability-hunt/run-tests.sh
 bash tests/autopilot/run-tests.sh
 bash tests/autopilot/test-adapters.sh             # skips a harness CLI that is not installed
-bash tests/qa-gatekeeper/run-tests.sh
+bash tests/qa-gatekeeper/run-tests.sh             # includes the QA, autopilot and hunt guardrail profile suites
 bash tests/skills/test-skill-bodies.sh
 node --test tests/pi/test-pi-extension.mjs
 bash tests/opencode/run-tests.sh            # unit tests; add --integration for a live OpenCode

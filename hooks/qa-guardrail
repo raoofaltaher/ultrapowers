@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
-# qa-guardrail: PreToolUse guardrail for the ultrapowers QA gatekeeper (spec 3.5) and the
-# autopilot envelope (autopilot spec section 8).
+# qa-guardrail: PreToolUse guardrail for the ultrapowers QA gatekeeper (spec 3.5), the
+# vulnerability hunt and the autopilot envelope (autopilot spec section 8).
 #
 # stdin  : the harness event JSON (tool_name, tool_input, optional cwd)
-# exit 0 : allow.  exit 2 : deny; stderr carries "QA-GUARDRAIL DENY: <reason>" or
-#          "AUTOPILOT-GUARDRAIL DENY: <reason>".
+# env    : ULTRAPOWERS_RUN_DIR, set only by hooks/lib/guardrail-bridge.mjs on the hook's spawn: the
+#          absolute directory the bridge found the run from (see the root scan below). Nothing
+#          else sets it; the run directory never travels inside the event.
+# exit 0 : allow.  exit 2 : deny; stderr carries "QA-GUARDRAIL DENY: <reason>",
+#          "HUNT-GUARDRAIL DENY: <reason>" or "AUTOPILOT-GUARDRAIL DENY: <reason>".
 #
 # Inert unless a run marker exists at or above the working directory: `.ultrapowers/qa-active`
-# (the QA profile: read-only, writes under reviews/<id>/ only) or `.ultrapowers/autopilot-active`
+# (the QA profile: read-only, writes under reviews/<id>/ only), `.ultrapowers/hunt-active` (the
+# hunt profile: the QA rules with the audit id in place of the ticket, plus the audit tools of the
+# hunt allowed and no test suite, no worktree and no tracker write) or `.ultrapowers/autopilot-active`
 # (the autopilot profile: writes anywhere in the worktree except protected paths; no push, no
-# merge, no tracker write; the engine does those between stages). With both markers the QA
-# profile applies. The skills write the markers and remove them at the end of the run, so every
-# other session pays only a directory walk.
+# merge, no tracker write; the engine does those between stages). With several markers in one
+# directory the first of qa, hunt, autopilot applies. The skills write the markers and remove them
+# at the end of the run, so every other session pays only a directory walk.
 #
 # `set -uo pipefail` and NOT `-e`: the "grep matches -> deny, else continue" pattern below
 # relies on a non-matching grep returning non-zero without aborting the script.
@@ -52,6 +57,9 @@ marker_suffix_r() {
     else
       REPLY=" (autopilot stage${ticket_id:+ for ticket $ticket_id}: ULTRAPOWERS_AUTOPILOT_INSIDE is set and the marker $f is gone. If no stage is running, your human partner can end it with autopilot.mjs end ${ticket_id:-<ID>} ${stage:-<stage>} or unset that variable.)"
     fi
+  elif [ "${PROFILE:-}" = "hunt" ]; then
+    f="$root/.ultrapowers/hunt-active"
+    REPLY=" (vulnerability hunt${ticket_id:+ $ticket_id}: $f${age:+, $age old}. If no hunt is in progress, your human partner can end it by running /ultrapowers:vulnerability-hunt again or by removing that file.)"
   else
     f="$root/.ultrapowers/qa-active"
     REPLY=" (QA run${ticket_id:+ for ticket $ticket_id}: $f${age:+, $age old}. If no QA run is in progress, your human partner can end it with /ultrapowers:qa-specialist ${ticket_id:-<id>} or remove that file.)"
@@ -89,7 +97,8 @@ lower_r() {
 }
 
 # Walk up from $1 looking for a run marker; REPLY is the directory that holds it and
-# PROFILE is `qa` or `autopilot` (qa wins when both markers exist in the same directory).
+# PROFILE is `qa`, `hunt` or `autopilot` (in that order of precedence when several markers exist in
+# the same directory).
 PROFILE=""
 find_root_r() {
   local d="$1"
@@ -99,6 +108,11 @@ find_root_r() {
     if [ -f "$d/.ultrapowers/qa-active" ]; then
       REPLY="$d"
       PROFILE="qa"
+      return 0
+    fi
+    if [ -f "$d/.ultrapowers/hunt-active" ]; then
+      REPLY="$d"
+      PROFILE="hunt"
       return 0
     fi
     if [ -f "$d/.ultrapowers/autopilot-active" ]; then
@@ -120,48 +134,127 @@ find_root_r() {
 find_root() { find_root_r "$1" || return 1; printf '%s' "$REPLY"; }
 
 event=""
-IFS= read -r -d '' event || true
+# read -N takes the pipe in blocks; read -d '' takes it one byte per call, 2 s per MB on Windows.
+# NUL bytes are dropped (the bridge ends the event with one; JSON escapes any other).
+ev_chunk=""
+while IFS= read -r -N 1048576 ev_chunk; do event+="$ev_chunk"; done
+event+="$ev_chunk"
 
-# --- Fast path: is a run active? Check the process cwd, then EVERY "cwd" string in the
-# event (all occurrences, so text inside a command can add a candidate but never hide the
-# real one). No process is started for an inert session.
+# --- Fast path: is a run active? The scan starts from ULTRAPOWERS_RUN_DIR when it is set, else
+# from the process cwd; then the event's TOP-LEVEL cwd alone is a further start. A key nested
+# under tool_input (cwd, workdir, working_directory, dir_path, ultrapowers_run_dir, ...) never
+# names the root: a tool argument would then choose the run, its profile and its project config.
+#
+# ULTRAPOWERS_RUN_DIR is set by hooks/lib/guardrail-bridge.mjs alone, on the hook's spawn: the
+# bridge runs the hook from the plugin folder (OpenCode, Pi, and through guardrail-cli.mjs Kimi,
+# Antigravity, Hermes and the Gemini project hook) and passes the directory it found the run from
+# out of band, never inside the event. It must be an absolute, existing directory, or every call
+# is refused. Unset (Claude Code, Cursor, Muse, Codex, Copilot CLI, Droid, Qwen Code, Devin), the
+# scan starts from the hook's own cwd, the session directory the harness runs it in; then the
+# top-level cwd, then the top-level workspace_roots[0] (Cursor's event carries the project there and
+# no cwd, and runs the hook from the plugin folder), then CURSOR_PROJECT_DIR, the last two only when
+# absolute and existing. Each is set by the harness; a copy nested under tool_input never counts.
+#
+# No process is started for an inert session, with one exception: the top-level fields are read
+# through node (hooks/lib/event-fields.mjs) only when some "cwd" or "workspace_roots" string in the
+# event text leads to a marker, or when the event is past the prefilter's bound (over 256 KB or
+# more than 64 candidates) and node is on PATH; then an inert event costs one node start.
 root=""
-norm_path_r "$PWD"
-if find_root_r "$REPLY"; then
-  root="$REPLY"
+root_start=""
+abs_dir_r() { # $1 a path: REPLY its normalized form when absolute and an existing directory, else fail
+  REPLY=""
+  case "$1" in /*|[A-Za-z]:/*|[A-Za-z]:\\*) ;; *) return 1 ;; esac
+  norm_path_r "$1"
+  [ -d "$REPLY" ] || { REPLY=""; return 1; }
+}
+if [ -n "${ULTRAPOWERS_RUN_DIR+x}" ]; then
+  case "$ULTRAPOWERS_RUN_DIR" in
+    /*|[A-Za-z]:/*|[A-Za-z]:\\*) ;;
+    *) deny "ULTRAPOWERS_RUN_DIR ($ULTRAPOWERS_RUN_DIR) is not an absolute path; the run directory cannot be verified, so every call is refused" ;;
+  esac
+  norm_path_r "$ULTRAPOWERS_RUN_DIR"
+  scan_start="$REPLY"
+  [ -d "$scan_start" ] || deny "ULTRAPOWERS_RUN_DIR ($ULTRAPOWERS_RUN_DIR) does not name an existing directory; the run directory cannot be verified, so every call is refused"
+  if find_root_r "$scan_start"; then root="$REPLY"; fi
 else
-  rest="$event"
-  # The directory a call runs in: the event cwd and a call's own working directory (OpenCode
-  # workdir, Hermes working_directory, Gemini dir_path, Antigravity Cwd). A call may name a project
-  # under run from a process that sits elsewhere, with no cwd in the event.
-  cwd_re='"(cwd|workdir|working_directory|workingDirectory|dir_path|Cwd)"[[:space:]]*:[[:space:]]*"([^"]*)"'
-  while [[ "$rest" =~ $cwd_re ]]; do
-    rest="${rest#*"${BASH_REMATCH[0]}"}"
-    candidate="${BASH_REMATCH[2]}"
-    [ -n "$candidate" ] || continue
-    norm_path_r "$candidate"
-    if find_root_r "$REPLY"; then
-      root="$REPLY"
-      break
+  norm_path_r "$PWD"
+  scan_start="$REPLY"
+  if find_root_r "$scan_start"; then
+    root="$REPLY"
+  else
+    # A superset filter with builtins only: every "cwd" string and every first "workspace_roots"
+    # entry in the text, the nested ones too. Only when one of them leads to a marker are the real
+    # top-level fields read, and only they count.
+    # Linear and bounded: the scan reads at most the first 256 KB of the event and 64 candidates,
+    # and each match advances by an offset (a ${rest#*match} strip is quadratic in bash, and a hook
+    # killed at its timeout lets the call through on some harnesses). Past either bound the filter
+    # cannot rule a run out, so the top-level fields are read through node as on a hit.
+    scan_cap=262144
+    rest="${event:0:$scan_cap}"
+    over_cap=""
+    [ "${#event}" -gt "$scan_cap" ] && over_cap=1
+    cwd_re='"(cwd|workspace_roots)"[[:space:]]*:[[:space:]]*\[?[[:space:]]*"([^"]*)"'
+    hit=""
+    n_cand=0
+    while [[ "$rest" =~ $cwd_re ]]; do
+      n_cand=$((n_cand + 1))
+      if [ "$n_cand" -gt 64 ]; then over_cap=1; break; fi
+      m="${BASH_REMATCH[0]}"
+      candidate="${BASH_REMATCH[2]}"
+      pre="${rest%%"$m"*}"
+      rest="${rest:$((${#pre} + ${#m}))}"
+      [ -n "$candidate" ] || continue
+      norm_path_r "$candidate"
+      if find_root_r "$REPLY"; then hit=1; break; fi
+    done
+    PROFILE=""
+    # Past the bound with no node the event cannot be read: an inert session must not depend on
+    # node, so the call goes on to the CURSOR_PROJECT_DIR start and, failing that, is allowed.
+    if [ -z "$hit" ] && [ -n "$over_cap" ] && command -v node >/dev/null 2>&1; then hit=1; fi
+    if [ -n "$hit" ]; then
+      command -v node >/dev/null 2>&1 || deny "node is required to read the event of a call that names a run directory, and is not on PATH"
+      ef_src="${BASH_SOURCE[0]}"
+      ef_slash='/'
+      ef_src="${ef_src//\\/$ef_slash}"
+      case "$ef_src" in */*) ef_js="${ef_src%/*}/lib/event-fields.mjs" ;; *) ef_js="lib/event-fields.mjs" ;; esac
+      if command -v cygpath >/dev/null 2>&1; then ef_js="$(cygpath -m "$ef_js" 2>/dev/null || printf '%s' "$ef_js")"; fi
+      top_fields="$(printf '%s' "$event" | node "$ef_js" cwd 'workspace_roots[0]')" || deny "the tool event could not be parsed for its top-level cwd; an uninspectable call is refused"
+      case "$top_fields" in
+        *$'\n'*) top_cwd="${top_fields%%$'\n'*}"; top_ws="${top_fields#*$'\n'}" ;;
+        *) top_cwd="$top_fields"; top_ws="" ;;
+      esac
+      if [ -n "$top_cwd" ]; then
+        norm_path_r "$top_cwd"
+        if find_root_r "$REPLY"; then root="$REPLY"; fi
+      fi
+      if [ -z "$root" ] && abs_dir_r "$top_ws" && find_root_r "$REPLY"; then
+        root="$REPLY"; abs_dir_r "$top_ws"; root_start="$REPLY"
+      fi
     fi
-  done
+  fi
+  if [ -z "$root" ] && [ -n "${CURSOR_PROJECT_DIR:-}" ] && abs_dir_r "$CURSOR_PROJECT_DIR" && find_root_r "$REPLY"; then
+    root="$REPLY"; abs_dir_r "$CURSOR_PROJECT_DIR"; root_start="$REPLY"
+  fi
 fi
 # A headless watcher stage carries ULTRAPOWERS_AUTOPILOT_INSIDE=1 in its environment: the
 # envelope then holds even when the marker file is gone (the root is the project that holds
-# .agents/ultrapowers.json above the cwd; no project, no verifiable call).
+# .agents/ultrapowers.json above the scan start: ULTRAPOWERS_RUN_DIR or the hook's cwd, never a
+# key of the event; no project, no verifiable call).
 if [ -z "$root" ] && [ "${ULTRAPOWERS_AUTOPILOT_INSIDE:-}" = "1" ]; then
-  d="$(norm_path "$PWD")"
+  d="$scan_start"
   while :; do
     if [ -f "$d/.agents/ultrapowers.json" ]; then root="$d"; PROFILE="autopilot"; break; fi
-    case "$d" in /|.|"") break ;; esac
+    case "$d" in /|.|"") break ;; */*) ;; *) break ;; esac
     d="${d%/*}"; [ -n "$d" ] || d="/"
   done
   [ -n "$root" ] || deny "an autopilot stage is running (ULTRAPOWERS_AUTOPILOT_INSIDE) outside any ultrapowers project; the call cannot be verified"
 fi
 [ -n "$root" ] || exit 0
 [ "$PROFILE" = "autopilot" ] && GUARD_PREFIX="AUTOPILOT-GUARDRAIL"
+[ "$PROFILE" = "hunt" ] && GUARD_PREFIX="HUNT-GUARDRAIL"
 run_kind="a QA run"
 [ "$PROFILE" = "autopilot" ] && run_kind="an autopilot stage"
+[ "$PROFILE" = "hunt" ] && run_kind="a vulnerability hunt"
 
 # --- Active. From here on an uninspectable call is denied, never waved through.
 command -v node >/dev/null 2>&1 || deny "node is required to inspect tool calls during $run_kind and is not on PATH"
@@ -176,6 +269,12 @@ done
 root_node="$root"
 if command -v cygpath >/dev/null 2>&1; then
   root_node="$(cygpath -m "$root" 2>/dev/null)" || root_node="$root"
+fi
+# The project folder the harness named (workspace_roots[0] or CURSOR_PROJECT_DIR) when the root came
+# from it: relative file-tool paths resolve there, as the shell's do, when the event has no cwd.
+root_start_node="$root_start"
+if [ -n "$root_start" ] && command -v cygpath >/dev/null 2>&1; then
+  root_start_node="$(cygpath -m "$root_start" 2>/dev/null)" || root_start_node="$root_start"
 fi
 
 # The hook's own folder: the node block and the write analyzer load hooks/lib/ from it.
@@ -281,9 +380,17 @@ for (const source of sources) {
 }
 let ticket = "";
 try { ticket = fs.readFileSync(path.join(root, ".ultrapowers", "qa-active"), "utf8").trim(); } catch (e) { ticket = ""; }
+// The hunt marker holds the audit id as plain text, like the QA marker: a ticket id or audit-<date>.
+if (!ticket) { try { ticket = fs.readFileSync(path.join(root, ".ultrapowers", "hunt-active"), "utf8").trim(); } catch (e) { ticket = ""; } }
 if (!ticket) {
   // The autopilot marker is JSON: { ticket, branch, scope }. Its ticket id serves the same role.
   try { ticket = str(JSON.parse(fs.readFileSync(path.join(root, ".ultrapowers", "autopilot-active"), "utf8")).ticket).trim(); } catch (e) { ticket = ""; }
+}
+// The ticket or audit id names the write area reviews/<id>/: an id with a parent segment or a path
+// separator would widen it, so a marker holding one is refused for every call.
+if (ticket && (ticket.includes("..") || /[\/\\]/.test(ticket))) {
+  process.stdout.write(["badmarker", "", "", "", "", "", "", "", ""].join("\0") + "\0");
+  process.exit(0);
 }
 // Facts about the run marker for every deny message: how long ago it was written, and the stage
 // an autopilot marker records. A marker that outlived its run is for the human partner to end.
@@ -291,10 +398,11 @@ let markerAge = "";
 let markerStage = "";
 try {
   const qaMarker = path.join(root, ".ultrapowers", "qa-active");
-  const marker = fs.existsSync(qaMarker) ? qaMarker : path.join(root, ".ultrapowers", "autopilot-active");
+  const huntMarker = path.join(root, ".ultrapowers", "hunt-active");
+  const marker = fs.existsSync(qaMarker) ? qaMarker : fs.existsSync(huntMarker) ? huntMarker : path.join(root, ".ultrapowers", "autopilot-active");
   const seconds = Math.max(0, Math.round((Date.now() - fs.statSync(marker).mtimeMs) / 1000));
   markerAge = seconds < 60 ? "<1m" : seconds < 3600 ? Math.floor(seconds / 60) + "m" : seconds < 172800 ? Math.floor(seconds / 3600) + "h" : Math.floor(seconds / 86400) + "d";
-  if (marker !== qaMarker) markerStage = str(JSON.parse(fs.readFileSync(marker, "utf8")).stage).trim();
+  if (marker !== qaMarker && marker !== huntMarker) markerStage = str(JSON.parse(fs.readFileSync(marker, "utf8")).stage).trim();
 } catch (e) { /* no facts: the deny message omits them */ }
 // Every path-shaped field any tool carries (a read, a search, an upload), for the
 // key-material check that applies to all tools, not only to file writes.
@@ -333,8 +441,8 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
   // against the event cwd, and compared exactly unless the project folder ignores case. The bash
   // rules then match on these trusted values: `real` is the full canonical path, `rel` the path
   // inside the project written "./<path>" (empty when the path is outside it).
-  let base = process.cwd();
-  try { if (str(ev.cwd) && fs.statSync(guard.toNative(str(ev.cwd))).isDirectory()) base = str(ev.cwd); } catch (e) { /* keep the process cwd */ }
+  let base = process.argv[3] || process.cwd();
+  try { if (str(ev.cwd) && fs.statSync(guard.toNative(str(ev.cwd))).isDirectory()) base = str(ev.cwd); } catch (e) { /* keep the found root or the process cwd */ }
   const rootReal = guard.realCanonical(root, root);
   const ignoreCase = guard.rootIgnoresCase(root);
   // A tool call may carry its own working directory (OpenCode workdir, Hermes working_directory,
@@ -366,6 +474,14 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
     if (hit) { writeRaw = str(hit[1]); break; }
   }
   if (!writeRaw && fileName && str(inp.dir_path)) writeRaw = str(inp.dir_path).replace(/[\\/]+$/, "") + "/" + fileName;
+  // A call that spells its file twice (path, file_path, filePath, notebook_path) under different
+  // targets: the rules above judge one spelling, the tool may write the other.
+  const spellings = Object.entries(inp).filter(([k, v]) => ["filepath", "notebookpath", "path"].includes(fold(k)) && str(v)).map(([, v]) => str(v));
+  const targets = new Set(spellings.map((p) => { const r = resolve(p).real; return ignoreCase ? r.toLowerCase() : r; }));
+  if (targets.size > 1) {
+    process.stdout.write(["twotargets:" + spellings.join(", "), "", "", "", "", "", "", "", ""].join("\0") + "\0");
+    process.exit(0);
+  }
   const w = writeRaw ? resolve(writeRaw) : { real: "", rel: "" };
   const keyReal = pathFields.map((p) => { const r = resolve(p); return r.rel ? r.rel.slice(2) : r.real; }).filter(Boolean);
   // The files a patch names (Codex apply_patch, Droid ApplyPatch), each as raw, rel and real.
@@ -394,22 +510,29 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
 }, (e) => {
   process.stdout.write(["noresolver:" + String(e.message).split("\n")[0], "", "", "", "", "", "", "", ""].join("\0") + "\0");
 });
-' "$root_node" "$hook_dir_node")
+' "$root_node" "$hook_dir_node" "$root_start_node")
 case "$parse_status" in
   noresolver:*) deny "the path resolver hooks/lib/guard-paths.mjs cannot be loaded (${parse_status#noresolver:}); every call is refused during $run_kind" ;;
   badconfig:*) deny "the project config .agents/ultrapowers.json cannot be read (${parse_status#badconfig:}); every call is refused while a run marker exists under .ultrapowers/" ;;
   shapeless) deny "the tool event has no readable tool name or input; an uninspectable call is refused during $run_kind" ;;
+  badmarker) deny "the run marker holds a ticket or audit id with a parent segment or a path separator; every call is refused while it does" ;;
+  twotargets:*) deny "the call names two different targets (${parse_status#twotargets:}); one call writes one file" ;;
 esac
 [ "$parse_status" = "ok" ] || deny "the tool event could not be parsed; an uninspectable call is refused during $run_kind"
 
 # Prefer the event's real cwd for the root and for resolving relative paths: on Windows the
 # harness spells it `S:\proj` while the process cwd is `/s/proj`; both normalize alike.
 base_cwd="$(norm_path "$PWD")"
+# A root found from workspace_roots[0] or CURSOR_PROJECT_DIR: the hook runs from the plugin folder
+# there, so relative paths resolve against the project directory the harness named.
+[ -n "$root_start" ] && base_cwd="$root_start"
 if [ -n "$event_cwd" ]; then
   ev_norm="$(norm_path "$event_cwd")"
   if [ -d "$ev_norm" ]; then
     base_cwd="$ev_norm"
-    if ev_root="$(find_root "$ev_norm")"; then
+    # Through the bridge the event cwd is the call's own directory, which the bridge bounded to the
+    # run it found; the root stays the one ULTRAPOWERS_RUN_DIR gave, so both judge the same run.
+    if [ -z "${ULTRAPOWERS_RUN_DIR+x}" ] && ev_root="$(find_root "$ev_norm")"; then
       root="$ev_root"
     fi
   fi
@@ -451,11 +574,15 @@ PROTECTED_RE='(^|/)\.ssh(/|$)|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws(/|$)|
 # The autopilot envelope also keeps the agent out of CI, the plugin hooks, the repository's commit
 # hooks (they run inside the engine's own commit and push) and the env file: a stage that
 # rewrites the workflow or the hooks rewrites its own brakes.
-AUTOPILOT_PROTECTED_RE='(^|/)\.github/|(^|/)\.gitlab-ci\.yml$|(^|/)hooks/(qa-guardrail|session-start|team-memory-[a-z]+|lib/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|/)\.gemini/hooks/|(^|/)\.husky/|(^|/)\.pre-commit-config\.ya?ml$|(^|/)lefthook\.ya?ml$|(^|/)\.env($|\.)|(^|/)qa/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|/)\.ultrapowers/(qa-active|autopilot-active|autopilot-stop)$'
+AUTOPILOT_PROTECTED_RE='(^|/)\.github/|(^|/)\.gitlab-ci\.yml$|(^|/)hooks/(qa-guardrail|session-start|team-memory-[a-z]+|lib/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|/)\.gemini/hooks/|(^|/)\.husky/|(^|/)\.pre-commit-config\.ya?ml$|(^|/)lefthook\.ya?ml$|(^|/)\.env($|\.)|(^|/)qa/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|/)\.ultrapowers/(qa-active|hunt-active|autopilot-active|autopilot-stop)$'
 # The QA baseline (known-issues) and the instruction files every later session obeys are the gate's
 # record and the agents' rules: a stage that edits its own baseline hides a failure from the QA
 # gate. The baseline's path is qa.knownIssues (default qa/known-issues.md, matched above).
 known_lc="$(lower "$known_issues")"
+# The QA and hunt run markers: never written, moved or removed by the run through a file tool or a
+# patch (a sole `rm` of the run's own marker, from the shell, is how the gatekeeper ends it).
+MARKER_RE='(^|/)\.ultrapowers/(qa-active|hunt-active)$'
+MARKER_WHY="is the run marker; the run marker is not the run's to change, the gatekeeper ends the run (with rm of its own marker as a call of its own)"
 # --- MCP tools of a tracker or of git, autopilot profile: reads pass, writes belong to the
 # engine between stages (the approve label among them). A tool name with a read verb is a read.
 # This rule comes before the file-tool gate: a tracker tool that carries a `path` argument
@@ -536,6 +663,8 @@ case "$patch_mode" in
       lower_r "${pcheck#./}"; pl="$REPLY"
       [[ "$pl" =~ $PROTECTED_RE ]] \
         && deny "the patch writes a protected path ($ppath); never allowed during $run_kind"
+      [ "$PROFILE" != "autopilot" ] && [[ "$pl" =~ $MARKER_RE ]] \
+        && deny "the patch target ($ppath) $MARKER_WHY"
       if [ "$PROFILE" = "autopilot" ]; then
         pl_noex="${pl//.env.example/}"
         [[ "$pl_noex" =~ $AUTOPILOT_PROTECTED_RE ]] \
@@ -552,7 +681,7 @@ case "$patch_mode" in
       else
         prc="${prel#./}"
         if [ "$ignore_case" = "1" ]; then lower_r "$prc"; prc="$REPLY"; fi
-        case "$prc" in reviews/*|.ultrapowers/*) ;; *) deny "a patch during a QA run is limited to reviews/ and .ultrapowers/ ($ppath)" ;; esac
+        case "$prc" in reviews/*|.ultrapowers/*) ;; *) deny "a patch during $run_kind is limited to reviews/ and .ultrapowers/ ($ppath)" ;; esac
       fi
     done <<< "$patch_recs"
     exit 0 ;;
@@ -567,6 +696,8 @@ if [ "$is_write_tool" -eq 1 ]; then
   wl="$(lower "${wcheck#./}")"
   printf '%s' "$wl" | grep -Eq "$PROTECTED_RE" \
     && deny "write to a protected path ($wpath) is never allowed during $run_kind"
+  [ "$PROFILE" != "autopilot" ] && [[ "$wl" =~ $MARKER_RE ]] \
+    && deny "the write target ($wpath) $MARKER_WHY"
   if [ "$PROFILE" = "autopilot" ]; then
     printf '%s' "${wl//.env.example/}" | grep -Eq "$AUTOPILOT_PROTECTED_RE" \
       && deny "write to a protected path ($wpath) is never allowed during an autopilot stage: CI, hooks, settings and the project config stay as they are"
@@ -593,7 +724,7 @@ if [ "$is_write_tool" -eq 1 ]; then
     fi
     case "$wrel" in .ultrapowers/*) ok=1 ;; esac
   fi
-  [ "$ok" -eq 1 ] || deny "writes during a QA run are limited to reviews/${ticket:-<id>}/ and .ultrapowers/ (got: $wpath)"
+  [ "$ok" -eq 1 ] || deny "writes during $run_kind are limited to reviews/${ticket:-<id>}/ and .ultrapowers/ (got: $wpath)"
   exit 0
 fi
 
@@ -640,6 +771,7 @@ B="(^|[;&|[:space:]\"'(\`/\\\\])"
 # excepted: it stores work locally and is the autopilot stage's way to set work aside.
 push_why="the QA gate reads and reports, it never publishes"
 [ "$PROFILE" = "autopilot" ] && push_why="the autopilot engine pushes between stages"
+[ "$PROFILE" = "hunt" ] && push_why="the hunt reads and reports, it never publishes"
 # One pass over the segments: a loop costs a process per `;`, `&` or `|`, so a long command could
 # outlast the hook's timeout (and a timed-out hook lets the call through). A segment with the push
 # token is a push unless it is a `git stash push` with no second push in it.
@@ -655,16 +787,25 @@ if [ "$PROFILE" = "autopilot" ]; then
   # The engine merges nothing and the agent merges nothing: the ticket branch is the only branch.
   printf '%s' "$lc" | grep -Eq '\bgit\b[^;&|]*\b(merge|rebase|cherry-pick)\b' \
     && deny "git merge, rebase and cherry-pick are never run by an autopilot stage; the branch is integrated through its pull request"
+fi
+
+if [ "$PROFILE" = "autopilot" ] || [ "$PROFILE" = "hunt" ]; then
+  tracker_why="the engine writes back between stages"
+  [ "$PROFILE" = "hunt" ] && tracker_why="the hunt reports in its own files and never writes to a tracker"
   # Tracker writes belong to the engine, after the agent exits: comments, labels, pull requests,
-  # releases, repository changes, and any gh/glab api call that is not a plain GET.
+  # releases, repository changes, and any gh/glab api call that is not a plain GET. The hunt writes
+  # to no tracker at all (its --post is a separate step of the skill, after the run).
   # The api forms include the attached spellings (-XPOST, -flabels[]=, -Fbody=) and --input.
   printf '%s' "$lc" | grep -Eq "${B}gh(\\.exe)?[[:space:]][^;&|]*\\b(issue[[:space:]]+(comment|edit|close|reopen|create|delete|transfer|pin|unpin|lock|unlock|develop)|pr[[:space:]]+(create|merge|close|reopen|edit|ready|review|comment|checkout|lock|unlock)|label[[:space:]]|release[[:space:]]|repo[[:space:]]+(create|delete|edit|fork|archive|rename|sync)|secret[[:space:]]|variable[[:space:]]|workflow[[:space:]]+(run|enable|disable)|api[[:space:]][^;&|]*([[:space:]]-x[[:space:]]|[[:space:]]-x[^[:space:]]|--method)|api[[:space:]][^;&|]*[[:space:]](-f|-F|--field|--raw-field|--input)[[:space:]=]|api[[:space:]][^;&|]*[[:space:]]-f[^[:space:]=])" \
-    && deny "gh writes (comments, labels, pull requests, releases, repository changes, non-GET api calls) are never run by an autopilot stage; the engine writes back between stages"
+    && deny "gh writes (comments, labels, pull requests, releases, repository changes, non-GET api calls) are never run during $run_kind; $tracker_why"
   printf '%s' "$lc" | grep -Eq "${B}glab(\\.exe)?[[:space:]][^;&|]*\\b(issue[[:space:]]+(note|update|close|reopen|create|delete|subscribe|unsubscribe)|mr[[:space:]]|label[[:space:]]|release[[:space:]]|repo[[:space:]]+(create|delete|archive|fork|mirror)|variable[[:space:]]|ci[[:space:]]+(run|retry|delete|trigger)|api[[:space:]][^;&|]*([[:space:]]-x[[:space:]]|[[:space:]]-x[^[:space:]]|--method)|api[[:space:]][^;&|]*[[:space:]](-f|-F|--field|--raw-field|--input)[[:space:]=]|api[[:space:]][^;&|]*[[:space:]]-f[^[:space:]=])" \
-    && deny "glab writes (notes, labels, merge requests, releases, repository changes, non-GET api calls) are never run by an autopilot stage; the engine writes back between stages"
+    && deny "glab writes (notes, labels, merge requests, releases, repository changes, non-GET api calls) are never run during $run_kind; $tracker_why"
   # The token itself is never read out: it is the only thing that makes a tracker write count.
   printf '%s' "$lc" | grep -Eq "${B}(gh|glab)(\\.exe)?[[:space:]]+auth[[:space:]]+(token|status[^;&|]*(-t\\b|--show-token))" \
-    && deny "reading the tracker token is never allowed during an autopilot stage"
+    && deny "reading the tracker token is never allowed during $run_kind"
+fi
+
+if [ "$PROFILE" = "autopilot" ]; then
   # A program word built at run time (a substitution, a backtick, eval) is the way around every
   # name rule above; the stage spells its commands out.
   # One pass over the segments (a loop here costs a process per `;`, `&` or `|`, so a long command
@@ -712,7 +853,17 @@ if printf '%s' "$lc" | grep -Eq '\bpsql\b'; then
 fi
 
 # Destructive filesystem: short and long rm options, find -delete, disk tools, device writes.
-printf '%s' "$lc" | grep -Eq "${B}rm[[:space:]]+-[a-z]*[rf]|${B}rm[[:space:]]+--(recursive|force|dir)|${B}(rmdir|shred|mkfs|dd)[[:space:]]|>[[:space:]]*/dev/(sd|nvme)|${B}find[[:space:]][^;&|]*[[:space:]]-delete\\b|${B}(rd|rmdir)[[:space:]]+/s|${B}del[[:space:]][^;&|]*/[sfq]\\b|remove-item[^;&|]*[[:space:]]-(recurse|force)" \
+# One exception, QA run and hunt: a call whose entire command is `rm -f <the run's own marker>` (the
+# write analyzer below confirms the operand is that marker; anything else stays refused).
+own_marker="qa-active"
+[ "$PROFILE" = "hunt" ] && own_marker="hunt-active"
+sole_rm_re='^[[:space:]]*rm[[:space:]]+-f[[:space:]]+("[^"$`\\]*"|'"'"'[^'"'"']*'"'"'|[^[:space:];&|<>()$`"'"'"'\\]+)[[:space:]]*$'
+sole_rm=0
+if [ "$PROFILE" != "autopilot" ] && [[ "$cmd" =~ $sole_rm_re ]]; then
+  op="${BASH_REMATCH[1]}"; op="${op#[\"\']}"; op="${op%[\"\']}"
+  [[ "$op" == ".ultrapowers/$own_marker" || "$op" == */".ultrapowers/$own_marker" ]] && sole_rm=1
+fi
+[ "$sole_rm" -eq 0 ] && printf '%s' "$lc" | grep -Eq "${B}rm[[:space:]]+-[a-z]*[rf]|${B}rm[[:space:]]+--(recursive|force|dir)|${B}(rmdir|shred|mkfs|dd)[[:space:]]|>[[:space:]]*/dev/(sd|nvme)|${B}find[[:space:]][^;&|]*[[:space:]]-delete\\b|${B}(rd|rmdir)[[:space:]]+/s|${B}del[[:space:]][^;&|]*/[sfq]\\b|remove-item[^;&|]*[[:space:]]-(recurse|force)" \
   && deny "recursive or forced delete is blocked"
 # PowerShell file cmdlets write, move or delete files; the file tools are gated to
 # reviews/<id>/ and .ultrapowers/, these are not.

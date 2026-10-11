@@ -229,6 +229,25 @@ test('the extension runs the ultrapowers guardrail before a tool call while a ru
   assert.equal(inert, undefined, 'no run marker: nothing is checked');
 });
 
+test('the extension runs the guardrail of a vulnerability hunt with the HUNT prefix', async () => {
+  const { handlers } = await loadExtension();
+  const toolCall = firstHandler(handlers, 'tool_call');
+  const root = mkdtempSync(join(tmpdir(), 'pi-hunt-'));
+  mkdirSync(join(root, '.agents'), { recursive: true });
+  mkdirSync(join(root, '.ultrapowers'), { recursive: true });
+  writeFileSync(join(root, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'p', autopilot: { mode: 'gated' } }));
+  writeFileSync(join(root, '.ultrapowers', 'hunt-active'), 'audit-2026-10-11\n');
+
+  const denied = await toolCall({ type: 'tool_call', toolCallId: 'h1', toolName: 'bash', input: { command: 'git push origin x' } }, { cwd: root });
+  assert.equal(denied?.block, true);
+  assert.match(denied.reason, /^HUNT-GUARDRAIL DENY: /);
+  const audit = await toolCall({ type: 'tool_call', toolCallId: 'h2', toolName: 'bash', input: { command: 'npm audit --package-lock-only --json' } }, { cwd: root });
+  assert.equal(audit, undefined);
+  const src = await toolCall({ type: 'tool_call', toolCallId: 'h3', toolName: 'write', input: { path: join(root, 'repo-a', 'src', 'x.ts'), content: 'x' } }, { cwd: root });
+  assert.equal(src?.block, true);
+  assert.match(src.reason, /^HUNT-GUARDRAIL DENY: /);
+});
+
 test('the extension keeps the envelope when ULTRAPOWERS_AUTOPILOT_INSIDE=1 and the marker is gone', async () => {
   const { handlers } = await loadExtension();
   const toolCall = firstHandler(handlers, 'tool_call');

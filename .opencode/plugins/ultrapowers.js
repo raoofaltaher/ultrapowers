@@ -23,7 +23,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // The ultrapowers guardrail (hooks/qa-guardrail) before every tool call. OpenCode has no shell
 // PreToolUse hook, so the plugin runs the same hook through the bridge in hooks/lib: inert
-// without a run marker (.ultrapowers/qa-active or autopilot-active), a thrown error with the
+// without a run marker (.ultrapowers/qa-active, hunt-active or autopilot-active), a thrown error with the
 // hook's reason when it denies. The bridge is loaded on first use: a copy of this file that
 // travels without hooks/lib still serves the bootstrap, and fails closed only during a run.
 const BRIDGE = path.resolve(__dirname, '../../hooks/lib/guardrail-bridge.mjs');
@@ -32,12 +32,13 @@ const loadBridge = () => {
   if (!bridgePromise) bridgePromise = import(pathToFileURL(BRIDGE).href).then((m) => m, () => null);
   return bridgePromise;
 };
-// The deny prefix of the run marker at or above startDir (the QA profile wins), or null. With
+// The deny prefix of the run marker at or above startDir (qa, then hunt, then autopilot), or null. With
 // ULTRAPOWERS_AUTOPILOT_INSIDE=1 (a headless stage) the run is active without the marker too.
 const runPrefix = (startDir) => {
   let dir = path.resolve(startDir || process.cwd());
   for (;;) {
     if (fs.existsSync(path.join(dir, '.ultrapowers', 'qa-active'))) return 'QA-GUARDRAIL';
+    if (fs.existsSync(path.join(dir, '.ultrapowers', 'hunt-active'))) return 'HUNT-GUARDRAIL';
     if (fs.existsSync(path.join(dir, '.ultrapowers', 'autopilot-active'))) return 'AUTOPILOT-GUARDRAIL';
     const parent = path.dirname(dir);
     if (parent === dir) return process.env.ULTRAPOWERS_AUTOPILOT_INSIDE === '1' ? 'AUTOPILOT-GUARDRAIL' : null;
@@ -53,6 +54,24 @@ export const guardTool = (directory) => async (input, output) => {
   }
   const verdict = bridge.runGuardrail({ toolName: input?.tool, input: output?.args, cwd: directory });
   if (verdict.deny) throw new Error(bridge.denyText(verdict));
+};
+
+// The V2 spelling of the same guard. V2's before-execute event carries the call's arguments as
+// `input` (`args` is accepted too); a plain object is judged like V1's output.args. During a run
+// an event with no such object cannot be judged and is refused; with no run it passes, as in V1.
+// A `directory` that is not a string falls back to the process cwd in the bridge, and a call's own
+// workdir is still checked there.
+const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const guardV2Tool = (directory) => {
+  const guard = guardTool(directory);
+  return async (event) => {
+    const args = isPlainObject(event?.input) ? event.input : isPlainObject(event?.args) ? event.args : null;
+    if (args) return guard({ tool: event?.tool, sessionID: event?.sessionID, callID: event?.id }, { args });
+    const bridge = await loadBridge();
+    const run = bridge ? bridge.activeRun(directory || process.cwd(), [process.cwd()]) : null;
+    const prefix = bridge ? run?.prefix : runPrefix(directory);
+    if (prefix) throw new Error(prefix + ' DENY: the V2 tool event carried no arguments; refused during a run');
+  };
 };
 
 // Skills directory shared by V1 (config hook) and V2 (setup/ctx.skill.transform)
@@ -477,7 +496,7 @@ export const UltrapowersPlugin = async ({ client, directory }) => {
  * V2 Setup Function (default.setup)
  *
  * Called by V2 PluginSupervisor (packages/core/src/plugin/supervisor.ts).
- * Performs two things:
+ * Performs three things:
  *
  * 1. Registers every skills/<name>/SKILL.md as a native Skill.Info object
  *    via ctx.skill.transform((draft) => draft.add(info)).
@@ -490,6 +509,8 @@ export const UltrapowersPlugin = async ({ client, directory }) => {
  *    See packages/core/src/plugin/skill.ts and packages/schema/src/skill.ts.
  * 2. Injects bootstrap context via ctx.session.hook("context"), the V2
  *    equivalent of V1's experimental.chat.messages.transform.
+ * 3. Registers the run guardrail through ctx.tool.hook("execute.before"), the V2
+ *    equivalent of V1's tool.execute.before.
  */
 async function setup(ctx) {
   // V1 (observed on opencode 1.18.18) also invokes default.setup, but with a
@@ -596,6 +617,21 @@ async function setup(ctx) {
     });
   } catch (err) {
     console.error('[ultrapowers] session hook registration failed:', err);
+  }
+
+  // 3. The guardrail of a run: V2's tool domain has the same before-execute hook V1 calls
+  // tool.execute.before (as read in the OpenCode source, not run on a live V2). A thrown error is
+  // expected to stop the call before the tool runs; the V2 promise adapter reports it as a failure
+  // of the call rather than as a Tool.Error with this reason. Inert outside a run, as in V1. A host
+  // without the hook leaves a run unguarded, so that is logged.
+  try {
+    if (ctx.tool && typeof ctx.tool.hook === 'function') {
+      await ctx.tool.hook('execute.before', guardV2Tool(projectDir));
+    } else {
+      console.error("[ultrapowers] the run guardrail is not registered on this host: ctx.tool.hook('execute.before') is unavailable, so a QA run, a vulnerability hunt or an autopilot stage runs without it");
+    }
+  } catch (err) {
+    console.error('[ultrapowers] tool guard registration failed:', err);
   }
 }
 

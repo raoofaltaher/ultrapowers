@@ -1,46 +1,114 @@
 # Ultrapowers Release Notes
 
-## v2.0.2 (2026-10-11)
+## v2.1.0 (2026-10-11)
 
-A security release from a review of the plugin's own code: five read-only investigators (injection, secrets and approval logic, prompt injection, supply chain, the guardrail entry points), one finding at a time verified by the orchestrator, and one fixer per batch, test-first. No CVE was found in any dependency; the plugin still has none at run time.
+A vulnerability hunt for a ticket's change or a whole project, the guardrail profile that keeps it read-only on every harness that runs the guardrail, one test suite that keeps those entry points in step, and a security hardening pass over the plugin's own code. The hunt is beta. The live run of the new hunt on this repository found six guardrail bypasses that the earlier hunt on dev had missed, and this release fixes them (see "Found by the live hunt" below).
 
-**Autopilot engine**
+**Heads up:**
+
+- `task-review` now runs the vulnerability hunt between the code review and the QA gate. A security `FAIL` makes the review `FAIL`; a security `PASS-WITH-ISSUES` makes it `PASS-WITH-ISSUES`; a security `INCOMPLETE` is named in the verdict and never blocks. The hunt uses the audit tools installed on the machine (`npm`, `pip-audit`, `cargo-audit`, `dotnet`, `osv-scanner`, `gh`, `glab`) and reports a lane as `incomplete` when a tool fails; it installs nothing.
+- The guardrail refuses more during a QA run and an autopilot stage (see "The security hardening pass"): among others, any PowerShell command, an interpreter given code inline, a shell init command, and a write by `mkdir`, `touch`, `sort -o`, `tar` or `patch` outside the report area.
+- Upgrade mode (`/ultrapowers:init`) offers the three templates that changed: `README.md` (the `hunt` setting), `.claude/settings.json` (pre-approves the new skill and carries the secret-read denies of the hardening pass) and `.gemini/hooks/ultrapowers-guardrail.mjs`. `templates/CHANGES.json` records the version of each. `.agents/ultrapowers.json` needs no change: the new `hunt` block is optional.
+
+**Vulnerability hunt and audit**
+
+- New skill `ultrapowers:vulnerability-hunt`: `/ultrapowers:vulnerability-hunt [ticket] [repo...] [--full-audit] [--post]`. With a ticket it hunts the files the ticket's change set touched. `--full-audit`, or no ticket, audits the whole tree and writes under `reviews/audit-<date>/`; a ticket with `--full-audit` is a full audit under the ticket's folder. It reads and reports: it installs nothing, fixes nothing and commits nothing, and a secret is named by file, line and kind, never printed or hashed.
+- New agent `agents/vulnerability-hunter.md`, the hunt's contract and its gatekeeper: it plans the hunt, dispatches the hunters, sends every High or Medium finding to a verifier and writes the verdict. It is forked where the harness supports it and read inline elsewhere. A preflight, `hunt-preflight.mjs`, scopes the run (a change set per repository, or the whole tree), finds the manifests and the installed audit tools, decides the lanes, plans the hunters and reports a stale marker. `--repo` narrows a ticket's repositories, and a repository dropped from the selection shows as a note.
+- Five lanes, each split over parallel hunters: dependencies (a CVE enters the table only from an audit tool's own report with an advisory id, marked runtime or test-only, never from memory), code, secrets and supply chain, the AI and agent surface (run when a model client, a prompt folder or an MCP config exists), and open-source intelligence on what the public can already see (run when `gh` or `osv-scanner` answers). No manifest is a note, not a failure.
+- New project setting `hunt.maxHuntersPerLane` in `.agents/ultrapowers.json`: the most hunters one lane runs in parallel, a whole number above 0, default 8. It is in the README's configuration table, the scaffold template and the project README template.
+- A verifier on the most capable model tries to refute every High or Medium finding; a finding it rejects, or that rates below the confidence floor of 6 out of 10, never counts and appears under Discarded leads. A finding without a numeric confidence is an error. Every subagent names its model: hunters on a mid-tier model, verifiers and the verdict on the most capable.
+- The verdict (`PASS`, `PASS-WITH-ISSUES`, `FAIL` or `INCOMPLETE`) is `FAIL` on a confirmed or plausible High finding or a critical or high CVE in a runtime dependency; `PASS-WITH-ISSUES` on a Medium finding, a moderate runtime CVE or a critical or high CVE in a test-only dependency; `INCOMPLETE` when the dependencies lane produced no block, or its status is `incomplete` with no CVE recorded (an audit tool that failed and reported no advisory). Low findings never change it. It goes to `reviews/<ID>/SECURITY-REPORT.md`, with `security-findings.json` beside it, and a `Guardrail:` line says whether the guardrail was active.
+- `task-review` runs the hunt as its Step 3b. Its assembler reads `security-findings.json`, computes the security verdict itself instead of trusting the report's line, and folds it into `TASK-REVIEW.md`; with no hunt file it reports "no vulnerability hunt" and changes nothing. A Red Flags row without a run behind it is dropped.
+- `--post` comments the report on the ticket and on its open pull or merge request through the autopilot tracker clients: `post-review.mjs --security-only <ticket | audit-date>`. For an audit without a ticket it comments the open pull or merge request of the current branch and refuses when none is open. It commits and pushes `reviews/audit-<date>/` through the guarded push only on a branch that starts with `audit-<date>-`; on any other branch it says that nothing was committed or pushed. Combined with `--draft-pr` it is a usage error.
+- The autopilot hunt stage is not part of this release; it is tracked in issue #43.
+
+**The `hunt` guardrail profile**
+
+- A third profile beside QA and autopilot, switched on by the marker `.ultrapowers/hunt-active` with the deny prefix `HUNT-GUARDRAIL`. The marker walk reads `qa-active`, then `hunt-active`, then `autopilot-active`. The profile reads everywhere in the project and writes only under `reviews/<audit id>/` and `.ultrapowers/`.
+- It allows a closed list of audit commands in their listed forms: `npm audit` and `pnpm audit`, `pip-audit`, `cargo audit`, `dotnet list package --vulnerable`, `osv-scanner`, `gh api` and `glab api` reads, and `gh search code`. Three need a flag: `npm audit` needs `--package-lock-only`, `pip-audit -r` needs `--no-deps`, and `dotnet list package` needs `--no-restore`, so that none of them resolves or restores anything. The dependencies lane prompt carries those flags.
+- Package managers are allowed only in their audit form and a read-only listing form that no project script can shadow (`npm` and `pnpm ls`, `pip list` and `freeze`, `cargo tree --locked`); `yarn`, `bun`, `uv`, `poetry`, `pipenv`, `pdm` and `go` are refused for every subcommand, and so is anything started through a package runner, including an `npx`-started audit tool. Installs and restores are refused.
+- `gh api` and `glab api` take a path only: a URL or `--hostname` is refused. `make test`, `mvn`, `gradle` and `phpunit` count as test suites and are refused, as are `git worktree add`, key material and every tracker write.
+- The profile is on every entry point that runs the guardrail: the bash hook `hooks/qa-guardrail`; `hooks/run-hook.cmd`, which fails closed on the hunt marker with its own `HUNT-GUARDRAIL` message when there is no bash; the bridge (`hooks/lib/guardrail-bridge.mjs`) for OpenCode and Pi, whose deny parser keeps the `HUNT-GUARDRAIL` prefix; `hooks/lib/guardrail-cli.mjs`, which runs the hook through the bridge, for Kimi Code, Antigravity, Hermes and the Gemini project hook; the Hermes plugin's own deny, which carries the prefix; and the Gemini launcher template, recorded at 2.1.0 so upgrade mode offers it. The OpenCode in-process fallback walks the same three markers.
+- OpenCode V2: the plugin's V2 setup registers the run guardrail on `ctx.tool.hook("execute.before")`; before this release a V2 session ran a QA run, a hunt or an autopilot stage without its brake. A V2 call with no argument object is refused during a run, and a host without that hook gets one logged line saying the guardrail is not registered. That V2 behaviour follows the OpenCode source as read on 2026-10-11 and has not been run on a live V2 host; the README and `docs/README.opencode.md` say so. A denied V2 call is expected to stop before the tool runs, without the hook's reason text.
+
+**Harness parity**
+
+- `AGENTS.md` rule 9 (every harness, every change) is applied to the hunt: each harness-specific surface it touches is covered or recorded as absent. The Muse manifest lists the new skill, and `.claude-plugin/plugin.json` declares `"agents"` as an array of the two agent files, `["./agents/qa-specialist.md", "./agents/vulnerability-hunter.md"]` (a folder value does not load).
+- New suite `tests/hooks/test-guardrail-entrypoints-parity.mjs`, one test over every entry point. It pins that the bash hook, the bridge, the OpenCode, Hermes and Gemini entry points and `run-hook.cmd` agree on the run markers, the deny prefixes and the precedence; the bridge's deny parser; the hook registration on every harness; the OpenCode V1 and V2 guard registration; and that each skill that forks into an agent has its agent file. A new profile can no longer land in one entry point only. It is listed in `AGENTS.md` and in CI, with `tests/vulnerability-hunt/run-tests.sh` and the `hunt` profile fixtures (`tests/qa-gatekeeper/test-hunt-profile.sh`, which `tests/qa-gatekeeper/run-tests.sh` runs).
+- Gemini CLI is in the Platform Adaptation list of `using-ultrapowers`, with its `references/gemini-tools.md`.
+
+**The security hardening pass**
+
+A review of the plugin's own code: five read-only investigators (injection, secrets and approval logic, prompt injection, supply chain, the guardrail entry points), one finding at a time verified by the orchestrator, and one fixer per batch, test-first. No CVE was found in any dependency; the plugin still has none at run time.
+
+Autopilot engine:
 
 - On Odoo, where tag tracking is unreadable and every tag is attributed to the task's last writer, a refused approve tag is now removed from the task with a note asking the approver to add it again, and a tag first seen under a non-approver never verifies later because an approver edited something else. The engine records the tags it saw and who placed them. The residual, two writes inside one poll interval, is documented in the watcher guide.
 - The engine no longer trusts the stage-writable state file for what it pushes: a ticket branch must match `<ID>-[A-Za-z0-9._-]+` (no `:`, `/` or `..`, so no refspec), `git check-ref-format` runs first and the push names `refs/heads/<b>:refs/heads/<b>` on both sides; the mode comes from the project, the labels and `--mode`, never from the state; the repositories, their branches and worktrees and the frozen scope are re-derived or checked against the configuration, and a mismatch stops the run with `state-tampered`.
-- The changes stage reads `tasks/<ID>/changes-comments.md`, which the engine writes before the stage from the ticket comments since the packet, keeping only authors with write access (and in the approvers list when one is set), each between marker lines. A comment from anyone else never reaches the stage.
+- The changes stage reads `tasks/<ID>/changes-comments.md`, which the engine writes before the stage from the ticket comments since the packet, keeping only authors with write access (and in the approvers list when one is set), each between marker lines. A comment from anyone else never reaches the stage. The file is protected like the ticket's other state files, and the stage says how many comments it did not read and why.
 - A QA report under a `reviews/<ID>` folder that is a symbolic link or junction out of the project is refused.
 
-**Posting to a tracker**
+Posting to a tracker:
 
 - GitLab runs a note line that starts with `/` as a quick action under the posting account. Every body the engine or `task-review --post` sends to GitLab (issue notes, merge request notes and descriptions) has such lines neutralised with a zero-width space, inside code fences too.
 - `task-review --post` refuses a `reviews/<ID>/artifacts` folder, or a `reviews/<ID>` folder, that is a symbolic link out of the project; with such a link, any local file named in a report was uploaded to GitLab or attached on Odoo.
 
-**Tickets**
+Tickets:
 
 - `source.md` fences the ticket's comments between their own markers with every line quoted, and writes labels, state, attachment names and link URLs as code spans, so a comment cannot forge a message header, a section heading or a downloaded-file line. The closing sentence now covers the text between any ultrapowers markers.
 - A link in a ticket to a loopback, private, link-local, unique-local, site-local, shared, multicast, benchmark, NAT64 or 6to4 address, to `localhost`, a single-label name, a `.internal` or `.local` name, a URL with a user name, or plain http to any host but the ticket source's own, is written as "not fetched" with the reason, and brainstorm-task never fetches it. The check is static; the fetch is the harness's.
 - The ticket title reaches `scaffold-task.sh create` through `--title-from-json <ticket JSON>` or `--title-file`, never as shell words; new-task and the autopilot scaffold prompt say so.
 
-**Project scaffold**
+Project scaffold:
 
 - The Claude Code settings deny reads of `.agents/mcp-secrets.env`, `.env`, `.env.local`, `.env.*.local`, `.env.production`, `~/.ssh` and `~/.aws`, and deny `--output` (and its abbreviations) on `git log`, `git diff` and `git show`, which otherwise write a commit message to any file under a pre-approved rule. OpenCode, Qwen Code and Cursor get the equivalent through their own documented mechanisms; the README names the harnesses that have none, where the guardrail during a QA or autopilot run is the only brake.
 - The npm MCP servers in the project template are pinned to exact versions; the gitleaks image in the pre-commit hook is pinned to a release tag; a Docker failure is reported as a skipped scan rather than a found secret; the team-memory lint says when node is missing. Upgrade mode offers all of these to existing projects.
+- `init` treats a Node below 22 as a warning, not a stop.
 - The Gemini project hook names the profile and the marker in its own deny; the Hermes plugin's own denies carry the profile prefix; the Muse guardrail hook timeout matches the other harnesses at 30 s.
 
-**Guardrail entry points**
+Guardrail entry points:
 
 - OpenCode, Pi, Kimi, Antigravity, Hermes and the Gemini project hook honour `ULTRAPOWERS_AUTOPILOT_INSIDE=1` like the bash hook: a stage whose marker is gone stays an autopilot stage, and a stage outside any project is denied.
 - The Antigravity marker search never starts from the tool call's own `Cwd`; it searches the workspace paths, the process directory and then the call's directory, first marker found wins.
-- A per-call working directory (`workdir`, `working_directory`, `dir_path`, `Cwd`) is normalised to one field, bounded to the project root, and denied when it resolves outside it.
+- A per-call working directory (`workdir`, `working_directory`, `dir_path`, `Cwd`) is normalised to one field, bounded to the project root, and denied when it resolves outside it, and its relative targets resolve against it like the event's own directory.
+- A tracker write through the OpenCode, Hermes or Cursor spelling of an MCP tool is refused like the `mcp__` spelling.
 
-**Skills**
+Guardrail rules, QA and autopilot profiles (the hook matches patterns; it is still not a sandbox):
 
-- task-review runs the review inline, with a `declined` entry, on a harness without a subagent tool.
+- Shells and interpreters: a PowerShell command is refused outright, and so is `-Method Post` to an unlisted host; a `cmd.exe` command line is refused except a literal list of QA reads, and a `/c` or `/k` tail holding `%`, `!` or `^` is refused; a shell init command or rc file, a `HOME=` assignment before a shell, `fish -C`, a zsh `ZDOTDIR` and any variable a shell or interpreter executes are refused unless on a short safe list; `coproc`, `case`, `select` and `function` are refused; code given to an interpreter inline or on stdin is refused however the option is spelled; `fish`, `csh` and `tcsh -c` are refused like `bash -c`, `env -S` and `patch` are refused, programs run through `ionice`, `flock`, `taskset`, `chrt` or `doas` are judged like the bare program, and `timeout -s` and `-k` no longer hide the program.
+- Containers and processes: `docker`, `podman` and `nerdctl` teardown and restart are refused with global options and quoting, `kubectl` is judged by its verb and `helm` is refused outright, and a container CLI option on neither list, a variable in the verb path or a verb outside the read set is refused; `kill` by name (`pkill`, `pgrep`, a group), a non-literal pid and every spelling of `kill -1`, a process group or `0` are refused, while `kill $!` and `kill $PID` stay allowed; `ssh`, `scp`, `rsync`, `nc` and `chmod`-like programs are refused however quoted or wrapped; a `gh` or `glab` verb outside the read allow-list is refused in an autopilot stage; `wget -i`, `curl -K` and a URL under any key or nesting of a tool input are judged like a URL on the command line; package runners fail closed.
+- Writes: `mkdir`, `touch`, `sort -o`, `find -fprint`, `-fprintf` and `-fls`, `tar` and `unzip` extraction, in-place `gzip` and a copy into a protected folder are refused outside the report area; key material is refused under `absolute_path`, `dir_path`, `DirectoryPath` and `Url`, and a bare `.ssh` or `.aws` folder counts; a trailing dot, a trailing space or an NTFS stream on a protected path is refused like the plain name; a tool with a path-shaped field the hook did not list is judged like `Write`, a write-named file tool without a readable path is refused, and the patch of any tool named `*patch*` is judged file by file; a git subcommand built from a variable is refused.
+- The loops over a call's URLs, key paths and patch files start no process per item, and the push and substitution checks read the command in one pass, so a long command no longer outlasts the hook's timeout.
 
-**Repository**
+Found by the live hunt, fixed in this release (hardening rounds 4 to 6). The live hunt of this repository found six bypasses of the guardrail analyzer that the earlier hunt on dev had missed; each was confirmed on the branch, and each is now refused or analysed:
 
+- A command substitution (`$( )` or backticks) is analysed as a command of its own in the same profile, up to three levels deep, instead of being read as opaque text; a cut whose quotes do not balance, a substitution inside a here-document, `${...}` or arithmetic, and in a QA run or a hunt `<( )` and `>( )`, are refused.
+- `cd` is scoped: the tracked directory is saved and restored around `( )`, each side of a pipeline, a backgrounded list and a brace group in a pipeline, so a `cd` there no longer moves where the next command's paths are judged; `eval` with a `cd` and `source` make it unknown.
+- `$'...'` and `$"..."` words are dynamic for every target check, not literal text.
+- The run markers `qa-active` and `hunt-active` are protected from every shell write, move and removal, file tool and patch; the one exit is a call whose entire command is `rm [-f]` of the run's own marker. A marker whose id holds `..`, `/` or `\` refuses every call.
+- `git -c`, `--config-env` and `--exec-path` are refused in every profile, not only in an autopilot stage, and so are `git grep -O` (`--open-files-in-pager`) and `--ext-diff` on any subcommand; `-C`, `--git-dir` and `--work-tree` take a literal folder inside the project.
+- The bridge refuses a call whose path spellings (`file_path`, `filePath`, `path`, `notebook_path`) name two different files, so a decoy path no longer decides how a write is judged; the hook's own event parse does the same.
+
+The same rounds closed the routes the re-reviews found next to them:
+
+- The Hermes plugin finds `node`, and the bridge finds `bash`, on absolute PATH entries outside the project only, never in the working directory, a relative entry or a folder under the project such as `node_modules/.bin`; the child runs from the plugin's folder.
+- The run's directory reaches the hook out of band, as `ULTRAPOWERS_RUN_DIR` set by the bridge on the spawn, and must be an absolute, existing folder; otherwise the hook reads the project root from the event's top-level `cwd` only, never from a key nested under the tool input.
+- Cursor, which runs the hook from the plugin folder and sends `workspace_roots` instead of `cwd`, roots the hook from the top-level `workspace_roots[0]` and then `CURSOR_PROJECT_DIR`, each only when absolute and existing; a nested copy never does.
+- The hook's search of the event for a run directory, when its own directory holds no run, is linear and reads at most 256 KB and 64 candidates with shell builtins; past that bound it reads the event's top-level fields through node. A 1 MB argument before a nested `cwd` key took minutes, past the hook's timeout, and now takes under a second. The event itself is read in blocks, not one byte per call.
+
+Skills and repository:
+
+- `task-review` runs the review inline, with a `declined` entry, on a harness without a subagent tool.
 - CI pins its actions to commit SHAs and pytest to a version; the engine's documented floor is Node 22 (18 and 20 are end-of-life); the brainstorm-server test dependency ws moves to 8.22.0; the Kimi manifest test falls back to `python` when `python3` is the Windows Store stub.
+
+**What was verified, and how**
+
+| | Verified |
+|---|---|
+| Offline suites | The suites `AGENTS.md` lists, including the new `tests/vulnerability-hunt/`, the `hunt` profile fixtures, the entry-point parity suite and the extended assembler and `post-review.mjs` tests |
+| Pressure scenarios | Subagents under pressure for the hunt's door and for `task-review` Step 3b (S28 to S34: the hunt in task-review, a repository with nothing to audit, the standalone `--post` with and without an open pull request, a hostile code comment, and the envelope gate when the marker or the preflight is refused); the record is in `tests/task-lifecycle/pressure-results.md` |
+| Live, Claude Code, 2026-10-11 | The hunt through both doors, headless: the standalone audit of this repository (verdict FAIL; two High findings against the guardrail analyzer left unverified when the verification pass was cut short, one Medium confirmed; dependencies, OSINT and secrets lanes incomplete) and the ticket door on the review fixture (verdict FAIL; the token and curl-pipe-shell findings confirmed; the planted CVE missed because the dependencies lane could not audit a nested manifest). The fixes those runs produced are in this release: the envelope gate, the nested-manifest audit with `--prefix`, the lane prompts' allowed forms, and the gatekeeper waiting for its hunters |
+| Not yet run live | The OpenCode V2 guard on a live V2 host, and `--post` of a security report |
 
 ## v2.0.1 (2026-10-11)
 

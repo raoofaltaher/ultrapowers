@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"echo x > reviews/1234/$'..'/$'..'/repo-a/src/a.js"},"reason":"cannot be verified"}

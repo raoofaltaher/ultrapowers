@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"git commit -m x","ultrapowers_run_dir":"{{DECOY}}"},"cwd":"{{ROOT}}","dir":"{{ELSEWHERE}}","env":{"ULTRAPOWERS_RUN_DIR":"{{ROOT}}"},"reason":"git commit changes a repository"}

@@ -19,7 +19,7 @@ try {
   input = '';
 }
 
-// The run marker at or above start (the QA profile wins): its deny prefix and path, or null.
+// The run marker at or above start (qa, then hunt, then autopilot): its deny prefix and path, or null.
 // With ULTRAPOWERS_AUTOPILOT_INSIDE=1 (a headless stage) and no marker, the run is an autopilot
 // stage all the same (marker null), as in the hook.
 function runActive(start) {
@@ -27,6 +27,8 @@ function runActive(start) {
   for (;;) {
     const qa = path.join(dir, '.ultrapowers', 'qa-active');
     if (fs.existsSync(qa)) return { prefix: 'QA-GUARDRAIL', marker: qa };
+    const hunt = path.join(dir, '.ultrapowers', 'hunt-active');
+    if (fs.existsSync(hunt)) return { prefix: 'HUNT-GUARDRAIL', marker: hunt };
     const autopilot = path.join(dir, '.ultrapowers', 'autopilot-active');
     if (fs.existsSync(autopilot)) return { prefix: 'AUTOPILOT-GUARDRAIL', marker: autopilot };
     const parent = path.dirname(dir);

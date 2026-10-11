@@ -77,7 +77,7 @@ After you've signed off on the design, your agent puts together an implementatio
 
 Next up, once you say "go", it launches a *subagent-driven-development* process, having agents work through each engineering task, inspecting and reviewing their work, and continuing forward. It's not uncommon for your agent to work autonomously for a couple hours at a time without deviating from the plan you put together.
 
-When the work is done, a QA agent tests the running app the way a senior human tester would, in a real browser, and leaves one verdict in the ticket's review folder. Anything worth knowing next time goes into the team memory in git, where every developer and every coding agent on the project can find it.
+When the work is done, a vulnerability hunt reads the change for known CVEs, secrets and insecure patterns, and a QA agent tests the running app the way a senior human tester would, in a real browser; each leaves one verdict in the ticket's review folder. Anything worth knowing next time goes into the team memory in git, where every developer and every coding agent on the project can find it.
 
 The same workflow runs from a ticket when you want it to: `/ultrapowers:autopilot <ticket>` posts the spec and plan on the issue, you approve with a label, and the engine opens the pull request. A watcher does the same for tickets you label.
 
@@ -89,6 +89,7 @@ There's a bunch more to it, but that's the core of the system. And because the s
 - **Workflow skills** trigger on their own: ask, plan, test first, review every task.
 - **One setup, every agent:** `/ultrapowers:init` writes instructions, MCP config and knowledge base folders.
 - **QA specialist** *(beta)*: tests the running app in a browser, one verdict per ticket.
+- **Vulnerability hunt** *(beta)*: hunts a ticket's change, or the whole tree, for CVEs, secrets and insecure patterns, one verdict per ticket.
 - **Team memory:** verified lessons saved in git, shared by every developer and agent.
 
 ### Three ways to work
@@ -125,7 +126,7 @@ Rows assume `gated`, the default mode. During a stage, a guardrail hook denies t
 
 **What leaves our network?** No telemetry: the plugin opens no connection itself. Your agent calls its model provider; `gh`, `glab` and git reach GitHub or GitLab with your tokens; with an Odoo source, the autopilot engine calls your own Odoo server's JSON-RPC API with the key you issued.
 
-**What has been verified?** Live: one GitHub ticket on Claude Code, gated, in the first autopilot release; in this release one Odoo task on Claude Code in a nested workspace with GitLab remotes, gated, through the session door to a QA stop and through the watcher to the review packet; `task-review --post --draft-pr` on two GitHub tickets of this repository, from the review comments to the draft pull requests. Offline: the engine against fake trackers and a fake Odoo, the guardrail cases, the init modes. Not yet run live: headless execute and QA stages, the changes loop, pull requests opened by the engine on GitLab, full mode.
+**What has been verified?** Live: one GitHub ticket on Claude Code, gated, in the first autopilot release; in this release one Odoo task on Claude Code in a nested workspace with GitLab remotes, gated, through the session door to a QA stop and through the watcher to the review packet; `task-review --post --draft-pr` on two GitHub tickets of this repository, from the review comments to the draft pull requests. Offline: the engine against fake trackers and a fake Odoo, the guardrail cases, the init modes. Not yet run live: headless execute and QA stages, the changes loop, pull requests opened by the engine on GitLab, full mode. The vulnerability hunt ran live on Claude Code on 2026-10-11, both doors, headless against this repository (a full audit with verdict FAIL: two High findings against the guardrail analyzer were left unverified when the verification pass was cut short, one Medium was confirmed, and the dependencies, OSINT and secrets lanes were incomplete) and against the review fixture (verdict FAIL, the token and curl-pipe-shell findings confirmed, the planted CVE missed because the dependencies lane could not audit a nested manifest). The fixes those runs produced are in this release: the envelope gate, the nested-manifest audit with `--prefix`, the lane prompts' allowed forms, and the gatekeeper waiting for its hunters.
 
 ## Installation
 
@@ -337,11 +338,13 @@ From a ticket to a reviewed, tested branch. The agents do the repeatable work; a
 
 8. **`/ultrapowers:qa-specialist <ticket> [note]`** *(beta)* - The QA gate, which you run before you finish the branch. It tests the running app in a real browser for every configured role and language, across seven lanes: UI, logs, API, database, observability, test suites and content. A guardrail keeps the run read-only. It writes `reviews/<ID>/QA-REPORT.md` with one verdict: PASS, PASS-WITH-ISSUES, FAIL, INCOMPLETE or PRECONDITION-FAILED. It never starts or stops your stack and never commits.
 
-9. **`/ultrapowers:task-review <ticket> [repos...] [--post] [--draft-pr]`** - The whole-ticket review, which you run after the work is done and before you finish the branch. For each repository the ticket touched, a reviewer on the most capable model reads the whole range and every changed file with its callers, judges the tests against test-driven development (is there a test, was it written first, does it test behavior), and traces every failing test and every Critical or Important finding to its root cause. Then the QA gate runs. One verdict (`PASS`, `PASS-WITH-ISSUES`, `FAIL` or `BLOCKED`) and the findings land in `reviews/<ID>/TASK-REVIEW.md`. It never edits code and never merges. With `--post` it also comments the full review and QA reports, screenshots included, on the ticket and on the ticket's open pull or merge request, and with `--draft-pr` it opens a draft one when none is open; on Odoo the screenshots are attached to the chatter message.
+9. **`/ultrapowers:task-review <ticket> [repos...] [--post] [--draft-pr]`** - The whole-ticket review, which you run after the work is done and before you finish the branch. For each repository the ticket touched, a reviewer on the most capable model reads the whole range and every changed file with its callers, judges the tests against test-driven development (is there a test, was it written first, does it test behavior), and traces every failing test and every Critical or Important finding to its root cause. Then the vulnerability hunt (Step 3b, step 10 below) runs on the same change set, and then the QA gate. One verdict (`PASS`, `PASS-WITH-ISSUES`, `FAIL` or `BLOCKED`) and the findings land in `reviews/<ID>/TASK-REVIEW.md`. It never edits code and never merges. With `--post` it also comments the full review and QA reports, screenshots included, on the ticket and on the ticket's open pull or merge request, and with `--draft-pr` it opens a draft one when none is open; on Odoo the screenshots are attached to the chatter message.
 
-10. **`/ultrapowers:finishing-a-development-branch`** - Activates when tasks complete. Verifies tests, offers to merge, open a pull request or keep the branch, and cleans up the worktree. Discarding the work needs your explicit request and a typed confirmation.
+10. **`/ultrapowers:vulnerability-hunt [ticket] [repos...] [--full-audit] [--post]`** *(beta)* - The security hunt, which `task-review` runs for you as its Step 3b and which you can run alone. With a ticket it covers the files the ticket's change set touched; with `--full-audit`, or with no ticket, it audits the whole tree under `reviews/audit-<date>/`. Five lanes (dependencies against the advisory databases through the audit tools that are installed, code, secrets and supply chain, the AI and agent surface, and what the public can already see) each run in hunters you cap with `hunt.maxHuntersPerLane`, and a verifier on the most capable model tries to refute every High or Medium finding before it counts. No CVE enters the report that an audit tool did not report, and a secret is named by file, line and kind, never printed or hashed. One verdict (`PASS`, `PASS-WITH-ISSUES`, `FAIL` or `INCOMPLETE`) lands in `reviews/<ID>/SECURITY-REPORT.md`. It installs nothing, fixes nothing and never commits. With `--post` it comments the report on the ticket, or on the open pull or merge request of the current branch when there is no ticket.
 
-11. **`/ultrapowers:autopilot <ticket> [--mode off|gated|full]`** *(the watcher and `full` mode are beta)* - Runs steps 2 to 8 and 10 for one GitHub, GitLab or Odoo ticket (an id, or an Odoo task's URL) with the human gates on the tracker instead of in the chat. It has two doors: the command, which you run in a session, and a watcher, `autopilot.mjs watch`, which runs on the machine that hosts your coding agent and picks up tickets a human labelled. In `gated` mode the run stops twice: at a review packet on the ticket, with links to the brief, the spec with its assumption ledger and the plan, which you approve with a label, and at the pull requests, one per repository in scope. In `full` mode only the pull requests wait for you. The engine keeps a hash-chained stage log per ticket, pushes and writes to the tracker itself, and a guardrail envelope keeps the agent from pushing, merging or writing to the tracker. Set it up with `/ultrapowers:init autopilot`; `docs/autopilot-watcher.md` covers the watcher as a service.
+11. **`/ultrapowers:finishing-a-development-branch`** - Activates when tasks complete. Verifies tests, offers to merge, open a pull request or keep the branch, and cleans up the worktree. Discarding the work needs your explicit request and a typed confirmation.
+
+12. **`/ultrapowers:autopilot <ticket> [--mode off|gated|full]`** *(the watcher and `full` mode are beta)* - Runs steps 2 to 8 and 11 for one GitHub, GitLab or Odoo ticket (an id, or an Odoo task's URL) with the human gates on the tracker instead of in the chat. It has two doors: the command, which you run in a session, and a watcher, `autopilot.mjs watch`, which runs on the machine that hosts your coding agent and picks up tickets a human labelled. In `gated` mode the run stops twice: at a review packet on the ticket, with links to the brief, the spec with its assumption ledger and the plan, which you approve with a label, and at the pull requests, one per repository in scope. In `full` mode only the pull requests wait for you. The engine keeps a hash-chained stage log per ticket, pushes and writes to the tracker itself, and a guardrail envelope keeps the agent from pushing, merging or writing to the tracker. It does not run the vulnerability hunt (step 10); an autopilot hunt stage is tracked in issue 43. Set it up with `/ultrapowers:init autopilot`; `docs/autopilot-watcher.md` covers the watcher as a service.
 
 At any point, **`/ultrapowers:task <ticket>`** tells you where a ticket stands (brief, spec, plan, reviews, branches) and what comes next, without changing anything. And **team-memory** works alongside every step: when the agent verifies a fact that is durable, expensive to rediscover and not already in the code, it saves it to `.agents/memory/` in git, so every developer, every coding agent and every session on the project can use it.
 
@@ -378,6 +381,7 @@ At any point, **`/ultrapowers:task <ticket>`** tells you where a ticket stands (
   },
   "autopilot": { "mode": "gated", "baseBranch": "dev", "approvers": ["alice"], "execution": "subagent", "harness": "claude-code" },
   "qa": { "urls": { "frontend": "http://localhost:3000" }, "roles": [ { "name": "user", "userEnv": "QA_USER_USER", "passwordEnv": "QA_PW_USER", "required": true } ] },
+  "hunt": { "maxHuntersPerLane": 8 },
   "written": [".mcp.json", "AGENTS.md"]
 }
 ```
@@ -396,6 +400,7 @@ At any point, **`/ultrapowers:task <ticket>`** tells you where a ticket stands (
 | `tickets` | Where tickets come from; no key means local tickets only | See the next table |
 | `autopilot` | How automated a ticket's run is; no key means the manual workflow | See the second table below; set it with `/ultrapowers:init autopilot` |
 | `qa` | QA gatekeeper settings: `urls`, `hosts`, `auth`, `roles`, `languages`, `containers`, `db`, `suites`, `observability`, `brand`, `regression`, `knownIssues`, `api` | Fill what your app has; the qa-specialist skill lists any missing key before a run |
+| `hunt` | Vulnerability hunt settings; no key means the defaults | `maxHuntersPerLane`: the most hunters one lane may run in parallel, a whole number above 0, default 8. Lower it to spend less, raise it for a large tree |
 
 One entry of `tickets.sources` (the id of its tickets is `<prefix>-<project>-<number>`, for example `GL-billing-api-42`):
 
@@ -438,20 +443,20 @@ Autopilot needs a GitHub, GitLab or Odoo source in `tickets`; an Odoo source nee
 | Claude Code | plugin hook `hooks/hooks.json` (PreToolUse) | yes | Verified live (the session door, GitHub and Odoo). Only the project's `.mcp.json` servers load into a headless stage, and the stage loads the engine's own plugin checkout (`--plugin-dir`), so its skills and hook are the engine's version on any host. A hook that crashes or exceeds its timeout is non-blocking in Claude Code; the deny path is exit 2 |
 | Codex | plugin hook `hooks/hooks-codex.json` | yes | Trust the plugin's hooks once with `/hooks`; the watcher passes `--dangerously-bypass-hook-trust`. Edits through `apply_patch` are checked file by file |
 | GitHub Copilot CLI | plugin hook `hooks/hooks.json` | yes | A failing hook denies the call |
-| Cursor | plugin hook `hooks/hooks-cursor.json`, `failClosed` | yes (`agent -p`) | |
+| Cursor | plugin hook `hooks/hooks-cursor.json`, `failClosed` | yes (`agent -p`) | Cursor runs the hook from the plugin folder and sends no `cwd`: the guardrail finds the run from the event's top-level `workspace_roots[0]`, then `CURSOR_PROJECT_DIR`, each only when absolute and existing; a `workspace_roots` nested in the tool input never counts. That event shape follows `hooks/session-start` and has not been captured from a live Cursor preToolUse call |
 | Muse | plugin hook (PreToolUse) | no headless CLI | |
 | Qwen Code | the extension's `hooks/hooks.json` (PreToolUse) | yes | |
 | Gemini CLI | the project `BeforeTool` hook init writes to `.gemini/settings.json`, which runs the extension's guardrail | yes | Set `ULTRAPOWERS_PLUGIN_ROOT` when the extension is not under `~/.gemini/extensions/ultrapowers`. A hook that writes anything but JSON to stdout is ignored by Gemini |
 | Factory Droid | plugin hook `hooks/hooks.json` | yes | |
 | Kimi Code | plugin hook in `.kimi-plugin/plugin.json`, through `hooks/lib/guardrail-cli.mjs` | yes | Like Gemini CLI, Qwen Code and Droid, Kimi lets a crashed or timed-out hook through; the deny path itself is exit 2 |
 | Grok Build CLI | not verified: install it through the Claude Code marketplace path and check that `hooks/hooks.json` fires | no adapter | Run its tickets from a session once the hook is confirmed |
-| OpenCode | in process, `tool.execute.before` in the plugin | yes | Never run it with `--pure`, which drops the plugin |
+| OpenCode | in process, `tool.execute.before` in the plugin (V1) and `ctx.tool.hook("execute.before")` (V2) | yes | Never run it with `--pure`, which drops the plugin. V2 enforcement depends on the host exposing `ctx.tool.hook('execute.before')` as in the OpenCode source read on 2026-10-11, and the plugin logs a line when the host does not. A denied call on V2 is expected from that source to stop before the tool runs without the hook's reason text; that has not been run on a live V2 |
 | Pi | in process, the extension's `tool_call` handler | yes | The watcher loads this extension and no other |
 | Hermes Agent | in process, the plugin's `pre_tool_call` (fails closed) | yes | The plugin must be in `plugins.enabled`; the watcher passes `--accept-hooks` |
 | Antigravity | plugin hook `hooks.json` at the plugin root, through `guardrail-cli.mjs --antigravity` | yes (`agy -p`) | From its documentation only: Antigravity runs plugin hooks in its CLI, the IDE surface and its crash behaviour are not confirmed |
 | Devin | `hooks/hooks.json`, which Devin documents as best effort and fail open | refused | A Devin session has no reliable envelope; use the project's own `permissions.deny` rules as the brake |
 
-**Where the QA guardrail applies.** The QA gate's guardrail (`/ultrapowers:qa-specialist`) runs on the hooks above. It is active on Claude Code, Cursor, GitHub Copilot CLI, Factory Droid, Qwen Code, Muse, Kimi Code, OpenCode, Pi, Hermes and Antigravity; on Codex after you trust the plugin's hooks with `/hooks`; on Gemini CLI only when `.gemini/settings.json` registers its hook; and not reliably on Devin, whose hooks fail open. The QA run's Step 4 probe records whether the guardrail is active, and the report's header says so.
+**Where the QA guardrail applies.** The QA gate's guardrail (`/ultrapowers:qa-specialist`) runs on the hooks above. It is active on Claude Code, Cursor, GitHub Copilot CLI, Factory Droid, Qwen Code, Muse, Kimi Code, OpenCode, Pi, Hermes and Antigravity; on Codex after you trust the plugin's hooks with `/hooks`; on Gemini CLI only when `.gemini/settings.json` registers its hook; and not reliably on Devin, whose hooks fail open. The QA run's Step 4 probe records whether the guardrail is active, and the report's header says so. The vulnerability hunt (`/ultrapowers:vulnerability-hunt`) has a third profile on the same hooks, switched on by the marker `.ultrapowers/hunt-active`: it reads everywhere in the project, allows the installed audit tools in their audit forms only and `gh api` reads, and denies every write outside `reviews/`, every package install, every push and tracker write, key material, worktrees and test runs. It applies on the same harnesses and with the same limits as the QA profile; the hunt's report header says whether it was active.
 
 On every harness the deny is the same exit code 2 with the reason on stderr, which each of them turns into a blocked call the agent can read. Only Claude Code's session door has been run live; the other rows rest on this repository's offline tests and on each vendor's documentation, and `tests/autopilot/test-adapters.sh` checks the headless flags against the CLIs installed on a machine. The hook matches patterns; it is not a sandbox. A build script a stage runs can execute anything the hook never sees, so the credentials a stage holds and the host it runs on are the boundary that counts: see `docs/autopilot-watcher.md`. On GitLab, "write access" means Maintainer or above.
 
@@ -471,6 +476,7 @@ Everything above the original methodology, built from real daily work across man
 - **Task lifecycle skills** - `new-task`, `brainstorm-task` and `task` keep one ticket id across `tasks/`, `specs/`, `plans/` and `reviews/`, so every brief, spec, plan and QA report for a ticket is in one predictable place. Brainstorming reads the code first, so the plan meets no surprises.
 - **Team memory** - Verified, durable lessons live in `.agents/memory/` in the repository: shared across developers, across coding agents and across sessions. Hooks remind the agent to save them, and a lint keeps the store small and clean.
 - **QA gatekeeper** *(beta)* - A seven-lane QA agent that tests the running app the way a senior human tester does, under a read-only guardrail, and leaves one verdict per ticket.
+- **Vulnerability hunt** *(beta)* - A read-only security agent that audits the dependencies with the installed audit tools, reads the code, the secrets and the supply chain, has a verifier try to refute every High or Medium finding, and leaves one verdict per ticket or per audit; `task-review` runs it for you.
 
 ## What's Inside
 
@@ -490,7 +496,8 @@ Everything above the original methodology, built from real daily work across man
 
 **Quality gate** *(beta)*
 - **qa-specialist** - Run the seven-lane QA gate for a ticket and leave one verdict in `reviews/<ID>/QA-REPORT.md`
-- **task-review** - Review a ticket's finished work end to end (code review with the test-first and root-cause lenses, then the QA gate), write `reviews/<ID>/TASK-REVIEW.md`, and with `--post` comment the full reports on the tracker
+- **task-review** - Review a ticket's finished work end to end (code review with the test-first and root-cause lenses, then the vulnerability hunt, then the QA gate), write `reviews/<ID>/TASK-REVIEW.md`, and with `--post` comment the full reports on the tracker
+- **vulnerability-hunt** - Hunt a ticket's change, or the whole tree with `--full-audit`, for CVEs, secrets and insecure patterns with the installed audit tools and a verifier for every High or Medium finding, write `reviews/<ID>/SECURITY-REPORT.md`, and with `--post` comment it on the tracker; `task-review` runs it for you
 - **qa-lane-1-ui**, **qa-lane-2-logs**, **qa-lane-3-api**, **qa-lane-4-db**, **qa-lane-5-observability**, **qa-lane-6-suites**, **qa-lane-7-content**, **qa-report** - The lanes and the report format the QA agent uses; not invoked directly
 
 **Testing**
@@ -519,6 +526,7 @@ Everything above the original methodology, built from real daily work across man
 ### Agents and Output Styles
 
 - **`agents/qa-specialist.md`** *(beta)* - The QA gatekeeper's contract: the agent the qa-specialist skill runs, forked where the harness supports it and inline elsewhere
+- **`agents/vulnerability-hunter.md`** *(beta)* - The vulnerability hunt's contract: the agent the vulnerability-hunt skill runs, forked where the harness supports it and inline elsewhere
 - **`output-styles/ste-explanatory.md`** - Explanatory answers in Simplified Technical English, with short insights about the choices made; init installs it for Claude Code, and every other agent gets the same rules through `AGENTS.md`
 
 ## Philosophy
@@ -622,6 +630,7 @@ The text diagrams below carry what the charts leave out: branch names, the stage
    writing-plans              ─► plans/<ID>/Plan.md           ◄ you review the plan
    executing-plans | subagent-driven-development, TDD, reviews ◄ a branch in each repo you choose
    /ultrapowers:qa-specialist ─► reviews/<ID>/QA-REPORT.md
+   /ultrapowers:vulnerability-hunt ─► reviews/<ID>/SECURITY-REPORT.md   (also inside task-review; --post: a comment)
    /ultrapowers:task-review   ─► reviews/<ID>/TASK-REVIEW.md   (--post: comments on the ticket and its PR/MR)
    finishing-a-development-branch                             ◄ you pick merge, PR or keep
 ```

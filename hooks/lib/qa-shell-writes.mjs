@@ -3,7 +3,10 @@
 // "writes outside reviews/<id>/ and .ultrapowers/"). Reads NUL-separated fields on stdin,
 // `<cwd>\0<root>\0<ticket>\0<command>`, and prints a deny reason, or nothing when the command
 // writes only inside the report area. Paths arrive on stdin, never as arguments, so Git Bash's
-// argument conversion cannot rewrite them. Node standard library only.
+// argument conversion cannot rewrite them. Node standard library only. The profile is read from
+// ULTRAPOWERS_GUARD_PROFILE: `qa` (the default), `autopilot` or `hunt` (the QA rules with the audit
+// id as the ticket, the audit tools of the vulnerability hunt allowed in their listed forms, and no
+// test suite, worktree or tracker write; see huntCheck).
 //
 // The analysis is a quote-aware tokenizer, not a shell: it follows `cd` and simple literal
 // assignments inside the command, looks inside `sh -c '...'` and `docker exec ... sh -c`, and
@@ -51,8 +54,14 @@ const WRITE_PROGRAMS = new Set(['rm', 'unlink', 'mv', 'cp', 'tee', 'sed', 'perl'
 
 // ---------- tokenizer ----------
 // A word is a list of parts: { t: 'lit', v } | { t: 'var', v: NAME } | { t: 'dyn' }.
+// toks.subs lists every command substitution, backtick and process substitution the text holds,
+// wherever it sits (a word, a quoted string, an arithmetic or ${...} expansion, an unquoted
+// here-document body): { kind: 'cmd', src } when its inner text was cut out, { kind: 'proc' } for
+// <( ) and >( ), and { kind: 'opaque' } when the inner text cannot be cut out reliably.
+const SUB_RE = /\$\(|`/;
 function tokenize(src) {
   const toks = [];
+  toks.subs = [];
   let i = 0;
   let word = null;
   const heredocs = [];
@@ -70,33 +79,56 @@ function tokenize(src) {
     if (next === '(') { // $( ... ) or $(( ... ))
       let depth = 0; let j = i + 1;
       for (; j < src.length; j++) { if (src[j] === '(') depth++; else if (src[j] === ')') { depth--; if (depth === 0) break; } }
+      const inner = src.slice(i + 2, Math.min(j, src.length));
+      // $(( ... )) is arithmetic, unless it holds a substitution of its own.
+      if (src[i + 2] === '(') { if (SUB_RE.test(inner)) toks.subs.push({ kind: 'opaque' }); }
+      else toks.subs.push(j >= src.length ? { kind: 'opaque' } : { kind: 'cmd', src: inner });
       i = j + 1; push({ t: 'dyn' }); return;
     }
     if (next === '{') {
       const j = src.indexOf('}', i + 2);
       const name = j === -1 ? '' : src.slice(i + 2, j);
+      // ${X:-$(cmd)}: the `}` found may sit inside the substitution, so its text is not cut out.
+      if (SUB_RE.test(j === -1 ? src.slice(i + 2) : name)) toks.subs.push({ kind: 'opaque' });
       i = j === -1 ? src.length : j + 1;
       push(/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? { t: 'var', v: name } : { t: 'dyn' });
       return;
     }
+    // $'...' (ANSI-C quoting: \x2e\x2e is `..`) and $"..." (a translated string) are expanded by the
+    // shell, so their words are never literal text. $"..." is read as a double-quoted string after
+    // the dynamic mark, so a substitution inside it is still seen.
+    if (!inDouble && next === "'") {
+      let j = i + 2;
+      while (j < src.length && src[j] !== "'") j += src[j] === '\\' ? 2 : 1;
+      i = j + 1; push({ t: 'dyn' }); return;
+    }
+    if (!inDouble && next === '"') { i += 1; push({ t: 'dyn' }); return; }
     const m = /^[A-Za-z_][A-Za-z0-9_]*/.exec(src.slice(i + 1));
     if (m) { i += 1 + m[0].length; push({ t: 'var', v: m[0] }); return; }
     // $! is the pid of the last background command: a variable, not a substitution.
     if (next === '!') { i += 2; push({ t: 'var', v: '!' }); return; }
     if (next && /[0-9@*#?$!-]/.test(next)) { i += 2; push({ t: 'dyn' }); return; }
-    i += 1; lit('$'); void inDouble;
+    i += 1; lit('$');
+  };
+  const backtick = () => { // at src[i] === '`'
+    const j = src.indexOf('`', i + 1);
+    toks.subs.push(j === -1 ? { kind: 'opaque' } : { kind: 'cmd', src: src.slice(i + 1, j) });
+    i = j === -1 ? src.length : j + 1;
+    push({ t: 'dyn' });
   };
   while (i < src.length) {
     const c = src[i];
     if (c === '\n') {
       op(';'); i++;
       while (heredocs.length) { // skip each pending here-document body
-        const delim = heredocs.shift();
+        const { delim, quoted } = heredocs.shift();
         for (;;) {
           const nl = src.indexOf('\n', i);
           const line = src.slice(i, nl === -1 ? src.length : nl);
           i = nl === -1 ? src.length : nl + 1;
           if (line.replace(/^\t+/, '') === delim || nl === -1) break;
+          // An unquoted delimiter: the body is expanded, and a substitution in it runs.
+          if (!quoted && SUB_RE.test(line)) toks.subs.push({ kind: 'opaque' });
         }
       }
       continue;
@@ -111,14 +143,16 @@ function tokenize(src) {
       while (i < src.length && src[i] !== '"') {
         if (src[i] === '\\' && '"\\$`\n'.includes(src[i + 1] || '')) { lit(src[i + 1]); i += 2; continue; }
         if (src[i] === '$') { readVar(true); continue; }
-        if (src[i] === '`') { const j = src.indexOf('`', i + 1); i = j === -1 ? src.length : j + 1; push({ t: 'dyn' }); continue; }
+        if (src[i] === '`') { backtick(); continue; }
         lit(src[i]); i++;
       }
       i++; continue;
     }
     if (c === '$') { readVar(false); continue; }
-    if (c === '`') { const j = src.indexOf('`', i + 1); i = j === -1 ? src.length : j + 1; push({ t: 'dyn' }); continue; }
+    if (c === '`') { backtick(); continue; }
     // operators; a word made only of digits right before < or > is a file descriptor
+    // <( ... ) and >( ... ) are process substitutions: the walk reads the parenthesis as a subshell.
+    if ((c === '>' || c === '<') && src[i + 1] === '(') toks.subs.push({ kind: 'proc' });
     if (c === '>' || c === '<') {
       let fd = null;
       if (word && word.length === 1 && word[0].t === 'lit' && /^[0-9]+$/.test(word[0].v)) { fd = word[0].v; word = null; }
@@ -130,9 +164,11 @@ function tokenize(src) {
       op(v);
       toks[toks.length - 1].fd = fd;
       if (v === '<<') { // remember the delimiter so the body is skipped at the next newline
+        // The delimiter word with its quotes and backslashes removed (<<'EOF', <<"EOF", <<\EOF, <<E"O"F
+        // all end at a line EOF); any quote or backslash in it leaves the body unexpanded.
         let j = i; while (src[j] === ' ' || src[j] === '\t') j++;
-        const m = /^(['"]?)([^\s'"<>;&|()]+)\1/.exec(src.slice(j));
-        if (m) heredocs.push(m[2]);
+        const m = /^(?:'[^']*'|"[^"]*"|\\.|[^\s<>;&|()'"\\])+/.exec(src.slice(j));
+        if (m) heredocs.push({ delim: m[0].replace(/\\(.)/g, '$1').replace(/['"]/g, ''), quoted: /['"\\]/.test(m[0]) });
       }
       continue;
     }
@@ -165,14 +201,14 @@ function normPath(p) {
 // the gate's record; the repository's commit hooks run inside the engine's own commit and push.
 // The autopilot marker, the kill switch and the engine's lock folder are the envelope's own
 // switches, written by the engine outside the stage. The QA marker stays writable: the QA skill
-// writes and removes it itself inside the session.
+// writes and removes it itself inside the session, and so does the hunt (its marker is refused to an autopilot stage only).
 const PROTECTED_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|(^|\/)\.aws(\/|$)|mcp-secrets\.env|\.local\.(sh|env|json)$|hooks\/qa-guardrail|\.agents\/ultrapowers\.json|(^|\/)\.claude\/|(^|\/)\.git\/|(^|\/)\.githooks\/|(^|\/)\.[a-z0-9_-]+\/settings(\.local)?\.json$|(^|\/)tasks\/[^/]+\/(autopilot\.json|stage-log\.jsonl|changes-comments\.md)$|(^|\/)\.ultrapowers\/(autopilot-active|autopilot-stop)$|(^|\/)\.ultrapowers\/autopilot(\/|$)|(^|\/)\.ultrapowers$/;
 // Key material no stage may read through a shell (the same list as the hook's shell rule). The
 // hook tests the typed command; an 8.3 short name (MCP-SE~1.ENV) hides the name from it, so any
 // word with an alias-shaped segment is resolved here and its real name is tested.
 const KEY_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|\.aws\/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|\/)\.env($|\.)/;
 const SHORT_SEG = /[^\\/]~[0-9]/;
-const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)hooks\/(qa-guardrail|session-start|team-memory-[a-z]+|lib\/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|\/)\.gemini\/hooks\/|(^|\/)\.husky\/|(^|\/)\.pre-commit-config\.ya?ml$|(^|\/)lefthook\.ya?ml$|(^|\/)\.env($|\.)|(^|\/)qa\/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|\/)\.ultrapowers\/(qa-active|autopilot-active|autopilot-stop)$/;
+const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)hooks\/(qa-guardrail|session-start|team-memory-[a-z]+|lib\/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|\/)\.gemini\/hooks\/|(^|\/)\.husky\/|(^|\/)\.pre-commit-config\.ya?ml$|(^|\/)lefthook\.ya?ml$|(^|\/)\.env($|\.)|(^|\/)qa\/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|\/)\.ultrapowers\/(qa-active|hunt-active|autopilot-active|autopilot-stop)$/;
 // Git subcommands an autopilot stage may run: the read-only set plus the commands that build the
 // ticket branch. Pushing and integrating belong to the engine; nothing discards work; `config` and
 // the `-c` global option are refused because an alias resolves to any command at all.
@@ -404,11 +440,15 @@ function inlineInterpreterReason(kind, prog, rest, { inPlaceOk = false } = {}) {
       if (v === '-') return STDIN_WHY;
       if (v === '--') return '';
       if (v.startsWith('--')) { if (v === '--version' || v === '--help') return ''; continue; }
+      // Only a group that is exactly -V, -VV or -h asks for the version or the help and runs nothing. On the
+      // Windows `py` launcher -V:<tag> selects a runtime and the real command line follows it, so that group
+      // is skipped whole (its tag is no flag letters) and the scan goes on.
+      if (/^-(V+|h)$/.test(v)) return '';
+      if (/^-V:/.test(v)) continue;
       for (let c = 1; c < v.length; c++) {
         const ch = v[c];
         if (ch === 'c') return INLINE_WHY;
         if (ch === 'm') return '';
-        if (ch === 'V' || ch === 'h') return '';
         if ('WXQ'.includes(ch)) { if (c === v.length - 1) k++; break; }
       }
     }
@@ -465,20 +505,402 @@ function inlineInterpreterReason(kind, prog, rest, { inPlaceOk = false } = {}) {
   return '';
 }
 
+// ---------- the vulnerability hunt ----------
+// The hunt profile applies every QA rule and then this list. The hunt reads: it runs the audit tools of
+// the project, in the forms below, and nothing else of a package manager. Each package manager is
+// allowed ONLY in its audit form plus a read-only listing form, and only where that form is a real
+// built-in that no script of the project can shadow: npm and pnpm audit (npm only, with
+// --package-lock-only) and ls/list; pip and pip3 list and freeze; cargo audit and tree --locked;
+// dotnet list package --vulnerable --no-restore; go nothing; yarn, bun, uv, poetry, pipenv and pdm
+// nothing (they run a script of the project for a word they do not know). The other installers
+// (HUNT_INSTALLERS: composer, bundle, gem, pipx, corepack, brew, apt, dnf, apk, conda, nuget ...) are
+// refused for every subcommand. The listing forms take a fixed option set (nothing that names an
+// index, a registry or a file). Every other subcommand, and any program started through a package
+// runner (npx, npm exec, uvx, pipx run ...), is refused with HUNT_NO_INSTALL. The installers and
+// environments that python can start as a module (HUNT_PY_MODULES) are refused too, and the -m module
+// is found the way the interpreter rule walks the options (pyModule). Test commands (and
+// `git worktree add`, in the git branch of simple()) are refused with HUNT_NO_SUITE. pip-audit,
+// osv-scanner, gh and glab are allowed only in the forms below. A program outside these families is
+// left to the QA rules. The hunters run the tools with no variable prefix, so SAFE_ENV_RE (the QA
+// variable gate) gets no addition: NPM_CONFIG_AUDIT_LEVEL=high npm audit is refused,
+// --audit-level=high is the spelling.
+const HUNT_NO_SUITE = 'the hunt reads; it runs no suite and makes no worktree';
+const HUNT_NO_INSTALL = 'the hunt installs nothing and runs nothing';
+// gh and glab: the groups the hunt may run, by program (a verb list, or '*' for every verb).
+const HUNT_TRACKER_READ = {
+  gh: { api: '*', search: ['code'], auth: ['status'], help: '*', version: '*' },
+  glab: { api: '*', auth: ['status'], help: '*', version: '*' },
+};
+const HUNT_AUDIT_TOOLS = new Set(['osv-scanner', 'pip-audit', 'cargo-audit']);
+// Programs that are a test run whatever their arguments.
+const HUNT_TEST_RUNNERS = new Set(['pytest', 'py.test', 'vitest', 'jest', 'mvn', 'gradle', 'gradlew', 'phpunit']);
+const HUNT_TEST_MODULES = new Set(['pytest', 'unittest', 'nose', 'nose2', 'tox']);
+const NPM_AUDIT_LEVELS = /^(info|low|moderate|high|critical|none)$/;
+// Installers outside the families below: refused for every subcommand (and a bare call), the way the package
+// managers are. A read-only form for one of them (composer audit, bundler-audit) would be a later allow-form.
+const HUNT_INSTALLERS = new Set([
+  'composer', 'bundle', 'bundler', 'bundler-audit', 'bundle-audit', 'gem', 'pipx', 'corepack', 'brew', 'apt', 'apt-get', 'choco', 'winget',
+  'dnf', 'yum', 'apk', 'pacman', 'zypper', 'snap', 'scoop', 'nix-env', 'conda', 'mamba', 'dpkg', 'rpm', 'nuget', 'pod',
+]);
+// What python can start as a module that installs software, makes an environment or serves files
+// (the first dotted segment of the module name).
+const HUNT_PY_MODULES = new Set([
+  'pip', 'ensurepip', 'uv', 'pipx', 'pipenv', 'poetry', 'pdm', 'virtualenv', 'venv', 'conda', 'mamba', 'easy_install', 'setuptools', 'build', 'wheel', 'twine', 'http',
+]);
+const HUNT_PY_MANAGERS = /^(pip[0-9]*(\.[0-9]+)*|uv|poetry|pipenv|pdm)$/;
+const INFO_FLAGS = ['--version', '-v', '-V', '--help', '-h'];
+
+// The reason an audit input path (a manifest folder, a lockfile, a requirements file) is not a plain
+// literal path, or '': no home, glob, expansion or parent-folder segment. The caller then holds the
+// path inside the project (checkProjectDir).
+function literalPathWhy(opt, word, what) {
+  if (word === undefined || word === null || word === '' || word.startsWith('-')) return `${opt} without a literal ${what}`;
+  if (/^~|[*?[\]{}$`]|(^|[\\/])\.\.([\\/]|$)/.test(word)) return `${opt} ${word} (a home, glob, expansion or parent-folder path)`;
+  return '';
+}
+// The { path, form, opt } entries of the valued options in `names` that a huntOptions parse found,
+// or { reason } for the first that is not a literal path.
+function inputPaths(parsed, names, form, what, refuse) {
+  const out = [];
+  for (const [name, , v] of parsed.valued) {
+    if (!names.includes(name)) continue;
+    const why = literalPathWhy(name, v, what);
+    if (why) return { reason: refuse(`${form} during the hunt; ${why}`) };
+    out.push({ path: v, form, opt: name });
+  }
+  return { out };
+}
+
+// Splits `words` (values, null for one built from a variable) by a spec of the options a command may
+// carry: { flags, valued, noPositional }. Returns { bad } (the first thing not on the spec) or
+// { positionals (indexes), valued ([option, value index, value]), seen (the flags given) }.
+function huntOptions(words, spec) {
+  const positionals = [];
+  const valued = [];
+  const seen = new Set();
+  for (let k = 0; k < words.length; k++) {
+    const v = words[k];
+    if (v === null) return { bad: 'an argument built from a variable or substitution' };
+    if (v === '--') return { bad: '--' };
+    if (!v.startsWith('-') || v === '-') {
+      if (spec.noPositional) return { bad: v };
+      positionals.push(k);
+      continue;
+    }
+    const eq = v.startsWith('--') ? v.indexOf('=') : -1;
+    const name = eq === -1 ? v : v.slice(0, eq);
+    if (spec.flags.has(name) && eq === -1) { seen.add(name); continue; }
+    if (spec.valued.has(name)) {
+      if (eq !== -1) { valued.push([name, k, v.slice(eq + 1)]); continue; }
+      if (words[k + 1] === undefined || words[k + 1] === null) return { bad: `${v} without a value` };
+      valued.push([name, k + 1, words[k + 1]]);
+      k += 1;
+      continue;
+    }
+    return { bad: v };
+  }
+  return { positionals, valued, seen };
+}
+
+// The hunt's judgement of one simple command: null when the program is not for it to judge, { reason }
+// to refuse, { allow: true, outputs, prefixes } to allow it (outputs: the paths, as written, of files it
+// writes, which the caller holds to the report area; prefixes: the { path, form } of the project folders
+// the command is pointed at, which the caller holds inside the project).
+export function huntCheck(prog0, words, { viaRunner = false, interpreter = '' } = {}) {
+  const prog = prog0.replace(/\.(cmd|bat|ps1|phar)$/, '');
+  const refuse = (reason) => ({ reason });
+  const allow = (outputs = [], prefixes = []) => ({ allow: true, outputs, prefixes });
+  const before = words.indexOf('--') === -1 ? words : words.slice(0, words.indexOf('--'));
+  const infoOnly = (list) => list.length > 0 && list.every((v) => INFO_FLAGS.includes(v));
+  const notListed = (what, forms) => refuse(`${what} is not on the hunt's list; ${HUNT_NO_INSTALL} (the forms it runs: ${forms})`);
+  if (HUNT_TEST_RUNNERS.has(prog)) return refuse(HUNT_NO_SUITE);
+  if ((prog === 'make' || prog === 'gmake') && before.some((v) => v === 'test' || v === 'check')) return refuse(HUNT_NO_SUITE);
+  if (HUNT_INSTALLERS.has(prog)) return refuse(`${prog} installs software or runs a script of the project; the hunt installs nothing (${prog} is refused for every subcommand)`);
+  // composer is a phar that php runs: `php composer.phar install`.
+  if (prog === 'php' && words.some((v) => v !== null && /(^|[\\/])composer(\.phar)?$/i.test(v))) return refuse('composer installs software or runs a script of the project; the hunt installs nothing (composer is refused for every subcommand)');
+  if (viaRunner && HUNT_AUDIT_TOOLS.has(prog)) return refuse(`${prog} started through a package runner installs it first; the hunt runs the audit tools that are already installed (${prog} on PATH)`);
+  if (viaRunner) return refuse(`${prog} started through a package runner (npx, npm exec, uvx, pipx run ...) is downloaded and run; ${HUNT_NO_INSTALL}`);
+
+  if (interpreter === 'python') {
+    const pm = pyModule(words);
+    if (pm === null) return null;
+    if (pm.unreadable) return refuse('the options of python before its script or module cannot be read during the hunt; write python -m <module> or python <script> with plain flags');
+    const mod = pm.mod;
+    if (HUNT_TEST_MODULES.has(mod)) return refuse(HUNT_NO_SUITE);
+    if (HUNT_PY_MODULES.has(mod.split('.')[0])) return refuse(`python -m ${mod} is not on the hunt's list; ${HUNT_NO_INSTALL} (python -m pip_audit is the form it runs)`);
+    if (mod === 'pip_audit') {
+      // An interpreter option that takes a value (-W ignore, -X dev) before -m would shift the words after it.
+      if (!pm.pure) return refuse('python options before -m pip_audit cannot be verified during the hunt; write python -m pip_audit first');
+      return huntPipAudit(words.slice(pm.rest), refuse, allow);
+    }
+    if (mod.startsWith('pip_audit')) return refuse(`python -m ${mod} is not on the hunt's list; ${HUNT_NO_INSTALL}`);
+    return null;
+  }
+
+  if (['npm', 'pnpm', 'yarn', 'bun'].includes(prog)) {
+    const sub = words[0];
+    // yarn and bun run a package.json script for a word they do not know, so a listing word could be
+    // a script of the repository: they are refused for every subcommand (a bare `yarn` installs).
+    const scriptRunner = prog === 'yarn' || prog === 'bun';
+    if (sub === undefined) return scriptRunner ? notListed(prog, 'npm audit --package-lock-only --json, npm ls') : null;
+    if (sub === null) return refuse(`the ${prog} subcommand is built from a variable or substitution and cannot be verified; spell it out`);
+    const s = sub.toLowerCase();
+    // npm takes any unambiguous prefix of a command name (npm aud, npm te) and a few aliases.
+    const isNpm = prog === 'npm';
+    const is = (name, alias = []) => s === name || alias.includes(s) || (isNpm && s.length >= 2 && name.startsWith(s));
+    if (!sub.startsWith('-')) {
+      if (is('test', ['tst', 't', 'it', 'cit', 'install-test', 'install-ci-test'])) return refuse(HUNT_NO_SUITE);
+      if (is('run-script', ['run', 'rum', 'urn'])) {
+        const script = words.slice(1).find((v) => v === null || !v.startsWith('-'));
+        if (script === null) return refuse(`the ${prog} script is built from a variable or substitution and cannot be verified; spell it out`);
+        if (script !== undefined && /^(pre|post)?tests?([:._-].*)?$/i.test(script)) return refuse(HUNT_NO_SUITE);
+      }
+    }
+    if (scriptRunner) return notListed(`${prog} ${sub}`, 'npm audit --package-lock-only --json, npm ls');
+    if (sub.startsWith('-')) {
+      if (infoOnly(words)) return allow();
+      return refuse(`${prog} options before the subcommand cannot be verified during the hunt; write ${prog} <command> first`);
+    }
+    if (is('audit')) {
+      const name = isNpm ? 'npm audit' : 'pnpm audit';
+      // The folder of the manifest: npm takes --prefix, pnpm --dir or -C (pnpm has no --prefix).
+      const form = isNpm
+        ? 'npm audit --package-lock-only [--json] [--audit-level=<level>] [--prefix <folder inside the project>]'
+        : 'pnpm audit [--json] [--audit-level=<level>] [--dir <folder inside the project>]';
+      const dirOpts = isNpm ? ['--prefix'] : ['--dir', '-C'];
+      const bad = (what) => refuse(`${name} may run only as ${form} during the hunt; ${what} changes a file or reads more than the report (${name} fix is never run)`);
+      const rest = words.slice(1);
+      let lockOnly = false;
+      const prefixes = [];
+      for (let k = 0; k < rest.length; k++) {
+        const v = rest[k];
+        if (v === null) return bad('an argument built from a variable or substitution');
+        if (v === '--package-lock-only') { lockOnly = true; continue; }
+        if (v === '--json') continue;
+        if (v === '--audit-level') { if (rest[k + 1] === undefined || rest[k + 1] === null || !NPM_AUDIT_LEVELS.test(rest[k + 1])) return bad('--audit-level without a level'); k += 1; continue; }
+        const m = /^--audit-level=(.*)$/.exec(v);
+        if (m && NPM_AUDIT_LEVELS.test(m[1])) continue;
+        // --prefix (npm), --dir or -C (pnpm) names the folder of the manifest: a literal path, which the
+        // caller then holds inside the project.
+        const opt = dirOpts.find((o) => v === o || v.startsWith(`${o}=`));
+        if (opt) {
+          const dirWord = v === opt ? rest[k + 1] : v.slice(opt.length + 1);
+          const why = literalPathWhy(opt, dirWord, 'folder');
+          if (why) return bad(why);
+          prefixes.push({ path: dirWord, form: `${name} may run only as ${form}`, opt });
+          if (v === opt) k += 1;
+          continue;
+        }
+        return bad(v === 'fix' ? 'fix' : `"${v}"`);
+      }
+      if (isNpm && !lockOnly) return refuse('npm audit must run with --package-lock-only during the hunt: without it npm reads the installed tree, which the hunt does not build (npm audit --package-lock-only --json)');
+      return allow([], prefixes);
+    }
+    if (is('list', ['ls'])) return huntLsOptions(words.slice(1), prog, refuse, allow);
+    return notListed(`${prog} ${sub}`, `${prog} audit${isNpm ? ' --package-lock-only --json' : ''}, ${prog} ls`);
+  }
+
+  // pip and pip3 have list and freeze built in. uv, poetry, pipenv and pdm run a script of the project
+  // for a word they do not know (pdm: a pyproject script), so they are refused for every subcommand.
+  if (HUNT_PY_MANAGERS.test(prog)) {
+    const sub = words[0];
+    const forms = 'pip list, pip freeze, pip-audit';
+    if (!/^pip/.test(prog)) return notListed(sub === undefined || sub === null ? prog : `${prog} ${sub}`, forms);
+    if (sub === undefined) return null;
+    if (sub === null) return refuse(`the ${prog} subcommand is built from a variable or substitution and cannot be verified; spell it out`);
+    if (sub.startsWith('-')) {
+      if (infoOnly(words)) return allow();
+      return refuse(`${prog} options before the subcommand cannot be verified during the hunt; write ${prog} <command> first`);
+    }
+    if (sub === 'list' || sub === 'freeze') return huntPipListOptions(prog, sub, words.slice(1), refuse, allow);
+    return notListed(`${prog} ${sub}`, forms);
+  }
+
+  if (prog === 'go') {
+    if (before.includes('test')) return refuse(HUNT_NO_SUITE);
+    return words.length ? notListed(`go ${words[0] === null ? '<built>' : words[0]}`, 'none: go can download modules and run code') : null;
+  }
+
+  if (prog === 'dotnet') {
+    if (before.includes('test') || before.includes('vstest')) return refuse(HUNT_NO_SUITE);
+    if (words.length === 0) return null;
+    if (infoOnly(words) || words.every((v) => v === '--info' || v === '--list-sdks' || v === '--list-runtimes')) return allow();
+    if (before[0] === 'list' && before.includes('package') && before.includes('--vulnerable')) {
+      const spec = { flags: new Set(['--vulnerable', '--include-transitive', '--no-restore']), valued: new Set(['--framework', '--format', '--output-version', '--verbosity']) };
+      // `list` and `package` are words of the command; the project (or solution) file, which may stand
+      // between them, is the one positional.
+      const pkg = before.indexOf('package');
+      const parsed = huntOptions([...before.slice(1, pkg), ...before.slice(pkg + 1)], spec);
+      if (parsed.bad !== undefined || parsed.positionals.length > 1) {
+        return refuse(`dotnet list package --vulnerable may run only with --no-restore [--include-transitive] [--framework <x>] [--format <x>] [--output-version <x>] and one project file during the hunt; ${parsed.bad !== undefined ? `"${parsed.bad}"` : 'a second positional'} is not allowed`);
+      }
+      if (!parsed.seen.has('--no-restore')) return refuse('dotnet list package restores first; the hunt restores nothing (add --no-restore; a project with no obj/project.assets.json is reported as not audited)');
+      return allow();
+    }
+    return notListed(`dotnet ${words[0] === null ? '<built>' : words[0]}`, 'dotnet list package --vulnerable --no-restore');
+  }
+
+  if (prog === 'cargo' || prog === 'cargo-audit') {
+    // A +toolchain may come first; any other option before the subcommand could take an argument.
+    let k = 0;
+    while (k < words.length && words[k] !== null && words[k].startsWith('+')) k += 1;
+    const sub = words[k];
+    if (sub === undefined) return null;
+    if (sub === null) return refuse('the cargo subcommand is built from a variable or substitution and cannot be verified; spell it out');
+    if (prog === 'cargo' && ['test', 't', 'nextest'].includes(sub)) return refuse(HUNT_NO_SUITE);
+    if (prog === 'cargo-audit' && sub !== 'audit') return notListed(`cargo-audit ${sub}`, 'cargo-audit audit --json');
+    if (sub.startsWith('-')) {
+      if (infoOnly(words.slice(k))) return allow();
+      return refuse('cargo options before the subcommand cannot be verified during the hunt; write cargo <command> first');
+    }
+    const rest = words.slice(k + 1);
+    if (sub === 'audit') {
+      const spec = { flags: new Set(['--json', '-q', '--quiet', '--no-fetch']), valued: new Set(['--file', '-f']) };
+      const parsed = huntOptions(rest, spec);
+      if (parsed.bad !== undefined || parsed.positionals.length) {
+        const what = parsed.bad !== undefined ? parsed.bad : rest[parsed.positionals[0]];
+        return refuse(`cargo audit may run only as cargo audit [--json] [--quiet] [--no-fetch] [--file <Cargo.lock>] during the hunt; "${what}" is not allowed (cargo audit fix changes Cargo.toml)`);
+      }
+      const files = inputPaths(parsed, ['--file', '-f'], 'cargo audit may run only as cargo audit [--json] [--quiet] [--no-fetch] [--file <Cargo.lock inside the project>]', 'file', refuse);
+      return files.reason || allow([], files.out);
+    }
+    if (sub === 'tree') {
+      const spec = {
+        flags: new Set(['--locked', '--offline', '-d', '--duplicates', '-q', '--quiet', '--workspace', '--all-features', '--no-default-features', '--no-dev-edges']),
+        valued: new Set(['-p', '--package', '-e', '--edges', '-i', '--invert', '--depth', '--prefix', '-f', '--format', '--target', '--features', '-F']),
+        noPositional: true,
+      };
+      const parsed = huntOptions(rest, spec);
+      if (parsed.bad !== undefined) return refuse(`cargo tree may run only as cargo tree --locked with listing options during the hunt; "${parsed.bad}" is not allowed`);
+      if (!parsed.seen.has('--locked')) return refuse('cargo tree must run with --locked during the hunt: without it cargo may rewrite Cargo.lock');
+      return allow();
+    }
+    return notListed(`cargo ${sub}`, 'cargo audit, cargo tree --locked');
+  }
+
+  if (prog === 'pip-audit') return huntPipAudit(words, refuse, allow);
+
+  if (prog === 'osv-scanner') {
+    const spec = {
+      flags: new Set(['--json', '-r', '--recursive', '--no-ignore']),
+      valued: new Set(['-L', '--lockfile', '-f', '--format', '--verbosity', '--output', '--output-file']),
+    };
+    const parsed = huntOptions(words, spec);
+    const denied = new Set(['fix', 'update', 'image', 'guided-remediation', 'help']);
+    const bad = parsed.bad !== undefined ? parsed.bad : (parsed.positionals.map((k) => words[k]).find((v) => denied.has(v)));
+    if (bad !== undefined) {
+      return refuse(`osv-scanner may run only as osv-scanner [scan [source]] [--json] [--format <x>] [--lockfile <file>] [-r] during the hunt; "${bad}" is not allowed (osv-scanner fix rewrites the lockfile)`);
+    }
+    const files = inputPaths(parsed, ['-L', '--lockfile'], 'osv-scanner may run only as osv-scanner [--json] [--lockfile <file inside the project>]', 'file', refuse);
+    return files.reason || allow(parsed.valued.filter(([name]) => name === '--output' || name === '--output-file').map(([, , v]) => v), files.out);
+  }
+  return null;
+}
+
+// Finds the `-m` module of a python command the way the interpreter rule (inlineInterpreterReason) walks
+// the options: a short group that holds `m` ends them, and the module is the rest of that group or the
+// next word. Returns null when the command runs a script, reads stdin or only asks for the version, and
+// { unreadable } for what cannot be read (a long option may take a value as its next word, so one is not
+// skipped blindly). `pure`: only value-less flags (-u, -I, -B ...) came before -m, so `rest` (the index of
+// the first word after the module) is where the module's own arguments begin.
+function pyModule(words) {
+  let pure = true;
+  for (let k = 0; k < words.length; k++) {
+    const v = words[k];
+    if (v === null) return { unreadable: true };
+    if (!v.startsWith('-') || v === '-' || v === '--') return null;
+    if (v.startsWith('--')) {
+      if (v === '--version' || v === '--help') return null;
+      return { unreadable: true };
+    }
+    // Exactly -V, -VV or -h: the version or the help, nothing runs. -V:<tag> on the Windows `py` launcher
+    // selects a runtime and the command line goes on after it (the same walk as the interpreter rule).
+    if (/^-(V+|h)$/.test(v)) return null;
+    if (/^-V:/.test(v)) { pure = false; continue; }
+    for (let c = 1; c < v.length; c++) {
+      const ch = v[c];
+      if (ch === 'm') {
+        const attached = v.slice(c + 1);
+        if (attached) return { mod: attached, rest: k + 1, pure };
+        if (words[k + 1] === undefined || words[k + 1] === null) return { unreadable: true };
+        return { mod: words[k + 1], rest: k + 2, pure };
+      }
+      if ('WXQ'.includes(ch)) { pure = false; if (c === v.length - 1) k += 1; break; }
+      if (!'bBdEiIOqRsSuvx'.includes(ch)) pure = false;
+    }
+  }
+  return null;
+}
+
+// The options a listing form takes, a fixed set: nothing that names an index, a registry or a file.
+function huntLsOptions(args, prog, refuse, allow) {
+  for (let k = 0; k < args.length; k++) {
+    const v = args[k];
+    if (v === null) return refuse(`${prog} ls with an argument built from a variable or substitution cannot be verified; ${HUNT_NO_INSTALL}`);
+    if (v === '--json' || v === '--all' || v === '--prod' || v === '--omit=dev' || /^--depth=[0-9]+$/.test(v)) continue;
+    if (v === '--depth' && args[k + 1] !== undefined && args[k + 1] !== null && /^[0-9]+$/.test(args[k + 1])) { k += 1; continue; }
+    return refuse(`${prog} ls takes only --json, --depth <n>, --all, --prod and --omit=dev during the hunt ("${v}" is not allowed); ${HUNT_NO_INSTALL}`);
+  }
+  return allow();
+}
+
+function huntPipListOptions(prog, sub, args, refuse, allow) {
+  for (let k = 0; k < args.length; k++) {
+    const v = args[k];
+    if (v === null) return refuse(`${prog} ${sub} with an argument built from a variable or substitution cannot be verified; ${HUNT_NO_INSTALL}`);
+    if (v === '--all') continue;
+    if (/^--format=(columns|freeze|json)$/.test(v)) continue;
+    if (v === '--format' && /^(columns|freeze|json)$/.test(args[k + 1] || '')) { k += 1; continue; }
+    const shown = v === '--format' && args[k + 1] !== undefined ? `--format ${args[k + 1] === null ? '<built from a variable>' : args[k + 1]}` : v;
+    return refuse(`${prog} ${sub} takes only --format (columns, freeze or json) and --all during the hunt ("${shown}" is not allowed: an index option or --outdated reaches a host, -r reads a file); ${HUNT_NO_INSTALL}`);
+  }
+  return allow();
+}
+
+function huntPipAudit(words, refuse, allow) {
+  const spec = {
+    flags: new Set(['--no-deps', '--strict', '--disable-pip', '--desc', '--aliases', '--skip-editable']),
+    valued: new Set(['-f', '--format', '-r', '--requirement', '-s', '--vulnerability-service', '--progress-spinner', '--ignore-vuln', '--timeout', '-o', '--output']),
+  };
+  const parsed = huntOptions(words, spec);
+  if (parsed.bad !== undefined || parsed.positionals.length) {
+    const what = parsed.bad !== undefined ? parsed.bad : words[parsed.positionals[0]];
+    return refuse(`pip-audit may run only as pip-audit [--no-deps] [--strict] [-f <format>] [-r <requirements file>] during the hunt; "${what}" is not allowed (pip-audit --fix changes the requirements)`);
+  }
+  // pip-audit resolves a requirements file through pip in a temporary environment: it downloads and
+  // builds what the file names unless --no-deps makes it audit the pinned versions as written.
+  if (parsed.valued.some(([name]) => name === '-r' || name === '--requirement') && !parsed.seen.has('--no-deps')) {
+    return refuse('pip-audit resolves requirements by installing them; the hunt installs nothing (add --no-deps and pin the requirements)');
+  }
+  const files = inputPaths(parsed, ['-r', '--requirement'], 'pip-audit may run only as pip-audit --no-deps [-r <requirements file inside the project>]', 'file', refuse);
+  return files.reason || allow(parsed.valued.filter(([name]) => name === '-o' || name === '--output').map(([, , v]) => v), files.out);
+}
+
 // ---------- analysis ----------
 const ENV_DUMP = 'dumping the environment is blocked; check a variable with ${NAME:+set} instead';
+const SUBST_WHY = 'a command substitution cannot be analysed; spell the command out (run the inner command as its own call)';
+const SUBST_DEPTH = 3;
+// The run markers of the QA and hunt profiles: the gatekeeper's switches, never the run's to change.
+const MARKER_RE = /(^|\/)\.ultrapowers\/(qa-active|hunt-active)$/;
+const MARKER_WHY = 'is the run marker; the run marker is not the run\'s to change, the gatekeeper ends the run (with rm of its own marker as a call of its own)';
 // A stage reads no tracker credential and nothing named like a secret out of the environment.
 const TRACKER_VARS = /^(GH_TOKEN|GITHUB_TOKEN|GITLAB_TOKEN|GLAB_TOKEN|ODOO_API_KEY|ULTRAPOWERS_STAGE_.*)$/i;
 const SECRET_VARS = /TOKEN|KEY|SECRET|PASS|CREDENTIAL|AUTH|COOKIE|SESSION|PRIVATE/i;
 
 export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase = process.platform === 'win32' || process.platform === 'darwin', roleVars = [], roRole = 'qa_agent_ro', flags = null }) {
   const autopilot = profile === 'autopilot';
+  // The hunt profile: every QA rule (the report area is reviews/<audit id>/ and .ultrapowers/, the audit
+  // id in the ticket field taking the place of a ticket), plus a closed list for the audit tools of the
+  // hunt and for what it refuses besides (see huntCheck).
+  const hunt = profile === 'hunt';
   // flags.psql counts the psql invocations this walk inspected. The hook compares it with the
   // number of psql words in the command and refuses one it did not see (xargs, find -exec, eval,
   // a brace group, sudo -u, su -c, kubectl exec): fail closed, not a second SQL parser in bash.
   // words: bare psql words seen anywhere; inspected: psql invocations judged. More words than
   // inspections means a psql the walk did not reach, which is refused at the end.
   const psqlCount = { words: 0, inspected: 0 };
+  // How many command substitutions deep the walk is (each one is walked as its own command).
+  let subDepth = 0;
   // Every compare below is between real canonical paths (8.3 short names, Git Bash forms and
   // symlinks resolved), exact unless the project's folder ignores case.
   const rootC = realCanonical(root, root);
@@ -486,7 +908,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     ? [rootC]
     : [realCanonical(ticket ? `${rootC}/reviews/${ticket}` : `${rootC}/reviews`, rootC), realCanonical(`${rootC}/.ultrapowers`, rootC)];
   const areaText = autopilot ? 'the workspace' : `reviews/${ticket || '<id>'}/ and .ultrapowers/`;
-  const runKind = autopilot ? 'an autopilot stage' : 'a QA run';
+  const runKind = autopilot ? 'an autopilot stage' : hunt ? 'a vulnerability hunt' : 'a QA run';
   const vars = new Map();
   // Names given to `export`, `declare` or `typeset` earlier in the command: they reach every later program.
   const exportedNames = new Set();
@@ -546,10 +968,33 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     }
     if (p.split('/').includes('..')) return deny(`${what} (${raw}) has a parent-directory segment and cannot be verified`);
     const real = realCanonical(p, rootC);
+    // QA run and hunt: both run markers are protected from every write, move and removal (one sole
+    // `rm` of the run's own marker excepted, before the walk), and so is what can reach them: a
+    // pattern under .ultrapowers/ (rm .ultrapowers/*-active) and .ultrapowers/ itself as the folder
+    // something is extracted into.
+    if (!autopilot) {
+      const innerL = (rel(real, rootC, ignoreCase) ?? real).toLowerCase();
+      if (MARKER_RE.test(innerL) || /(^|\/)\.ultrapowers\/_$/.test(innerL) || (/[*?[{]/.test(raw) && /(^|\/)\.ultrapowers(\/|$)/i.test(p))) {
+        return deny(`${what} (${raw}) ${MARKER_WHY}`);
+      }
+    }
     // A directory named as the target (cp x .husky, mkdir .github) receives its content inside it:
     // the patterns name the contents of a protected folder, so the folder is judged as one.
     if (protectedPath(real) || protectedPath(`${real}/_`)) return deny(`${what} (${raw}) is a protected path; the config, hooks, CI, settings and key material are never written during ${runKind}`);
     if (!inArea(real)) deny(`${what} (${raw}) is outside ${areaText}; shell writes during ${runKind} are limited to ${autopilot ? 'the workspace' : 'those folders'}`);
+  };
+  // A folder a hunt command is pointed at (npm audit --prefix <dir>): a literal path that resolves inside the
+  // project, symlinks and 8.3 names resolved. Anywhere else the tool would read a tree the hunt was not given.
+  // The same for an audit input file (cargo audit --file, osv-scanner --lockfile, pip-audit -r).
+  const checkProjectDir = (raw, form, dir, opt = '--prefix') => {
+    let p = normPath(raw);
+    if (!p.startsWith('/')) {
+      if (dir === null) return deny(`${form} during the hunt; ${opt} ${raw} is relative to a directory the command changed to through a variable; use a literal path`);
+      p = `${dir}/${p.replace(/^\.\//, '')}`;
+    }
+    if (p.split('/').includes('..')) return deny(`${form} during the hunt; ${opt} ${raw} has a parent-directory segment and cannot be verified`);
+    const real = realCanonical(p, rootC);
+    if (rel(real, rootC, ignoreCase) === null) deny(`${form} during the hunt; ${opt} ${raw} is outside the project ${rootC}`);
   };
 
   // A word spelled with an 8.3 alias that resolves to key material, whatever reads it (issue #31).
@@ -572,6 +1017,40 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     if (depth > 4) return deny('the command nests shells too deeply to be verified');
     let dir = startDir;
     const toks = tokenize(src);
+    // A command substitution runs a command of its own inside a word. A QA run and a hunt refuse
+    // every one: the inner text is cut out by a scan that is not a shell parser, so a substitution
+    // it misreads could hide a write. An autopilot stage writes anywhere in the workspace, so its
+    // inner commands are walked under the same rules (the code-running and write-capable programs
+    // the profile gates are judged there), and what cannot be cut out cleanly is refused.
+    // Every profile: the inner text of $( ) and of a backtick is cut out and walked as a command of
+    // its own in the same profile, up to SUBST_DEPTH levels deep; the outer command is then judged
+    // with the substitution as a word built at run time (null). Refused: what cannot be cut out
+    // cleanly (inside a here-document, a ${...} or an arithmetic expansion, or a cut whose quotes do
+    // not balance), and in a QA run or a hunt a process substitution <( ) or >( ).
+    if (toks.subs.length) {
+      for (const s of toks.subs) {
+        if (s.kind === 'proc') { if (!autopilot) return deny(`${SUBST_WHY} (a process substitution)`); continue; }
+        if (s.kind !== 'cmd') return deny(`${SUBST_WHY} (a substitution inside a here-document, a \${...} or an arithmetic expansion)`);
+        // An odd quote count means the scan cut the text at the wrong parenthesis.
+        // Read as the shell quotes: inside '...' only ' ends it; elsewhere a backslash escapes.
+        let q = '';
+        for (let k = 0; k < s.src.length; k++) {
+          const ch = s.src[k];
+          if (q === "'") { if (ch === "'") q = ''; continue; }
+          if (ch === '\\') { k++; continue; }
+          if (q === '"') { if (ch === '"') q = ''; continue; }
+          if (ch === "'" || ch === '"') q = ch;
+        }
+        if (q) return deny(`${SUBST_WHY} (its quotes do not balance)`);
+        if (subDepth >= SUBST_DEPTH) return deny(`${SUBST_WHY} (substitutions nested more than ${SUBST_DEPTH} deep)`);
+        // The substitution runs where the command is at that point; a cd earlier in it makes that unknown.
+        const at = toks.some((t) => t.k === 'w' && ['cd', 'pushd', 'popd'].includes(progName(resolveWord(t) || ''))) ? null : startDir;
+        const saved = { ...walkEnv };
+        subDepth += 1;
+        try { walk(s.src, at, container, depth); } finally { subDepth -= 1; Object.assign(walkEnv, saved); }
+        if (reason) return;
+      }
+    }
     let cmd = [];
     const flush = () => { if (cmd.length) simple(cmd); cmd = []; };
     // countWords is false when a wrapper's tail is re-run and the outer command counted it already.
@@ -673,8 +1152,28 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       };
       // export NAME=value, declare -x, typeset -x: the variable reaches every later command.
       // (Without a name the same words dump the environment; that rule is further down.)
-      if (['export', 'declare', 'typeset'].includes(progName(args[0].v)) && args.slice(1).some((x) => x.v === null || !x.v.startsWith('-'))) {
+      // A hunt walks readonly too (zsh exports with readonly -x), and judges the NAME of every word, from its
+      // leading literal part up to `=`, before a value built from an expansion hides it: only the harmless
+      // names pass, however their value is built.
+      const declWord = progName(args[0].v);
+      if (['export', 'declare', 'typeset', ...(hunt ? ['readonly'] : [])].includes(declWord) && args.slice(1).some((x) => x.v === null || !x.v.startsWith('-'))) {
+        const how = declWord === 'export' ? 'exported' : declWord === 'readonly' ? 'made readonly' : 'set by declare or typeset';
         for (const x of args.slice(1)) {
+          if (hunt && !(x.v !== null && x.v.startsWith('-')) && !(x.w.parts[0] && x.w.parts[0].t === 'lit' && x.w.parts[0].v.startsWith('-'))) {
+            let literal = '';
+            let named = false;
+            for (const part of x.w.parts) {
+              if (part.t !== 'lit') break;
+              const at = part.v.indexOf('=');
+              if (at !== -1) { literal += part.v.slice(0, at); named = true; break; }
+              literal += part.v;
+            }
+            // A name that ends before any expansion (`NAME=$X`, `NAME`) is known; one cut short by an expansion
+            // (`$NAME=x`, `GH_$X=x`) is not.
+            const known = named || x.w.parts.every((part) => part.t === 'lit');
+            if (!known || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(literal)) return deny(`a variable ${how} during ${runKind} (a name built from an expansion) cannot be verified; only the listed harmless variables pass`);
+            if (!SAFE_ENV_RE.test(literal)) return deny(`a variable ${how} during ${runKind} (${literal}) can redirect the audit tools (a host, a registry, a config file); only the listed harmless variables pass`);
+          }
           if (x.v === null) { if (x.w.parts.some((p) => p.t === 'lit' && /PGUSER|PSQLRC|PGSERVICE|PGOPTIONS|PGPASSFILE/.test(p.v))) walkEnv.pgUser = null; continue; }
           if (x.v.startsWith('-')) continue;
           const eq = x.v.indexOf('=');
@@ -703,8 +1202,12 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         return 0;
       };
       const isRunner = () => runnerSkip() > 0;
+      // True once a package runner (npx, npm exec, uvx, pipx run ...) has been skipped to reach the program:
+      // the program may then have been downloaded to run, which the hunt does not allow of an audit tool.
+      let viaRunner = false;
       while (WRAPPERS.has(prog) || prog === 'env' || prog === 'timeout' || prog === 'xargs' || isRunner()) {
         if (isRunner()) {
+          viaRunner = true;
           args = args.slice(runnerSkip());
           // The runner's own -c/--call STRING (a command string) is only a -c BEFORE the program word:
           // after it, -c belongs to the wrapped program and the normal program rules read it.
@@ -847,6 +1350,18 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         const why = inlineInterpreterReason(interpKind, prog, rest, { inPlaceOk: autopilot });
         if (why) return deny(why);
       }
+      // The hunt: the audit tools it may run, in the forms it may run them, and the commands it refuses
+      // (a test suite, a worktree). A listed form is allowed here, after the variable gate and the
+      // interpreter rules above and the redirect check at the top, which apply to it as to any command.
+      if (hunt) {
+        const h = huntCheck(prog, rest.map((x) => x.v), { viaRunner, interpreter: interpKind });
+        if (h && h.reason) return deny(h.reason);
+        if (h && h.allow) {
+          for (const p of h.outputs) checkTarget({ k: 'w', parts: [{ t: 'lit', v: p }] }, dir, `${prog} output file`, container);
+          for (const { path: p, form, opt } of h.prefixes || []) checkProjectDir(p, form, dir, opt);
+          return;
+        }
+      }
       if (prog === 'psql') {
         psqlCheck(rest);
         // -o and -L write a file: the same area rule as a redirect.
@@ -862,14 +1377,28 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         if (names.length === 0) return deny(ENV_DUMP);
         for (const x of names) {
           if (x.v === null) return deny('printenv names a variable built from a substitution; it cannot be verified');
-          if (!autopilot && !roleVars.includes(x.v)) return deny(`printenv ${x.v} reads a variable that is not a configured role variable; during a QA run only the role variables (qa.roles[].userEnv and passwordEnv) are read, and any other is checked with \${NAME:+set}`);
+          if (!autopilot && !roleVars.includes(x.v)) return deny(`printenv ${x.v} reads a variable that is not a configured role variable; during ${runKind} only the role variables (qa.roles[].userEnv and passwordEnv) are read, and any other is checked with \${NAME:+set}`);
           if (autopilot && (TRACKER_VARS.test(x.v) || SECRET_VARS.test(x.v))) return deny(`printenv ${x.v} would print a credential or secret; an autopilot stage never reads one out, check it with \${NAME:+set}`);
         }
         return;
       }
       // Commands that print the whole environment: set and compgen -e, and export, declare,
       // typeset and readonly when they name nothing to set.
-      if (prog === 'set') { if (rest.length === 0 && !nullOut) deny(ENV_DUMP); return; }
+      if (prog === 'set') {
+        if (rest.length === 0 && !nullOut) deny(ENV_DUMP);
+        // set -a (-o allexport) exports every later assignment with no export word to judge, so the variable
+        // gate would never see GH_HOST=evil: refused during a hunt, as a group of short options holding `a` too (-euao).
+        if (hunt) {
+          for (let k = 0; k < rest.length; k++) {
+            const v = rest[k].v;
+            if (v === null) return deny('set with an option built from a variable or substitution cannot be verified; a variable set for a shell or interpreter can make it run code before the command, and only the listed harmless variables pass');
+            if (/^-[A-Za-z]*a[A-Za-z]*$/.test(v) || (/^-[A-Za-z]*o$/.test(v) && rest[k + 1] && rest[k + 1].v === 'allexport')) {
+              return deny('set -a (allexport) exports every later assignment, and a variable set for a shell or interpreter can make it run code before the command; only the listed harmless variables pass, so allexport is refused during the hunt');
+            }
+          }
+        }
+        return;
+      }
       if (prog === 'compgen') { if (rest.some((x) => /^-[a-z]*e/.test(x.v || '')) && !nullOut) deny(ENV_DUMP); return; }
       if (['export', 'declare', 'typeset', 'readonly'].includes(prog) && plain.length === 0 && !nullOut) deny(ENV_DUMP);
       if (prog === 'export' || prog === 'local' || prog === 'declare' || prog === 'typeset' || prog === 'readonly') {
@@ -906,9 +1435,14 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       }
       if (prog === 'eval') {
         if (rest.some((x) => x.v === null)) return deny('eval runs a command built from a variable; it cannot be verified');
-        walkNested(rest.map((x) => x.v).join(' '), dir, container, depth + 1, pgUser);
+        const text = rest.map((x) => x.v).join(' ');
+        walkNested(text, dir, container, depth + 1, pgUser);
+        // eval runs in the current shell: a cd inside it moves every later command.
+        if (/(^|[\s;&|(])(cd|pushd|popd)(\s|$|[;&|)])/.test(text)) dir = null;
         return;
       }
+      // A sourced script runs in the current shell and may change its directory.
+      if (prog === 'source' || prog === '.') { dir = null; return; }
       if (prog === 'helm') {
         // Not modelled: its read verbs (template, install --dry-run, lint, show) take --post-renderer BINARY.
         return deny('helm can run a post-renderer; a QA run or a stage has no use for it');
@@ -1110,16 +1644,45 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
           break;
         }
         if (rest[k] && rest[k].v === null) return deny('the git subcommand is built from a variable or substitution and cannot be verified; spell it out');
+        // Every profile: a config key given on the command line (core.fsmonitor, core.pager,
+        // diff.external, an alias) names a program git runs, so -c and --config-env turn a read into
+        // anything; --exec-path picks the programs git runs. -C, --git-dir and --work-tree name a
+        // literal folder inside the project.
+        for (let g = 0; g < k; g++) {
+          const v = rest[g].v;
+          if (v === null) return deny('a git global option built from a variable or substitution cannot be verified; spell it out');
+          if (v === '-c' || v.startsWith('--config-env') || v === '--exec-path' || v.startsWith('--exec-path=')) {
+            return deny(`git -c and --exec-path can turn any git command into another (a config key names a program git runs); ${autopilot ? 'an autopilot stage runs plain git' : `git runs plain during ${runKind}`}`);
+          }
+          const dirOpt = ['-C', '--git-dir', '--work-tree'].find((o) => v === o || v.startsWith(`${o}=`));
+          if (dirOpt) {
+            const valWord = v === dirOpt ? rest[g + 1] : { v: v.slice(dirOpt.length + 1) };
+            if (!valWord || valWord.v === null) return deny(`git ${dirOpt} with a folder built from a variable or substitution cannot be verified; spell it out`);
+            const raw = valWord.v;
+            let p = normPath(raw);
+            if (p.startsWith('~')) return deny(`git ${dirOpt} ${raw} is outside the project; git reads the project's repositories only`);
+            if (!p.startsWith('/')) {
+              if (dir === null) return deny(`git ${dirOpt} ${raw} is relative to a directory the command changed to through a variable; use a literal path`);
+              p = `${dir}/${p.replace(/^\.\//, '')}`;
+            }
+            if (p.split('/').includes('..')) return deny(`git ${dirOpt} ${raw} has a parent-directory segment and cannot be verified`);
+            if (rel(realCanonical(p, rootC), rootC, ignoreCase) === null) return deny(`git ${dirOpt} ${raw} is outside the project; git reads the project's repositories only`);
+          }
+        }
         const sub = rest[k] ? rest[k].v : '';
         const subArgs = rest.slice(k + 1).map((x) => x.v || '');
         if (!sub) return;
+        // git takes any unambiguous prefix of a long option (--open for --open-files-in-pager).
+        const longIs = (x, name, min) => { if (!x.startsWith('--')) return false; const n = x.slice(2).split('=')[0]; return n.length >= min && name.startsWith(n); };
+        // grep -O / --open-files-in-pager runs the program it names on the matching files.
+        if (sub === 'grep' && subArgs.some((x) => (/^-[A-Za-z]*O/.test(x) && !x.startsWith('--')) || longIs(x, 'open-files-in-pager', 2))) {
+          return deny(`git grep -O (--open-files-in-pager) runs the program it names; during ${runKind} git grep prints its matches`);
+        }
+        // --ext-diff runs the external diff driver a config names, on any command that prints a diff.
+        if (subArgs.some((x) => longIs(x, 'ext-diff', 3))) return deny(`git --ext-diff runs an external diff program; during ${runKind} git prints its own diff`);
         if (autopilot) {
           // An allow-list: the stage commits, branches, stashes and fetches; it never pushes,
           // integrates, discards or reconfigures git.
-          const globals = rest.slice(0, k).map((x) => x.v || '');
-          if (globals.some((g) => g === '-c' || g.startsWith('--config-env') || g === '--exec-path' || g.startsWith('--exec-path='))) {
-            return deny('git -c and --exec-path can turn any git command into another; an autopilot stage runs plain git');
-          }
           if (GIT_READ_ONLY.has(sub) || GIT_AUTOPILOT_ALLOWED.has(sub)) return;
           if (sub === 'fetch') {
             // Positive form only: `git fetch origin [refspec...]` with a few plain options.
@@ -1149,6 +1712,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
           if (sub === 'config') return deny('git config can define an alias or change the remote; the project config stays as it is during an autopilot stage');
           return deny(`git ${sub} is not on the autopilot allow-list; the engine pushes and integrates, nothing discards work, and an alias is not run`);
         }
+        if (hunt && sub === 'worktree' && subArgs[0] === 'add') return deny(HUNT_NO_SUITE);
         if (GIT_READ_ONLY.has(sub)) {
           if (subArgs.some((x) => x === '--output' || x.startsWith('--output='))) deny('git --output writes a file; redirect into reviews/<id>/artifacts/ instead');
           return;
@@ -1158,7 +1722,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         if (sub === 'remote' && (subArgs.length === 0 || ['-v', 'show', 'get-url'].includes(subArgs[0]))) return;
         if (sub === 'config' && subArgs.some((x) => ['--get', '--list', '-l', '--get-all', '--get-regexp'].includes(x))) return;
         if (sub === 'worktree' && subArgs[0] === 'list') return;
-        return deny(`git ${sub} changes a repository; only read-only git commands run during a QA run`);
+        return deny(`git ${sub} changes a repository; only read-only git commands run during ${runKind}`);
       }
       if (['awk', 'gawk', 'mawk', 'nawk'].includes(prog)) {
         // An awk program can run a command (system(), a pipe, getline from a command) or write a file
@@ -1201,7 +1765,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       }
       if (prog === 'sed' || prog === 'perl' || prog === 'ruby') {
         const inPlace = rest.some((x) => x.v && (x.v === '--in-place' || x.v.startsWith('--in-place=') || /^-[A-Za-z]*i/.test(x.v)));
-        if (inPlace && !autopilot) deny(`${prog} -i edits files in place; the code under test is read-only during a QA run`);
+        if (inPlace && !autopilot) deny(`${prog} -i edits files in place; the code under test is read-only during ${runKind}`);
         if (inPlace && autopilot) {
           // Every operand but the script is a file the edit writes. The script is the operand that
           // follows -e/--expression/-f/--file, or the first plain operand when none is given.
@@ -1219,7 +1783,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         return;
       }
       if (prog === 'truncate') {
-        if (!autopilot) return deny('truncate changes a file; the code under test is read-only during a QA run');
+        if (!autopilot) return deny(`truncate changes a file; the code under test is read-only during ${runKind}`);
         for (const x of plain) if (x.v && !/^-/.test(x.v) && !/^[0-9]+[kmg]?$/i.test(x.v)) checkTarget(x.w, dir, 'truncate target', container);
         return;
       }
@@ -1253,21 +1817,26 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       if (['chmod', 'chown', 'chgrp', 'icacls', 'takeown', 'setfacl', 'attrib', 'cacls', 'xattr', 'chattr'].includes(prog)) {
         return deny('permission or ownership change is blocked');
       }
-      if (autopilot && (prog === 'gh' || prog === 'glab')) {
+      if ((autopilot || hunt) && (prog === 'gh' || prog === 'glab')) {
+        const listName = autopilot ? 'autopilot' : 'hunt';
+        const trackerWhy = autopilot ? 'the engine writes back between stages' : 'the hunt reports in its own files and never writes to a tracker';
         // The tracker belongs to the engine: a stage runs the read verbs below and nothing else. The
         // hook's text rules read the bare spellings of the write verbs; this reads the words as the
         // CLI does (quoting undone), and an unknown group or verb (alias set, extension install, run
         // rerun, gist create ...) is refused rather than judged by a deny-list.
-        const READ = prog === 'gh'
+        const READ = hunt ? HUNT_TRACKER_READ[prog] : prog === 'gh'
           ? { issue: ['view', 'list', 'status'], pr: ['view', 'list', 'status', 'diff', 'checks'], repo: ['view', 'list', 'clone'], run: ['view', 'list', 'watch', 'download'], workflow: ['view', 'list'], release: ['view', 'list', 'download'], label: ['list'], gist: ['view', 'list'], project: ['view', 'list', 'field-list', 'item-list'], cache: ['list'], secret: ['list'], variable: ['list', 'get'], ruleset: ['list', 'view', 'check'], config: ['get', 'list'], alias: ['list'], extension: ['list', 'search', 'browse'], auth: ['status'], 'ssh-key': ['list'], 'gpg-key': ['list'], org: ['list'], api: '*', search: '*', status: '*', browse: '*', help: '*', version: '*', completion: '*' }
           : { issue: ['view', 'list'], mr: ['view', 'list', 'diff'], ci: ['status', 'view', 'list', 'trace', 'lint', 'get'], repo: ['view', 'list', 'clone'], release: ['view', 'list'], label: ['list'], variable: ['list', 'get'], auth: ['status'], api: '*', help: '*', version: '*', completion: '*' };
+        // The hunt calls the host the CLI is signed in to: another host would carry the call, and anything in its
+        // path or query, to a server the hunt did not choose.
+        if (hunt && rest.some((x) => x.v !== null && /^--hostname(=|$)/.test(x.v))) return deny(`${prog} --hostname names another host for the call; the hunt's api calls are a path on the host ${prog} is signed in to`);
         let g = 0;
         while (g < rest.length && rest[g].v !== null && rest[g].v.startsWith('-')) g += ['-R', '--repo', '--hostname'].includes(rest[g].v) ? 2 : 1;
         const group = rest[g];
         if (!group) return; // only flags: --version, --help
         if (group.v === null) return deny(`the ${prog} command is built from a variable or substitution and cannot be verified; spell it out`);
         const spec = Object.prototype.hasOwnProperty.call(READ, group.v) ? READ[group.v] : undefined;
-        if (spec === undefined) return deny(`${prog} ${group.v} is not on the autopilot read allow-list; the engine writes to the tracker between stages`);
+        if (spec === undefined) return deny(`${prog} ${group.v} is not on the ${listName} read allow-list; ${trackerWhy}`);
         if (group.v === 'api') {
           // api is a read only without a method and without a body: -X/--method/--request other than
           // GET, -f/-F/--field/--raw-field/--input/-d/--data (any spelling, attached or not), a
@@ -1276,17 +1845,18 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
           for (let k = 0; k < apiWords.length; k++) {
             const v = apiWords[k].v;
             if (v === null) return deny(`${prog} api with an argument built from a variable or substitution cannot be verified; spell it out`);
+            if (hunt && v.includes('://')) return deny(`${prog} api with a URL (${v.slice(0, 40)}) can reach a host no list sees and carry data in its query; the hunt's api calls are a path on the host ${prog} is signed in to`);
             const m = /^(?:-X|--method|--request)(?:=(.*))?$/i.exec(v) || (/^-X(.+)$/.exec(v) ? [v, /^-X(.+)$/.exec(v)[1]] : null);
             if (m) {
               const methodWord = m[1] !== undefined ? m[1] : (apiWords[k + 1] ? apiWords[k + 1].v : null);
-              if (methodWord === null || String(methodWord).toUpperCase() !== 'GET') return deny(`${prog} api with a method other than GET writes to the tracker; the engine writes back between stages`);
+              if (methodWord === null || String(methodWord).toUpperCase() !== 'GET') return deny(`${prog} api with a method other than GET writes to the tracker; ${trackerWhy}`);
               if (m[1] === undefined) k++;
               continue;
             }
-            if (/^(-f|-F|--field|--raw-field|--input|-d|--data)([=].*)?$/.test(v) || /^-[fFd].+/.test(v) || /^--(field|raw-field|input|data)=/.test(v)) return deny(`${prog} api with a field, a body or input is a write; the engine writes back between stages`);
-            if (/^(-H|--header)$/i.test(v) && apiWords[k + 1] && apiWords[k + 1].v !== null && /content-type/i.test(apiWords[k + 1].v)) return deny(`${prog} api with a Content-Type header carries a body; the engine writes back between stages`);
-            if (/^-H.*content-type/i.test(v) || /^--header=.*content-type/i.test(v)) return deny(`${prog} api with a Content-Type header carries a body; the engine writes back between stages`);
-            if (/mutation/i.test(v)) return deny(`${prog} api with a mutation is a write; the engine writes back between stages`);
+            if (/^(-f|-F|--field|--raw-field|--input|-d|--data)([=].*)?$/.test(v) || /^-[fFd].+/.test(v) || /^--(field|raw-field|input|data)=/.test(v)) return deny(`${prog} api with a field, a body or input is a write; ${trackerWhy}`);
+            if (/^(-H|--header)$/i.test(v) && apiWords[k + 1] && apiWords[k + 1].v !== null && /content-type/i.test(apiWords[k + 1].v)) return deny(`${prog} api with a Content-Type header carries a body; ${trackerWhy}`);
+            if (/^-H.*content-type/i.test(v) || /^--header=.*content-type/i.test(v)) return deny(`${prog} api with a Content-Type header carries a body; ${trackerWhy}`);
+            if (/mutation/i.test(v)) return deny(`${prog} api with a mutation is a write; ${trackerWhy}`);
             if (v === 'graphql') return deny(`${prog} api graphql is a POST; run the read through a REST endpoint or a gh read verb`);
           }
           return;
@@ -1295,7 +1865,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         const verbWord = rest.slice(g + 1).find((x) => x.v === null || !x.v.startsWith('-'));
         if (!verbWord) return;
         if (verbWord.v === null) return deny(`the ${prog} ${group.v} verb is built from a variable or substitution and cannot be verified; spell it out`);
-        if (!spec.includes(verbWord.v)) return deny(`${prog} ${group.v} ${verbWord.v} is not on the autopilot read allow-list; the engine writes to the tracker between stages`);
+        if (!spec.includes(verbWord.v)) return deny(`${prog} ${group.v} ${verbWord.v} is not on the ${listName} read allow-list; ${trackerWhy}`);
         return;
       }
       if (prog === 'kill') {
@@ -1444,13 +2014,49 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         if (!explicit) checkTarget({ k: 'w', parts: [{ t: 'lit', v: 'download' }] }, dir, 'wget (writes into the working directory)', container);
       }
     };
+    // The tracked directory follows the shell's scoping: a subshell ( ), each side of a pipeline and
+    // a backgrounded command run in a child, so a cd inside one of them does not reach the next
+    // command. pipeBase is the directory the current pipeline started in, listBase the one the
+    // current and-or list started in; a ( or { group saves both and the ) or } restores them (and
+    // the ) the directory too: a brace group runs in the current shell).
+    let pipeBase = dir;
+    let listBase = dir;
+    let inPipe = false;
+    const frames = [];
+    const endPipe = () => { if (inPipe) { dir = pipeBase; inPipe = false; } };
+    const open = (paren) => { frames.push({ paren, dir, pipeBase, listBase, inPipe }); pipeBase = dir; listBase = dir; inPipe = false; };
+    const close = () => {
+      const f = frames.pop();
+      if (!f) return;
+      endPipe();
+      if (f.paren) dir = f.dir;
+      ({ pipeBase, listBase, inPipe } = f);
+    };
     for (const t of toks) {
-      if (t.k === 'op' && [';', '&&', '||', '|', '&', '(', ')'].includes(t.v)) flush();
-      else cmd.push(t);
+      if (t.k === 'op' && [';', '&&', '||', '|', '&', '(', ')'].includes(t.v)) {
+        flush();
+        if (t.v === '|') { dir = pipeBase; inPipe = true; }
+        else if (t.v === '&') { inPipe = false; dir = listBase; pipeBase = dir; }
+        else if (t.v === ';') { endPipe(); pipeBase = dir; listBase = dir; }
+        else if (t.v === '&&' || t.v === '||') { endPipe(); pipeBase = dir; }
+        else if (t.v === '(') open(true);
+        else close();
+        continue;
+      }
+      if (t.k === 'w' && cmd.length === 0) {
+        const v = resolveWord(t);
+        if (v === '{') open(false);
+        else if (v === '}') close();
+      }
+      cmd.push(t);
     }
     flush();
   };
 
+  // The one way a QA run or a hunt ends: the gatekeeper removes its own marker with a call whose
+  // entire command is `rm [-f] <marker>` (one literal operand, no other word, no chaining). The
+  // other profile's marker, and every other spelling, stay refused by checkTarget.
+  if (!autopilot && ownMarkerRemoval(String(command), normPath(cwd), rootC, hunt ? 'hunt-active' : 'qa-active', ignoreCase)) return '';
   try {
     walk(String(command), normPath(cwd), false, 0);
   } catch (error) {
@@ -1463,11 +2069,29 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
   return reason;
 }
 
+// True when `command` is exactly `rm <path>` or `rm -f <path>`, every word plain literal text, and
+// <path> (relative to cwd) is the marker `name` of the project at rootC.
+export function ownMarkerRemoval(command, cwd, rootC, name, ignoreCase) {
+  const toks = tokenize(command);
+  if (toks.subs.length || toks.some((t) => t.k !== 'w')) return false;
+  if (!toks.every((t) => t.parts.every((p) => p.t === 'lit'))) return false;
+  const words = toks.map((t) => t.parts.map((p) => p.v).join(''));
+  if (words[0] !== 'rm') return false;
+  const ops = words[1] === '-f' ? words.slice(2) : words.slice(1);
+  if (ops.length !== 1 || ops[0].startsWith('-') || /[*?[\]{}~$`]/.test(ops[0])) return false;
+  let p = normPath(ops[0]);
+  if (!p.startsWith('/')) p = `${cwd}/${p.replace(/^\.\//, '')}`;
+  if (p.split('/').includes('..')) return false;
+  const want = realCanonical(`${rootC}/.ultrapowers/${name}`, rootC);
+  const got = realCanonical(p, rootC);
+  return ignoreCase ? got.toLowerCase() === want.toLowerCase() : got === want;
+}
+
 function main() {
   let input = '';
   try { input = readFileSync(0, 'utf8'); } catch { input = ''; }
   const [cwd = '', root = '', ticket = '', ignoreCaseFlag = '', roleVarsField = '', roRoleField = '', ...cmdParts] = input.split('\0');
-  const profile = process.env.ULTRAPOWERS_GUARD_PROFILE === 'autopilot' ? 'autopilot' : 'qa';
+  const profile = ['autopilot', 'hunt'].includes(process.env.ULTRAPOWERS_GUARD_PROFILE) ? process.env.ULTRAPOWERS_GUARD_PROFILE : 'qa';
   const out = analyze(cmdParts.join('\0'), { cwd, root, ticket, profile, ignoreCase: ignoreCaseFlag === '1', roleVars: roleVarsField.split(',').filter(Boolean), roRole: roRoleField || 'qa_agent_ro' });
   if (out) process.stdout.write(out);
 }

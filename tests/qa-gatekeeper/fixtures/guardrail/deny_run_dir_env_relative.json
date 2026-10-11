@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"ls"},"env":{"ULTRAPOWERS_RUN_DIR":"project"},"reason":"ULTRAPOWERS_RUN_DIR (project) is not an absolute path"}
