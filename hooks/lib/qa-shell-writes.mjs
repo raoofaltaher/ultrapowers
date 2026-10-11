@@ -915,17 +915,34 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         return deny(`${prog} ${verb}${next && ['config', 'auth', 'rollout'].includes(verb) ? ' ' + next.v : ''} changes the cluster; the stack stays as found, only read verbs (get, describe, logs, top ...) run during ${runKind}`);
       }
       if (prog === 'cmd') {
-        // cmd /c COMMAND... (also /k, /r, /d /s /c): the rest of the line is the command, with
-        // backslash separators. Its own builtins (del, copy, move, ren, md) are judged below.
-        const ci = rest.findIndex((x) => x.v !== null && /^\/[ckr]$/i.test(x.v));
-        if (ci === -1) return deny('cmd without /c reads its commands from stdin, which cannot be inspected; run the command directly');
-        const tail = rest.slice(ci + 1);
-        if (!tail.length || tail.some((x) => x.v === null)) return deny('cmd /c runs a command built from a variable or missing; it cannot be verified');
-        // %VAR% expansion, !VAR! delayed expansion and ^ escapes change the command after this walk has
-        // read it (`%COMSPEC%`, `echo ^> x`): none is modelled, so a tail holding one is refused.
-        if (tail.some((x) => /[%!^]/.test(x.v))) return deny('a cmd tail with %, ! or ^ is not analysed (variable expansion, delayed expansion and caret escapes are not modelled); run the command directly');
-        walkNested(tail.map((x) => x.v).join(' ').replace(/\\/g, '/'), dir, container, depth + 1, pgUser);
-        return;
+        // cmd.exe is not modelled: its quoting, its separators (& && || |), its redirects (> >> < >nul 2>&1),
+        // %VAR% and !VAR! expansion, ^ escapes and the /c quote-stripping rule all differ from the POSIX
+        // walk. Every `cmd /c` and `cmd /k` tail is refused, except a small literal list of reads during a
+        // QA run: dir, ver, where WORD, and type PATH inside the project, with none of the characters
+        // that give cmd any other meaning.
+        const CMD_MSG = 'a cmd.exe command line is not analysed; run the read command directly';
+        if (autopilot) return deny(CMD_MSG);
+        // Only /c, and as the first word: /k leaves a shell open, and an option before /c (/d /s /v:on) changes the parse.
+        if (!rest.length || rest[0].v === null || !/^\/c$/i.test(rest[0].v)) return deny(CMD_MSG);
+        const tail = rest.slice(1);
+        if (!tail.length || tail.some((x) => x.v === null)) return deny(CMD_MSG);
+        const text = tail.map((x) => x.v).join(' ').trim();
+        if (/["'&|<>%!^()\r\n\0]/.test(text)) return deny(CMD_MSG);
+        const words = text.split(/\s+/);
+        const verb = words[0].toLowerCase();
+        if (verb === 'dir') return;
+        if (verb === 'ver' && words.length === 1) return;
+        if (verb === 'where' && words.length === 2 && /^[A-Za-z0-9_.-]+$/.test(words[1])) return;
+        if (verb === 'type' && words.length === 2 && !/[*?]/.test(words[1])) {
+          let p = normPath(words[1].replace(/\\/g, '/'));
+          if (!p.startsWith('/')) p = dir === null ? '' : `${dir}/${p.replace(/^\.\//, '')}`;
+          if (p && !p.split('/').includes('..')) {
+            const real = realCanonical(p, rootC);
+            const inner = rel(real, rootC, ignoreCase);
+            if (inner !== null && !KEY_RE.test(inner.toLowerCase())) return;
+          }
+        }
+        return deny(CMD_MSG);
       }
       if (prog === 'pwsh' || prog === 'powershell') {
         // PowerShell is not analysed at all: -Command (and any prefix of it: -c, -co, -cwa), -EncodedCommand
