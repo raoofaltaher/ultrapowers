@@ -309,8 +309,10 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
   // and one outside the project is reported to the shell rules.
   let workdirState = "";
   let workdirReal = "";
+  const fileName = str(inp.file_name) || str(inp.fileName) || str(inp.FileName);
   for (const key of ["workdir", "working_directory", "workingDirectory", "dir_path", "Cwd", "cwd"]) {
     if (!str(inp[key]).trim()) continue;
+    if (key === "dir_path" && fileName) continue; // the directory of a file name, not a working directory
     workdirReal = guard.realCanonical(str(inp[key]).trim(), base);
     if (guard.rel(workdirReal, rootReal, ignoreCase) === null) workdirState = "outside"; else { workdirState = "ok"; base = workdirReal; }
     break;
@@ -321,7 +323,16 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
     return { real, rel: inner === null ? "" : "./" + inner };
   };
   // The written path under its known spellings; a move or copy writes its destination.
-  const writeRaw = str(inp.file_path) || str(inp.notebook_path) || str(inp.path) || str(inp.destination) || str(inp.target) || str(inp.target_file) || str(inp.TargetFile) || str(inp.filePath);
+  // The key spellings differ by harness (file_path, filePath, TargetFile, AbsolutePath, absolute_path,
+  // Path): they are compared with case and separators folded; a file name next to a directory
+  // (Gemini dir_path + file_name) is the path they make together.
+  const fold = (k) => k.toLowerCase().replace(/[_-]/g, "");
+  let writeRaw = "";
+  for (const want of ["filepath", "notebookpath", "path", "absolutepath", "destination", "destinationpath", "target", "targetfile", "targetpath", "outputpath", "newpath"]) {
+    const hit = Object.entries(inp).find(([k, v]) => fold(k) === want && str(v));
+    if (hit) { writeRaw = str(hit[1]); break; }
+  }
+  if (!writeRaw && fileName && str(inp.dir_path)) writeRaw = str(inp.dir_path).replace(/[\\/]+$/, "") + "/" + fileName;
   const w = writeRaw ? resolve(writeRaw) : { real: "", rel: "" };
   const keyReal = pathFields.map((p) => { const r = resolve(p); return r.rel ? r.rel.slice(2) : r.real; }).filter(Boolean);
   // The files a patch names (Codex apply_patch, Droid ApplyPatch), each as raw, rel and real.
@@ -456,7 +467,14 @@ case "$tool" in
     case "$tool_lc" in
       *write*|*edit*|*create*|*move_file*|*copy_file*|*delete*|replace|*replace_file*|*patch*)
         [ -n "$wpath" ] && is_write_tool=1 ;;
-    esac ;;
+    esac
+    # A write-named file tool (StrReplaceFile, write_file, ...) is a write whether or not its path
+    # can be read: without one the call is refused below.
+    file_write_re='(write|edit|create|delete|replace|move|copy|rename|patch|insert|append|save|remove).*(file|notebook)|(file|notebook).*(write|edit|create|delete|replace|move|copy|rename|patch|insert|append|save|remove)'
+    [[ "$tool_lc" =~ $file_write_re ]] && is_write_tool=1
+    # Any other tool that carries a path-shaped field writes it, unless it is a reader.
+    read_only_re='^(read|ls|cat|glob|grep|lsp|open|stat|tree|find|view)|read|list|grep|glob|search|view|find|symbol|definition|reference|diagnostic|hover|artifact|get_|fetch|stat|tree|show|info|exists'
+    if [ "$is_write_tool" -eq 0 ] && [ -n "$wpath" ] && ! [[ "$tool_lc" =~ $read_only_re ]]; then is_write_tool=1; fi ;;
 esac
 
 # A command or a write run from a directory outside the project cannot be judged by the project's
