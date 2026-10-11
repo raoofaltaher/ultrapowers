@@ -29,7 +29,10 @@ const XARGS_VALUE_OPTS = new Set(['-I', '-i', '-n', '-P', '-L', '-d', '-a', '-E'
 // The SQL argument of an inspected psql is the one text that is not counted.
 // This analyzer matches the shapes a cooperative agent types; it is not a sandbox. A program
 // spelled with a glob, copied under another name or run from a script file is beyond a text rule,
-// and the read-only database role's grants are the guarantee behind it.
+// and the read-only database role's grants are the guarantee behind it. That is the QA and autopilot
+// limit (they run the project's own suites and scripts); the hunt is a program allow-list instead
+// (huntProgramWhy): a script of the project, a path-named program of the project and any program off the
+// list are refused there.
 const PSQL_PROGRAMS = new Set(['psql']);
 // psql as a token inside a word that holds whitespace (a command string for another program).
 const PSQL_TOKEN_RE = /(^|[\s;&|(`'"])(?:[^\s'"`;&|()]*[\\/])?psql(\.exe)?(?=[\s;&|)`'"]|$)/gi;
@@ -876,6 +879,69 @@ function huntPipAudit(words, refuse, allow) {
   return files.reason || allow(parsed.valued.filter(([name]) => name === '-o' || name === '--output').map(([, , v]) => v), files.out);
 }
 
+// ---------- the hunt's program list ----------
+// The hunt is a program allow-list: besides the audit tools of huntCheck, the git and gh/glab forms of the
+// walk below and the node/python scripts named here, it runs only these read verbs and shell builtins. Any
+// other program, a script of the project and a program named by a path inside the project are refused
+// with HUNT_NOT_LISTED. QA and autopilot keep their deny-list on purpose: they run the project's suites.
+const HUNT_PROGRAMS = new Set(['cat', 'ls', 'head', 'tail', 'wc', 'grep', 'rg', 'find', 'file', 'stat', 'du', 'sort', 'cut', 'tr', 'diff', 'comm',
+  'sha256sum', 'shasum', 'md5sum', 'jq', 'yq', 'basename', 'dirname', 'realpath', 'readlink', 'printf', 'echo', 'true', 'false', 'test', '[', '[[', 'pwd', 'env',
+  'git', 'gh', 'glab']);
+const HUNT_BUILTINS = new Set(['cd', 'pushd', 'popd', 'set', 'unset', 'local', ':']);
+// The scripts of the plugin that a hunt (or a task review) runs by name when the audited project is the plugin itself.
+const HUNT_OWN_SCRIPTS_RE = /(^|\/)skills\/(vulnerability-hunt\/scripts\/hunt-preflight|task-review\/scripts\/assemble-review)\.mjs$/;
+const HUNT_NOT_LISTED = (prog) => `the hunt reads; ${prog} is not on its list (the read verbs, git read commands, the audit tools and gh/glab api GET)`;
+// The reason the hunt refuses this program ('' when it is on the list). args: the words of the command from
+// the program on ({ w, v } with v === null for a word built from a variable); dir: the directory the command
+// runs in (null when unknown); inArea: whether a real path is in the report area.
+function huntProgramWhy(prog, args, interpKind, { dir, rootC, ignoreCase, inArea }) {
+  const word = args[0].v;
+  const rest = args.slice(1);
+  const vals = rest.map((x) => x.v);
+  if (/[\\/]/.test(word)) {
+    let p = normPath(word);
+    if (!p.startsWith('/')) {
+      if (dir === null) return `the hunt reads; the program ${word} is relative to a directory the command changed to through a variable; use a plain program name`;
+      p = `${dir}/${p.replace(/^\.\//, '')}`;
+    }
+    if (p.split('/').includes('..')) return `the hunt reads; the program ${word} has a parent-folder segment and cannot be verified`;
+    if (rel(realCanonical(p, rootC), rootC, ignoreCase) !== null) return `the hunt reads; ${word} is a program of the project and is not on its list`;
+  }
+  if (rest.length > 0 && vals.every((v) => v !== null && INFO_FLAGS.includes(v))) return '';
+  if (HUNT_BUILTINS.has(prog)) return '';
+  if (HUNT_PROGRAMS.has(prog)) {
+    const text = vals.filter((v) => v !== null);
+    if (prog === 'rg' && text.some((v) => /^--(pre|hostname-bin)(=|$)/.test(v))) return 'the hunt reads; rg --pre and --hostname-bin run a program';
+    if (prog === 'yq' && text.some((v) => /^-[A-Za-z]*[is]$/.test(v) || /^--(inplace|split-exp)(=|$)/.test(v))) return 'the hunt reads; yq -i and -s write files';
+    if (prog === 'yq' && text.some((v) => /(^|[^A-Za-z0-9_])(str)?env(subst)?\s*\(|(^|[^A-Za-z0-9_])(load|eval)(_str|_xml|_base64|_props|_csv|_json|_yaml)?\s*\(/.test(v))) return 'the hunt reads; a yq expression that reads the environment or loads a file cannot be verified';
+    if (prog === 'jq' && text.some((v) => /\$ENV\b|(^|[\s|(;,])env([\s|)\];,]|$)/.test(v))) return 'the hunt reads; a jq expression that reads the environment cannot be verified';
+    if (prog === 'file' && text.some((v) => /^-[A-Za-z]*C/.test(v) || v === '--compile')) return 'the hunt reads; file -C writes a compiled magic file';
+    return '';
+  }
+  if (SHELLS.has(prog)) {
+    // Only a command string, which the walk reads as a command of its own; a script file or stdin is a program of the project.
+    if (vals.some((v) => v !== null && (/^-[a-zA-Z]*c[a-zA-Z]*$/.test(v) || v === '--command' || v.startsWith('--command=')))) return '';
+    return HUNT_NOT_LISTED(prog);
+  }
+  if (['node', 'nodejs'].includes(prog) || interpKind === 'python') {
+    // The script is the first word, with no option before it (an option may take a value or load code); it runs
+    // only when it lies outside the project, or is one of the plugin's own scripts and not a file of the report area.
+    const script = args[1];
+    if (!script || script.v === null || script.v.startsWith('-')) return `the hunt reads; ${prog} runs a script given as its first word with no option before it`;
+    let p = normPath(script.v);
+    if (!p.startsWith('/')) {
+      if (dir === null) return `the hunt reads; ${prog} ${script.v} is relative to a directory the command changed to through a variable`;
+      p = `${dir}/${p.replace(/^\.\//, '')}`;
+    }
+    if (p.split('/').includes('..')) return `the hunt reads; ${prog} ${script.v} has a parent-folder segment and cannot be verified`;
+    const real = realCanonical(p, rootC);
+    if (rel(real, rootC, ignoreCase) === null) return '';
+    if (HUNT_OWN_SCRIPTS_RE.test(real.replace(/\\/g, '/')) && !inArea(real)) return '';
+    return `the hunt reads; ${prog} ${script.v} is not on its list (${prog} runs only the hunt's own preflight script or a script outside the project, never a file of the project or of the report area)`;
+  }
+  return HUNT_NOT_LISTED(prog);
+}
+
 // ---------- analysis ----------
 const ENV_DUMP = 'dumping the environment is blocked; check a variable with ${NAME:+set} instead';
 const SUBST_WHY = 'a command substitution cannot be analysed; spell the command out (run the inner command as its own call)';
@@ -1362,6 +1428,11 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
           return;
         }
       }
+      // The hunt is a program allow-list (huntProgramWhy). The rules below still run for what is listed (sort -o, find -exec,
+      // the git, gh and glab forms) and for what is not, so a specific refusal of theirs is kept; an unlisted program they
+      // let through is refused last, with the list message.
+      const unlisted = hunt ? huntProgramWhy(prog, args, interpKind, { dir, rootC, ignoreCase, inArea }) : '';
+      const afterGate = () => {
       if (prog === 'psql') {
         psqlCheck(rest);
         // -o and -L write a file: the same area rule as a redirect.
@@ -1956,6 +2027,46 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         }
         return;
       }
+      if (prog === 'shuf') {
+        // -o FILE, -oFILE, --output FILE and --output=FILE write FILE, the same as sort -o.
+        for (let k = 0; k < rest.length; k++) {
+          const v = rest[k].v;
+          if (v === null) continue;
+          if (v === '--output') { if (rest[k + 1]) { checkTarget(rest[k + 1].w, dir, 'shuf --output', container); k++; } continue; }
+          if (v.startsWith('--output=')) { checkTarget({ k: 'w', parts: [{ t: 'lit', v: v.slice('--output='.length) }] }, dir, 'shuf --output', container); continue; }
+          const m = /^-[a-z]*o(.*)$/.exec(v);
+          if (m && !v.startsWith('--')) {
+            if (m[1]) checkTarget({ k: 'w', parts: [{ t: 'lit', v: m[1] }] }, dir, 'shuf -o', container);
+            else if (rest[k + 1]) { checkTarget(rest[k + 1].w, dir, 'shuf -o', container); k++; }
+          }
+        }
+        return;
+      }
+      if (prog === 'uniq') {
+        // uniq [OPTION]... [INPUT [OUTPUT]]: the second operand is a file it writes. -f, -s and -w take a value.
+        const operands = [];
+        for (let k = 0; k < rest.length; k++) {
+          const v = rest[k].v;
+          if (v !== null && ['-f', '-s', '-w', '--skip-fields', '--skip-chars', '--check-chars', '--group'].includes(v)) { k++; continue; }
+          if (v !== null && v.startsWith('-') && v !== '-') continue;
+          operands.push(rest[k]);
+        }
+        if (operands.length >= 2) checkTarget(operands[1].w, dir, 'uniq output file', container);
+        return;
+      }
+      if (prog === 'openssl') {
+        // -out, -keyout, -writerand and -save name a file the subcommand writes.
+        for (let k = 0; k < rest.length - 1; k++) {
+          if (['-out', '-keyout', '-writerand', '-save'].includes(rest[k].v)) { checkTarget(rest[k + 1].w, dir, `openssl ${rest[k].v}`, container); k++; }
+        }
+        return;
+      }
+      if (prog === 'sqlite3') {
+        // The first operand opens (and may create or change) a database file; ':memory:' and a blank name touch none.
+        const db = rest.find((x) => x.v === null || !x.v.startsWith('-'));
+        if (db && db.v !== ':memory:' && db.v !== '') checkTarget(db.w, dir, 'sqlite3 database', container);
+        return;
+      }
       if (prog === 'mkdir' || prog === 'touch') {
         // The operands are the paths made; -m MODE, -d DATE, -t STAMP and -r REFERENCE take a value.
         const valued = prog === 'mkdir' ? new Set(['-m', '--mode']) : new Set(['-d', '--date', '-t', '-r', '--reference', '--time']);
@@ -2013,6 +2124,9 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         }
         if (!explicit) checkTarget({ k: 'w', parts: [{ t: 'lit', v: 'download' }] }, dir, 'wget (writes into the working directory)', container);
       }
+      };
+      afterGate();
+      if (unlisted && !reason) deny(unlisted);
     };
     // The tracked directory follows the shell's scoping: a subshell ( ), each side of a pipeline and
     // a backgrounded command run in a child, so a cd inside one of them does not reach the next
