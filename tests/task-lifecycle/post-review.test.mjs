@@ -39,11 +39,12 @@ function fakeTracker(name, { open = {}, createdUrl = 'https://example.test/pr/99
 }
 
 // A workspace on disk with the review files; fake deps record git and tracker calls in `log`.
-function setup({ id, review = '# Task review\n\nVerdict: FAIL — x.\n', qa = '# QA report\n\nVerdict: PASS — ok.\n', artifacts = {}, entries, docsBranch, forges = {}, trackers = {}, pushFails = {} }) {
+function setup({ id, review = '# Task review\n\nVerdict: FAIL — x.\n', qa = '# QA report\n\nVerdict: PASS — ok.\n', security = null, artifacts = {}, entries, docsBranch, forges = {}, trackers = {}, pushFails = {} }) {
   const root = mkdtempSync(join(tmpdir(), 'post-review-'));
   mkdirSync(join(root, 'reviews', id, 'artifacts'), { recursive: true });
   if (review !== null) writeFileSync(join(root, 'reviews', id, 'TASK-REVIEW.md'), review);
   if (qa !== null) writeFileSync(join(root, 'reviews', id, 'QA-REPORT.md'), qa);
+  if (security !== null) writeFileSync(join(root, 'reviews', id, 'SECURITY-REPORT.md'), security);
   for (const [name, bytes] of Object.entries(artifacts)) writeFileSync(join(root, 'reviews', id, 'artifacts', name), bytes);
   const log = [];
   const deps = {
@@ -170,6 +171,52 @@ test('GitHub: commits reviews/<ID>, pushes the documents branch, comments review
     assert.match(comments[1].body, /^\*\*QA-REPORT\.md\*\*/);
     assert.match(comments[1].body, /!\[cart as admin\]\(https:\/\/github\.com\/o\/docs\/blob\/GH-web-7-work\/reviews\/GH-web-7\/artifacts\/cart-admin-en-total\.png\?raw=true\)/);
     assert.equal(out.posted.length, 2);
+  } finally { rmSync(s.root, { recursive: true, force: true }); }
+});
+
+test('a SECURITY-REPORT.md beside the review is posted as the third part, after the QA report; without one only two parts go', async () => {
+  const id = 'GH-web-7';
+  const withReport = fakeTracker('ticket');
+  const a = setup({ id, security: '# Security report\n\nVerdict: FAIL — a runtime CVE.\n', trackers: { ticket: withReport }, entries: [] });
+  const without = fakeTracker('ticket');
+  const b = setup({ id, trackers: { ticket: without }, entries: [] });
+  try {
+    for (const s of [a, b]) s.deps.forgeFor = (dir) => (dir === s.root ? { provider: 'github', host: 'github.com', path: 'o/docs' } : null);
+    await postReview({ id, root: a.root, marker: MARKER, resolution: ticketOf(id) }, a.deps);
+    await postReview({ id, root: b.root, marker: MARKER, resolution: ticketOf(id) }, b.deps);
+    const three = withReport.calls.filter((c) => c.op === 'comment');
+    assert.equal(three.length, 3);
+    assert.match(three[0].body, /^\*\*TASK-REVIEW\.md\*\*/);
+    assert.match(three[1].body, /^\*\*QA-REPORT\.md\*\*/);
+    assert.match(three[2].body, /^\*\*SECURITY-REPORT\.md\*\*/);
+    assert.match(three[2].body, /Verdict: FAIL — a runtime CVE/);
+    assert.equal(without.calls.filter((c) => c.op === 'comment').length, 2);
+  } finally { rmSync(a.root, { recursive: true, force: true }); rmSync(b.root, { recursive: true, force: true }); }
+});
+
+test('a long SECURITY-REPORT.md goes as numbered parts, each under the limit, on the ticket and on the pull request, after the QA report', async () => {
+  const id = 'GH-web-7';
+  const finding = (n) => `## Finding ${n}\n\n${'The export builds a shell command from the query string. '.repeat(40)}\n`;
+  const security = '# Security report\n\nVerdict: FAIL — long.\n\n' + Array.from({ length: 80 }, (_, n) => finding(n)).join('\n');
+  assert.ok(security.length > 65000);
+  const ticket = fakeTracker('ticket');
+  const pr = fakeTracker('o/api', { open: { 'feature/7-x': 'https://github.com/o/api/pull/3' } });
+  const s = setup({
+    id, security, trackers: { ticket, 'github.com/o/api': pr },
+    entries: [{ repo: 'api', path: 'api', branch: 'feature/7-x', defaultBranch: 'main', onTicketBranch: true }],
+  });
+  try {
+    s.deps.forgeFor = (dir) => (dir === s.root ? { provider: 'github', host: 'github.com', path: 'o/docs' } : { provider: 'github', host: 'github.com', path: 'o/api' });
+    await postReview({ id, root: s.root, marker: MARKER, resolution: ticketOf(id) }, s.deps);
+    for (const bodies of [ticket.calls.filter((c) => c.op === 'comment'), pr.calls.filter((c) => c.op === 'prComment')]) {
+      const parts = bodies.filter((c) => c.body.startsWith('**SECURITY-REPORT.md**'));
+      assert.ok(parts.length >= 2, `${parts.length} security parts`);
+      parts.forEach((c, i) => {
+        assert.ok(c.body.length < 65536);
+        assert.match(c.body, new RegExp(`^\\*\\*SECURITY-REPORT\\.md\\*\\* \\(part ${i + 1} of ${parts.length}\\)`));
+      });
+      assert.ok(bodies.indexOf(parts[0]) > bodies.findIndex((c) => c.body.startsWith('**QA-REPORT.md**')), 'security after QA');
+    }
   } finally { rmSync(s.root, { recursive: true, force: true }); }
 });
 

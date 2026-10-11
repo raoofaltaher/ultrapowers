@@ -56,6 +56,23 @@ if grep -q 'most capable' "$SKILL_MD" && grep -q 'most capable' "$SKILL_DIR/prom
 # A harness with no subagent tool still gets the code review: the session runs the reviewer's prompt itself.
 if grep -q '^\*\*Without a subagent tool:\*\* read \[prompts/review.md\]' "$SKILL_MD" && grep -q 'declined. entry' "$SKILL_MD"; then pass "the body runs the review inline, with a declined entry, when there is no subagent tool"; else fail "the body runs the review inline, with a declined entry, when there is no subagent tool"; fi
 
+# Step 3b runs the vulnerability hunt between the code review and the QA gate (its three sentences verbatim).
+step3="$(grep -n '^## Step 3: ' "$SKILL_MD" | cut -d: -f1)"
+step3b="$(grep -n '^## Step 3b: The vulnerability hunt$' "$SKILL_MD" | cut -d: -f1)"
+step4="$(grep -n '^## Step 4: ' "$SKILL_MD" | cut -d: -f1)"
+if [[ -n "$step3b" && -n "$step3" && -n "$step4" && "$step3" -lt "$step3b" && "$step3b" -lt "$step4" ]]; then pass "Step 3b sits between Step 3 and Step 4"; else fail "Step 3b sits between Step 3 and Step 4"; fi
+if grep -qF 'After every reviewer has returned and before the QA gate, run `ultrapowers:vulnerability-hunt <ID> <repo words>`; it writes `reviews/<ID>/SECURITY-REPORT.md` and `security-findings.json`, which Step 5 folds in. Its verdict stands as written. A hunt that could not run is INCOMPLETE in the report, not a reason to skip Step 5.' "$SKILL_MD"; then pass "Step 3b holds the three sentences of the hunt"; else fail "Step 3b holds the three sentences of the hunt"; fi
+if grep -qF 'a code review of every repository it touched, then the vulnerability hunt, then the QA gate' "$SKILL_MD"; then pass "the Overview names the hunt between the code review and the QA gate"; else fail "the Overview names the hunt between the code review and the QA gate"; fi
+hunt_item="$(grep -n '^[0-9]*\. Run the vulnerability hunt' "$SKILL_MD" | cut -d: -f1)"
+findings_item="$(grep -n '^[0-9]*\. Collect the findings file$' "$SKILL_MD" | cut -d: -f1)"
+qa_item="$(grep -n '^[0-9]*\. Run the QA gate' "$SKILL_MD" | cut -d: -f1)"
+if [[ -n "$hunt_item" && -n "$findings_item" && -n "$qa_item" && "$findings_item" -lt "$hunt_item" && "$hunt_item" -lt "$qa_item" ]]; then pass "the Checklist runs the hunt between the findings file and the QA gate"; else fail "the Checklist runs the hunt between the findings file and the QA gate"; fi
+nums="$(sed -n '/^## Checklist$/,/^## Red Flags$/p' "$SKILL_MD" | grep -oE '^[0-9]+\.' | tr -d '.' | tr '\n' ' ')"
+if [[ "$nums" == "1 2 3 4 5 6 7 8 9 " ]]; then pass "the Checklist is numbered 1 to 9"; else fail "the Checklist is numbered 1 to 9 (got: $nums)"; fi
+redflags="$(sed -n '/^## Red Flags$/,$p' "$SKILL_MD")"
+if grep -q 'CI already runs' <<<"$redflags" && grep -q 'no network' <<<"$redflags" && grep -q 'skip Step 5' <<<"$redflags"; then pass "Red Flags answers the skipped audit, the assumed missing network and the skipped fold"; else fail "Red Flags answers the skipped audit, the assumed missing network and the skipped fold"; fi
+if grep -q 'security-findings.json' "$SKILL_MD" && grep -q 'SECURITY-REPORT.md' "$SKILL_MD" && grep -q 'ultrapowers:vulnerability-hunt' "$SKILL_MD" && [[ -f "$REPO_ROOT/skills/vulnerability-hunt/SKILL.md" ]]; then pass "the body names the hunt skill and its two files, and the skill exists"; else fail "the body names the hunt skill and its two files, and the skill exists"; fi
+
 # The upstream project name never appears; it is built at run time so this file does not hold it.
 upstream="$(printf '%s%s' super powers)"
 if ! grep -rqi "$upstream" "$SKILL_DIR"; then pass "no upstream project name anywhere in the skill"; else fail "no upstream project name anywhere in the skill"; fi

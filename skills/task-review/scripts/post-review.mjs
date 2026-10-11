@@ -2,7 +2,8 @@
 // post-review.mjs <ticket> [--draft-pr] [--cwd <dir>]
 //
 // Step 6 of ultrapowers:task-review, run only when the invocation carried --post. Posts the full
-// reviews/<ticket>/TASK-REVIEW.md and QA-REPORT.md, screenshots included, on the ticket and on the
+// reviews/<ticket>/TASK-REVIEW.md, QA-REPORT.md and, when the vulnerability hunt wrote one,
+// SECURITY-REPORT.md, screenshots included, on the ticket and on the
 // ticket's open pull or merge request of each repository on a ticket branch, through the autopilot
 // tracker clients (tracker.mjs) and the guarded push (repos.mjs). It never merges and never edits
 // code. Network access is only what those two modules do; a local ticket is refused.
@@ -189,7 +190,8 @@ function numbered(name, parts) {
   return parts.map((part, i) => `**${name}**${parts.length > 1 ? ` (part ${i + 1} of ${parts.length})` : ''}\n\n${part}`);
 }
 
-// The comments for one destination: TASK-REVIEW.md then QA-REPORT.md, each rewritten and split.
+// The comments for one destination: TASK-REVIEW.md, QA-REPORT.md, then SECURITY-REPORT.md when there is
+// one, each rewritten and split.
 // Returns [{ body, attachments }] in posting order. In upload mode every artifact a document links
 // is uploaded first through tracker.upload; a failed upload is noted in `notes` and the link
 // falls back to the raw URL.
@@ -281,6 +283,9 @@ export async function postReview({ id, root, marker, resolution, draftPr = false
   const documents = [{ name: 'TASK-REVIEW.md', text: fs.readFileSync(reviewFile, 'utf8') }];
   const qaFile = path.join(root, 'reviews', id, 'QA-REPORT.md');
   if (fs.existsSync(qaFile)) documents.push({ name: 'QA-REPORT.md', text: fs.readFileSync(qaFile, 'utf8') });
+  // The vulnerability hunt's report (Step 3b) is the third part, only when the hunt wrote one.
+  const securityFile = path.join(root, 'reviews', id, 'SECURITY-REPORT.md');
+  if (fs.existsSync(securityFile)) documents.push({ name: 'SECURITY-REPORT.md', text: fs.readFileSync(securityFile, 'utf8') });
 
   const docsBranch = deps.currentBranch(root);
   if (!docsBranch.startsWith(`${id}-`)) {
