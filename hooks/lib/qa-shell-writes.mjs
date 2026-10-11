@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { inside, realCanonical, rel } from './guard-paths.mjs';
 
 const DEVICES = new Set(['/dev/null', '/dev/stdout', '/dev/stderr', '/dev/tty', 'nul', '/dev/fd/1', '/dev/fd/2']);
-const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
+const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'ash', 'mksh', 'rbash', 'fish', 'csh', 'tcsh']);
 const WRAPPERS = new Set(['nohup', 'command', 'exec', 'time', 'sudo', 'nice', 'stdbuf', 'setsid', 'busybox', 'builtin', 'unbuffer', 'ionice', 'doas', 'flock', 'taskset', 'chrt']);
 // Options of a wrapper that take a value, so the word after them is not the program.
 const WRAPPER_VALUE_OPTS = new Set(['-n', '--adjustment', '-o', '-e', '-i']);
@@ -714,7 +714,10 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       }
       if (SHELLS.has(prog)) {
         // -c may be bundled with other short flags (-lc, -ec, -xc); the next word is the command.
-        const ci = rest.findIndex((x) => x.v !== null && /^-[a-zA-Z]*c[a-zA-Z]*$/.test(x.v));
+        // fish takes the long spelling too: --command CMD, --command=CMD.
+        const eqi = rest.findIndex((x) => x.v !== null && x.v.startsWith('--command='));
+        if (eqi !== -1) { walkNested(rest[eqi].v.slice('--command='.length), dir, container, depth + 1, pgUser); return; }
+        const ci = rest.findIndex((x) => x.v !== null && (/^-[a-zA-Z]*c[a-zA-Z]*$/.test(x.v) || x.v === '--command'));
         if (ci !== -1) {
           if (!rest[ci + 1] || rest[ci + 1].v === null) return deny(`${prog} -c runs a command built from a variable; it cannot be verified`);
           walkNested(rest[ci + 1].v, dir, container, depth + 1, pgUser);
