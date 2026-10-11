@@ -108,10 +108,38 @@ export function guardrailEvent({ toolName, input, cwd }) {
   const filePath = first('file_path', 'filePath', 'path', 'notebook_path', 'file');
   const command = first('command', 'cmd');
   const url = first('url');
+  const workdir = perCallDir(inp);
   if (filePath !== undefined) inp.file_path = filePath;
   if (command !== undefined) inp.command = command;
   if (url !== undefined) inp.url = url;
-  return { tool_name: String(toolName ?? ''), tool_input: inp, cwd: String(cwd ?? '') };
+  // One canonical spelling of the call's working directory; with no cwd from the harness it is
+  // the event's cwd too, so the hook resolves relative paths against it.
+  if (workdir !== undefined) inp.workdir = workdir;
+  const evCwd = String(cwd ?? '') || (workdir !== undefined ? path.resolve(workdir) : '');
+  return { tool_name: String(toolName ?? ''), tool_input: inp, cwd: evCwd };
+}
+
+// `p` resolved through the symlinks of its nearest existing ancestor (the rest may not exist yet).
+function realish(p) {
+  let head = path.resolve(p);
+  const tail = [];
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync(head), ...tail);
+    } catch {
+      const parent = path.dirname(head);
+      if (parent === head) return path.resolve(p);
+      tail.unshift(path.basename(head));
+      head = parent;
+    }
+  }
+}
+
+// True when `p` is `root` or inside it (case-insensitively on Windows).
+function within(p, root) {
+  const fold = (s) => (process.platform === 'win32' ? s.toLowerCase() : s);
+  const rel = path.relative(fold(root), fold(p));
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
 // Git for Windows bash, found the way hooks/run-hook.cmd finds it; `bash` on PATH elsewhere.
@@ -138,16 +166,23 @@ function bashBinary() {
 // `cwd` is the session directory and stays the event's cwd; `dirs` are further candidates (an
 // entry point's workspace paths, a call's own directory). The run is looked for from every
 // candidate, the session cwd and the process cwd included, and the first marker found wins: a
-// candidate can add a run, never hide one.
+// candidate can add a run, never hide one. A call's own working directory outside the project
+// root is denied here: the hook resolves paths against the event, not against that directory.
 export function runGuardrail({ toolName, input, cwd, dirs = [], hookDir = HOOK_DIR, timeoutMs = 15000 }) {
-  const startDir = cwd && String(cwd) ? String(cwd) : process.cwd();
-  const event = guardrailEvent({ toolName, input, cwd: startDir });
+  const givenCwd = cwd && String(cwd) ? String(cwd) : '';
+  const startDir = givenCwd || process.cwd();
+  const event = guardrailEvent({ toolName, input, cwd: givenCwd });
+  if (!event.cwd) event.cwd = startDir;
   const callDir = perCallDir(event.tool_input);
-  const run = activeRun(startDir, [...dirs, process.cwd(), ...(callDir ? [path.resolve(startDir, callDir)] : [])]);
+  const callAbs = callDir !== undefined ? path.resolve(startDir, callDir) : null;
+  const run = activeRun(startDir, [...dirs, process.cwd(), ...(callAbs ? [callAbs] : [])]);
   if (!run) return { deny: false };
   const { prefix } = run;
   if (!run.root) {
     return { deny: true, prefix, reason: 'an autopilot stage is running (ULTRAPOWERS_AUTOPILOT_INSIDE) outside any ultrapowers project; the call cannot be verified' };
+  }
+  if (callAbs && !within(realish(callAbs), run.root)) {
+    return { deny: true, prefix, reason: `the call's working directory ${callAbs} is outside the project root ${run.root}; during a run a call works inside the project` };
   }
   const hook = path.join(hookDir, 'qa-guardrail');
   const bash = bashBinary();

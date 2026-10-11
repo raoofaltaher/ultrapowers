@@ -85,6 +85,19 @@ def test_a_workdir_under_a_run_is_guarded_from_a_session_outside_it(hook, tmp_pa
     assert verdict and verdict.get("action") == "block"
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is needed to run the guardrail")
+def test_a_terminal_workdir_outside_the_project_is_blocked(hook, tmp_path, monkeypatch):
+    (tmp_path / "proj").mkdir()
+    root = _project(tmp_path / "proj")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(root)
+    verdict = hook("terminal", {"command": "echo x > config", "workdir": str(outside)}, "t11")
+    assert verdict and verdict.get("action") == "block"
+    assert "outside the project root" in verdict.get("message", "")
+    assert hook("terminal", {"command": "git status", "workdir": str(root / ".agents")}, "t12") is None
+
+
 def test_plugin_yaml_declares_the_hook():
     here = os.path.dirname(os.path.abspath(__file__))
     text = open(os.path.join(here, "..", "..", ".hermes-plugin", "plugin.yaml"), encoding="utf-8").read()

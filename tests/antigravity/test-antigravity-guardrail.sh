@@ -57,5 +57,11 @@ assert(out.decision === 'deny', `Cwd outside, the workspace holds the marker: de
 out = hook(runCommand('git push origin GH-16-x', outside), { cwd: stage });
 assert(out.decision === 'deny', `Cwd outside, no workspacePaths, the process cwd holds the marker: denied (${JSON.stringify(out)})`);
 
+// The call's Cwd is its working directory: outside the project root it is refused outright.
+out = hook(runCommand('echo x > config', outside, [stage]));
+assert(out.decision === 'deny' && /outside the project root/.test(out.reason), `Cwd outside the project: refused (${JSON.stringify(out)})`);
+out = hook(runCommand('git status', path.join(stage, '.agents'), [stage]));
+assert(out.decision === 'allow', `Cwd inside the project: the hook decides (${JSON.stringify(out)})`);
+
 console.log('test-antigravity-guardrail: OK');
 JS

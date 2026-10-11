@@ -31,6 +31,7 @@ export function eventFrom(text, { antigravity: ag = false } = {}) {
     if (typeof argsIn.CommandLine === 'string') input.command = argsIn.CommandLine;
     if (typeof argsIn.TargetFile === 'string') input.file_path = argsIn.TargetFile;
     if (typeof argsIn.AbsolutePath === 'string') input.file_path = argsIn.AbsolutePath;
+    if (typeof argsIn.Cwd === 'string' && argsIn.Cwd) input.workdir = argsIn.Cwd; // the call's own directory, bounded by the bridge
     // The session directory is the workspace (else the process cwd); the call's own Cwd is a
     // per-call argument and never replaces it. The marker search takes every candidate: each
     // workspace path, the process cwd, then Cwd, and the first marker found wins.

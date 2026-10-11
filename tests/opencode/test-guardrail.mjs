@@ -35,6 +35,13 @@ await assert.rejects(
   'the state file is protected, read through OpenCode\'s filePath spelling',
 );
 await hooks['tool.execute.before']({ tool: 'bash', sessionID: 's1', callID: 'c3' }, { args: { command: 'git status --porcelain' } });
+// OpenCode's bash takes a per-call workdir: outside the project it is refused, inside it passes
+await assert.rejects(
+  hooks['tool.execute.before']({ tool: 'bash', sessionID: 's1', callID: 'c3b' }, { args: { command: 'echo x > config', workdir: fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-outside-')) } }),
+  /AUTOPILOT-GUARDRAIL DENY: the call's working directory .* is outside the project root/,
+  'a workdir outside the project is refused',
+);
+await hooks['tool.execute.before']({ tool: 'bash', sessionID: 's1', callID: 'c3c' }, { args: { command: 'git status', workdir: path.join(active, '.agents') } });
 await hooks['tool.execute.before']({ tool: 'write', sessionID: 's1', callID: 'c4' }, { args: { filePath: path.join(active, 'src', 'a.ts'), content: 'x' } });
 
 const idle = project(false);

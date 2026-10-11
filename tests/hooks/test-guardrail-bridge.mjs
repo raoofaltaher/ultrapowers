@@ -238,3 +238,50 @@ test('runGuardrail takes the first marker among the session cwd and every extra 
     assert.equal(v.deny, true, `${key}: ${JSON.stringify(v)}`);
   }
 });
+
+// ---- the per-call working directory: one canonical field, bounded to the project ----
+test('guardrailEvent normalises every per-call working directory spelling to tool_input.workdir', () => {
+  for (const key of ['workdir', 'working_directory', 'Cwd', 'dir_path']) {
+    const ev = guardrailEvent({ toolName: 'bash', input: { command: 'ls', [key]: '/p/sub' }, cwd: '/p' });
+    assert.equal(ev.tool_input.workdir, '/p/sub', key);
+    assert.equal(ev.cwd, '/p', `${key}: the harness cwd stays the event cwd`);
+  }
+  // on a listing tool, dir_path is the directory listed, not a working directory
+  assert.equal(guardrailEvent({ toolName: 'list_directory', input: { dir_path: '/elsewhere' }, cwd: '/p' }).tool_input.workdir, undefined);
+  // no cwd from the harness: the call's working directory becomes the event cwd
+  assert.equal(guardrailEvent({ toolName: 'bash', input: { command: 'ls', workdir: path.resolve('/p/sub') }, cwd: '' }).cwd, path.resolve('/p/sub'));
+});
+
+test('a per-call working directory outside the project root is denied by the entry point', () => {
+  const root = project();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'workdir-outside-'));
+  for (const key of ['workdir', 'working_directory', 'Cwd', 'dir_path']) {
+    const v = runGuardrail({ toolName: 'bash', input: { command: 'echo x > config', [key]: outside }, cwd: root });
+    assert.equal(v.deny, true, `${key}: ${JSON.stringify(v)}`);
+    assert.equal(v.prefix, 'AUTOPILOT-GUARDRAIL');
+    assert.match(v.reason, /working directory .* is outside the project root/, key);
+  }
+  const escape = runGuardrail({ toolName: 'bash', input: { command: 'ls', workdir: path.join('..', '..') }, cwd: path.join(root, 'repo-a') });
+  assert.equal(escape.deny, true, JSON.stringify(escape));
+  assert.match(escape.reason, /outside the project root/);
+  // inside the project the hook decides as before
+  assert.deepEqual(runGuardrail({ toolName: 'bash', input: { command: 'git status', workdir: path.join(root, 'repo-a') }, cwd: root }), { deny: false });
+  assert.deepEqual(runGuardrail({ toolName: 'bash', input: { command: 'git status', workdir: 'repo-a/src' }, cwd: root }), { deny: false });
+  // outside a run nothing is checked
+  const idle = fs.mkdtempSync(path.join(os.tmpdir(), 'workdir-idle-'));
+  assert.deepEqual(runGuardrail({ toolName: 'bash', input: { command: 'ls', workdir: outside }, cwd: idle, hookDir: '/nonexistent' }), { deny: false });
+});
+
+test('guardrail-cli bounds the working directory of a Gemini dir_path and an Antigravity Cwd', () => {
+  const root = project();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-workdir-outside-'));
+  const gemini = runCli({ hook_event_name: 'BeforeTool', tool_name: 'run_shell_command', tool_input: { command: 'echo x > config', dir_path: outside }, cwd: root });
+  assert.equal(gemini.status, 2, gemini.stderr);
+  assert.match(gemini.stderr, /outside the project root/);
+  const ag = runCli({ toolCall: { name: 'run_command', args: { CommandLine: 'echo x > config', Cwd: outside } }, workspacePaths: [root], cwd: root }, ['--antigravity']);
+  const out = JSON.parse(ag.stdout);
+  assert.equal(out.decision, 'deny', ag.stdout);
+  assert.match(out.reason, /outside the project root/);
+  const inside = runCli({ toolCall: { name: 'run_command', args: { CommandLine: 'git status', Cwd: path.join(root, 'repo-a') } }, workspacePaths: [root], cwd: root }, ['--antigravity']);
+  assert.deepEqual(JSON.parse(inside.stdout), { decision: 'allow' });
+});

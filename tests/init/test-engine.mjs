@@ -698,3 +698,16 @@ test('Gemini launcher: the run is looked for from the event cwd, the process cwd
   const denied = geminiLaunch(call({ dir_path: root }), { pluginRoot: repoRoot, cwd: outside });
   assert.equal(denied.status, 2, denied.stderr);
 });
+
+test('Gemini launcher: a run_shell_command dir_path outside the project root is refused', () => {
+  const root = geminiProject();
+  fs.mkdirSync(path.join(root, '.ultrapowers'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.ultrapowers', 'autopilot-active'), JSON.stringify({ ticket: 'GH-16', branch: 'GH-16-x', scope: ['.'], stage: 'execute' }));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'gemini-dirpath-outside-'));
+  const call = (dirPath, command) => ({ hook_event_name: 'BeforeTool', tool_name: 'run_shell_command', tool_input: { command, dir_path: dirPath }, cwd: root });
+  const denied = geminiLaunch(call(outside, 'echo x > config'), { pluginRoot: repoRoot });
+  assert.equal(denied.status, 2, denied.stderr);
+  assert.match(denied.stderr, /outside the project root/);
+  const allowed = geminiLaunch(call('.agents', 'git status'), { pluginRoot: repoRoot });
+  assert.equal(allowed.status, 0, allowed.stderr);
+});
