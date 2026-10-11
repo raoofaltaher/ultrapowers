@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveTicket } from '../../skills/new-task/scripts/ticket-sources.mjs';
 import { pushAllowed } from '../../skills/autopilot/scripts/autopilot-lib.mjs';
-import { postReview, splitParts, rewriteLinks, rawBase } from '../../skills/task-review/scripts/post-review.mjs';
+import { postReview, splitParts, rewriteLinks, rawBase, linkBase } from '../../skills/task-review/scripts/post-review.mjs';
 
 const MARKER = {
   commitTrailer: 'Reviewed-by: Fixture Owner',
@@ -24,7 +24,7 @@ const MARKER = {
 };
 
 // A fake tracker: records every call; `open` maps a branch to an open PR url.
-function fakeTracker(name, { open = {}, createdUrl = 'https://example.test/pr/99' } = {}) {
+function fakeTracker(name, { open = {}, createdUrl = 'https://example.test/pr/99', uploadFails = null } = {}) {
   const calls = [];
   const t = {
     name, calls,
@@ -33,6 +33,7 @@ function fakeTracker(name, { open = {}, createdUrl = 'https://example.test/pr/99
     findOpenPr: async (branch) => { calls.push({ op: 'findOpenPr', branch }); return open[branch] ?? null; },
     createPr: async (args) => { calls.push({ op: 'createPr', ...args }); return createdUrl; },
     title: async () => 'Discount at checkout',
+    upload: async (file) => { calls.push({ op: 'upload', file }); if (uploadFails) throw new Error(uploadFails); const base = file.split(/[\\/]/).pop(); return { url: `/uploads/abc/${encodeURIComponent(base)}`, markdown: `![${base}](/uploads/abc/${encodeURIComponent(base)})` }; },
   };
   return t;
 }
@@ -167,7 +168,7 @@ test('GitHub: commits reviews/<ID>, pushes the documents branch, comments review
     assert.match(comments[0].body, /^\*\*TASK-REVIEW\.md\*\*/);
     assert.match(comments[0].body, /Verdict: FAIL/);
     assert.match(comments[1].body, /^\*\*QA-REPORT\.md\*\*/);
-    assert.match(comments[1].body, /!\[cart as admin\]\(https:\/\/raw\.githubusercontent\.com\/o\/docs\/GH-web-7-work\/reviews\/GH-web-7\/artifacts\/cart-admin-en-total\.png\)/);
+    assert.match(comments[1].body, /!\[cart as admin\]\(https:\/\/github\.com\/o\/docs\/blob\/GH-web-7-work\/reviews\/GH-web-7\/artifacts\/cart-admin-en-total\.png\?raw=true\)/);
     assert.equal(out.posted.length, 2);
   } finally { rmSync(s.root, { recursive: true, force: true }); }
 });
@@ -287,25 +288,25 @@ test('a report over 65,536 characters is posted as numbered parts in order, each
     assert.equal(reviewParts.length, 1);
     assert.ok(comments.indexOf(reviewParts[0]) < comments.indexOf(qaParts[0]), 'review before QA');
     for (let n = 0; n < 120; n += 1) {
-      const holders = qaParts.filter((c) => c.body.includes(`/artifacts/f${n}.png)`));
+      const holders = qaParts.filter((c) => c.body.includes(`/artifacts/f${n}.png?raw=true)`));
       assert.equal(holders.length, 1, `screenshot ${n} is in exactly one part`);
       assert.ok(holders[0].body.includes(`## Finding ${n}`), `screenshot ${n} sits with its finding`);
     }
   } finally { rmSync(s.root, { recursive: true, force: true }); }
 });
 
-test('GitLab: raw links use the -/raw form on the ticket host, and parts stay under the argv-safe limit', async () => {
+test('GitLab: screenshots are uploaded to the project, and parts stay under the argv-safe limit', async () => {
   const id = 'GL-7';
   const ticket = fakeTracker('ticket');
   const qa = '# QA\n\nVerdict: PASS — ok.\n\n![x y](artifacts/x y.png)\n\n' + 'padding line\n\n'.repeat(4000);
-  const s = setup({ id, qa, trackers: { ticket }, entries: [] });
+  const s = setup({ id, qa, artifacts: { 'x y.png': Buffer.from('png') }, trackers: { ticket }, entries: [] });
   try {
     s.deps.forgeFor = (dir) => (dir === s.root ? { provider: 'gitlab', host: 'gitlab.example.com', path: 'acme/docs' } : null);
     await postReview({ id, root: s.root, marker: MARKER, resolution: ticketOf(id) }, s.deps);
     const comments = ticket.calls.filter((c) => c.op === 'comment');
     assert.ok(comments.length > 2);
     assert.ok(comments.every((c) => c.body.length <= 24000));
-    assert.ok(comments.some((c) => c.body.includes('https://gitlab.example.com/acme/docs/-/raw/GL-7-work/reviews/GL-7/artifacts/x%20y.png')));
+    assert.ok(comments.some((c) => c.body.includes('![x y](/uploads/abc/x%20y.png)')));
   } finally { rmSync(s.root, { recursive: true, force: true }); }
 });
 
@@ -340,7 +341,7 @@ test('Odoo: a missing screenshot file is named in the body, not attached, and do
   } finally { rmSync(s.root, { recursive: true, force: true }); }
 });
 
-test('Odoo ticket, code repository on GitLab: the PR comment has no raw link (the documents have no forge) and says where the screenshots are', async () => {
+test('Odoo ticket, code repository on GitLab: the PR comment carries the screenshot as an upload to that project, never a raw link', async () => {
   const id = 'OD-13627';
   const ticket = fakeTracker('ticket');
   const api = fakeTracker('api', { open: { [`${id}-work`]: 'https://gitlab.example.com/acme/api/-/merge_requests/5' } });
@@ -355,7 +356,8 @@ test('Odoo ticket, code repository on GitLab: the PR comment has no raw link (th
     const note = api.calls.filter((c) => c.op === 'prComment').find((c) => c.body.startsWith('**QA-REPORT.md**'));
     assert.ok(note);
     assert.doesNotMatch(note.body, /https?:\/\/[^\s]*\.png/);
-    assert.match(note.body, /attached to the ticket/);
+    assert.match(note.body, /!\[a\]\(\/uploads\/abc\/a\.png\)/);
+    assert.ok(api.calls.some((c) => c.op === 'upload' && c.file.endsWith('a.png')));
   } finally { rmSync(s.root, { recursive: true, force: true }); }
 });
 
@@ -409,4 +411,38 @@ test('rewriteLinks in raw mode never builds a URL outside the artifacts folder',
   assert.doesNotMatch(text, /\.\.\//);
   assert.match(text, /not inside reviews\/GH-7\/artifacts\//);
   assert.match(text, /https:\/\/raw\.example\/o\/r\/GH-7-x\/reviews\/GH-7\/artifacts\/ok\.png/);
+});
+
+test('linkBase builds the blob URL of a GitHub branch; a raw-mode image on GitHub carries ?raw=true, a file link does not', () => {
+  assert.equal(linkBase({ provider: 'github', host: 'github.com', path: 'o/r' }, 'GH-7-x'), 'https://github.com/o/r/blob/GH-7-x');
+  assert.equal(linkBase({ provider: 'gitlab', host: 'gitlab.example.com', path: 'acme/web' }, 'GL-7-feat/é'), 'https://gitlab.example.com/acme/web/-/raw/GL-7-feat/%C3%A9');
+  assert.equal(linkBase(null, 'b'), null);
+  const { text } = rewriteLinks('![shot](artifacts/a.png) [probe](artifacts/api-probes.txt)', { id: 'GH-7', mode: 'raw', base: 'https://github.com/o/r/blob/GH-7-x', imageQuery: '?raw=true' });
+  assert.match(text, /!\[shot\]\(https:\/\/github\.com\/o\/r\/blob\/GH-7-x\/reviews\/GH-7\/artifacts\/a\.png\?raw=true\)/);
+  assert.match(text, /\[probe\]\(https:\/\/github\.com\/o\/r\/blob\/GH-7-x\/reviews\/GH-7\/artifacts\/api-probes\.txt\)/);
+});
+
+test('GitLab: screenshots are uploaded to the project and embedded from the upload URL; a failed upload keeps the raw link with a note', async () => {
+  const id = 'GL-7';
+  const ticket = fakeTracker('ticket');
+  const qa = '# QA\n\nVerdict: PASS — ok.\n\n![x y](artifacts/x y.png)\n\n![gone](artifacts/missing.png)\n';
+  const s = setup({ id, qa, artifacts: { 'x y.png': Buffer.from('png') }, trackers: { ticket }, entries: [] });
+  try {
+    s.deps.forgeFor = (dir) => (dir === s.root ? { provider: 'gitlab', host: 'gitlab.example.com', path: 'acme/docs' } : null);
+    await postReview({ id, root: s.root, marker: MARKER, resolution: ticketOf(id) }, s.deps);
+    const qaComment = ticket.calls.filter((c) => c.op === 'comment').find((c) => c.body.startsWith('**QA-REPORT.md**'));
+    assert.match(qaComment.body, /!\[x y\]\(\/uploads\/abc\/x%20y\.png\)/);
+    assert.ok(ticket.calls.some((c) => c.op === 'upload' && c.file.endsWith('x y.png')));
+    assert.match(qaComment.body, /missing\.png.*not found/);
+  } finally { rmSync(s.root, { recursive: true, force: true }); }
+  const failing = fakeTracker('ticket', { uploadFails: 'glab api failed: 413' });
+  const s2 = setup({ id, qa: '# QA\n\nVerdict: PASS — ok.\n\n![x y](artifacts/x y.png)\n', artifacts: { 'x y.png': Buffer.from('png') }, trackers: { ticket: failing }, entries: [] });
+  try {
+    s2.deps.forgeFor = (dir) => (dir === s2.root ? { provider: 'gitlab', host: 'gitlab.example.com', path: 'acme/docs' } : null);
+    const out = await postReview({ id, root: s2.root, marker: MARKER, resolution: ticketOf(id) }, s2.deps);
+    const qaComment = failing.calls.filter((c) => c.op === 'comment').find((c) => c.body.startsWith('**QA-REPORT.md**'));
+    assert.match(qaComment.body, /https:\/\/gitlab\.example\.com\/acme\/docs\/-\/raw\/GL-7-work\/reviews\/GL-7\/artifacts\/x%20y\.png/);
+    assert.match(qaComment.body, /upload failed: glab api failed: 413/);
+    assert.ok(out.notes.some((n) => /upload failed/.test(n)));
+  } finally { rmSync(s2.root, { recursive: true, force: true }); }
 });

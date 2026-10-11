@@ -381,3 +381,21 @@ test('odoo comment without attachments sends no attachment_ids', async () => {
   await trackerFor(ODOO(f), E_ODOO).comment(13627, 'plain');
   assert.ok(!('attachment_ids' in f.seed.writes.at(-1).kwargs));
 });
+
+test('gitlab upload posts the file to the project uploads API and returns its url and markdown', async () => {
+  const e = env({ 'api projects/acme%2Fplatform%2Fweb/uploads -X POST -F file=@': { stdout: { url: '/uploads/abc/shot.png', markdown: '![shot.png](/uploads/abc/shot.png)', full_path: '/acme/platform/web/uploads/abc/shot.png' } } });
+  const file = path.join(os.tmpdir(), `shot-${process.pid}.png`);
+  fs.writeFileSync(file, 'png');
+  try {
+    const up = await trackerFor(GL, e).upload(file);
+    assert.equal(up.url, '/uploads/abc/shot.png');
+    assert.equal(up.markdown, '![shot.png](/uploads/abc/shot.png)');
+    const args = e.calls()[0].args;
+    assert.deepEqual(args.slice(0, 4), ['api', 'projects/acme%2Fplatform%2Fweb/uploads', '-X', 'POST']);
+    assert.ok(args.includes(`file=@${file}`), JSON.stringify(args));
+  } finally { fs.rmSync(file, { force: true }); }
+});
+
+test('github and odoo trackers have no upload: the call fails with no-upload', async () => {
+  await assert.rejects(trackerFor(GH, env({})).upload('x.png'), (err) => err.code === 'no-upload');
+});

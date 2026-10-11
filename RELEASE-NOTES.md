@@ -1,5 +1,9 @@
 # Ultrapowers Release Notes
 
+## Unreleased
+
+- `task-review --post`: screenshots render on a private repository. GitHub comments link the file on the documents branch through the blob URL with `?raw=true`, which GitHub serves to a logged-in viewer with access; GitLab comments upload the file to the project through its uploads API and embed what it returns, with the raw link as the fallback when an upload fails (#34).
+
 ## v2.0.0 (2026-10-10)
 
 Every open issue triaged against 1.3.1 and fixed in one release, a stricter guardrail, and `/ultrapowers:task-review`.

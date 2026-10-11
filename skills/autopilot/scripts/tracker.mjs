@@ -169,6 +169,11 @@ class GitHubTracker {
     return parseJson(out.stdout, 'gh pr list')[0]?.url ?? null;
   }
 
+  // GitHub has no API that attaches a file to a comment; images are linked from the repository.
+  async upload() {
+    throw new AutopilotError('no-upload', 'GitHub has no upload API for comment images; the review links the file on its branch');
+  }
+
   async prComment(url, body) {
     const out = await run(this.r, this.env, ['pr', 'comment', url, '--body-file', '-'], body);
     return lastUrl(out.stdout);
@@ -296,6 +301,15 @@ class GitLabTracker {
     const out = await run(this.r, this.env, ['mr', 'list', '-R', this.path, '--source-branch', branch, '-F', 'json']);
     const open = parseJson(out.stdout, 'glab mr list').filter((m) => !m.state || m.state === 'opened');
     return open[0]?.web_url ?? null;
+  }
+
+  // A file uploaded to the project (POST /projects/:id/uploads). The answer's `url` is the
+  // project-relative path that renders in issue and merge-request notes, private projects included.
+  async upload(filePath) {
+    const out = await run(this.r, this.env, ['api', `projects/${this.enc}/uploads`, '-X', 'POST', '-F', `file=@${filePath}`]);
+    const answer = parseJson(out.stdout, 'glab api uploads');
+    if (!answer || typeof answer.url !== 'string') throw new AutopilotError('tracker-failed', 'glab api uploads returned no url');
+    return { url: answer.url, markdown: answer.markdown ?? `![${path.basename(filePath)}](${answer.url})`, fullPath: answer.full_path ?? null };
   }
 
   async prComment(url, body) {
@@ -556,6 +570,10 @@ class OdooTracker {
 
   async findOpenPr() {
     throw new AutopilotError('no-forge', 'an Odoo task is not a forge; open pull requests are found on the repository\'s forge');
+  }
+
+  async upload() {
+    throw new AutopilotError('no-upload', 'an Odoo task takes attachments through comment({ attachments }), not uploads');
   }
 }
 

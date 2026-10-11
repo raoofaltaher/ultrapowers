@@ -62,6 +62,17 @@ export function rawBase(forge, branch) {
   return null;
 }
 
+// Where a branch's files can be linked so that a logged-in viewer with access sees them: on GitHub
+// the blob URL (an image carries ?raw=true, which GitHub serves through a signed redirect on a
+// private repository too); on GitLab the raw URL (an upload replaces it where it can, see the
+// upload mode). Null without a forge.
+export function linkBase(forge, branch) {
+  if (!forge) return null;
+  const encoded = String(branch).split('/').map(encodeSegment).join('/');
+  if (forge.provider === 'github') return `https://github.com/${forge.path}/blob/${encoded}`;
+  return rawBase(forge, branch);
+}
+
 function decodeName(raw) {
   if (!/%[0-9A-Fa-f]{2}/.test(raw)) return raw;
   try {
@@ -85,8 +96,13 @@ export function insideArtifacts(name) {
 //                    whether the file is on disk, and a missing one is named, not attached
 //   mode 'plain'  -> a line saying the file is attached to the ticket
 // Returns { text, files } where files lists { name, replacement } for each artifact link, in order.
-export function rewriteLinks(text, { id, mode, base = null, exists = () => true }) {
+//   mode 'upload' -> the file's URL on the tracker after an upload (options.uploaded, name -> url);
+//                    a file whose upload failed (options.failed, name -> reason) keeps the raw link
+//                    from options.base with a note, and a missing file is named, not linked
+//   imageQuery      -> appended to an image URL in raw mode (GitHub's ?raw=true)
+export function rewriteLinks(text, { id, mode, base = null, exists = () => true, imageQuery = '', uploaded = null, failed = null }) {
   const files = [];
+  const rawUrl = (name) => `${base}/reviews/${encodeSegment(id)}/artifacts/${name.split('/').map(encodeSegment).join('/')}`;
   const out = String(text).replace(ARTIFACT, (whole, bang, label, angled, bare) => {
     const name = decodeName((angled ?? bare).slice('artifacts/'.length));
     const caption = label || name;
@@ -95,8 +111,12 @@ export function rewriteLinks(text, { id, mode, base = null, exists = () => true 
     }
     let replacement;
     if (mode === 'raw') {
-      const url = `${base}/reviews/${encodeSegment(id)}/artifacts/${name.split('/').map(encodeSegment).join('/')}`;
-      replacement = `${bang}[${label}](${url})`;
+      replacement = `${bang}[${label}](${rawUrl(name)}${bang && imageQuery ? imageQuery : ''})`;
+    } else if (mode === 'upload') {
+      if (uploaded && uploaded.has(name)) replacement = `${bang}[${label}](${uploaded.get(name)})`;
+      else if (failed && failed.has(name)) replacement = base ? `${bang}[${label}](${rawUrl(name)}) (upload failed: ${failed.get(name)})` : `${bang ? 'Screenshot' : 'File'}: ${caption} (upload failed: ${failed.get(name)})`;
+      else if (!exists(name)) return `${bang ? 'Screenshot' : 'File'}: ${caption} (artifacts/${name} not found, not attached)`;
+      else replacement = base ? `${bang}[${label}](${rawUrl(name)})` : `${bang ? 'Screenshot' : 'File'}: ${caption} (artifacts/${name})`;
     } else if (mode === 'attach') {
       replacement = exists(name)
         ? `${bang ? 'Screenshot' : 'File'}: ${caption} (attached as ${name})`
@@ -169,8 +189,10 @@ function numbered(name, parts) {
 }
 
 // The comments for one destination: TASK-REVIEW.md then QA-REPORT.md, each rewritten and split.
-// Returns [{ body, attachments }] in posting order.
-function commentsFor(documents, { id, mode, base, limit, root }) {
+// Returns [{ body, attachments }] in posting order. In upload mode every artifact a document links
+// is uploaded first through tracker.upload; a failed upload is noted in `notes` and the link
+// falls back to the raw URL.
+async function commentsFor(documents, { id, mode, base, limit, root, imageQuery = '', tracker = null, notes = [] }) {
   const out = [];
   const artifactsDir = path.resolve(root, 'reviews', id, 'artifacts');
   // The real path must sit under the real artifacts folder: a symlink inside it is not followed out.
@@ -187,8 +209,24 @@ function commentsFor(documents, { id, mode, base, limit, root }) {
     if (!insideArtifacts(name)) return false;
     try { return fs.existsSync(artifactPath(name)); } catch { return false; }
   };
+  const uploaded = new Map();
+  const failed = new Map();
+  if (mode === 'upload') {
+    for (const doc of documents) {
+      for (const file of rewriteLinks(doc.text, { id, mode: 'raw', base: base || '', exists }).files) {
+        if (uploaded.has(file.name) || failed.has(file.name) || !exists(file.name)) continue;
+        try {
+          const up = await tracker.upload(artifactPath(file.name));
+          uploaded.set(file.name, up.url);
+        } catch (error) {
+          failed.set(file.name, error.message);
+          notes.push(`artifacts/${file.name}: upload failed: ${error.message}`);
+        }
+      }
+    }
+  }
   for (const doc of documents) {
-    const { text, files } = rewriteLinks(doc.text, { id, mode, base, exists });
+    const { text, files } = rewriteLinks(doc.text, { id, mode, base, exists, imageQuery, uploaded, failed });
     const parts = numbered(doc.name, splitParts(text, limit - HEADER_RESERVE));
     for (const body of parts) {
       if (body.length > limit) throw new AutopilotError('part-too-long', `a part of ${doc.name} has ${body.length} characters, over the ${limit} limit`);
@@ -248,13 +286,23 @@ export async function postReview({ id, root, marker, resolution, draftPr = false
     deps.push(root, docsBranch, { state: { ticket: id, scope: { frozen: [] } }, repoName: 'docs', ticket: id });
   }
   const docsRaw = rawBase(docsForge, docsBranch);
+  const docsLink = linkBase(docsForge, docsBranch);
 
   const posted = [];
   const notes = [];
 
+  // How a destination shows a screenshot: Odoo attaches it, GitLab uploads it to the project (raw
+  // link as the fallback), GitHub links the blob with ?raw=true; a destination without a documents
+  // forge gets a plain line.
+  const modeFor = (provider) => {
+    if (provider === 'odoo') return { mode: 'attach' };
+    if (provider === 'gitlab') return { mode: 'upload', base: docsRaw };
+    return docsLink ? { mode: 'raw', base: docsLink, imageQuery: '?raw=true' } : { mode: 'plain' };
+  };
+
   const ticketTracker = deps.trackerFor(resolution, env);
-  const ticketMode = resolution.provider === 'odoo' ? 'attach' : 'raw';
-  for (const c of commentsFor(documents, { id, mode: ticketMode, base: docsRaw, limit: LIMITS[resolution.provider], root })) {
+  const ticketMode = modeFor(resolution.provider).mode;
+  for (const c of await commentsFor(documents, { id, ...modeFor(resolution.provider), limit: LIMITS[resolution.provider], root, tracker: ticketTracker, notes })) {
     const url = ticketMode === 'attach' && c.attachments.length
       ? await ticketTracker.comment(resolution.number, c.body, { attachments: c.attachments })
       : await ticketTracker.comment(resolution.number, c.body);
@@ -296,8 +344,7 @@ export async function postReview({ id, root, marker, resolution, draftPr = false
         continue;
       }
     }
-    const mode = docsRaw ? 'raw' : 'plain';
-    for (const c of commentsFor(documents, { id, mode, base: docsRaw, limit: LIMITS[forge.provider] ?? LIMITS.github, root })) {
+    for (const c of await commentsFor(documents, { id, ...modeFor(forge.provider), limit: LIMITS[forge.provider] ?? LIMITS.github, root, tracker, notes })) {
       await tracker.prComment(prUrl, c.body);
     }
     posted.push({ to: 'pr', repo: entry.repo, url: prUrl, created });
