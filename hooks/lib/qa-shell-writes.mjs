@@ -879,6 +879,93 @@ function huntPipAudit(words, refuse, allow) {
   return files.reason || allow(parsed.valued.filter(([name]) => name === '-o' || name === '--output').map(([, , v]) => v), files.out);
 }
 
+// ---------- curl and wget under an egress allow-list ----------
+// With qa.hosts.allowed set, curl and wget reach only listed hosts. The hook's text check reads the literal
+// http(s) URLs of the command; this reads the words the way the program does, so what that check cannot see
+// is refused: an option that redirects a listed host (a proxy, a resolve or connect override, a Host header), a
+// URL given as an option, and any operand that is not a literal http(s) URL on a listed host. A valued option
+// is skipped only when it is known to take a value (the short ones by letter, the long ones by name, or attached
+// with =); an option this list does not know stands for a flag, so its value is judged as an operand: refused.
+const CURL_SHORT_VALUED = new Set(['A', 'b', 'c', 'C', 'd', 'D', 'e', 'E', 'F', 'H', 'K', 'm', 'o', 'P', 'Q', 'r', 't', 'T', 'u', 'U', 'w', 'X', 'y', 'Y', 'z']);
+const CURL_LONG_VALUED = new Set(['--output', '--header', '--data', '--data-raw', '--data-binary', '--data-ascii', '--data-urlencode', '--request', '--user', '--user-agent',
+  '--referer', '--cookie', '--cookie-jar', '--write-out', '--max-time', '--connect-timeout', '--retry', '--retry-delay', '--retry-max-time', '--upload-file', '--form', '--form-string',
+  '--cacert', '--cert', '--key', '--capath', '--limit-rate', '--range', '--output-dir', '--dump-header', '--trace', '--trace-ascii', '--stderr', '--json', '--max-redirs',
+  '--time-cond', '--continue-at', '--oauth2-bearer', '--aws-sigv4', '--proto', '--proto-redir']);
+const CURL_REFUSED_LONG = /^--(connect-to|resolve|url|doh-url|dns-servers|dns-interface|unix-socket|abstract-unix-socket|preproxy|socks[0-9a-z]*|proxy[a-z0-9-]*)$/;
+const WGET_SHORT_VALUED = new Set(['O', 'P', 'o', 'a', 'i', 't', 'T', 'w', 'Q', 'l', 'A', 'R', 'D', 'I', 'X', 'B', 'U', 'Y', 'e']);
+const WGET_LONG_VALUED = new Set(['--output-document', '--directory-prefix', '--output-file', '--append-output', '--header', '--user-agent', '--timeout', '--tries', '--wait', '--waitretry',
+  '--read-timeout', '--connect-timeout', '--dns-timeout', '--limit-rate', '--post-data', '--post-file', '--body-data', '--body-file', '--http-user', '--http-password', '--user', '--password',
+  '--referer', '--load-cookies', '--save-cookies', '--ca-certificate', '--certificate', '--private-key', '--level', '--accept', '--reject', '--quota', '--bind-address', '--base', '--method']);
+// The host of a literal http(s) URL, lowercase: scheme, userinfo, path and port removed (the hook's host_of_r).
+function urlHost(u) {
+  let s = u.replace(/^[A-Za-z][A-Za-z0-9+.-]*:\/\//, '');
+  if (/^[^/?@]*@/.test(s)) s = s.replace(/^[^/?@]*@/, '');
+  let a = s.split(/[/?]/)[0];
+  if (/:[0-9]+$/.test(a)) a = a.replace(/:[0-9]+$/, '');
+  return a.toLowerCase();
+}
+// The reason curl or wget (prog) may not run under the allow-list of hosts, or ''. rest: the words after the program.
+function egressWhy(prog, rest, allowedHosts) {
+  const curl = prog === 'curl';
+  const SHORT = curl ? CURL_SHORT_VALUED : WGET_SHORT_VALUED;
+  const LONG = curl ? CURL_LONG_VALUED : WGET_LONG_VALUED;
+  const operands = [];
+  // The text a word starts with, before its first expansion: enough to see a Host header.
+  const lead = (x) => (x.v !== null ? x.v : x.w.parts.reduce((acc, p) => (acc.done || p.t !== 'lit' ? { ...acc, done: true } : { text: acc.text + p.v, done: false }), { text: '', done: false }).text);
+  const headerWhy = (x) => {
+    if (!x) return '';
+    const t = lead(x);
+    if (/^\s*host\s*[:;]/i.test(t)) return `${prog} with a Host header can send a request for a listed host to another server; qa.hosts.allowed is set`;
+    if (curl && t.startsWith('@')) return `${prog} -H @file reads its headers from a file that cannot be inspected (a Host header there redirects a listed host); qa.hosts.allowed is set`;
+    return '';
+  };
+  const noEscape = `qa.hosts.allowed is set, so ${prog} takes none of the options that point a listed host at another server`;
+  let k = 0;
+  for (; k < rest.length; k++) {
+    const x = rest[k];
+    const v = x.v;
+    if (v === '--') { k++; break; }
+    if (v !== null && v.startsWith('--')) {
+      const eq = v.indexOf('=');
+      const name = eq === -1 ? v : v.slice(0, eq);
+      if (curl && CURL_REFUSED_LONG.test(name)) return `${prog} ${name} can point a listed host at another server; ${noEscape}`;
+      if (!curl && (name === '--execute' || name === '--use-proxy')) return `${prog} ${name} runs a setting (a proxy, a host) that can point a listed host at another server; ${noEscape}`;
+      if (name === '--header') {
+        const why = headerWhy(eq === -1 ? rest[k + 1] : { v: v.slice(eq + 1), w: null });
+        if (why) return why;
+      }
+      if (LONG.has(name) && eq === -1) k++;
+      continue;
+    }
+    if (v !== null && v.startsWith('-') && v !== '-') {
+      for (let c = 1; c < v.length; c++) {
+        const ch = v[c];
+        if (curl && ch === 'x') return `curl -x names a proxy and can point a listed host at another server; ${noEscape}`;
+        if (!curl && ch === 'e') return `wget -e runs a setting (a proxy, a host) that can point a listed host at another server; ${noEscape}`;
+        if (SHORT.has(ch)) {
+          const attached = v.slice(c + 1);
+          if (ch === 'H') {
+            const why = headerWhy(attached ? { v: attached, w: null } : rest[k + 1]);
+            if (why) return why;
+          }
+          if (!attached) k++;
+          break;
+        }
+      }
+      continue;
+    }
+    operands.push(x);
+  }
+  for (; k < rest.length; k++) operands.push(rest[k]);
+  for (const x of operands) {
+    if (x.v === null) return `a ${prog} operand is built from a variable or command substitution and cannot be verified; use a literal http(s) URL on a host in qa.hosts.allowed`;
+    if (!/^https?:\/\//i.test(x.v) || /[\s\\]/.test(x.v)) return `${prog} operand "${x.v.slice(0, 60)}" is not a literal http(s) URL on a host in qa.hosts.allowed; a bare host, a second target or a URL with a space or backslash is refused`;
+    const h = urlHost(x.v);
+    if (!allowedHosts.includes(h)) return `${prog} operand host '${h}' is not in qa.hosts.allowed`;
+  }
+  return '';
+}
+
 // ---------- the hunt's program list ----------
 // The hunt is a program allow-list: besides the audit tools of huntCheck, the git and gh/glab forms of the
 // walk below and the node/python scripts named here, it runs only these read verbs and shell builtins. Any
@@ -955,7 +1042,7 @@ const MARKER_WHY = 'is the run marker; the run marker is not the run\'s to chang
 const TRACKER_VARS = /^(GH_TOKEN|GITHUB_TOKEN|GITLAB_TOKEN|GLAB_TOKEN|ODOO_API_KEY|ULTRAPOWERS_STAGE_.*)$/i;
 const SECRET_VARS = /TOKEN|KEY|SECRET|PASS|CREDENTIAL|AUTH|COOKIE|SESSION|PRIVATE/i;
 
-export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase = process.platform === 'win32' || process.platform === 'darwin', roleVars = [], roRole = 'qa_agent_ro', flags = null }) {
+export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase = process.platform === 'win32' || process.platform === 'darwin', roleVars = [], roRole = 'qa_agent_ro', flags = null, allowedHosts = [] }) {
   const autopilot = profile === 'autopilot';
   // The hunt profile: every QA rule (the report area is reviews/<audit id>/ and .ultrapowers/, the audit
   // id in the ticket field taking the place of a ticket), plus a closed list for the audit tools of the
@@ -2095,6 +2182,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         return;
       }
       if (prog === 'curl') {
+        if (allowedHosts.length) { const why = egressWhy('curl', rest, allowedHosts); if (why) deny(why); }
         for (let k = 0; k < rest.length; k++) {
           const v = rest[k].v || '';
           const long = /^--(output|dump-header|cookie-jar|trace|trace-ascii|stderr|libcurl)(=(.*))?$/.exec(v);
@@ -2113,6 +2201,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         return;
       }
       if (prog === 'wget') {
+        if (allowedHosts.length) { const why = egressWhy('wget', rest, allowedHosts); if (why) deny(why); }
         let explicit = false;
         for (let k = 0; k < rest.length; k++) {
           const v = rest[k].v || '';
@@ -2209,7 +2298,7 @@ function main() {
   try { input = readFileSync(0, 'utf8'); } catch { input = ''; }
   const [cwd = '', root = '', ticket = '', ignoreCaseFlag = '', roleVarsField = '', roRoleField = '', ...cmdParts] = input.split('\0');
   const profile = ['autopilot', 'hunt'].includes(process.env.ULTRAPOWERS_GUARD_PROFILE) ? process.env.ULTRAPOWERS_GUARD_PROFILE : 'qa';
-  const out = analyze(cmdParts.join('\0'), { cwd, root, ticket, profile, ignoreCase: ignoreCaseFlag === '1', roleVars: roleVarsField.split(',').filter(Boolean), roRole: roRoleField || 'qa_agent_ro' });
+  const out = analyze(cmdParts.join('\0'), { cwd, root, ticket, profile, ignoreCase: ignoreCaseFlag === '1', roleVars: roleVarsField.split(',').filter(Boolean), roRole: roRoleField || 'qa_agent_ro', allowedHosts: String(process.env.ULTRAPOWERS_GUARD_HOSTS || '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean) });
   if (out) process.stdout.write(out);
 }
 

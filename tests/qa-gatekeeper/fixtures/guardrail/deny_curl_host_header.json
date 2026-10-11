@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"curl -H \"Host: evil.example\" http://localhost:3000/"},"reason":"a Host header"}

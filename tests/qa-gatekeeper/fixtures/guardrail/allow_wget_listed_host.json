@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"wget -q -O reviews/1234/artifacts/p.html http://localhost:3000/"}}

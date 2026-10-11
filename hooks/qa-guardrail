@@ -941,7 +941,7 @@ writes_js="$hook_dir_node/lib/qa-shell-writes.mjs"
 # Lane 4's psql rules live in the analyzer too: it walks xargs, find -exec, eval, sudo, su -c,
 # kubectl exec and brace groups, refuses a program built from a variable, and refuses a psql
 # word it did not inspect (fail closed on its own count), so no text check is repeated here.
-wreason="$(printf '%s\0%s\0%s\0%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$ignore_case" "$role_vars" "$ro_role" "$cmd" | ULTRAPOWERS_GUARD_PROFILE="$PROFILE" node "$writes_js" 2>&1)" \
+wreason="$(printf '%s\0%s\0%s\0%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$ignore_case" "$role_vars" "$ro_role" "$cmd" | ULTRAPOWERS_GUARD_PROFILE="$PROFILE" ULTRAPOWERS_GUARD_HOSTS="$allowed" node "$writes_js" 2>&1)" \
   || wreason="the command could not be analysed for writes; it is refused during $run_kind"
 [ -z "$wreason" ] || deny "$wreason"
 
