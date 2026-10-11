@@ -661,6 +661,10 @@ NET_RE="${B}(curl|wget)(\\.exe)?[[:space:]]|invoke-webrequest|invoke-restmethod|
 if printf '%s' "$lc" | grep -Eq "$NET_RE"; then
   printf '%s' "$cmd" | grep -Eq '://[^[:space:]]*(\$\(|`|\$\{)' \
     && deny "a command or variable substitution inside a URL can carry data out in the URL and is blocked; use a literal URL"
+  # curl reads more options (a URL, data, a header) from a --config file, which cannot be inspected.
+  printf '%s' "$lc" | grep -Eq "${B}curl(\\.exe)?[[:space:]]" \
+    && printf '%s' "$cmd" | grep -Eq '(^|[[:space:]])(-[A-Za-z0-9]*K|--config)([[:space:]=]|$)' \
+    && deny "curl --config (-K) reads its options from a file that cannot be inspected; give the options on the command line"
   sends=0
   printf '%s' "$lc" | grep -Eq "${B}curl(\\.exe)?[[:space:]]" \
     && printf '%s' "$cmd" | grep -Eq '(^|[[:space:]])-[A-Za-z0-9]*[dFT]|(^|[[:space:]])--(data[a-z-]*|form[a-z-]*|upload-file|json)([[:space:]=]|$)' && sends=1
