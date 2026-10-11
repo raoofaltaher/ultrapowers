@@ -51,7 +51,11 @@ ORDER BY nspname \gexec
 --   psql -U <ro_role> -d <database> -c "SELECT 1;"
 --   psql -U <ro_role> -d <database> -c "CREATE TABLE nope(x int);"
 --     -> ERROR: permission denied for schema public            (PostgreSQL 15 and newer)
---     -> ERROR: cannot execute CREATE TABLE in a read-only transaction   (older versions)
+--     -> ERROR: cannot execute CREATE TABLE in a read-only transaction   (older versions; see below)
+-- On PostgreSQL 14 and older the REVOKE above does not remove the CREATE that every role holds on
+-- the public schema through PUBLIC. There that error comes from default_transaction_read_only,
+-- which a session can override, and it is the only stop until the owner runs the PUBLIC revokes
+-- in the optional hardening below.
 
 -- Optional hardening (a decision for the database owner, so it is commented out). PostgreSQL lets
 -- every role EXECUTE every function by default, and a function can write data even though the role
@@ -59,3 +63,10 @@ ORDER BY nspname \gexec
 -- that is not a read, but it cannot see inside a function of your own schema. To close that, run
 -- once as the owner, then GRANT EXECUTE on the functions the application's reads need:
 --   REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
+--
+-- Also a decision for the owner: PUBLIC holds CREATE on the public schema before PostgreSQL 15, and
+-- TEMP on every database, so the role keeps both through PUBLIC however the grants above read.
+-- Revoking from the role itself does not remove what PUBLIC grants. Run once as the owner (it
+-- affects every role that relies on PUBLIC, so check the application first):
+--   REVOKE CREATE ON SCHEMA public FROM PUBLIC;      -- PostgreSQL 14 and older only
+--   REVOKE TEMP ON DATABASE <db> FROM PUBLIC;
