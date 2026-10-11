@@ -253,5 +253,9 @@
   {"name":"deny_glob_ssh_dir_bare","event":{"tool_name":"Glob","tool_input":{"pattern":"*","path":"{{ROOT}}/.ssh"}}},
   {"name":"deny_view_file_absolute_path_secrets","event":{"tool_name":"view_file","tool_input":{"AbsolutePath":"{{ROOT}}/.agents/mcp-secrets.env"}}},
   {"name":"deny_tool_nested_url_offlist","event":{"tool_name":"fetch_page","tool_input":{"request":{"target":"https://evil.example.org/x"}}}},
+  {"name":"deny_write_changes_comments","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/tasks/GH-16/changes-comments.md","content":"x"}}},
+  {"name":"deny_shell_write_changes_comments","event":{"tool_name":"Bash","tool_input":{"command":"echo x > tasks/GH-16/changes-comments.md"}}},
+  {"name":"deny_apply_patch_changes_comments","event":{"tool_name":"apply_patch","tool_input":{"patch":"*** Begin Patch\n*** Update File: tasks/GH-16/changes-comments.md\n@@\n-a\n+b\n*** End Patch"}}},
+  {"name":"allow_write_task_other_doc","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/tasks/GH-16/notes.md","content":"x"}}},
   {"name":"allow_write_nested_agents_md","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/repo-a/AGENTS.md","content":"x"}}}
 ]
