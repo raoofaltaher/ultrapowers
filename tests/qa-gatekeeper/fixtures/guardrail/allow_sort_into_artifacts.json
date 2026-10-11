@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"sort -k2,2 -t, -o reviews/1234/artifacts/sorted.csv reviews/1234/artifacts/raw.csv; sort -u repo-a/src/list.txt | head -5"}}

@@ -855,6 +855,21 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         return;
       }
       if (prog === 'tee') { for (const x of plain) checkTarget(x.w, dir, 'tee target', container); return; }
+      if (prog === 'sort') {
+        // -o FILE, -oFILE, a cluster ending in o (-ro FILE), --output FILE and --output=FILE write FILE.
+        for (let k = 0; k < rest.length; k++) {
+          const v = rest[k].v;
+          if (v === null) continue;
+          if (v === '--output') { if (rest[k + 1]) { checkTarget(rest[k + 1].w, dir, 'sort --output', container); k++; } continue; }
+          if (v.startsWith('--output=')) { checkTarget({ k: 'w', parts: [{ t: 'lit', v: v.slice('--output='.length) }] }, dir, 'sort --output', container); continue; }
+          const m = /^-[bdfghiMnrRsuVzc]*o(.*)$/.exec(v);
+          if (m && !v.startsWith('--')) {
+            if (m[1]) checkTarget({ k: 'w', parts: [{ t: 'lit', v: m[1] }] }, dir, 'sort -o', container);
+            else if (rest[k + 1]) { checkTarget(rest[k + 1].w, dir, 'sort -o', container); k++; }
+          }
+        }
+        return;
+      }
       if (prog === 'mkdir' || prog === 'touch') {
         // The operands are the paths made; -m MODE, -d DATE, -t STAMP and -r REFERENCE take a value.
         const valued = prog === 'mkdir' ? new Set(['-m', '--mode']) : new Set(['-d', '--date', '-t', '-r', '--reference', '--time']);
