@@ -1,5 +1,5 @@
 name: ultrapowers
-version: 2.0.1
+version: 2.0.2
 description: Ultrapowers skills and workflow bootstrap for Hermes Agent
 author: raoofaltaher
 provides_hooks:

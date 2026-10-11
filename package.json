@@ -1,6 +1,6 @@
 {
   "name": "ultrapowers",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Ultrapowers skills and runtime bootstrap for coding agents",
   "type": "module",
   "main": ".opencode/plugins/ultrapowers.js",

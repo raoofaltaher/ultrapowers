@@ -1,5 +1,47 @@
 # Ultrapowers Release Notes
 
+## v2.0.2 (2026-10-11)
+
+A security release from a review of the plugin's own code: five read-only investigators (injection, secrets and approval logic, prompt injection, supply chain, the guardrail entry points), one finding at a time verified by the orchestrator, and one fixer per batch, test-first. No CVE was found in any dependency; the plugin still has none at run time.
+
+**Autopilot engine**
+
+- On Odoo, where tag tracking is unreadable and every tag is attributed to the task's last writer, a refused approve tag is now removed from the task with a note asking the approver to add it again, and a tag first seen under a non-approver never verifies later because an approver edited something else. The engine records the tags it saw and who placed them. The residual, two writes inside one poll interval, is documented in the watcher guide.
+- The engine no longer trusts the stage-writable state file for what it pushes: a ticket branch must match `<ID>-[A-Za-z0-9._-]+` (no `:`, `/` or `..`, so no refspec), `git check-ref-format` runs first and the push names `refs/heads/<b>:refs/heads/<b>` on both sides; the mode comes from the project, the labels and `--mode`, never from the state; the repositories, their branches and worktrees and the frozen scope are re-derived or checked against the configuration, and a mismatch stops the run with `state-tampered`.
+- The changes stage reads `tasks/<ID>/changes-comments.md`, which the engine writes before the stage from the ticket comments since the packet, keeping only authors with write access (and in the approvers list when one is set), each between marker lines. A comment from anyone else never reaches the stage.
+- A QA report under a `reviews/<ID>` folder that is a symbolic link or junction out of the project is refused.
+
+**Posting to a tracker**
+
+- GitLab runs a note line that starts with `/` as a quick action under the posting account. Every body the engine or `task-review --post` sends to GitLab (issue notes, merge request notes and descriptions) has such lines neutralised with a zero-width space, inside code fences too.
+- `task-review --post` refuses a `reviews/<ID>/artifacts` folder, or a `reviews/<ID>` folder, that is a symbolic link out of the project; with such a link, any local file named in a report was uploaded to GitLab or attached on Odoo.
+
+**Tickets**
+
+- `source.md` fences the ticket's comments between their own markers with every line quoted, and writes labels, state, attachment names and link URLs as code spans, so a comment cannot forge a message header, a section heading or a downloaded-file line. The closing sentence now covers the text between any ultrapowers markers.
+- A link in a ticket to a loopback, private, link-local, unique-local, site-local, shared, multicast, benchmark, NAT64 or 6to4 address, to `localhost`, a single-label name, a `.internal` or `.local` name, a URL with a user name, or plain http to any host but the ticket source's own, is written as "not fetched" with the reason, and brainstorm-task never fetches it. The check is static; the fetch is the harness's.
+- The ticket title reaches `scaffold-task.sh create` through `--title-from-json <ticket JSON>` or `--title-file`, never as shell words; new-task and the autopilot scaffold prompt say so.
+
+**Project scaffold**
+
+- The Claude Code settings deny reads of `.agents/mcp-secrets.env`, `.env`, `.env.local`, `.env.*.local`, `.env.production`, `~/.ssh` and `~/.aws`, and deny `--output` (and its abbreviations) on `git log`, `git diff` and `git show`, which otherwise write a commit message to any file under a pre-approved rule. OpenCode, Qwen Code and Cursor get the equivalent through their own documented mechanisms; the README names the harnesses that have none, where the guardrail during a QA or autopilot run is the only brake.
+- The npm MCP servers in the project template are pinned to exact versions; the gitleaks image in the pre-commit hook is pinned to a release tag; a Docker failure is reported as a skipped scan rather than a found secret; the team-memory lint says when node is missing. Upgrade mode offers all of these to existing projects.
+- The Gemini project hook names the profile and the marker in its own deny; the Hermes plugin's own denies carry the profile prefix; the Muse guardrail hook timeout matches the other harnesses at 30 s.
+
+**Guardrail entry points**
+
+- OpenCode, Pi, Kimi, Antigravity, Hermes and the Gemini project hook honour `ULTRAPOWERS_AUTOPILOT_INSIDE=1` like the bash hook: a stage whose marker is gone stays an autopilot stage, and a stage outside any project is denied.
+- The Antigravity marker search never starts from the tool call's own `Cwd`; it searches the workspace paths, the process directory and then the call's directory, first marker found wins.
+- A per-call working directory (`workdir`, `working_directory`, `dir_path`, `Cwd`) is normalised to one field, bounded to the project root, and denied when it resolves outside it.
+
+**Skills**
+
+- task-review runs the review inline, with a `declined` entry, on a harness without a subagent tool.
+
+**Repository**
+
+- CI pins its actions to commit SHAs and pytest to a version; the engine's documented floor is Node 22 (18 and 20 are end-of-life); the brainstorm-server test dependency ws moves to 8.22.0; the Kimi manifest test falls back to `python` when `python3` is the Windows Store stub.
+
 ## v2.0.1 (2026-10-11)
 
 Two lane 4 and task-review fixes found in the 2.0.0 review, each posted and reviewed through `task-review --post` on this repository, which was its first live run on GitHub, and three fixes from a diagnosis of the 2.0.0 session with `diagnosing-ultrapowers`.
