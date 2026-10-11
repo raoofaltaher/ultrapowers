@@ -15,5 +15,6 @@
     "collaboration",
     "best-practices",
     "workflows"
-  ]
+  ],
+  "agents": "./agents/"
 }
