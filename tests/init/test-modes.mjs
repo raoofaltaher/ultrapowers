@@ -687,6 +687,13 @@ test('upgrade from 1.1.0 lists .gemini/settings.json as changed', () => {
   assert.ok(report.changed.some((c) => c.path === '.gemini/settings.json'), JSON.stringify(report.changed));
 });
 
+test('upgrade from 2.0.1 offers the pinned MCP servers and the gitleaks image pin', () => {
+  const root = scaffolded();
+  setMarkerVersion(root, '2.0.1');
+  const paths = run(['upgrade', '--root', root]).changed.map((c) => c.path);
+  for (const target of ['.mcp.json', '.githooks/pre-commit', 'README.md']) assert.ok(paths.includes(target), `${target} in ${JSON.stringify(paths)}`);
+});
+
 test('join reports a .gemini/settings.json that lacks the guardrail hook', () => {
   const root = scaffolded();
   fs.writeFileSync(path.join(root, '.gemini', 'settings.json'), '{ "mcpServers": {} }\n');

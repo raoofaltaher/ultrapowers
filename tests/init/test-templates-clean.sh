@@ -128,7 +128,9 @@ else
 fi
 
 changes_at() { node -e 'const c=require(process.argv[1]);process.stdout.write(String(c[process.argv[2]]))' "$TEMPLATES/CHANGES.json" "$1"; }
-for entry in AGENTS.md:2.0.0 CLAUDE.md:2.0.2 .claude/settings.json:2.0.2; do
+for entry in AGENTS.md:2.0.0 CLAUDE.md:2.0.2 .claude/settings.json:2.0.2 README.md:2.0.2 .mcp.json:2.0.2 \
+  .codex/config.toml:2.0.2 .cursor/mcp.json:2.0.2 .gemini/settings.json:2.0.2 .qwen/settings.json:2.0.2 opencode.json:2.0.2 \
+  .factory/mcp.json:2.0.2 .kimi/mcp.json:2.0.2 .vscode/mcp.json:2.0.2 .githooks/pre-commit:2.0.2; do
   target="${entry%:*}"
   version="${entry##*:}"
   if [ "$(changes_at "$target")" = "$version" ]; then
