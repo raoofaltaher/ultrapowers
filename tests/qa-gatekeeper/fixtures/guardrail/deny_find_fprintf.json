@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"find . -maxdepth 1 -fprintf repo-a/src/app.js '%p\\n'"}}

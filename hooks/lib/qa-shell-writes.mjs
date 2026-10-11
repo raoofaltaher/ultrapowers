@@ -843,6 +843,10 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         return;
       }
       if (prog === 'find') {
+        // -fprint, -fprint0, -fprintf and -fls write the file named by the next word.
+        for (let k = 0; k < rest.length - 1; k++) {
+          if (['-fprint', '-fprint0', '-fprintf', '-fls'].includes(rest[k].v)) checkTarget(rest[k + 1].w, dir, `find ${rest[k].v}`, container);
+        }
         const ei = rest.findIndex((x) => ['-exec', '-execdir', '-ok', '-okdir'].includes(x.v));
         if (ei !== -1) {
           let end = rest.findIndex((x, i) => i > ei && (x.v === ';' || x.v === '+'));
