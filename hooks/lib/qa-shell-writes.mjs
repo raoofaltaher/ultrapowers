@@ -469,31 +469,41 @@ function inlineInterpreterReason(kind, prog, rest, { inPlaceOk = false } = {}) {
 }
 
 // ---------- the vulnerability hunt ----------
-// The hunt profile applies every QA rule and then this closed list. The hunters run the audit tools
-// of the project (the lane prompts under skills/vulnerability-hunt/prompts/ name the commands) and
-// read; they run no test suite, make no worktree, install nothing the tool does not install for
-// itself, and write no tracker. A command of a tool family below that is not one of the listed
-// forms is refused with the form that is allowed; a program outside every family is left to the QA
-// rules. The hunters run the tools with no variable prefix, so SAFE_ENV_RE (the QA variable gate)
-// gets no addition: NPM_CONFIG_AUDIT_LEVEL=high npm audit is refused, --audit-level=high is the
-// spelling.
+// The hunt profile applies every QA rule and then this list. The hunt reads: it runs the audit tools of
+// the project, in the forms below, and nothing else of a package manager. Each package manager is
+// allowed ONLY in its audit form plus a read-only listing form, and only where that form is a real
+// built-in that no script of the project can shadow: npm and pnpm audit (npm only, with
+// --package-lock-only) and ls/list; pip and pip3 list and freeze; cargo audit and tree --locked;
+// dotnet list package --vulnerable --no-restore; go nothing; yarn, bun, uv, poetry, pipenv and pdm
+// nothing (they run a script of the project for a word they do not know). Every other subcommand, and
+// any program started through a package runner (npx, npm exec, uvx, pipx run ...), is refused with
+// HUNT_NO_INSTALL. Test commands (and `git worktree add`, in the git branch of simple()) are refused
+// with HUNT_NO_SUITE. pip-audit, osv-scanner, gh and glab are allowed only in the forms below. A program
+// outside these families is left to the QA rules. The hunters run the tools with no variable prefix, so
+// SAFE_ENV_RE (the QA variable gate) gets no addition: NPM_CONFIG_AUDIT_LEVEL=high npm audit is refused,
+// --audit-level=high is the spelling.
 const HUNT_NO_SUITE = 'the hunt reads; it runs no suite and makes no worktree';
+const HUNT_NO_INSTALL = 'the hunt installs nothing and runs nothing';
 // gh and glab: the groups the hunt may run, by program (a verb list, or '*' for every verb).
 const HUNT_TRACKER_READ = {
   gh: { api: '*', search: ['code'], auth: ['status'], help: '*', version: '*' },
   glab: { api: '*', auth: ['status'], help: '*', version: '*' },
 };
 const HUNT_AUDIT_TOOLS = new Set(['osv-scanner', 'pip-audit', 'cargo-audit']);
-const HUNT_TEST_RUNNERS = new Set(['pytest', 'py.test', 'vitest', 'jest']);
+// Programs that are a test run whatever their arguments.
+const HUNT_TEST_RUNNERS = new Set(['pytest', 'py.test', 'vitest', 'jest', 'mvn', 'gradle', 'gradlew', 'phpunit']);
 const HUNT_TEST_MODULES = new Set(['pytest', 'unittest', 'nose', 'nose2', 'tox']);
 const NPM_AUDIT_LEVELS = /^(info|low|moderate|high|critical|none)$/;
+const HUNT_PY_MANAGERS = /^(pip[0-9]*(\.[0-9]+)*|uv|poetry|pipenv|pdm)$/;
+const INFO_FLAGS = ['--version', '-v', '-V', '--help', '-h'];
 
 // Splits `words` (values, null for one built from a variable) by a spec of the options a command may
 // carry: { flags, valued, noPositional }. Returns { bad } (the first thing not on the spec) or
-// { positionals, values: [[option, value index]] }.
+// { positionals (indexes), valued ([option, value index, value]), seen (the flags given) }.
 function huntOptions(words, spec) {
   const positionals = [];
   const valued = [];
+  const seen = new Set();
   for (let k = 0; k < words.length; k++) {
     const v = words[k];
     if (v === null) return { bad: 'an argument built from a variable or substitution' };
@@ -505,7 +515,7 @@ function huntOptions(words, spec) {
     }
     const eq = v.startsWith('--') ? v.indexOf('=') : -1;
     const name = eq === -1 ? v : v.slice(0, eq);
-    if (spec.flags.has(name) && eq === -1) continue;
+    if (spec.flags.has(name) && eq === -1) { seen.add(name); continue; }
     if (spec.valued.has(name)) {
       if (eq !== -1) { valued.push([name, k, v.slice(eq + 1)]); continue; }
       if (words[k + 1] === undefined || words[k + 1] === null) return { bad: `${v} without a value` };
@@ -515,7 +525,7 @@ function huntOptions(words, spec) {
     }
     return { bad: v };
   }
-  return { positionals, valued };
+  return { positionals, valued, seen };
 }
 
 // The hunt's judgement of one simple command: null when the program is not for it to judge, { reason }
@@ -526,8 +536,12 @@ export function huntCheck(prog0, words, { viaRunner = false, interpreter = '' } 
   const refuse = (reason) => ({ reason });
   const allow = (outputs = []) => ({ allow: true, outputs });
   const before = words.indexOf('--') === -1 ? words : words.slice(0, words.indexOf('--'));
+  const infoOnly = (list) => list.length > 0 && list.every((v) => INFO_FLAGS.includes(v));
+  const notListed = (what, forms) => refuse(`${what} is not on the hunt's list; ${HUNT_NO_INSTALL} (the forms it runs: ${forms})`);
   if (HUNT_TEST_RUNNERS.has(prog)) return refuse(HUNT_NO_SUITE);
+  if ((prog === 'make' || prog === 'gmake') && before.some((v) => v === 'test' || v === 'check')) return refuse(HUNT_NO_SUITE);
   if (viaRunner && HUNT_AUDIT_TOOLS.has(prog)) return refuse(`${prog} started through a package runner installs it first; the hunt runs the audit tools that are already installed (${prog} on PATH)`);
+  if (viaRunner) return refuse(`${prog} started through a package runner (npx, npm exec, uvx, pipx run ...) is downloaded and run; ${HUNT_NO_INSTALL}`);
 
   if (interpreter === 'python') {
     const m = words.findIndex((v) => v !== null && (v === '-m' || /^-m.+/.test(v)));
@@ -535,6 +549,7 @@ export function huntCheck(prog0, words, { viaRunner = false, interpreter = '' } 
       const mod = words[m] === '-m' ? words[m + 1] : words[m].slice(2);
       if (mod === null || mod === undefined) return refuse('python -m with a module built from a variable cannot be verified during the hunt');
       if (HUNT_TEST_MODULES.has(mod)) return refuse(HUNT_NO_SUITE);
+      if (mod === 'pip') return refuse(`python -m pip is not on the hunt's list; ${HUNT_NO_INSTALL} (python -m pip_audit is the form it runs)`);
       if (mod === 'pip_audit') {
         // An interpreter option before -m may take a value (-W ignore, -X dev) that would shift the words after it.
         if (m !== 0) return refuse('python options before -m pip_audit cannot be verified during the hunt; write python -m pip_audit first');
@@ -546,72 +561,125 @@ export function huntCheck(prog0, words, { viaRunner = false, interpreter = '' } 
 
   if (['npm', 'pnpm', 'yarn', 'bun'].includes(prog)) {
     const sub = words[0];
-    if (sub === undefined) return null;
+    // yarn and bun run a package.json script for a word they do not know, so a listing word could be
+    // a script of the repository: they are refused for every subcommand (a bare `yarn` installs).
+    const scriptRunner = prog === 'yarn' || prog === 'bun';
+    if (sub === undefined) return scriptRunner ? notListed(prog, 'npm audit --package-lock-only --json, npm ls') : null;
     if (sub === null) return refuse(`the ${prog} subcommand is built from a variable or substitution and cannot be verified; spell it out`);
-    if (sub.startsWith('-')) {
-      if (words.every((v) => ['--version', '-v', '--help', '-h'].includes(v))) return allow();
-      return refuse(`${prog} options before the subcommand cannot be verified during the hunt; write ${prog} <command> first`);
-    }
     const s = sub.toLowerCase();
     // npm takes any unambiguous prefix of a command name (npm aud, npm te) and a few aliases.
     const isNpm = prog === 'npm';
     const is = (name, alias = []) => s === name || alias.includes(s) || (isNpm && s.length >= 2 && name.startsWith(s));
+    if (!sub.startsWith('-')) {
+      if (is('test', ['tst', 't', 'it', 'cit', 'install-test', 'install-ci-test'])) return refuse(HUNT_NO_SUITE);
+      if (is('run-script', ['run', 'rum', 'urn'])) {
+        const script = words.slice(1).find((v) => v === null || !v.startsWith('-'));
+        if (script === null) return refuse(`the ${prog} script is built from a variable or substitution and cannot be verified; spell it out`);
+        if (script !== undefined && /^(pre|post)?tests?([:._-].*)?$/i.test(script)) return refuse(HUNT_NO_SUITE);
+      }
+    }
+    if (scriptRunner) return notListed(`${prog} ${sub}`, 'npm audit --package-lock-only --json, npm ls');
+    if (sub.startsWith('-')) {
+      if (infoOnly(words)) return allow();
+      return refuse(`${prog} options before the subcommand cannot be verified during the hunt; write ${prog} <command> first`);
+    }
     if (is('audit')) {
-      if (!isNpm) return refuse(`${prog} audit is not on the hunt's list; the audit of a Node project is npm audit --package-lock-only --json`);
-      const bad = (what) => refuse(`npm audit may run only as npm audit [--package-lock-only] [--json] [--audit-level=<level>] during the hunt; ${what} changes a file or reads more than the report (npm audit fix is never run)`);
+      if (!isNpm) return notListed(`${prog} audit`, 'npm audit --package-lock-only --json, npm ls');
+      const bad = (what) => refuse(`npm audit may run only as npm audit --package-lock-only [--json] [--audit-level=<level>] during the hunt; ${what} changes a file or reads more than the report (npm audit fix is never run)`);
       const rest = words.slice(1);
+      let lockOnly = false;
       for (let k = 0; k < rest.length; k++) {
         const v = rest[k];
         if (v === null) return bad('an argument built from a variable or substitution');
-        if (v === '--package-lock-only' || v === '--json') continue;
+        if (v === '--package-lock-only') { lockOnly = true; continue; }
+        if (v === '--json') continue;
         if (v === '--audit-level') { if (rest[k + 1] === undefined || rest[k + 1] === null || !NPM_AUDIT_LEVELS.test(rest[k + 1])) return bad('--audit-level without a level'); k += 1; continue; }
         const m = /^--audit-level=(.*)$/.exec(v);
         if (m && NPM_AUDIT_LEVELS.test(m[1])) continue;
         return bad(v === 'fix' ? 'fix' : `"${v}"`);
       }
+      if (!lockOnly) return refuse('npm audit must run with --package-lock-only during the hunt: without it npm reads the installed tree, which the hunt does not build (npm audit --package-lock-only --json)');
       return allow();
     }
-    if (is('test', ['tst', 't', 'it', 'cit', 'install-test', 'install-ci-test'])) return refuse(HUNT_NO_SUITE);
-    if (is('run-script', ['run', 'rum', 'urn'])) {
-      const script = words.slice(1).find((v) => v === null || !v.startsWith('-'));
-      if (script === null) return refuse(`the ${prog} script is built from a variable or substitution and cannot be verified; spell it out`);
-      if (script !== undefined && /^(pre|post)?tests?([:._-].*)?$/i.test(script)) return refuse(HUNT_NO_SUITE);
-    }
-    return null;
+    if (is('list', ['ls'])) return allow();
+    return notListed(`${prog} ${sub}`, `${prog} audit${isNpm ? ' --package-lock-only --json' : ''}, ${prog} ls`);
   }
 
-  if (prog === 'go') return before.includes('test') ? refuse(HUNT_NO_SUITE) : null;
+  // pip and pip3 have list and freeze built in. uv, poetry, pipenv and pdm run a script of the project
+  // for a word they do not know (pdm: a pyproject script), so they are refused for every subcommand.
+  if (HUNT_PY_MANAGERS.test(prog)) {
+    const sub = words[0];
+    const forms = 'pip list, pip freeze, pip-audit';
+    if (!/^pip/.test(prog)) return notListed(sub === undefined || sub === null ? prog : `${prog} ${sub}`, forms);
+    if (sub === undefined) return null;
+    if (sub === null) return refuse(`the ${prog} subcommand is built from a variable or substitution and cannot be verified; spell it out`);
+    if (sub.startsWith('-')) {
+      if (infoOnly(words)) return allow();
+      return refuse(`${prog} options before the subcommand cannot be verified during the hunt; write ${prog} <command> first`);
+    }
+    if (sub === 'list' || sub === 'freeze') return allow();
+    return notListed(`${prog} ${sub}`, forms);
+  }
+
+  if (prog === 'go') {
+    if (before.includes('test')) return refuse(HUNT_NO_SUITE);
+    return words.length ? notListed(`go ${words[0] === null ? '<built>' : words[0]}`, 'none: go can download modules and run code') : null;
+  }
+
   if (prog === 'dotnet') {
     if (before.includes('test') || before.includes('vstest')) return refuse(HUNT_NO_SUITE);
+    if (words.length === 0) return null;
+    if (infoOnly(words) || words.every((v) => v === '--info' || v === '--list-sdks' || v === '--list-runtimes')) return allow();
     if (before[0] === 'list' && before.includes('package') && before.includes('--vulnerable')) {
       const spec = { flags: new Set(['--vulnerable', '--include-transitive', '--no-restore']), valued: new Set(['--framework', '--format', '--output-version', '--verbosity']) };
-      // `list` and `package` are words of the command, the project (or solution) file is its one positional.
-      // `package` is a word of the command and `list` the one before it; the project (or solution) file,
-      // which may stand between them, is the one positional.
+      // `list` and `package` are words of the command; the project (or solution) file, which may stand
+      // between them, is the one positional.
       const pkg = before.indexOf('package');
       const parsed = huntOptions([...before.slice(1, pkg), ...before.slice(pkg + 1)], spec);
       if (parsed.bad !== undefined || parsed.positionals.length > 1) {
-        return refuse(`dotnet list package --vulnerable may run only with [--include-transitive] [--no-restore] [--framework <x>] [--format <x>] [--output-version <x>] and one project file during the hunt; ${parsed.bad !== undefined ? `"${parsed.bad}"` : 'a second positional'} is not allowed`);
+        return refuse(`dotnet list package --vulnerable may run only with --no-restore [--include-transitive] [--framework <x>] [--format <x>] [--output-version <x>] and one project file during the hunt; ${parsed.bad !== undefined ? `"${parsed.bad}"` : 'a second positional'} is not allowed`);
       }
+      if (!parsed.seen.has('--no-restore')) return refuse('dotnet list package restores first; the hunt restores nothing (add --no-restore; a project with no obj/project.assets.json is reported as not audited)');
       return allow();
     }
-    return null;
+    return notListed(`dotnet ${words[0] === null ? '<built>' : words[0]}`, 'dotnet list package --vulnerable --no-restore');
   }
 
   if (prog === 'cargo' || prog === 'cargo-audit') {
-    if (prog === 'cargo' && (before.includes('test') || before.includes('t') || before.includes('nextest'))) return refuse(HUNT_NO_SUITE);
-    const words2 = prog === 'cargo-audit' ? ['audit', ...words] : words;
-    const first = words2.indexOf('audit');
-    if (first === -1) return null;
-    // Only a +toolchain may come before the subcommand: any other option could take an argument.
-    if (!words2.slice(0, first).every((v) => v !== null && v.startsWith('+'))) return refuse('cargo options before audit cannot be verified during the hunt; write cargo audit first');
-    const spec = { flags: new Set(['--json', '-q', '--quiet', '--no-fetch']), valued: new Set(['--file', '-f']) };
-    const parsed = huntOptions(words2.slice(first + 1), spec);
-    if (parsed.bad !== undefined || parsed.positionals.length) {
-      const what = parsed.bad !== undefined ? parsed.bad : words2[first + 1 + parsed.positionals[0]];
-      return refuse(`cargo audit may run only as cargo audit [--json] [--quiet] [--no-fetch] [--file <Cargo.lock>] during the hunt; "${what}" is not allowed (cargo audit fix changes Cargo.toml)`);
+    // A +toolchain may come first; any other option before the subcommand could take an argument.
+    let k = 0;
+    while (k < words.length && words[k] !== null && words[k].startsWith('+')) k += 1;
+    const sub = words[k];
+    if (sub === undefined) return null;
+    if (sub === null) return refuse('the cargo subcommand is built from a variable or substitution and cannot be verified; spell it out');
+    if (prog === 'cargo' && ['test', 't', 'nextest'].includes(sub)) return refuse(HUNT_NO_SUITE);
+    if (prog === 'cargo-audit' && sub !== 'audit') return notListed(`cargo-audit ${sub}`, 'cargo-audit audit --json');
+    if (sub.startsWith('-')) {
+      if (infoOnly(words.slice(k))) return allow();
+      return refuse('cargo options before the subcommand cannot be verified during the hunt; write cargo <command> first');
     }
-    return allow();
+    const rest = words.slice(k + 1);
+    if (sub === 'audit') {
+      const spec = { flags: new Set(['--json', '-q', '--quiet', '--no-fetch']), valued: new Set(['--file', '-f']) };
+      const parsed = huntOptions(rest, spec);
+      if (parsed.bad !== undefined || parsed.positionals.length) {
+        const what = parsed.bad !== undefined ? parsed.bad : rest[parsed.positionals[0]];
+        return refuse(`cargo audit may run only as cargo audit [--json] [--quiet] [--no-fetch] [--file <Cargo.lock>] during the hunt; "${what}" is not allowed (cargo audit fix changes Cargo.toml)`);
+      }
+      return allow();
+    }
+    if (sub === 'tree') {
+      const spec = {
+        flags: new Set(['--locked', '--offline', '-d', '--duplicates', '-q', '--quiet', '--workspace', '--all-features', '--no-default-features', '--no-dev-edges']),
+        valued: new Set(['-p', '--package', '-e', '--edges', '-i', '--invert', '--depth', '--prefix', '-f', '--format', '--target', '--features', '-F']),
+        noPositional: true,
+      };
+      const parsed = huntOptions(rest, spec);
+      if (parsed.bad !== undefined) return refuse(`cargo tree may run only as cargo tree --locked with listing options during the hunt; "${parsed.bad}" is not allowed`);
+      if (!parsed.seen.has('--locked')) return refuse('cargo tree must run with --locked during the hunt: without it cargo may rewrite Cargo.lock');
+      return allow();
+    }
+    return notListed(`cargo ${sub}`, 'cargo audit, cargo tree --locked');
   }
 
   if (prog === 'pip-audit') return huntPipAudit(words, refuse, allow);
@@ -641,6 +709,11 @@ function huntPipAudit(words, refuse, allow) {
   if (parsed.bad !== undefined || parsed.positionals.length) {
     const what = parsed.bad !== undefined ? parsed.bad : words[parsed.positionals[0]];
     return refuse(`pip-audit may run only as pip-audit [--no-deps] [--strict] [-f <format>] [-r <requirements file>] during the hunt; "${what}" is not allowed (pip-audit --fix changes the requirements)`);
+  }
+  // pip-audit resolves a requirements file through pip in a temporary environment: it downloads and
+  // builds what the file names unless --no-deps makes it audit the pinned versions as written.
+  if (parsed.valued.some(([name]) => name === '-r' || name === '--requirement') && !parsed.seen.has('--no-deps')) {
+    return refuse('pip-audit resolves requirements by installing them; the hunt installs nothing (add --no-deps and pin the requirements)');
   }
   return allow(parsed.valued.filter(([name]) => name === '-o' || name === '--output').map(([, , v]) => v));
 }
@@ -1350,7 +1423,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         }
         if (hunt && sub === 'worktree' && subArgs[0] === 'add') return deny(HUNT_NO_SUITE);
         if (GIT_READ_ONLY.has(sub)) {
-          if (subArgs.some((x) => x === '--output'|| x.startsWith('--output='))) deny('git --output writes a file; redirect into reviews/<id>/artifacts/ instead');
+          if (subArgs.some((x) => x === '--output' || x.startsWith('--output='))) deny('git --output writes a file; redirect into reviews/<id>/artifacts/ instead');
           return;
         }
         if (sub === 'branch' && subArgs.every((x) => ['--show-current', '-a', '-r', '--list', '-v', '-vv', '--all', '--remotes'].includes(x))) return;
@@ -1463,6 +1536,9 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         const READ = hunt ? HUNT_TRACKER_READ[prog] : prog === 'gh'
           ? { issue: ['view', 'list', 'status'], pr: ['view', 'list', 'status', 'diff', 'checks'], repo: ['view', 'list', 'clone'], run: ['view', 'list', 'watch', 'download'], workflow: ['view', 'list'], release: ['view', 'list', 'download'], label: ['list'], gist: ['view', 'list'], project: ['view', 'list', 'field-list', 'item-list'], cache: ['list'], secret: ['list'], variable: ['list', 'get'], ruleset: ['list', 'view', 'check'], config: ['get', 'list'], alias: ['list'], extension: ['list', 'search', 'browse'], auth: ['status'], 'ssh-key': ['list'], 'gpg-key': ['list'], org: ['list'], api: '*', search: '*', status: '*', browse: '*', help: '*', version: '*', completion: '*' }
           : { issue: ['view', 'list'], mr: ['view', 'list', 'diff'], ci: ['status', 'view', 'list', 'trace', 'lint', 'get'], repo: ['view', 'list', 'clone'], release: ['view', 'list'], label: ['list'], variable: ['list', 'get'], auth: ['status'], api: '*', help: '*', version: '*', completion: '*' };
+        // The hunt calls the host the CLI is signed in to: another host would carry the call, and anything in its
+        // path or query, to a server the hunt did not choose.
+        if (hunt && rest.some((x) => x.v !== null && /^--hostname(=|$)/.test(x.v))) return deny(`${prog} --hostname names another host for the call; the hunt's api calls are a path on the host ${prog} is signed in to`);
         let g = 0;
         while (g < rest.length && rest[g].v !== null && rest[g].v.startsWith('-')) g += ['-R', '--repo', '--hostname'].includes(rest[g].v) ? 2 : 1;
         const group = rest[g];
@@ -1478,6 +1554,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
           for (let k = 0; k < apiWords.length; k++) {
             const v = apiWords[k].v;
             if (v === null) return deny(`${prog} api with an argument built from a variable or substitution cannot be verified; spell it out`);
+            if (hunt && v.includes('://')) return deny(`${prog} api with a URL (${v.slice(0, 40)}) can reach a host no list sees and carry data in its query; the hunt's api calls are a path on the host ${prog} is signed in to`);
             const m = /^(?:-X|--method|--request)(?:=(.*))?$/i.exec(v) || (/^-X(.+)$/.exec(v) ? [v, /^-X(.+)$/.exec(v)[1]] : null);
             if (m) {
               const methodWord = m[1] !== undefined ? m[1] : (apiWords[k + 1] ? apiWords[k + 1].v : null);
