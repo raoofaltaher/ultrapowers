@@ -756,6 +756,25 @@ test('last-writer mode: a refused approve tag is removed and an approver\'s late
   assert.ok(s.tasks[0].tag_ids.includes(s.tags.find((t) => t.name === 'AI').id));
 });
 
+test('last-writer mode: a tag the engine could not remove is logged, and noted at most once per planting', async () => {
+  const ws = await odooWorkspace({ seed: { tagTracking: false, failTagRemoval: 'Ultrapowers Approve' } });
+  throughPlan(ws, { id: ODOO_ID });
+  assert.equal(run(ws, ['packet', ODOO_ID]).code, 0);
+  await ws.odoo.tagTask(13627, 'Ultrapowers Approve', { by: 'mallory', at: '2999-01-01 00:00:00', tracked: false });
+  const posts = async () => (await ws.odoo.state()).writes.filter((w) => w.method === 'message_post' && /Approve tag refused/.test(w.kwargs.body)).length;
+  const refusals = () => logLines(ws, ODOO_ID).filter((l) => l.event === 'approval-refused');
+  for (let i = 0; i < 3; i++) {
+    const n = run(ws, ['next', ODOO_ID]);
+    assert.deepEqual([n.json.action, n.json.approval.reason], ['wait', 'not-approver'], n.stdout + n.stderr);
+  }
+  assert.equal(refusals().length, 1, 'one log line for the one planted tag, not one per poll');
+  assert.equal(refusals()[0].removed, false);
+  assert.match(refusals()[0].error, /tags cannot be removed/);
+  assert.equal(await posts(), 0, 'no note claims a removal that did not happen');
+  const s = await ws.odoo.state();
+  assert.ok(s.tasks[0].tag_ids.includes(s.tags.find((t) => t.name === 'Ultrapowers Approve').id), 'the tag is still on the task');
+});
+
 test('a tracked approval is accepted after the packet and attributed as tracked', async () => {
   const ws = await odooWorkspace();
   throughPlan(ws, { id: ODOO_ID });

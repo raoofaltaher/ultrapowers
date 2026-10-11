@@ -1,6 +1,6 @@
 // A fake Odoo for the tests: the JSON-RPC surface the engine uses (`common.authenticate`,
 // `object.execute_kw`) and `/web/database/list`, on a node http server. `seed.models[model][method]`
-// answers each call; every call, request body and write is recorded for the assertions.
+// answers each call (`failTagRemoval: '<tag name>'` refuses to remove that tag); every call, request body and write is recorded for the assertions.
 import http from 'node:http';
 import fs from 'node:fs';
 
@@ -141,6 +141,7 @@ export function odooSeedWithTask(overrides = {}) {
         for (const task of x.tasks.filter((t) => ids.includes(t.id))) {
           for (const cmd of vals.tag_ids ?? []) {
             if (cmd[0] === 4 && !task.tag_ids.includes(cmd[1])) task.tag_ids.push(cmd[1]);
+            if (cmd[0] === 3 && x.failTagRemoval && x.tags.find((t) => t.id === cmd[1])?.name === x.failTagRemoval) throw new Error('AccessError: tags cannot be removed');
             if (cmd[0] === 3) task.tag_ids = task.tag_ids.filter((id) => id !== cmd[1]);
             if (cmd[0] === 6) task.tag_ids = [...cmd[2]];
           }

@@ -744,20 +744,35 @@ const REMOVE_REFUSED = ['before-packet', 'not-permitted', 'not-approver', 'attri
 // approver's unrelated edit never upgrades a tag a non-approver planted.
 async function observeLastWriterTags(ctx, state, events, door, eventsList, verdict) {
   let observed = observeTags(state.lastSeenTags, eventsList);
-  if (!verdict.ok && REMOVE_REFUSED.includes(verdict.reason) && observed.some((t) => t.name === events.approve)) {
+  // What was already reported, by the planted tag's writer and time and by the outcome: a poll that
+  // meets the same tag again says nothing more, a re-planted tag has a new time and is reported.
+  let reported = Array.isArray(state.refusalsReported) ? state.refusalsReported : [];
+  const planted = observed.find((t) => t.name === events.approve);
+  if (!verdict.ok && REMOVE_REFUSED.includes(verdict.reason) && planted) {
+    const key = (removed) => `${planted.writer}|${planted.at}|${removed}`;
     try {
       await ctx.tracker.removeLabel(ctx.source.number, events.approve);
       observed = observed.filter((t) => t.name !== events.approve);
-      await ctx.tracker.comment(ctx.source.number, `Autopilot for ${state.ticket}: Approve tag refused: ${verdict.detail} (${verdict.reason}); add it again to approve.`).catch(() => {});
-      appendLog(ctx.root, state.ticket, { stage: 'gate', event: 'approval-refused', actor: 'engine', trigger: door, repo: 'docs', reason: verdict.reason, detail: verdict.detail });
-    } catch {
+      if (!reported.includes(key(true))) {
+        reported = [...reported, key(true)];
+        await ctx.tracker.comment(ctx.source.number, `Autopilot for ${state.ticket}: Approve tag refused: ${verdict.detail} (${verdict.reason}); add it again to approve.`).catch(() => {});
+        appendLog(ctx.root, state.ticket, { stage: 'gate', event: 'approval-refused', actor: 'engine', trigger: door, repo: 'docs', reason: verdict.reason, detail: verdict.detail, removed: true });
+      }
+    } catch (err) {
       // The tag stays recorded under the writer it was first seen with, which never verifies.
+      if (!reported.includes(key(false))) {
+        reported = [...reported, key(false)];
+        appendLog(ctx.root, state.ticket, { stage: 'gate', event: 'approval-refused', actor: 'engine', trigger: door, repo: 'docs', reason: verdict.reason, detail: verdict.detail, removed: false, error: String(err?.message ?? err) });
+      }
     }
   }
-  if (JSON.stringify(observed) === JSON.stringify(state.lastSeenTags ?? null)) return;
+  const sameReported = JSON.stringify(reported) === JSON.stringify(state.refusalsReported ?? []);
+  if (sameReported && JSON.stringify(observed) === JSON.stringify(state.lastSeenTags ?? null)) return;
   state.lastSeenTags = observed;
+  state.refusalsReported = reported;
   const fresh = readState(ctx.root, state.ticket) ?? state;
   fresh.lastSeenTags = observed;
+  fresh.refusalsReported = reported;
   writeState(ctx.root, state.ticket, fresh);
   commitState(ctx, state.ticket, `chore(${state.ticket}): autopilot gate tags observed`);
 }
