@@ -29,6 +29,10 @@
       "field": "version"
     },
     {
+      "path": ".antigravity-plugin/plugin.json",
+      "field": "version"
+    },
+    {
       "path": ".muse-plugin/plugin.json",
       "field": "version"
     },

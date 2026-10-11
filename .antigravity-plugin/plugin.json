@@ -1,0 +1,26 @@
+{
+  "name": "ultrapowers",
+  "displayName": "Ultrapowers",
+  "version": "2.0.2",
+  "description": "Skills for coding agents: design before code, test-first, systematic debugging, and a gated ticket, QA and review workflow",
+  "logo": "assets/app-icon.png",
+  "suggestedPrompts": [
+    "I've got an idea for something I'd like to build",
+    "Let's figure out why this broke"
+  ],
+  "category": "Developer Tools",
+  "keywords": [
+    "skills",
+    "tdd",
+    "debugging",
+    "collaboration",
+    "best-practices",
+    "workflows"
+  ],
+  "author": {
+    "name": "RAOOF A."
+  },
+  "homepage": "https://github.com/raoofaltaher/ultrapowers",
+  "repository": "https://github.com/raoofaltaher/ultrapowers",
+  "license": "SEE LICENSE IN LICENSE"
+}
