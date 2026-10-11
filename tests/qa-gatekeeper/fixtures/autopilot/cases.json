@@ -267,5 +267,6 @@
   {"name":"deny_mkdir_husky","event":{"tool_name":"Bash","tool_input":{"command":"mkdir .husky"}}},
   {"name":"deny_ln_into_github","event":{"tool_name":"Bash","tool_input":{"command":"ln -s ../x .github"}}},
   {"name":"allow_cp_into_repo_dir","event":{"tool_name":"Bash","tool_input":{"command":"cp repo-a/src/x.sh repo-a/src"}}},
+  {"name":"deny_patch_command_hook_diff","event":{"tool_name":"Bash","tool_input":{"command":"patch -p1 -i changes.diff"}}},
   {"name":"allow_write_nested_agents_md","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/repo-a/AGENTS.md","content":"x"}}}
 ]

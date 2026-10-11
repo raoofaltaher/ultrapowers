@@ -865,6 +865,11 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         return;
       }
       if (prog === 'tee') { for (const x of plain) checkTarget(x.w, dir, 'tee target', container); return; }
+      if (prog === 'patch') {
+        // The files a diff names are inside the diff; --dry-run (and -C/--check) changes nothing.
+        if (rest.some((x) => x.v !== null && ['--dry-run', '-C', '--check'].includes(x.v))) return;
+        return deny(`patch writes the files its diff names, which cannot be seen before it runs; during ${runKind} edit files through the file tools`);
+      }
       if (prog === 'tar' || prog === 'bsdtar') {
         // Extracting writes under -C DIR (the working directory when none); creating, appending and
         // updating write the archive named by -f. -O / --to-stdout extracts nowhere.
