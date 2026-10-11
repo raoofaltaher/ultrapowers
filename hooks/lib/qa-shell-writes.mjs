@@ -774,6 +774,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
           if (v.startsWith('-')) { k++; continue; }
           break;
         }
+        if (rest[k] && rest[k].v === null) return deny('the git subcommand is built from a variable or substitution and cannot be verified; spell it out');
         const sub = rest[k] ? rest[k].v : '';
         const subArgs = rest.slice(k + 1).map((x) => x.v || '');
         if (!sub) return;
