@@ -74,6 +74,8 @@ function tokenize(src) {
     }
     const m = /^[A-Za-z_][A-Za-z0-9_]*/.exec(src.slice(i + 1));
     if (m) { i += 1 + m[0].length; push({ t: 'var', v: m[0] }); return; }
+    // $! is the pid of the last background command: a variable, not a substitution.
+    if (next === '!') { i += 2; push({ t: 'var', v: '!' }); return; }
     if (next && /[0-9@*#?$!-]/.test(next)) { i += 2; push({ t: 'dyn' }); return; }
     i += 1; lit('$'); void inDouble;
   };
@@ -368,6 +370,8 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
   const areaText = autopilot ? 'the workspace' : `reviews/${ticket || '<id>'}/ and .ultrapowers/`;
   const runKind = autopilot ? 'an autopilot stage' : 'a QA run';
   const vars = new Map();
+  // Variables assigned from a command substitution (P=$(pgrep node)): a later `kill $P` is a kill by name.
+  const taint = new Set();
   // PGUSER handed down to a nested shell (`PGUSER=x sh -c '...'`, `docker exec -e PGUSER=x ... sh -c`),
   // or exported by an earlier command; psqlEnv: one of PSQL_ENV was set the same ways.
   const walkEnv = { pgUser: undefined, psqlEnv: false };
@@ -501,7 +505,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         const m = first && first.t === 'lit' ? /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(first.v) : null;
         if (!m) break;
         const rest = { k: 'w', parts: [{ t: 'lit', v: first.v.slice(m[0].length) }, ...words[a].parts.slice(1)] };
-        assigns.push([m[1], resolveWord(rest)]);
+        assigns.push([m[1], resolveWord(rest), rest]);
         a++;
       }
       // The PGUSER given to this command (a leading assignment, an env wrapper or a docker -e):
@@ -523,7 +527,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         if (reason) deny(reason);
       };
       let args = words.slice(a).map((w) => ({ w, v: resolveWord(w) }));
-      if (args.length === 0) { for (const [n, v] of assigns) { if (v === null) vars.delete(n); else vars.set(n, v); } return; }
+      if (args.length === 0) { for (const [n, v, aw] of assigns) { if (v === null) { vars.delete(n); if (aw.parts.some((p) => p.t === 'dyn')) taint.add(n); else taint.delete(n); } else { vars.set(n, v); taint.delete(n); } } return; }
       // A brace group's braces are not a program.
       if (args[0].v === '{') args = args.slice(1);
       if (args.length && args[args.length - 1].v === '}') args = args.slice(0, -1);
@@ -565,6 +569,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
           const tail = skipOptions(args.slice(1), XARGS_VALUE_OPTS);
           const ip = tail.length ? progName(tail[0].v) : '';
           if (WRITE_PROGRAMS.has(ip)) deny(`xargs ${ip} writes to paths that cannot be seen before it runs`);
+          if (ip === 'kill') deny('xargs kill signals pids that cannot be seen before it runs; kill takes a literal pid');
           return redispatch(tail, true);
         }
         if (prog === 'command' && args[1] && ['-v', '-V'].includes(args[1].v)) return;
@@ -922,6 +927,27 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         return;
       }
       if (prog === 'tee') { for (const x of plain) checkTarget(x.w, dir, 'tee target', container); return; }
+      // Killing by name reaches the app under test; a targeted `kill <pid>` of the run's own background
+      // suite stays allowed (a pid is a positive number written out, not a pgrep or a group).
+      if (['pkill', 'killall', 'killall5', 'skill', 'taskkill', 'stop-process'].includes(prog) || (prog === 'fuser' && rest.some((x) => x.v !== null && /^-[a-zA-Z]*k/.test(x.v)))) {
+        return deny('killing processes by name is blocked; the stack stays as found');
+      }
+      if (prog === 'kill') {
+        for (let k = 0; k < rest.length; k++) {
+          const v = rest[k].v;
+          if (v === null) {
+            // A variable naming a pid ($PID, $!, "$SUITE_PID") is how a run stops its own suite; a
+            // substitution (kill $(pgrep ...)) or a variable assigned from one is a kill by name.
+            const parts = rest[k].w.parts;
+            if (parts.some((p) => p.t === 'dyn' || (p.t === 'var' && taint.has(p.v)))) return deny('kill with a pid built from a substitution (kill $(pgrep ...)) is a kill by name; kill takes a literal pid or a pid variable');
+            continue;
+          }
+          if (['-s', '-n', '--signal'].includes(v)) { k++; continue; }
+          if (/^-([A-Za-z]+|[0-9]+)$/.test(v) && !/^-1$/.test(v) || v === '-l' || v === '-L' || v === '--list') continue;
+          if (!/^[1-9][0-9]*$/.test(v)) return deny(`kill ${v} is not a literal pid; a group, every process or a name is blocked`);
+        }
+        return;
+      }
       if (prog === 'patch') {
         // The files a diff names are inside the diff; --dry-run (and -C/--check) changes nothing.
         if (rest.some((x) => x.v !== null && ['--dry-run', '-C', '--check'].includes(x.v))) return;

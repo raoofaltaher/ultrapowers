@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"fuser -k 3000/tcp"}}

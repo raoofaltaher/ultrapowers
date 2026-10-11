@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"kill -TERM 4242; kill -s KILL 4243; kill -9 4244; kill -l; (sleep 1 & kill $!); kill \"$SUITE_PID\""}}

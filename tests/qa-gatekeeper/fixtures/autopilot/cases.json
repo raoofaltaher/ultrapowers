@@ -285,5 +285,8 @@
   {"name":"deny_docker_quoted_subcommand_rm","event":{"tool_name":"Bash","tool_input":{"command":"docker \"rm\" api"}}},
   {"name":"deny_podman_stop","event":{"tool_name":"Bash","tool_input":{"command":"podman stop api"}}},
   {"name":"allow_docker_logs_host_option","event":{"tool_name":"Bash","tool_input":{"command":"docker -H unix:///var/run/docker.sock logs --tail 20 api"}}},
+  {"name":"deny_kill_pgrep_substitution","event":{"tool_name":"Bash","tool_input":{"command":"kill -9 $(pgrep node)"}}},
+  {"name":"deny_pkill_split_quote","event":{"tool_name":"Bash","tool_input":{"command":"p''kill node"}}},
+  {"name":"allow_kill_background_pid","event":{"tool_name":"Bash","tool_input":{"command":"(sleep 1 & kill $!)"}}},
   {"name":"allow_write_nested_agents_md","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/repo-a/AGENTS.md","content":"x"}}}
 ]

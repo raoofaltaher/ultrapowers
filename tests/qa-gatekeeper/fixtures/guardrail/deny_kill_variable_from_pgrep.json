@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"P=$(pgrep -f app); kill -9 $P"}}
