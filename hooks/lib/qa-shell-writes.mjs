@@ -522,6 +522,9 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       if (args[0].v === '{') args = args.slice(1);
       if (args.length && args[args.length - 1].v === '}') args = args.slice(0, -1);
       if (args.length === 0 || args[0].v === '}') return;
+      // A compound command's keyword is not a program: `then rm x`, `do rm x`, `else rm x`.
+      while (args.length && args[0].v !== null && ['then', 'do', 'else', 'elif', 'if', 'while', 'until'].includes(args[0].v)) args = args.slice(1);
+      if (args.length === 0) return;
       const PROGRAM_FROM_VAR = 'the program of a command is built from a variable or substitution and cannot be verified; spell it out';
       if (args[0].v === null) return deny(PROGRAM_FROM_VAR);
       let prog = progName(args[0].v);

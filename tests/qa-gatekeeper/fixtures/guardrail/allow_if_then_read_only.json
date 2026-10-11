@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"if [ -f reviews/1234/QA-REPORT.md ]; then cat reviews/1234/QA-REPORT.md; else echo none; fi; for f in repo-a/src/*; do wc -l \"$f\"; done"}}

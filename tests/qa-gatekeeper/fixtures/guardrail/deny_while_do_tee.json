@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"while read l; do tee repo-a/src/app.js < list.txt; done"}}
