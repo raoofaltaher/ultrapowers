@@ -1036,6 +1036,14 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       if (['pkill', 'killall', 'killall5', 'skill', 'taskkill', 'stop-process'].includes(prog) || (prog === 'fuser' && rest.some((x) => x.v !== null && /^-[a-zA-Z]*k/.test(x.v)))) {
         return deny('killing processes by name is blocked; the stack stays as found');
       }
+      // Remote shells and copies, however the program is quoted or wrapped (the hook's text rule reads
+      // the bare spelling).
+      if (['ssh', 'scp', 'sftp', 'rsync', 'telnet', 'nc', 'ncat', 'netcat', 'socat', 'ftp', 'tftp', 'lftp', 'sshpass', 'mosh', 'rsh', 'rcp', 'ssh-copy-id', 'sshfs'].includes(prog)) {
+        return deny('remote shell or copy is blocked');
+      }
+      if (['chmod', 'chown', 'chgrp', 'icacls', 'takeown', 'setfacl', 'attrib', 'cacls', 'xattr', 'chattr'].includes(prog)) {
+        return deny('permission or ownership change is blocked');
+      }
       if (autopilot && (prog === 'gh' || prog === 'glab')) {
         // The tracker belongs to the engine: a stage runs the read verbs below and nothing else. The
         // hook's text rules read the bare spellings of the write verbs; this reads the words as the

@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"setfacl -m u:x:rwx repo-a"}}

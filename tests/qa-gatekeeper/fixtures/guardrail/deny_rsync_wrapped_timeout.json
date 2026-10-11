@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"timeout 60 rsync -a reviews/ dev@example.invalid:/tmp/x"}}
