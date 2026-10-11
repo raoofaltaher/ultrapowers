@@ -25,6 +25,7 @@ SUITES=(
   "bash tests/qa-gatekeeper/test-no-reference-leaks.sh"
   "bash tests/qa-gatekeeper/test-qa-guardrail.sh"
   "bash tests/qa-gatekeeper/test-autopilot-profile.sh"
+  "bash tests/qa-gatekeeper/test-hunt-profile.sh"
   "node --test tests/qa-gatekeeper/qa-shell-writes.test.mjs"
   "node --test tests/qa-gatekeeper/guard-paths.test.mjs"
   "node --test tests/qa-gatekeeper/judge.test.mjs"

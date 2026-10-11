@@ -3,7 +3,10 @@
 // "writes outside reviews/<id>/ and .ultrapowers/"). Reads NUL-separated fields on stdin,
 // `<cwd>\0<root>\0<ticket>\0<command>`, and prints a deny reason, or nothing when the command
 // writes only inside the report area. Paths arrive on stdin, never as arguments, so Git Bash's
-// argument conversion cannot rewrite them. Node standard library only.
+// argument conversion cannot rewrite them. Node standard library only. The profile is read from
+// ULTRAPOWERS_GUARD_PROFILE: `qa` (the default), `autopilot` or `hunt` (the QA rules with the audit
+// id as the ticket, the audit tools of the vulnerability hunt allowed in their listed forms, and no
+// test suite, worktree or tracker write; see huntCheck).
 //
 // The analysis is a quote-aware tokenizer, not a shell: it follows `cd` and simple literal
 // assignments inside the command, looks inside `sh -c '...'` and `docker exec ... sh -c`, and
@@ -165,14 +168,14 @@ function normPath(p) {
 // the gate's record; the repository's commit hooks run inside the engine's own commit and push.
 // The autopilot marker, the kill switch and the engine's lock folder are the envelope's own
 // switches, written by the engine outside the stage. The QA marker stays writable: the QA skill
-// writes and removes it itself inside the session.
+// writes and removes it itself inside the session, and so does the hunt (its marker is refused to an autopilot stage only).
 const PROTECTED_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|(^|\/)\.aws(\/|$)|mcp-secrets\.env|\.local\.(sh|env|json)$|hooks\/qa-guardrail|\.agents\/ultrapowers\.json|(^|\/)\.claude\/|(^|\/)\.git\/|(^|\/)\.githooks\/|(^|\/)\.[a-z0-9_-]+\/settings(\.local)?\.json$|(^|\/)tasks\/[^/]+\/(autopilot\.json|stage-log\.jsonl|changes-comments\.md)$|(^|\/)\.ultrapowers\/(autopilot-active|autopilot-stop)$|(^|\/)\.ultrapowers\/autopilot(\/|$)|(^|\/)\.ultrapowers$/;
 // Key material no stage may read through a shell (the same list as the hook's shell rule). The
 // hook tests the typed command; an 8.3 short name (MCP-SE~1.ENV) hides the name from it, so any
 // word with an alias-shaped segment is resolved here and its real name is tested.
 const KEY_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|\.aws\/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|\/)\.env($|\.)/;
 const SHORT_SEG = /[^\\/]~[0-9]/;
-const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)hooks\/(qa-guardrail|session-start|team-memory-[a-z]+|lib\/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|\/)\.gemini\/hooks\/|(^|\/)\.husky\/|(^|\/)\.pre-commit-config\.ya?ml$|(^|\/)lefthook\.ya?ml$|(^|\/)\.env($|\.)|(^|\/)qa\/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|\/)\.ultrapowers\/(qa-active|autopilot-active|autopilot-stop)$/;
+const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)hooks\/(qa-guardrail|session-start|team-memory-[a-z]+|lib\/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|\/)\.gemini\/hooks\/|(^|\/)\.husky\/|(^|\/)\.pre-commit-config\.ya?ml$|(^|\/)lefthook\.ya?ml$|(^|\/)\.env($|\.)|(^|\/)qa\/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|\/)\.ultrapowers\/(qa-active|hunt-active|autopilot-active|autopilot-stop)$/;
 // Git subcommands an autopilot stage may run: the read-only set plus the commands that build the
 // ticket branch. Pushing and integrating belong to the engine; nothing discards work; `config` and
 // the `-c` global option are refused because an alias resolves to any command at all.
@@ -465,6 +468,183 @@ function inlineInterpreterReason(kind, prog, rest, { inPlaceOk = false } = {}) {
   return '';
 }
 
+// ---------- the vulnerability hunt ----------
+// The hunt profile applies every QA rule and then this closed list. The hunters run the audit tools
+// of the project (the lane prompts under skills/vulnerability-hunt/prompts/ name the commands) and
+// read; they run no test suite, make no worktree, install nothing the tool does not install for
+// itself, and write no tracker. A command of a tool family below that is not one of the listed
+// forms is refused with the form that is allowed; a program outside every family is left to the QA
+// rules. The hunters run the tools with no variable prefix, so SAFE_ENV_RE (the QA variable gate)
+// gets no addition: NPM_CONFIG_AUDIT_LEVEL=high npm audit is refused, --audit-level=high is the
+// spelling.
+const HUNT_NO_SUITE = 'the hunt reads; it runs no suite and makes no worktree';
+// gh and glab: the groups the hunt may run, by program (a verb list, or '*' for every verb).
+const HUNT_TRACKER_READ = {
+  gh: { api: '*', search: ['code'], auth: ['status'], help: '*', version: '*' },
+  glab: { api: '*', auth: ['status'], help: '*', version: '*' },
+};
+const HUNT_AUDIT_TOOLS = new Set(['osv-scanner', 'pip-audit', 'cargo-audit']);
+const HUNT_TEST_RUNNERS = new Set(['pytest', 'py.test', 'vitest', 'jest']);
+const HUNT_TEST_MODULES = new Set(['pytest', 'unittest', 'nose', 'nose2', 'tox']);
+const NPM_AUDIT_LEVELS = /^(info|low|moderate|high|critical|none)$/;
+
+// Splits `words` (values, null for one built from a variable) by a spec of the options a command may
+// carry: { flags, valued, noPositional }. Returns { bad } (the first thing not on the spec) or
+// { positionals, values: [[option, value index]] }.
+function huntOptions(words, spec) {
+  const positionals = [];
+  const valued = [];
+  for (let k = 0; k < words.length; k++) {
+    const v = words[k];
+    if (v === null) return { bad: 'an argument built from a variable or substitution' };
+    if (v === '--') return { bad: '--' };
+    if (!v.startsWith('-') || v === '-') {
+      if (spec.noPositional) return { bad: v };
+      positionals.push(k);
+      continue;
+    }
+    const eq = v.startsWith('--') ? v.indexOf('=') : -1;
+    const name = eq === -1 ? v : v.slice(0, eq);
+    if (spec.flags.has(name) && eq === -1) continue;
+    if (spec.valued.has(name)) {
+      if (eq !== -1) { valued.push([name, k, v.slice(eq + 1)]); continue; }
+      if (words[k + 1] === undefined || words[k + 1] === null) return { bad: `${v} without a value` };
+      valued.push([name, k + 1, words[k + 1]]);
+      k += 1;
+      continue;
+    }
+    return { bad: v };
+  }
+  return { positionals, valued };
+}
+
+// The hunt's judgement of one simple command: null when the program is not for it to judge, { reason }
+// to refuse, { allow: true, outputs } to allow it (outputs: the paths, as written, of files it writes,
+// which the caller holds to the report area).
+export function huntCheck(prog0, words, { viaRunner = false, interpreter = '' } = {}) {
+  const prog = prog0.replace(/\.(cmd|bat|ps1)$/, '');
+  const refuse = (reason) => ({ reason });
+  const allow = (outputs = []) => ({ allow: true, outputs });
+  const before = words.indexOf('--') === -1 ? words : words.slice(0, words.indexOf('--'));
+  if (HUNT_TEST_RUNNERS.has(prog)) return refuse(HUNT_NO_SUITE);
+  if (viaRunner && HUNT_AUDIT_TOOLS.has(prog)) return refuse(`${prog} started through a package runner installs it first; the hunt runs the audit tools that are already installed (${prog} on PATH)`);
+
+  if (interpreter === 'python') {
+    const m = words.findIndex((v) => v !== null && (v === '-m' || /^-m.+/.test(v)));
+    if (m !== -1) {
+      const mod = words[m] === '-m' ? words[m + 1] : words[m].slice(2);
+      if (mod === null || mod === undefined) return refuse('python -m with a module built from a variable cannot be verified during the hunt');
+      if (HUNT_TEST_MODULES.has(mod)) return refuse(HUNT_NO_SUITE);
+      if (mod === 'pip_audit') {
+        // An interpreter option before -m may take a value (-W ignore, -X dev) that would shift the words after it.
+        if (m !== 0) return refuse('python options before -m pip_audit cannot be verified during the hunt; write python -m pip_audit first');
+        return huntPipAudit(words.slice(words[m] === '-m' ? m + 2 : m + 1), refuse, allow);
+      }
+    }
+    return null;
+  }
+
+  if (['npm', 'pnpm', 'yarn', 'bun'].includes(prog)) {
+    const sub = words[0];
+    if (sub === undefined) return null;
+    if (sub === null) return refuse(`the ${prog} subcommand is built from a variable or substitution and cannot be verified; spell it out`);
+    if (sub.startsWith('-')) {
+      if (words.every((v) => ['--version', '-v', '--help', '-h'].includes(v))) return allow();
+      return refuse(`${prog} options before the subcommand cannot be verified during the hunt; write ${prog} <command> first`);
+    }
+    const s = sub.toLowerCase();
+    // npm takes any unambiguous prefix of a command name (npm aud, npm te) and a few aliases.
+    const isNpm = prog === 'npm';
+    const is = (name, alias = []) => s === name || alias.includes(s) || (isNpm && s.length >= 2 && name.startsWith(s));
+    if (is('audit')) {
+      if (!isNpm) return refuse(`${prog} audit is not on the hunt's list; the audit of a Node project is npm audit --package-lock-only --json`);
+      const bad = (what) => refuse(`npm audit may run only as npm audit [--package-lock-only] [--json] [--audit-level=<level>] during the hunt; ${what} changes a file or reads more than the report (npm audit fix is never run)`);
+      const rest = words.slice(1);
+      for (let k = 0; k < rest.length; k++) {
+        const v = rest[k];
+        if (v === null) return bad('an argument built from a variable or substitution');
+        if (v === '--package-lock-only' || v === '--json') continue;
+        if (v === '--audit-level') { if (rest[k + 1] === undefined || rest[k + 1] === null || !NPM_AUDIT_LEVELS.test(rest[k + 1])) return bad('--audit-level without a level'); k += 1; continue; }
+        const m = /^--audit-level=(.*)$/.exec(v);
+        if (m && NPM_AUDIT_LEVELS.test(m[1])) continue;
+        return bad(v === 'fix' ? 'fix' : `"${v}"`);
+      }
+      return allow();
+    }
+    if (is('test', ['tst', 't', 'it', 'cit', 'install-test', 'install-ci-test'])) return refuse(HUNT_NO_SUITE);
+    if (is('run-script', ['run', 'rum', 'urn'])) {
+      const script = words.slice(1).find((v) => v === null || !v.startsWith('-'));
+      if (script === null) return refuse(`the ${prog} script is built from a variable or substitution and cannot be verified; spell it out`);
+      if (script !== undefined && /^(pre|post)?tests?([:._-].*)?$/i.test(script)) return refuse(HUNT_NO_SUITE);
+    }
+    return null;
+  }
+
+  if (prog === 'go') return before.includes('test') ? refuse(HUNT_NO_SUITE) : null;
+  if (prog === 'dotnet') {
+    if (before.includes('test') || before.includes('vstest')) return refuse(HUNT_NO_SUITE);
+    if (before[0] === 'list' && before.includes('package') && before.includes('--vulnerable')) {
+      const spec = { flags: new Set(['--vulnerable', '--include-transitive', '--no-restore']), valued: new Set(['--framework', '--format', '--output-version', '--verbosity']) };
+      // `list` and `package` are words of the command, the project (or solution) file is its one positional.
+      // `package` is a word of the command and `list` the one before it; the project (or solution) file,
+      // which may stand between them, is the one positional.
+      const pkg = before.indexOf('package');
+      const parsed = huntOptions([...before.slice(1, pkg), ...before.slice(pkg + 1)], spec);
+      if (parsed.bad !== undefined || parsed.positionals.length > 1) {
+        return refuse(`dotnet list package --vulnerable may run only with [--include-transitive] [--no-restore] [--framework <x>] [--format <x>] [--output-version <x>] and one project file during the hunt; ${parsed.bad !== undefined ? `"${parsed.bad}"` : 'a second positional'} is not allowed`);
+      }
+      return allow();
+    }
+    return null;
+  }
+
+  if (prog === 'cargo' || prog === 'cargo-audit') {
+    if (prog === 'cargo' && (before.includes('test') || before.includes('t') || before.includes('nextest'))) return refuse(HUNT_NO_SUITE);
+    const words2 = prog === 'cargo-audit' ? ['audit', ...words] : words;
+    const first = words2.indexOf('audit');
+    if (first === -1) return null;
+    // Only a +toolchain may come before the subcommand: any other option could take an argument.
+    if (!words2.slice(0, first).every((v) => v !== null && v.startsWith('+'))) return refuse('cargo options before audit cannot be verified during the hunt; write cargo audit first');
+    const spec = { flags: new Set(['--json', '-q', '--quiet', '--no-fetch']), valued: new Set(['--file', '-f']) };
+    const parsed = huntOptions(words2.slice(first + 1), spec);
+    if (parsed.bad !== undefined || parsed.positionals.length) {
+      const what = parsed.bad !== undefined ? parsed.bad : words2[first + 1 + parsed.positionals[0]];
+      return refuse(`cargo audit may run only as cargo audit [--json] [--quiet] [--no-fetch] [--file <Cargo.lock>] during the hunt; "${what}" is not allowed (cargo audit fix changes Cargo.toml)`);
+    }
+    return allow();
+  }
+
+  if (prog === 'pip-audit') return huntPipAudit(words, refuse, allow);
+
+  if (prog === 'osv-scanner') {
+    const spec = {
+      flags: new Set(['--json', '-r', '--recursive', '--no-ignore']),
+      valued: new Set(['-L', '--lockfile', '-f', '--format', '--verbosity', '--output', '--output-file']),
+    };
+    const parsed = huntOptions(words, spec);
+    const denied = new Set(['fix', 'update', 'image', 'guided-remediation', 'help']);
+    const bad = parsed.bad !== undefined ? parsed.bad : (parsed.positionals.map((k) => words[k]).find((v) => denied.has(v)));
+    if (bad !== undefined) {
+      return refuse(`osv-scanner may run only as osv-scanner [scan [source]] [--json] [--format <x>] [--lockfile <file>] [-r] during the hunt; "${bad}" is not allowed (osv-scanner fix rewrites the lockfile)`);
+    }
+    return allow(parsed.valued.filter(([name]) => name === '--output' || name === '--output-file').map(([, , v]) => v));
+  }
+  return null;
+}
+
+function huntPipAudit(words, refuse, allow) {
+  const spec = {
+    flags: new Set(['--no-deps', '--strict', '--disable-pip', '--desc', '--aliases', '--skip-editable']),
+    valued: new Set(['-f', '--format', '-r', '--requirement', '-s', '--vulnerability-service', '--progress-spinner', '--ignore-vuln', '--timeout', '-o', '--output']),
+  };
+  const parsed = huntOptions(words, spec);
+  if (parsed.bad !== undefined || parsed.positionals.length) {
+    const what = parsed.bad !== undefined ? parsed.bad : words[parsed.positionals[0]];
+    return refuse(`pip-audit may run only as pip-audit [--no-deps] [--strict] [-f <format>] [-r <requirements file>] during the hunt; "${what}" is not allowed (pip-audit --fix changes the requirements)`);
+  }
+  return allow(parsed.valued.filter(([name]) => name === '-o' || name === '--output').map(([, , v]) => v));
+}
+
 // ---------- analysis ----------
 const ENV_DUMP = 'dumping the environment is blocked; check a variable with ${NAME:+set} instead';
 // A stage reads no tracker credential and nothing named like a secret out of the environment.
@@ -473,6 +653,10 @@ const SECRET_VARS = /TOKEN|KEY|SECRET|PASS|CREDENTIAL|AUTH|COOKIE|SESSION|PRIVAT
 
 export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase = process.platform === 'win32' || process.platform === 'darwin', roleVars = [], roRole = 'qa_agent_ro', flags = null }) {
   const autopilot = profile === 'autopilot';
+  // The hunt profile: every QA rule (the report area is reviews/<audit id>/ and .ultrapowers/, the audit
+  // id in the ticket field taking the place of a ticket), plus a closed list for the audit tools of the
+  // hunt and for what it refuses besides (see huntCheck).
+  const hunt = profile === 'hunt';
   // flags.psql counts the psql invocations this walk inspected. The hook compares it with the
   // number of psql words in the command and refuses one it did not see (xargs, find -exec, eval,
   // a brace group, sudo -u, su -c, kubectl exec): fail closed, not a second SQL parser in bash.
@@ -486,7 +670,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     ? [rootC]
     : [realCanonical(ticket ? `${rootC}/reviews/${ticket}` : `${rootC}/reviews`, rootC), realCanonical(`${rootC}/.ultrapowers`, rootC)];
   const areaText = autopilot ? 'the workspace' : `reviews/${ticket || '<id>'}/ and .ultrapowers/`;
-  const runKind = autopilot ? 'an autopilot stage' : 'a QA run';
+  const runKind = autopilot ? 'an autopilot stage' : hunt ? 'a vulnerability hunt' : 'a QA run';
   const vars = new Map();
   // Names given to `export`, `declare` or `typeset` earlier in the command: they reach every later program.
   const exportedNames = new Set();
@@ -703,8 +887,12 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         return 0;
       };
       const isRunner = () => runnerSkip() > 0;
+      // True once a package runner (npx, npm exec, uvx, pipx run ...) has been skipped to reach the program:
+      // the program may then have been downloaded to run, which the hunt does not allow of an audit tool.
+      let viaRunner = false;
       while (WRAPPERS.has(prog) || prog === 'env' || prog === 'timeout' || prog === 'xargs' || isRunner()) {
         if (isRunner()) {
+          viaRunner = true;
           args = args.slice(runnerSkip());
           // The runner's own -c/--call STRING (a command string) is only a -c BEFORE the program word:
           // after it, -c belongs to the wrapped program and the normal program rules read it.
@@ -847,6 +1035,17 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         const why = inlineInterpreterReason(interpKind, prog, rest, { inPlaceOk: autopilot });
         if (why) return deny(why);
       }
+      // The hunt: the audit tools it may run, in the forms it may run them, and the commands it refuses
+      // (a test suite, a worktree). A listed form is allowed here, after the variable gate and the
+      // interpreter rules above and the redirect check at the top, which apply to it as to any command.
+      if (hunt) {
+        const h = huntCheck(prog, rest.map((x) => x.v), { viaRunner, interpreter: interpKind });
+        if (h && h.reason) return deny(h.reason);
+        if (h && h.allow) {
+          for (const p of h.outputs) checkTarget({ k: 'w', parts: [{ t: 'lit', v: p }] }, dir, `${prog} output file`, container);
+          return;
+        }
+      }
       if (prog === 'psql') {
         psqlCheck(rest);
         // -o and -L write a file: the same area rule as a redirect.
@@ -862,7 +1061,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         if (names.length === 0) return deny(ENV_DUMP);
         for (const x of names) {
           if (x.v === null) return deny('printenv names a variable built from a substitution; it cannot be verified');
-          if (!autopilot && !roleVars.includes(x.v)) return deny(`printenv ${x.v} reads a variable that is not a configured role variable; during a QA run only the role variables (qa.roles[].userEnv and passwordEnv) are read, and any other is checked with \${NAME:+set}`);
+          if (!autopilot && !roleVars.includes(x.v)) return deny(`printenv ${x.v} reads a variable that is not a configured role variable; during ${runKind} only the role variables (qa.roles[].userEnv and passwordEnv) are read, and any other is checked with \${NAME:+set}`);
           if (autopilot && (TRACKER_VARS.test(x.v) || SECRET_VARS.test(x.v))) return deny(`printenv ${x.v} would print a credential or secret; an autopilot stage never reads one out, check it with \${NAME:+set}`);
         }
         return;
@@ -1149,8 +1348,9 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
           if (sub === 'config') return deny('git config can define an alias or change the remote; the project config stays as it is during an autopilot stage');
           return deny(`git ${sub} is not on the autopilot allow-list; the engine pushes and integrates, nothing discards work, and an alias is not run`);
         }
+        if (hunt && sub === 'worktree' && subArgs[0] === 'add') return deny(HUNT_NO_SUITE);
         if (GIT_READ_ONLY.has(sub)) {
-          if (subArgs.some((x) => x === '--output' || x.startsWith('--output='))) deny('git --output writes a file; redirect into reviews/<id>/artifacts/ instead');
+          if (subArgs.some((x) => x === '--output'|| x.startsWith('--output='))) deny('git --output writes a file; redirect into reviews/<id>/artifacts/ instead');
           return;
         }
         if (sub === 'branch' && subArgs.every((x) => ['--show-current', '-a', '-r', '--list', '-v', '-vv', '--all', '--remotes'].includes(x))) return;
@@ -1158,7 +1358,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         if (sub === 'remote' && (subArgs.length === 0 || ['-v', 'show', 'get-url'].includes(subArgs[0]))) return;
         if (sub === 'config' && subArgs.some((x) => ['--get', '--list', '-l', '--get-all', '--get-regexp'].includes(x))) return;
         if (sub === 'worktree' && subArgs[0] === 'list') return;
-        return deny(`git ${sub} changes a repository; only read-only git commands run during a QA run`);
+        return deny(`git ${sub} changes a repository; only read-only git commands run during ${runKind}`);
       }
       if (['awk', 'gawk', 'mawk', 'nawk'].includes(prog)) {
         // An awk program can run a command (system(), a pipe, getline from a command) or write a file
@@ -1201,7 +1401,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       }
       if (prog === 'sed' || prog === 'perl' || prog === 'ruby') {
         const inPlace = rest.some((x) => x.v && (x.v === '--in-place' || x.v.startsWith('--in-place=') || /^-[A-Za-z]*i/.test(x.v)));
-        if (inPlace && !autopilot) deny(`${prog} -i edits files in place; the code under test is read-only during a QA run`);
+        if (inPlace && !autopilot) deny(`${prog} -i edits files in place; the code under test is read-only during ${runKind}`);
         if (inPlace && autopilot) {
           // Every operand but the script is a file the edit writes. The script is the operand that
           // follows -e/--expression/-f/--file, or the first plain operand when none is given.
@@ -1219,7 +1419,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         return;
       }
       if (prog === 'truncate') {
-        if (!autopilot) return deny('truncate changes a file; the code under test is read-only during a QA run');
+        if (!autopilot) return deny(`truncate changes a file; the code under test is read-only during ${runKind}`);
         for (const x of plain) if (x.v && !/^-/.test(x.v) && !/^[0-9]+[kmg]?$/i.test(x.v)) checkTarget(x.w, dir, 'truncate target', container);
         return;
       }
@@ -1253,12 +1453,14 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       if (['chmod', 'chown', 'chgrp', 'icacls', 'takeown', 'setfacl', 'attrib', 'cacls', 'xattr', 'chattr'].includes(prog)) {
         return deny('permission or ownership change is blocked');
       }
-      if (autopilot && (prog === 'gh' || prog === 'glab')) {
+      if ((autopilot || hunt) && (prog === 'gh' || prog === 'glab')) {
+        const listName = autopilot ? 'autopilot' : 'hunt';
+        const trackerWhy = autopilot ? 'the engine writes back between stages' : 'the hunt reports in its own files and never writes to a tracker';
         // The tracker belongs to the engine: a stage runs the read verbs below and nothing else. The
         // hook's text rules read the bare spellings of the write verbs; this reads the words as the
         // CLI does (quoting undone), and an unknown group or verb (alias set, extension install, run
         // rerun, gist create ...) is refused rather than judged by a deny-list.
-        const READ = prog === 'gh'
+        const READ = hunt ? HUNT_TRACKER_READ[prog] : prog === 'gh'
           ? { issue: ['view', 'list', 'status'], pr: ['view', 'list', 'status', 'diff', 'checks'], repo: ['view', 'list', 'clone'], run: ['view', 'list', 'watch', 'download'], workflow: ['view', 'list'], release: ['view', 'list', 'download'], label: ['list'], gist: ['view', 'list'], project: ['view', 'list', 'field-list', 'item-list'], cache: ['list'], secret: ['list'], variable: ['list', 'get'], ruleset: ['list', 'view', 'check'], config: ['get', 'list'], alias: ['list'], extension: ['list', 'search', 'browse'], auth: ['status'], 'ssh-key': ['list'], 'gpg-key': ['list'], org: ['list'], api: '*', search: '*', status: '*', browse: '*', help: '*', version: '*', completion: '*' }
           : { issue: ['view', 'list'], mr: ['view', 'list', 'diff'], ci: ['status', 'view', 'list', 'trace', 'lint', 'get'], repo: ['view', 'list', 'clone'], release: ['view', 'list'], label: ['list'], variable: ['list', 'get'], auth: ['status'], api: '*', help: '*', version: '*', completion: '*' };
         let g = 0;
@@ -1267,7 +1469,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         if (!group) return; // only flags: --version, --help
         if (group.v === null) return deny(`the ${prog} command is built from a variable or substitution and cannot be verified; spell it out`);
         const spec = Object.prototype.hasOwnProperty.call(READ, group.v) ? READ[group.v] : undefined;
-        if (spec === undefined) return deny(`${prog} ${group.v} is not on the autopilot read allow-list; the engine writes to the tracker between stages`);
+        if (spec === undefined) return deny(`${prog} ${group.v} is not on the ${listName} read allow-list; ${trackerWhy}`);
         if (group.v === 'api') {
           // api is a read only without a method and without a body: -X/--method/--request other than
           // GET, -f/-F/--field/--raw-field/--input/-d/--data (any spelling, attached or not), a
@@ -1279,14 +1481,14 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
             const m = /^(?:-X|--method|--request)(?:=(.*))?$/i.exec(v) || (/^-X(.+)$/.exec(v) ? [v, /^-X(.+)$/.exec(v)[1]] : null);
             if (m) {
               const methodWord = m[1] !== undefined ? m[1] : (apiWords[k + 1] ? apiWords[k + 1].v : null);
-              if (methodWord === null || String(methodWord).toUpperCase() !== 'GET') return deny(`${prog} api with a method other than GET writes to the tracker; the engine writes back between stages`);
+              if (methodWord === null || String(methodWord).toUpperCase() !== 'GET') return deny(`${prog} api with a method other than GET writes to the tracker; ${trackerWhy}`);
               if (m[1] === undefined) k++;
               continue;
             }
-            if (/^(-f|-F|--field|--raw-field|--input|-d|--data)([=].*)?$/.test(v) || /^-[fFd].+/.test(v) || /^--(field|raw-field|input|data)=/.test(v)) return deny(`${prog} api with a field, a body or input is a write; the engine writes back between stages`);
-            if (/^(-H|--header)$/i.test(v) && apiWords[k + 1] && apiWords[k + 1].v !== null && /content-type/i.test(apiWords[k + 1].v)) return deny(`${prog} api with a Content-Type header carries a body; the engine writes back between stages`);
-            if (/^-H.*content-type/i.test(v) || /^--header=.*content-type/i.test(v)) return deny(`${prog} api with a Content-Type header carries a body; the engine writes back between stages`);
-            if (/mutation/i.test(v)) return deny(`${prog} api with a mutation is a write; the engine writes back between stages`);
+            if (/^(-f|-F|--field|--raw-field|--input|-d|--data)([=].*)?$/.test(v) || /^-[fFd].+/.test(v) || /^--(field|raw-field|input|data)=/.test(v)) return deny(`${prog} api with a field, a body or input is a write; ${trackerWhy}`);
+            if (/^(-H|--header)$/i.test(v) && apiWords[k + 1] && apiWords[k + 1].v !== null && /content-type/i.test(apiWords[k + 1].v)) return deny(`${prog} api with a Content-Type header carries a body; ${trackerWhy}`);
+            if (/^-H.*content-type/i.test(v) || /^--header=.*content-type/i.test(v)) return deny(`${prog} api with a Content-Type header carries a body; ${trackerWhy}`);
+            if (/mutation/i.test(v)) return deny(`${prog} api with a mutation is a write; ${trackerWhy}`);
             if (v === 'graphql') return deny(`${prog} api graphql is a POST; run the read through a REST endpoint or a gh read verb`);
           }
           return;
@@ -1295,7 +1497,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         const verbWord = rest.slice(g + 1).find((x) => x.v === null || !x.v.startsWith('-'));
         if (!verbWord) return;
         if (verbWord.v === null) return deny(`the ${prog} ${group.v} verb is built from a variable or substitution and cannot be verified; spell it out`);
-        if (!spec.includes(verbWord.v)) return deny(`${prog} ${group.v} ${verbWord.v} is not on the autopilot read allow-list; the engine writes to the tracker between stages`);
+        if (!spec.includes(verbWord.v)) return deny(`${prog} ${group.v} ${verbWord.v} is not on the ${listName} read allow-list; ${trackerWhy}`);
         return;
       }
       if (prog === 'kill') {
@@ -1467,7 +1669,7 @@ function main() {
   let input = '';
   try { input = readFileSync(0, 'utf8'); } catch { input = ''; }
   const [cwd = '', root = '', ticket = '', ignoreCaseFlag = '', roleVarsField = '', roRoleField = '', ...cmdParts] = input.split('\0');
-  const profile = process.env.ULTRAPOWERS_GUARD_PROFILE === 'autopilot' ? 'autopilot' : 'qa';
+  const profile = ['autopilot', 'hunt'].includes(process.env.ULTRAPOWERS_GUARD_PROFILE) ? process.env.ULTRAPOWERS_GUARD_PROFILE : 'qa';
   const out = analyze(cmdParts.join('\0'), { cwd, root, ticket, profile, ignoreCase: ignoreCaseFlag === '1', roleVars: roleVarsField.split(',').filter(Boolean), roRole: roRoleField || 'qa_agent_ro' });
   if (out) process.stdout.write(out);
 }

@@ -73,7 +73,7 @@ node --test tests/task-lifecycle/post-review.test.mjs
 bash tests/vulnerability-hunt/run-tests.sh
 bash tests/autopilot/run-tests.sh
 bash tests/autopilot/test-adapters.sh             # skips a harness CLI that is not installed
-bash tests/qa-gatekeeper/run-tests.sh
+bash tests/qa-gatekeeper/run-tests.sh             # includes the QA, autopilot and hunt guardrail profile suites
 bash tests/skills/test-skill-bodies.sh
 node --test tests/pi/test-pi-extension.mjs
 bash tests/opencode/run-tests.sh            # unit tests; add --integration for a live OpenCode
