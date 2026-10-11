@@ -156,7 +156,7 @@ This repository is its own plugin marketplace (`.claude-plugin/marketplace.json`
 agy plugin install https://github.com/raoofaltaher/ultrapowers
 ```
 
-Antigravity runs the plugin's session-start hook, so Ultrapowers is active from the first message. Reinstall with the same command to update.
+Antigravity reads the plugin's own manifest, `.antigravity-plugin/plugin.json`, and loads the bundled skills. Measured on agy 1.3.1 (by the upstream project; not yet re-measured here): agy has no session-start event, so the plugin's session-start hook does not run. Antigravity lists each installed skill's description instead, and the description of the `using-ultrapowers` skill prompts the model to load it at the start of a conversation. The repository-root `hooks.json` registers only the guardrail. Reinstall with the same command to update.
 
 ### Codex
 

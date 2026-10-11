@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Validate the Antigravity (agy) integration. agy installs the existing plugin
 # directly (`agy plugin install <repo-url>`): it loads the bundled skills and
-# runs the SessionStart hook for bootstrap, so there is no agy-specific scaffold
+# loads the description of using-ultrapowers for bootstrap (no session-start event), so there is little agy-specific scaffold
 # to test. What IS agy-specific is the tool mapping — subagent dispatch via
 # invoke_subagent (self/research types) and task tracking via a task artifact —
 # and SKILL.md pointing at it.
