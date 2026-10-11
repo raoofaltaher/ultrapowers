@@ -451,7 +451,7 @@ PROTECTED_RE='(^|/)\.ssh(/|$)|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws(/|$)|
 # The autopilot envelope also keeps the agent out of CI, the plugin hooks, the repository's commit
 # hooks (they run inside the engine's own commit and push) and the env file: a stage that
 # rewrites the workflow or the hooks rewrites its own brakes.
-AUTOPILOT_PROTECTED_RE='(^|/)\.github/|(^|/)\.gitlab-ci\.yml$|(^|/)hooks/(qa-guardrail|session-start|team-memory-[a-z]+|lib/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|/)\.gemini/hooks/|(^|/)\.husky/|(^|/)\.pre-commit-config\.ya?ml$|(^|/)lefthook\.ya?ml$|(^|/)\.env($|\.)|(^|/)qa/known-issues\.md$|^(agents|claude|gemini)\.md$'
+AUTOPILOT_PROTECTED_RE='(^|/)\.github/|(^|/)\.gitlab-ci\.yml$|(^|/)hooks/(qa-guardrail|session-start|team-memory-[a-z]+|lib/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|/)\.gemini/hooks/|(^|/)\.husky/|(^|/)\.pre-commit-config\.ya?ml$|(^|/)lefthook\.ya?ml$|(^|/)\.env($|\.)|(^|/)qa/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|/)\.ultrapowers/(qa-active|autopilot-active|autopilot-stop)$'
 # The QA baseline (known-issues) and the instruction files every later session obeys are the gate's
 # record and the agents' rules: a stage that edits its own baseline hides a failure from the QA
 # gate. The baseline's path is qa.knownIssues (default qa/known-issues.md, matched above).

@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"npx -y eslint -c reviews/1234/artifacts/eslintrc.json repo-a/src; pipx run black -c 'x' --version"}}

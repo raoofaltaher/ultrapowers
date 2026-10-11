@@ -361,5 +361,12 @@
   {"name":"allow_gh_api_explicit_get","event":{"tool_name":"Bash","tool_input":{"command":"gh api -X GET repos/o/r/pulls/1 --jq .title"}}},
   {"name":"allow_gh_api_header_accept","event":{"tool_name":"Bash","tool_input":{"command":"gh api repos/o/r/pulls/1 -H 'Accept: application/vnd.github+json'"}}},
   {"name":"allow_glab_api_get","event":{"tool_name":"Bash","tool_input":{"command":"glab api projects/1/issues"}}},
-  {"name":"allow_gh_issue_pr_reads","event":{"tool_name":"Bash","tool_input":{"command":"gh issue view 16; gh issue list; gh issue status; gh pr view 3; gh pr list; gh pr status; gh pr diff 3; gh pr checks 3"}}}
+  {"name":"allow_gh_issue_pr_reads","event":{"tool_name":"Bash","tool_input":{"command":"gh issue view 16; gh issue list; gh issue status; gh pr view 3; gh pr list; gh pr status; gh pr diff 3; gh pr checks 3"}}},
+  {"name":"deny_write_nested_qa_marker","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/sub/.ultrapowers/qa-active","content":"1234"}}},
+  {"name":"deny_write_root_qa_marker","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.ultrapowers/qa-active","content":"1234"}}},
+  {"name":"deny_shell_nested_qa_marker","event":{"tool_name":"Bash","tool_input":{"command":"mkdir -p sub/.ultrapowers && echo 1234 > sub/.ultrapowers/qa-active"}}},
+  {"name":"deny_patch_nested_qa_marker","event":{"tool_name":"apply_patch","tool_input":{"patch":"*** Begin Patch\n*** Add File: sub/.ultrapowers/qa-active\n+1234\n*** End Patch"}}},
+  {"name":"deny_nested_autopilot_marker","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/sub/.ultrapowers/autopilot-active","content":"{}"}}},
+  {"name":"allow_write_worktree_ultrapowers_state","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.worktrees/GH-16-x/.ultrapowers/sdd/plan/progress.md","content":"x"}}},
+  {"name":"deny_pipx_run_python_c_wrapped","event":{"tool_name":"Bash","tool_input":{"command":"pipx run python -c 'print(1)'"}}}
 ]

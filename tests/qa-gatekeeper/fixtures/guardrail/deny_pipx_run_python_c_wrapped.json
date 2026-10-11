@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"pipx run python -c 'print(1)'"}}

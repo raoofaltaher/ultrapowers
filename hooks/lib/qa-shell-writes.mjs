@@ -165,7 +165,7 @@ const PROTECTED_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|(^|\/)
 // word with an alias-shaped segment is resolved here and its real name is tested.
 const KEY_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|\.aws\/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|\/)\.env($|\.)/;
 const SHORT_SEG = /[^\\/]~[0-9]/;
-const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)hooks\/(qa-guardrail|session-start|team-memory-[a-z]+|lib\/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|\/)\.gemini\/hooks\/|(^|\/)\.husky\/|(^|\/)\.pre-commit-config\.ya?ml$|(^|\/)lefthook\.ya?ml$|(^|\/)\.env($|\.)|(^|\/)qa\/known-issues\.md$|^(agents|claude|gemini)\.md$/;
+const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)hooks\/(qa-guardrail|session-start|team-memory-[a-z]+|lib\/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|\/)\.gemini\/hooks\/|(^|\/)\.husky\/|(^|\/)\.pre-commit-config\.ya?ml$|(^|\/)lefthook\.ya?ml$|(^|\/)\.env($|\.)|(^|\/)qa\/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|\/)\.ultrapowers\/(qa-active|autopilot-active|autopilot-stop)$/;
 // Git subcommands an autopilot stage may run: the read-only set plus the commands that build the
 // ticket branch. Pushing and integrating belong to the engine; nothing discards work; `config` and
 // the `-c` global option are refused because an alias resolves to any command at all.
@@ -687,15 +687,8 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       while (WRAPPERS.has(prog) || prog === 'env' || prog === 'timeout' || prog === 'xargs' || isRunner()) {
         if (isRunner()) {
           args = args.slice(runnerSkip());
-          // -c/--call STRING (npx) is a command string; --call=STRING too.
-          const callEq = args.findIndex((x) => x.v !== null && x.v.startsWith('--call='));
-          if (callEq !== -1) { walkNested(args[callEq].v.slice('--call='.length), dir, container, depth + 1, pgUser); return; }
-          const ci = args.findIndex((x) => x.v === '-c' || x.v === '--call');
-          if (ci !== -1) {
-            if (!args[ci + 1] || args[ci + 1].v === null) return deny('a package runner -c runs a command built from a variable; it cannot be verified');
-            walkNested(args[ci + 1].v, dir, container, depth + 1, pgUser);
-            return;
-          }
+          // The runner's own -c/--call STRING (a command string) is only a -c BEFORE the program word:
+          // after it, -c belongs to the wrapped program and the normal program rules read it.
           // Fail closed: only the options below, then the program. An option on neither list could take
           // an argument and make it the program.
           const RUNNER_SPEC = {
@@ -709,6 +702,12 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
             if (w.v === null) return deny('a package runner option or program built from a variable or substitution cannot be verified; spell it out');
             if (w.v === '--') { r += 1; break; }
             if (!w.v.startsWith('-')) break;
+            if (w.v.startsWith('--call=')) { walkNested(w.v.slice('--call='.length), dir, container, depth + 1, pgUser); return; }
+            if (w.v === '-c' || w.v === '--call') {
+              if (!args[r + 1] || args[r + 1].v === null) return deny('a package runner -c runs a command built from a variable; it cannot be verified');
+              walkNested(args[r + 1].v, dir, container, depth + 1, pgUser);
+              return;
+            }
             const eq = w.v.indexOf('=');
             const name = w.v.startsWith('--') && eq !== -1 ? w.v.slice(0, eq) : w.v;
             if (RUNNER_SPEC.flags.has(name) && eq === -1) { r += 1; continue; }
