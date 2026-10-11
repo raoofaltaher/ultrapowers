@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"env -S 'rm repo-a/src/app.js'"}}
