@@ -8,7 +8,7 @@ import {
   AutopilotError, STAGES, DEFAULTS, validateAutopilot, effectiveAutopilot, slugFor, branchName, modeFor,
   initialState, statePath, logPath, readState, writeState, hashLine, appendLog, readLog, verifyChain,
   packetId, renderPacket, verifyApproval, assumptionsFrom, scopeFrom, freezeScope, pushAllowed, loadSecretsFile,
-  nextStage, acquireLock, releaseLock, readLock, lockPath, activeMarkerPath, writeActiveMarker, clearActiveMarker,
+  nextStage, acquireLock, releaseLock, readLock, lockPath, activeMarkerPath, writeActiveMarker, clearActiveMarker, observeTags,
 } from '../../skills/autopilot/scripts/autopilot-lib.mjs';
 
 const TEMPLATE = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'skills', 'autopilot', 'templates', 'packet.md'), 'utf8');
@@ -168,6 +168,34 @@ test('verifyApproval carries the event attribution, tracked by default', async (
   assert.equal(lw.attribution, 'last-writer');
   const tracked = await verifyApproval({ events: [{ id: '5', action: 'labeled', label: 'A', actor: 'val', at: '2026-10-05T09:00:00Z' }], approveLabel: 'A', packet, permissionOf: async () => 'write', tips });
   assert.equal(tracked.attribution, 'tracked');
+});
+
+// Security: a last-writer attribution never upgrades a tag first seen under a non-approver.
+test('verifyApproval in last-writer mode refuses a tag first observed under another writer', async () => {
+  const packet = { postedAt: '2026-10-05T08:00:00Z', docsTip: 'x', tips: {} };
+  const tips = { docs: 'x', repos: {} };
+  const lw = (actor, at) => [{ id: `write:${at}`, action: 'labeled', label: 'A', actor, at, attribution: 'last-writer' }];
+  const base = { approveLabel: 'A', packet, permissionOf: async () => 'write', approvers: ['val'], tips };
+  // T1: a non-approver adds the tag; it is refused and recorded under that writer.
+  const t1 = await verifyApproval({ ...base, events: lw('dev', '2026-10-05T09:00:00Z'), lastSeenTags: [] });
+  assert.equal(t1.reason, 'not-approver');
+  const seen = observeTags([], lw('dev', '2026-10-05T09:00:00Z'));
+  assert.deepEqual(seen, [{ name: 'A', writer: 'dev', at: '2026-10-05T09:00:00Z' }]);
+  // T2: an approver's unrelated edit makes them the last writer: still refused.
+  const t2 = await verifyApproval({ ...base, events: lw('val', '2026-10-05T10:00:00Z'), lastSeenTags: seen });
+  assert.deepEqual([t2.ok, t2.reason], [false, 'attribution-unproven']);
+  assert.deepEqual(observeTags(seen, lw('val', '2026-10-05T10:00:00Z')), seen, 'the first-seen writer is kept while the tag stays');
+  // The tag gone, then added again by the approver: absent at the previous observation, so it verifies.
+  const gone = observeTags(seen, []);
+  assert.deepEqual(gone, []);
+  const t3 = await verifyApproval({ ...base, events: lw('val', '2026-10-05T11:00:00Z'), lastSeenTags: gone });
+  assert.equal(t3.ok, true);
+  // Recorded under the same approver: verifies.
+  const t4 = await verifyApproval({ ...base, events: lw('val', '2026-10-05T11:00:00Z'), lastSeenTags: [{ name: 'A', writer: 'val', at: '2026-10-05T10:30:00Z' }] });
+  assert.equal(t4.ok, true);
+  // A tracked event is never judged by the last-seen record.
+  const tracked = await verifyApproval({ ...base, events: [{ id: '5', action: 'labeled', label: 'A', actor: 'val', at: '2026-10-05T10:00:00Z' }], lastSeenTags: seen });
+  assert.equal(tracked.ok, true);
 });
 
 test('loadSecretsFile fills only the variables the environment lacks', () => {

@@ -726,6 +726,36 @@ test('a last-writer approval forged into the state file does not open execute', 
   assert.equal(swapped.json.error.code, 'approval-unverified', swapped.stdout);
 });
 
+// Security: with last-writer attribution a tag planted by a non-approver (T1) must not become an
+// approver's approval after that approver's unrelated edit (T2). The refused tag is removed.
+test('last-writer mode: a refused approve tag is removed and an approver\'s later edit does not approve', async () => {
+  const ws = await odooWorkspace({ seed: { tagTracking: false } });
+  throughPlan(ws, { id: ODOO_ID });
+  assert.equal(run(ws, ['packet', ODOO_ID]).code, 0);
+  await ws.odoo.tagTask(13627, 'Ultrapowers Approve', { by: 'mallory', at: '2999-01-01 00:00:00', tracked: false });
+  const t1 = run(ws, ['next', ODOO_ID]);
+  assert.deepEqual([t1.json.action, t1.json.approval.reason], ['wait', 'not-approver'], t1.stdout + t1.stderr);
+  let s = await ws.odoo.state();
+  const approve = s.tags.find((t) => t.name === 'Ultrapowers Approve').id;
+  assert.ok(!s.tasks[0].tag_ids.includes(approve), 'the refused tag is removed from the task');
+  assert.ok(s.writes.some((w) => w.method === 'write' && JSON.stringify(w.vals.tag_ids) === JSON.stringify([[3, approve]])), 'removed through the tracker');
+  const note = s.writes.filter((w) => w.method === 'message_post').at(-1);
+  assert.match(note.kwargs.body, /Approve tag refused: .*add it again to approve/);
+  // T2: the approver edits something else on the task and becomes its last writer.
+  await ws.odoo.tagTask(13627, 'AI', { by: 'val', at: '2999-01-02 00:00:00', tracked: false });
+  const t2 = run(ws, ['next', ODOO_ID]);
+  assert.equal(t2.json.action, 'wait', t2.stdout);
+  assert.notEqual(t2.json.approval?.ok, true);
+  assert.equal(state(ws, ODOO_ID).approval, null);
+  // The approver adds the tag themselves: approved, by them.
+  await ws.odoo.tagTask(13627, 'Ultrapowers Approve', { by: 'val', at: '2999-01-03 00:00:00', tracked: false });
+  const t3 = run(ws, ['next', ODOO_ID]);
+  assert.deepEqual([t3.json.action, t3.json.stage], ['run', 'execute'], t3.stdout);
+  assert.equal(state(ws, ODOO_ID).approval.actor, 'val');
+  s = await ws.odoo.state();
+  assert.ok(s.tasks[0].tag_ids.includes(s.tags.find((t) => t.name === 'AI').id));
+});
+
 test('a tracked approval is accepted after the packet and attributed as tracked', async () => {
   const ws = await odooWorkspace();
   throughPlan(ws, { id: ODOO_ID });

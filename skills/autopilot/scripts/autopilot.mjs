@@ -18,7 +18,7 @@ import {
   AutopilotError, STAGES, QA_STOPS, effectiveAutopilot, modeFor, branchName, initialState,
   readState, writeState, appendLog, readLog, verifyChain,
   nextStage, acquireLock, releaseLock, liveLock, readLock, lockPath,
-  writeActiveMarker, clearActiveMarker, readActiveMarker, verifyApproval,
+  writeActiveMarker, clearActiveMarker, readActiveMarker, verifyApproval, observeTags,
   renderPacket, assumptionsFrom, scopeFrom, freezeScope, pushAllowed, loadSecretsFile, packetId, hashLine,
   reviewFolderProblem,
 } from './autopilot-lib.mjs';
@@ -487,6 +487,8 @@ async function postPacket(ctx, opts, state) {
   const postedAt = (await ctx.tracker.commentTime(commentUrl).catch(() => null)) ?? new Date().toISOString();
   state.packet = { commentUrl, docsTip, tips, postedAt };
   state.approval = null;
+  // The packet just removed the approve tag: at this observation it is absent.
+  state.lastSeenTags = [];
   state.stageStatus = 'finished';
   writeState(ctx.root, opts.id, state);
   appendLog(ctx.root, opts.id, { stage: 'gate', event: 'packet-posted', actor: 'engine', trigger: opts.door, repo: 'docs', sha: docsTip, url: commentUrl });
@@ -683,6 +685,40 @@ async function openPullRequests(ctx, opts, state, { resuming, qaOn }) {
 async function pendingApproval(ctx, state, events, door = 'command') {
   if (!state.packet) return { ok: false, reason: 'no-packet', detail: 'no packet has been posted' };
   const eventsList = await ctx.tracker.labelEvents(ctx.source.number);
+  const lastWriter = typeof ctx.tracker.tagsTracked === 'function' && !(await ctx.tracker.tagsTracked());
+  const verdict = await checkApproval(ctx, state, events, door, eventsList, lastWriter ? (state.lastSeenTags ?? null) : undefined);
+  if (lastWriter) await observeLastWriterTags(ctx, state, events, door, eventsList, verdict);
+  return verdict;
+}
+
+// The refusals after which a last-writer approve tag is taken off the task: whoever adds it next
+// becomes the task's last writer, so an approver must add it themselves.
+const REMOVE_REFUSED = ['before-packet', 'not-permitted', 'not-approver', 'attribution-unproven', 'self-watch', 'self-watch-no-stage-tokens'];
+
+// Last-writer mode (Odoo without readable tag tracking, spec D3): a refused approve tag is removed
+// with a note, and the tag set is recorded with the writer each tag was first seen under, so an
+// approver's unrelated edit never upgrades a tag a non-approver planted.
+async function observeLastWriterTags(ctx, state, events, door, eventsList, verdict) {
+  let observed = observeTags(state.lastSeenTags, eventsList);
+  if (!verdict.ok && REMOVE_REFUSED.includes(verdict.reason) && observed.some((t) => t.name === events.approve)) {
+    try {
+      await ctx.tracker.removeLabel(ctx.source.number, events.approve);
+      observed = observed.filter((t) => t.name !== events.approve);
+      await ctx.tracker.comment(ctx.source.number, `Autopilot for ${state.ticket}: Approve tag refused: ${verdict.detail} (${verdict.reason}); add it again to approve.`).catch(() => {});
+      appendLog(ctx.root, state.ticket, { stage: 'gate', event: 'approval-refused', actor: 'engine', trigger: door, repo: 'docs', reason: verdict.reason, detail: verdict.detail });
+    } catch {
+      // The tag stays recorded under the writer it was first seen with, which never verifies.
+    }
+  }
+  if (JSON.stringify(observed) === JSON.stringify(state.lastSeenTags ?? null)) return;
+  state.lastSeenTags = observed;
+  const fresh = readState(ctx.root, state.ticket) ?? state;
+  fresh.lastSeenTags = observed;
+  writeState(ctx.root, state.ticket, fresh);
+  commitState(ctx, state.ticket, `chore(${state.ticket}): autopilot gate tags observed`);
+}
+
+async function checkApproval(ctx, state, events, door, eventsList, lastSeenTags) {
   const tips = { docs: workTip(ctx.dirs.docs, state.ticket, state.docs.branch), repos: {} };
   for (const r of state.repos ?? []) {
     const dir = r.worktree && fs.existsSync(r.worktree) ? r.worktree : ctx.dirs.repos[r.name];
@@ -690,7 +726,7 @@ async function pendingApproval(ctx, state, events, door = 'command') {
   }
   const verdict = await verifyApproval({
     events: eventsList, approveLabel: events.approve, packet: state.packet,
-    permissionOf: (login) => ctx.tracker.permission(login), approvers: ctx.settings.approvers ?? [], tips,
+    permissionOf: (login) => ctx.tracker.permission(login), approvers: ctx.settings.approvers ?? [], tips, lastSeenTags,
   });
   if (verdict.ok && door === 'watch') {
     // The self check fails closed: an engine account that cannot be read is treated as the actor.

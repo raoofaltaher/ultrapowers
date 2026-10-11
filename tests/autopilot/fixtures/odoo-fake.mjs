@@ -83,6 +83,8 @@ export function odooSeedWithTask(overrides = {}) {
     { id: 9, login: 'val', partner_id: [19, 'Val'], share: false, [g]: [100] },
     { id: 10, login: 'guest', partner_id: [20, 'Guest'], share: true, [g]: [] },
     { id: 11, login: 'intern', partner_id: [21, 'Intern'], share: false, [g]: [] },
+    // A Project User who is not in autopilot.approvers: permitted to write, never to approve.
+    { id: 12, login: 'mallory', partner_id: [22, 'Mallory'], share: false, [g]: [100] },
   ];
   s.tags = [{ id: 1, name: 'AI', color: 5 }, { id: 2, name: 'Backend', color: 6 }, { id: 3, name: 'Ultrapowers Ready', color: 10 }, { id: 4, name: 'Ultrapowers Approve', color: 4 }];
   s.tasks = [

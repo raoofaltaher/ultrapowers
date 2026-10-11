@@ -365,7 +365,10 @@ export function renderPacket(template, { state, links, assumptions = [], events,
 // The four checks of spec §7 against the tracker's label events.
 // The engine's own account counts like any other: the developer who runs the engine approves their own tickets.
 // A team that runs the engine as a bot keeps the bot out by listing human logins in autopilot.approvers.
-export async function verifyApproval({ events, approveLabel, packet, permissionOf, approvers = [], tips }) {
+// `lastSeenTags` is the tag set the engine recorded at its previous observation (observeTags). A
+// last-writer event names whoever wrote the task last, not who added the tag, so such an approve
+// tag verifies only when it was absent at that observation or was first seen under this same actor.
+export async function verifyApproval({ events, approveLabel, packet, permissionOf, approvers = [], tips, lastSeenTags }) {
   const relevant = (events ?? []).filter((e) => e.label === approveLabel).sort((a, b) => String(a.at).localeCompare(String(b.at)));
   const last = relevant[relevant.length - 1];
   if (!last || last.action !== 'labeled') return { ok: false, reason: 'no-event', detail: `no ${approveLabel} label event` };
@@ -379,6 +382,12 @@ export async function verifyApproval({ events, approveLabel, packet, permissionO
   const permission = await permissionOf(last.actor);
   if (!['write', 'maintain', 'admin'].includes(permission)) return { ok: false, reason: 'not-permitted', detail: `${last.actor} has ${permission} access` };
   if (approvers.length && !approvers.includes(last.actor)) return { ok: false, reason: 'not-approver', detail: `${last.actor} is not in autopilot.approvers` };
+  if (last.attribution === 'last-writer' && Array.isArray(lastSeenTags)) {
+    const seen = lastSeenTags.find((t) => t?.name === approveLabel);
+    if (seen && seen.writer !== last.actor) {
+      return { ok: false, reason: 'attribution-unproven', detail: `the ${approveLabel} tag was first seen under ${seen.writer || 'an unknown writer'} at ${seen.at}; ${last.actor} is only the task's last writer` };
+    }
+  }
   const drift = [];
   if ((tips?.docs ?? null) !== (packet.docsTip ?? null)) drift.push(`docs ${packet.docsTip} -> ${tips?.docs}`);
   for (const [name, sha] of Object.entries(packet.tips ?? {})) {
@@ -386,6 +395,20 @@ export async function verifyApproval({ events, approveLabel, packet, permissionO
   }
   if (drift.length) return { ok: false, reason: 'drift', detail: drift.join(', ') };
   return { ok: true, actor: last.actor, eventId: String(last.id), at: last.at, attribution: last.attribution ?? 'tracked' };
+}
+
+// The tag set of a last-writer observation: a tag already recorded keeps the writer it was first
+// seen under (a later edit never upgrades it), a new tag takes the current last writer, a tag gone
+// from the task is dropped.
+export function observeTags(previous, events) {
+  const before = new Map((Array.isArray(previous) ? previous : []).filter((t) => t?.name).map((t) => [t.name, t]));
+  const out = [];
+  for (const e of events ?? []) {
+    if (e.action !== 'labeled' || out.some((t) => t.name === e.label)) continue;
+    const kept = before.get(e.label);
+    out.push(kept ? { name: kept.name, writer: kept.writer, at: kept.at } : { name: e.label, writer: e.actor ?? '', at: e.at ?? '' });
+  }
+  return out;
 }
 
 // The Odoo tag names init proposes when a project's autopilot source is Odoo (spec D9).
