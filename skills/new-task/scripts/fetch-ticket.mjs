@@ -153,6 +153,8 @@ const BLOCKED_V4 = [
   [[192, 168], 16, 'a private address'],
   [[100, 64], 10, 'a shared (carrier-grade NAT) address'],
   [[169, 254], 16, 'a link-local address'],
+  [[198, 18], 15, 'a benchmark-testing address'],
+  [[224], 3, 'a multicast or reserved address'],
 ];
 
 function v4Problem(octets) {
@@ -193,6 +195,12 @@ function v6Problem(hostname) {
     return v4Problem([g[6] >> 8, g[6] & 255, g[7] >> 8, g[7] & 255]);
   }
   if ((g[0] & 0xffc0) === 0xfe80) return 'a link-local address';
+  if ((g[0] & 0xffc0) === 0xfec0) return 'a site-local address';
+  // NAT64 (64:ff9b::/96) and 6to4 (2002::/16) embed an IPv4 address; judge that address.
+  if (g[0] === 0x64 && g[1] === 0xff9b && g.slice(2, 6).every((x) => x === 0)) {
+    return v4Problem([g[6] >> 8, g[6] & 255, g[7] >> 8, g[7] & 255]);
+  }
+  if (g[0] === 0x2002) return v4Problem([g[1] >> 8, g[1] & 255, g[2] >> 8, g[2] & 255]);
   if ((g[0] & 0xfe00) === 0xfc00) return 'a unique-local address';
   return null;
 }
