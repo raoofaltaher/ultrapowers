@@ -201,6 +201,13 @@ read its output, and compare. Three outcomes:
   continue. The ruling is carried, not remembered: later tasks that touch
   the same interface read it from the ledger.
 
+A command the harness moved to the background after its timeout is a
+command whose output you have not read. Before the next step, read its
+output file; a process waiting on input (an interpreter given its program
+on stdin and nothing arriving — `python3 - <<'EOF'` with an empty body
+opens a REPL) will never finish, so stop it by its task id. Nothing left
+running follows you into the next step.
+
 Commit as the plan's commit steps say. A task that spans several commits
 is fine; BASE is what the review range is cut from, never `HEAD~1`.
 
@@ -297,6 +304,12 @@ line under "Deferred minors". Both lists are exhaustive. Your final
 message is the only place the decisions you took on your human partner's
 behalf — and the findings you chose not to act on — reach them.
 
+Before that message, stop every background task you started that is
+still running. A hand-back that leaves one running keeps this agent
+alive: the harness shows it as working, for hours, on a shell nobody
+reads. Name in the final message any task you could not stop, with its
+id, so your human partner can.
+
 When the final review is clean and its fixes are committed, delete this
 plan's workspace directory — the git history is the record now. Sibling
 directories belong to other plans; leave them alone.
@@ -322,6 +335,7 @@ the engine pushes and opens the pull requests. No menu, no push, no merge.
 | "The reviewer said Minor, so it's Minor" | The label graded the spec's silence. Grade what the person gets. Re-grade, then gate. |
 | "The fix is obvious, no need for a failing test first" | The failing test is the only proof the finding was real and is now gone. Without it you have a diff and a hope. |
 | "I'll fix the minors too while I'm in there" | Every minor you fix is a test, a fix, and a suite run your partner did not ask for. Ledger them; your partner decides. |
+| "The call moved to the background; I'll redo the edit and move on" | A backgrounded call is a shell still running. Read its output or stop it; one left running at hand-back shows this agent as working for hours. |
 
 ## Example Workflow
 

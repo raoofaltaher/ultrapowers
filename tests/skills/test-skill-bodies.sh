@@ -76,6 +76,14 @@ for f in README.md docs/autopilot-watcher.md skills/init/scripts/init.mjs skills
 done
 
 echo ""
+echo "=== Test: executing-plans leaves no background task running at hand-back (issue #40) ==="
+expect skills/executing-plans/SKILL.md 'moved to the background' 'executing-plans rules on a call the harness moved to the background'
+expect skills/executing-plans/SKILL.md 'waiting on input' 'executing-plans names the interpreter waiting on stdin'
+expect skills/executing-plans/SKILL.md 'stop every background task' 'executing-plans stops its background tasks before the final message'
+expect skills/executing-plans/SKILL.md 'could not stop' 'executing-plans names in the final message a task it could not stop'
+expect skills/executing-plans/SKILL.md '"The call moved to the background' 'executing-plans has the rationalization row for a backgrounded call'
+
+echo ""
 if [[ "$FAILURES" -ne 0 ]]; then
     echo "FAILED: $FAILURES assertion(s)."
     exit 1
