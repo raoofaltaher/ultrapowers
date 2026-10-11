@@ -82,6 +82,18 @@ expect skills/executing-plans/SKILL.md 'waiting on input' 'executing-plans names
 expect skills/executing-plans/SKILL.md 'stop every background task' 'executing-plans stops its background tasks before the final message'
 expect skills/executing-plans/SKILL.md 'could not stop' 'executing-plans names in the final message a task it could not stop'
 expect skills/executing-plans/SKILL.md '"The call moved to the background' 'executing-plans has the rationalization row for a backgrounded call'
+echo "=== Test: executing-plans runs the task's test command once, inside task-done (#39) ==="
+# An executor ran a ten-minute suite set twice per task: once itself, to prove
+# the completion contract before the ledger line, and once more through
+# task-done, which is that run. The contract must not ask for a run that
+# task-done makes.
+expect skills/executing-plans/SKILL.md 'Do not run the task.s test command yourself before .task-done.' 'executing-plans tells the executor not to run the task command before task-done'
+expect skills/executing-plans/SKILL.md 'then task-done to record it' 'executing-plans has the rationalization row for the run-then-record habit'
+if grep -Eq 'The final test run for the task passed' "$REPO_ROOT/skills/executing-plans/SKILL.md"; then
+    fail 'executing-plans no longer lists a passed final run as a precondition of the ledger line'
+else
+    pass 'executing-plans no longer lists a passed final run as a precondition of the ledger line'
+fi
 
 echo ""
 if [[ "$FAILURES" -ne 0 ]]; then

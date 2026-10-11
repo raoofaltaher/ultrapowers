@@ -218,10 +218,13 @@ in this session — not inferred from the diff looking right:
 
 - Every test the brief names exists and ran in this task, and you read
   the output.
-- The final test run for the task passed — `task-done` is that run, and
-  it writes the command and result into the ledger line.
 - Every `Expected:` line in the brief was compared against real output.
 - Every deviation from the brief has a `Ruling:` line in the ledger.
+
+The task's final test run is `task-done` itself (next section): it runs
+the task's test command once and writes the command and result into the
+ledger line. That run is not a precondition of the line; it is how the
+line gets written.
 
 **REQUIRED SUB-SKILL:** ultrapowers:verification-before-completion governs
 the claim. If any item is missing, the task is not complete: finish it.
@@ -237,6 +240,13 @@ if they pass — appends the completion line to the ledger:
 
 A failing run records nothing; the task is not complete. When it records,
 mark the todo complete and take the next task.
+
+Do not run the task's test command yourself before `task-done` to see
+whether it will pass: `task-done` is that run, and its refusal is the
+same evidence as a failure you watched. The per-step runs are the ones
+you make by hand; the task's command runs once, inside `task-done`. A
+slow suite run twice per task doubles the cost of every task and proves
+nothing the first run did not.
 
 ## Final Review
 
@@ -326,6 +336,7 @@ the engine pushes and opens the pull requests. No menu, no push, no merge.
 | "I remember what Task N says" | You remember a summary. The brief has the exact values. Read it. |
 | "The plan's code is right, skip watching the test fail" | A test you never saw fail proves nothing. It is one step. Run it. |
 | "I'll run the full suite at the end instead of per step" | Per-step runs are how you learn which step broke it. The end-of-task run is the contract, not a substitute. |
+| "I'll run the task's tests first, then task-done to record it" | task-done is that run. Running the command before it is the same suite twice per task, and the second run proves nothing the first did not. Call task-done once; it runs, then records or refuses. |
 | "The plan is wrong here, I'll just do the right thing" | Do the right thing and ledger the ruling. Unledgered deviation is a decision made in secret. |
 | "I'll write the ledger lines after a few tasks" | Compaction does not wait for a convenient moment. One line per task, in the same message as the commit. |
 | "Let me check in before the next task" | They chose inline to spend less. Progress prompts spend their time instead. Only the four stops stop you. |
