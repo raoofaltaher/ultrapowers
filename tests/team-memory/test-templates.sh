@@ -70,6 +70,15 @@ check "nested-clone pointer template names ../.agents/memory/ and the grep cavea
   f="$(grep -rl "Team memory lives at" "$1" | head -1)"; [ -n "$f" ] &&
   grep -q "\.\./\.agents/memory/" "$f" && grep -qi "grep from inside this repo cannot see it" "$f"' _ "$TPL"
 
+# Supply chain: the pre-commit template pins the gitleaks image to a version
+# tag, tells a docker failure from a finding, and says when the lint is skipped.
+check "pre-commit.tmpl pins the gitleaks image to a version tag, not :latest" bash -c '
+  grep -Eq "zricethezav/gitleaks:v[0-9]+\.[0-9]+\.[0-9]+" "$1" && ! grep -q "gitleaks:latest" "$1"' _ "$TPL/.githooks/pre-commit.tmpl"
+
+check "pre-commit.tmpl reports a docker failure as a skipped scan and a missing node as a skipped lint" bash -c '
+  grep -q "gitleaks (docker) could not run (exit" "$1" && grep -q "secret scan skipped" "$1" &&
+  grep -q "team-memory lint skipped (node not found)" "$1"' _ "$TPL/.githooks/pre-commit.tmpl"
+
 # Real render through the init engine (acceptance criterion 1).
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT

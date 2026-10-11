@@ -20,11 +20,18 @@ if [ -n "$GITLEAKS" ]; then
     exit 1
   }
 elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-  MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd):/repo:ro" -w /repo zricethezav/gitleaks:latest \
-    git --pre-commit --staged --no-banner "$@" || {
+  # The image is pinned to a release tag (supply chain): update the tag on purpose,
+  # after reading the gitleaks release notes, never by pulling :latest.
+  docker_status=0
+  MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd):/repo:ro" -w /repo zricethezav/gitleaks:v8.30.1 \
+    git --pre-commit --staged --no-banner "$@" || docker_status=$?
+  if [ "$docker_status" -eq 1 ]; then
     echo "gitleaks (docker): potential secret in staged changes - commit blocked." >&2
     exit 1
-  }
+  elif [ "$docker_status" -ne 0 ]; then
+    # 125 (daemon or pull error), 126 and 127 are docker failures, not findings.
+    echo "gitleaks (docker) could not run (exit $docker_status); secret scan skipped." >&2
+  fi
 else
   echo "warning: gitleaks unavailable (no working binary, no docker); secret scan skipped." >&2
 fi
@@ -64,5 +71,8 @@ if [ -f ".agents/memory/MEMORY.md" ] && command -v node >/dev/null 2>&1 \
   else
     echo "pre-commit: team-memory lint skipped (ultrapowers plugin not found; set ULTRAPOWERS_ROOT to its checkout)" >&2
   fi
+elif [ -f ".agents/memory/MEMORY.md" ] && ! command -v node >/dev/null 2>&1 \
+  && git diff --cached --name-only | grep -q '^\.agents/memory/'; then
+  echo "pre-commit: team-memory lint skipped (node not found)" >&2
 fi
 # <<< team-memory lint
