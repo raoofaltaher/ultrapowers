@@ -1208,13 +1208,30 @@ test('the changes stage says how many comments it did not read and why, on the t
   const before = stdinOf(ws, (a) => a[0] === 'issue' && a[1] === 'comment').length;
   const b = run(ws, ['begin', 'GH-16', 'changes']);
   assert.equal(b.code, 0, b.stdout + b.stderr);
-  const sentence = 'Autopilot for GH-16: 1 comment(s) since the packet were not read by the changes stage: not from a member with write access (GitLab: Maintainer or above) or not in the approvers list.';
+  const sentence = 'Autopilot for GH-16: 1 comment(s) since the packet were not read by the changes stage: not from a member with write access (write, maintain or admin).';
   const notes = stdinOf(ws, (a) => a[0] === 'issue' && a[1] === 'comment').slice(before);
   assert.deepEqual(notes, [sentence], 'one note on the ticket, with the count and the reason');
   assert.ok(!notes[0].includes('Ignore the plan'), 'no body in the note');
   const text = fs.readFileSync(path.join(ws.root, 'tasks', 'GH-16', 'changes-comments.md'), 'utf8');
   assert.ok(text.includes(sentence), 'the file header says the same');
   assert.ok(!text.includes('Ignore the plan'), 'a reader\'s comment never reaches the stage');
+});
+
+test('the note about unread comments names the approvers list only when autopilot.approvers is set', () => {
+  const ws = workspace({ autopilot: { mode: 'gated', baseBranch: 'main', approvers: ['alice'] } });
+  throughPlan(ws);
+  run(ws, ['packet', 'GH-16']);
+  ws.setMap({
+    'issue view 16 -R o/r --json labels': { stdout: { labels: [{ name: 'up:changes' }] } },
+    'issue edit 16 -R o/r --remove-label up:changes': { stdout: '' },
+    'api repos/o/r/issues/16/comments': { stdout: [[{ id: 1, user: { login: 'bob' }, created_at: '2999-01-01T00:00:00Z', html_url: 'https://github.com/o/r/issues/16#issuecomment-1', body: 'Please change it.' }]] },
+    'api repos/o/r/collaborators/bob/permission': { stdout: { permission: 'write' } },
+  });
+  const before = stdinOf(ws, (a) => a[0] === 'issue' && a[1] === 'comment').length;
+  const bb = run(ws, ['begin', 'GH-16', 'changes']);
+  assert.equal(bb.code, 0, bb.stdout + bb.stderr);
+  const notes = stdinOf(ws, (a) => a[0] === 'issue' && a[1] === 'comment').slice(before);
+  assert.deepEqual(notes, ['Autopilot for GH-16: 1 comment(s) since the packet were not read by the changes stage: not from a member with write access (write, maintain or admin) or not in the approvers list.']);
 });
 
 test('run stops when a stage repeats without progress', () => {
