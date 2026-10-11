@@ -250,5 +250,8 @@
   {"name":"allow_dir_path_file_name_src","event":{"tool_name":"new_file","tool_input":{"dir_path":"{{ROOT}}/repo-a/src","file_name":"x.js","content":"x"}}},
   {"name":"allow_view_file_absolute_path","event":{"tool_name":"view_file","tool_input":{"AbsolutePath":"{{ROOT}}/.github/workflows/ci.yml"}}},
   {"name":"allow_todo_write","event":{"tool_name":"TodoWrite","tool_input":{"todos":[]}}},
+  {"name":"deny_glob_ssh_dir_bare","event":{"tool_name":"Glob","tool_input":{"pattern":"*","path":"{{ROOT}}/.ssh"}}},
+  {"name":"deny_view_file_absolute_path_secrets","event":{"tool_name":"view_file","tool_input":{"AbsolutePath":"{{ROOT}}/.agents/mcp-secrets.env"}}},
+  {"name":"deny_tool_nested_url_offlist","event":{"tool_name":"fetch_page","tool_input":{"request":{"target":"https://evil.example.org/x"}}}},
   {"name":"allow_write_nested_agents_md","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/repo-a/AGENTS.md","content":"x"}}}
 ]

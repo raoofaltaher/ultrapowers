@@ -284,11 +284,18 @@ try {
 // Every path-shaped field any tool carries (a read, a search, an upload), for the
 // key-material check that applies to all tools, not only to file writes.
 const pathFields = [];
-for (const key of ["file_path", "notebook_path", "path", "source", "destination", "filename"]) {
-  if (str(inp[key])) pathFields.push(str(inp[key]));
+// Keys are compared with case and separators folded (file_path, filePath, FilePath; AbsolutePath,
+// absolute_path; DirectoryPath, dir_path; Url).
+const PATH_KEYS = new Set(["filepath", "notebookpath", "path", "source", "destination", "destinationpath", "filename", "absolutepath", "dirpath", "directorypath", "url", "uri", "targetfile", "targetpath", "target", "searchdirectory", "file", "folder", "directory", "outputpath", "newpath"]);
+for (const [key, value] of Object.entries(inp)) {
+  const k = key.toLowerCase().replace(/[_-]/g, "");
+  if (PATH_KEYS.has(k) && str(value)) pathFields.push(str(value));
+  if ((k === "paths" || k === "files" || k === "filepaths" || k === "absolutepaths") && Array.isArray(value)) for (const v of value) if (str(v)) pathFields.push(str(v));
 }
-for (const key of ["paths", "files"]) {
-  if (Array.isArray(inp[key])) for (const v of inp[key]) if (str(v)) pathFields.push(str(v));
+{
+  const dir = str(inp.dir_path) || str(inp.DirectoryPath);
+  const name = str(inp.file_name) || str(inp.fileName);
+  if (dir && name) pathFields.push(dir.replace(/[\\/]+$/, "") + "/" + name);
 }
 // Every string value of the input that is a URL by itself (a navigation target, a page to scrape, a
 // fetch address) under whatever key or nesting a harness spells it; text that merely contains a
@@ -401,7 +408,7 @@ tool_lc="$(lower "$tool")"
 
 # Key material: never read, searched, uploaded or written by any tool during a run. A
 # `.env.example` file is the documented template and stays readable.
-KEY_RE='(^|/)\.ssh/|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws/|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|/)\.env($|\.)'
+KEY_RE='(^|/)\.ssh(/|$)|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws(/|$)|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|/)\.env($|\.)'
 if [ -n "$keypaths" ]; then
   while IFS= read -r kp; do
     [ -n "$kp" ] || continue
@@ -427,7 +434,7 @@ fi
 # the loop where the agent edits the guardrail, the config, CI, harness settings or key material).
 # Named targets, not folder names: `src/hooks/` of a React app and `appsettings.json` of a .NET
 # app are ordinary implementation files. The ticket's state files are the gate's record.
-PROTECTED_RE='(^|/)\.ssh/|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws/|mcp-secrets\.env|\.local\.(sh|env|json)$|hooks/qa-guardrail|\.agents/ultrapowers\.json|(^|/)\.claude/|(^|/)\.git/|(^|/)\.githooks/|(^|/)\.[a-z0-9_-]+/settings(\.local)?\.json$|(^|/)tasks/[^/]+/(autopilot\.json|stage-log\.jsonl)$|(^|/)\.ultrapowers/(autopilot-active|autopilot-stop)$|(^|/)\.ultrapowers/autopilot(/|$)|(^|/)\.ultrapowers$'
+PROTECTED_RE='(^|/)\.ssh(/|$)|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws(/|$)|mcp-secrets\.env|\.local\.(sh|env|json)$|hooks/qa-guardrail|\.agents/ultrapowers\.json|(^|/)\.claude/|(^|/)\.git/|(^|/)\.githooks/|(^|/)\.[a-z0-9_-]+/settings(\.local)?\.json$|(^|/)tasks/[^/]+/(autopilot\.json|stage-log\.jsonl)$|(^|/)\.ultrapowers/(autopilot-active|autopilot-stop)$|(^|/)\.ultrapowers/autopilot(/|$)|(^|/)\.ultrapowers$'
 # The autopilot envelope also keeps the agent out of CI, the plugin hooks, the repository's commit
 # hooks (they run inside the engine's own commit and push) and the env file: a stage that
 # rewrites the workflow or the hooks rewrites its own brakes.
@@ -702,7 +709,7 @@ printf '%s' "$lc" | grep -Eq '/dev/(tcp|udp)/' \
 # Key material named anywhere in a command, whatever reads or sends it; environment dumps;
 # uploads. `.env.example` is the documented template and stays readable.
 key_lc="${lc//.env.example/}"
-printf '%s' "$key_lc" | grep -Eq '(^|/)\.ssh/|authorized_keys|id_rsa|id_ed25519|\.aws/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|[/[:space:]@"'"'"'=])\.env([^a-z0-9_]|$)' \
+printf '%s' "$key_lc" | grep -Eq '(^|/)\.ssh([^a-z0-9_.-]|$)|authorized_keys|id_rsa|id_ed25519|\.aws/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|[/[:space:]@"'"'"'=])\.env([^a-z0-9_]|$)' \
   && deny "reading or transferring key material is blocked"
 printf '%s' "$lc" | grep -Eq "${B}(printenv|env)[[:space:]]*(\$|[;&|])" \
   && deny "dumping the environment is blocked; check a variable with \${NAME:+set} instead"
