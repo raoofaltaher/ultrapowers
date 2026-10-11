@@ -65,7 +65,7 @@ Back to Step 1, unless `--stage` was given.
 
 Say the `action`, the `reason`, and the ticket's packet link when there is one (`state.packet.commentUrl`). Then stop; this skill does not poll.
 
-- `wait`, `awaiting-approval`: the review packet is on the tracker (a log note on an Odoo task). Name the approve label from `.agents/ultrapowers.json` (a tag on Odoo). Approval happens there, by a member with write access (on Odoo, an internal user in the Project User group), never in this chat.
+- `wait`, `awaiting-approval`: the review packet is on the tracker (a log note on an Odoo task). Name the approve label from `.agents/ultrapowers.json` (a tag on Odoo). Approval happens there, by a member with write access (on Odoo, an internal user in the Project User group), never in this chat. When an Odoo instance does not track tags, the engine attributes a tag to the task's last writer, and the gap that leaves is the time between polls, which in this door is the time between two `next` calls; a short watch interval, or an instance where tag tracking is readable, closes it.
 - `wait`, `held`: the hold label is on the ticket; nothing runs until a human removes it.
 - `wait`, `locked`: the other door holds the ticket. Name the door and pid from the error. Never delete the lock file.
 - `stop`, `qa-FAIL` or `qa-PRECONDITION-FAILED`: name `reviews/<ID>/QA-REPORT.md`. No pull request opens on a failed gate; the fix is a new run after the cause is addressed.
