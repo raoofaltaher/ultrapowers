@@ -8,6 +8,7 @@ Two lane 4 and task-review fixes found in the 2.0.0 review, each posted and revi
 - `task-review --post`: screenshots render on a private repository. GitHub comments link the file on the documents branch through the blob URL with `?raw=true`, which GitHub serves to a logged-in viewer with access; GitLab comments upload the file to the project through its uploads API and embed what it returns, with the raw link as the fallback when an upload fails (#34).
 - `executing-plans`: the task's test command runs once, inside `task-done`. The completion contract listed a passed final run as a precondition of the ledger line while `task-done` is that run, so an executor ran a ten-minute suite set twice per task (#39).
 - `executing-plans`: an executor stops every background task it started before its hand-back, reads the output of a call the harness moved to the background, and names in its final message any task it could not stop; a shell left waiting on stdin kept an agent shown as running for hours (#40).
+- `tests/qa-gatekeeper/run-tests.sh`: stopping the runner stops its suites. Each suite runs as a tracked child in its own process group, a trap ends that group on INT, TERM or HUP, and a watchdog stops the runner when its parent shell is gone, which is what a Windows harness stop looks like from inside (`taskkill /T` reaches the wrapper shell only, because Cygwin orphans every exec'd process). `ULTRAPOWERS_QA_SUITES` replaces the suite list for a short run (#41).
 
 ## v2.0.0 (2026-10-10)
 
