@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveTicket } from '../../skills/new-task/scripts/ticket-sources.mjs';
 import { pushAllowed } from '../../skills/autopilot/scripts/autopilot-lib.mjs';
-import { postReview, splitParts, rewriteLinks, rawBase, linkBase } from '../../skills/task-review/scripts/post-review.mjs';
+import { postReview, postAudit, splitParts, rewriteLinks, rawBase, linkBase } from '../../skills/task-review/scripts/post-review.mjs';
 
 const MARKER = {
   commitTrailer: 'Reviewed-by: Fixture Owner',
@@ -565,5 +565,186 @@ test('reviews/<ID> linked to a folder outside the project: nothing is read, atta
     rmSync(join(s.root, 'reviews', id), { force: true, recursive: false });
     rmSync(s.root, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+// ---- --security-only (the standalone door of ultrapowers:vulnerability-hunt) ----
+
+const AUDIT = 'audit-2026-10-11';
+const SECURITY = '# Security report\n\nVerdict: FAIL — a runtime CVE.\n';
+const docsForge = { provider: 'github', host: 'github.com', path: 'o/docs' };
+
+test('--security-only with an audit id: one comment on the open PR of the current branch, nothing on a ticket, no draft, no push from a branch outside the push rule', async () => {
+  const pr = fakeTracker('o/docs', { open: { 'feature/login': 'https://github.com/o/docs/pull/8' } });
+  const ticket = fakeTracker('ticket');
+  const s = setup({ id: AUDIT, review: null, qa: null, security: SECURITY, docsBranch: 'feature/login', trackers: { ticket, 'github.com/o/docs': pr } });
+  try {
+    s.deps.forgeFor = () => docsForge;
+    const out = await postAudit({ id: AUDIT, root: s.root, marker: MARKER }, s.deps);
+    assert.deepEqual(pr.calls.filter((c) => c.op === 'findOpenPr').map((c) => c.branch), ['feature/login']);
+    const comments = pr.calls.filter((c) => c.op === 'prComment');
+    assert.equal(comments.length, 1);
+    assert.equal(comments[0].url, 'https://github.com/o/docs/pull/8');
+    assert.match(comments[0].body, /^\*\*SECURITY-REPORT\.md\*\*/);
+    assert.match(comments[0].body, /Verdict: FAIL — a runtime CVE/);
+    assert.equal(pr.calls.filter((c) => c.op === 'createPr').length, 0, 'never opens a draft');
+    assert.equal(ticket.calls.length, 0, 'nothing on a ticket');
+    assert.equal(s.log.length, 0, 'no commit and no push from feature/login');
+    assert.ok(out.notes.some((n) => /not committed or pushed/i.test(n) && /feature\/login/.test(n)));
+    assert.equal(out.posted.length, 1);
+    assert.equal(out.posted[0].to, 'pr');
+  } finally { rmSync(s.root, { recursive: true, force: true }); }
+});
+
+test('--security-only with an audit id on a branch named audit-<date>-*: the folder is committed and pushed through the guarded push, then commented', async () => {
+  const branch = `${AUDIT}-hunt`;
+  const pr = fakeTracker('o/docs', { open: { [branch]: 'https://github.com/o/docs/pull/9' } });
+  const s = setup({ id: AUDIT, review: null, qa: null, security: SECURITY, docsBranch: branch, trackers: { 'github.com/o/docs': pr } });
+  try {
+    s.deps.forgeFor = () => docsForge;
+    await postAudit({ id: AUDIT, root: s.root, marker: MARKER }, s.deps);
+    const commit = s.log.find((l) => l.op === 'commit');
+    assert.deepEqual(commit.paths, [`reviews/${AUDIT}`]);
+    assert.equal(commit.message, `docs(${AUDIT}): security report`);
+    assert.equal(commit.trailer, 'Reviewed-by: Fixture Owner');
+    const push = s.log.find((l) => l.op === 'push');
+    assert.equal(push.branch, branch);
+    assert.ok(pushAllowed(push.options.state, 'docs', push.branch, AUDIT));
+    assert.equal(pr.calls.filter((c) => c.op === 'prComment').length, 1);
+  } finally { rmSync(s.root, { recursive: true, force: true }); }
+});
+
+test('--security-only with an audit id and no open PR refuses with no-open-pr and posts nothing', async () => {
+  const pr = fakeTracker('o/docs');
+  const s = setup({ id: AUDIT, review: null, qa: null, security: SECURITY, docsBranch: 'feature/login', trackers: { 'github.com/o/docs': pr } });
+  try {
+    s.deps.forgeFor = () => docsForge;
+    await assert.rejects(postAudit({ id: AUDIT, root: s.root, marker: MARKER }, s.deps), (e) => e.code === 'no-open-pr' && /feature\/login/.test(e.message));
+    assert.equal(pr.calls.filter((c) => c.op === 'prComment' || c.op === 'createPr').length, 0);
+    assert.equal(s.log.length, 0);
+  } finally { rmSync(s.root, { recursive: true, force: true }); }
+});
+
+test('--security-only with an audit id refuses a missing report, a detached HEAD and a repository without a forge, before any call', async () => {
+  const pr = fakeTracker('o/docs', { open: { 'feature/login': 'https://github.com/o/docs/pull/8' } });
+  const none = setup({ id: AUDIT, review: null, qa: null, docsBranch: 'feature/login', trackers: { 'github.com/o/docs': pr } });
+  const detached = setup({ id: AUDIT, review: null, qa: null, security: SECURITY, docsBranch: '', trackers: { 'github.com/o/docs': pr } });
+  const noForge = setup({ id: AUDIT, review: null, qa: null, security: SECURITY, docsBranch: 'feature/login', trackers: { 'github.com/o/docs': pr } });
+  try {
+    none.deps.forgeFor = () => docsForge;
+    detached.deps.forgeFor = () => docsForge;
+    await assert.rejects(postAudit({ id: AUDIT, root: none.root, marker: MARKER }, none.deps), (e) => e.code === 'no-security-report');
+    await assert.rejects(postAudit({ id: AUDIT, root: detached.root, marker: MARKER }, detached.deps), (e) => e.code === 'no-open-pr');
+    await assert.rejects(postAudit({ id: AUDIT, root: noForge.root, marker: MARKER }, noForge.deps), (e) => e.code === 'no-forge');
+    assert.equal(pr.calls.length, 0);
+  } finally { for (const s of [none, detached, noForge]) rmSync(s.root, { recursive: true, force: true }); }
+});
+
+test('--security-only with a long audit report goes as numbered parts, in order, each under the limit', async () => {
+  const finding = (n) => `## Finding ${n}\n\n${'The export builds a shell command from the query string. '.repeat(40)}\n`;
+  const security = '# Security report\n\nVerdict: FAIL — long.\n\n' + Array.from({ length: 80 }, (_, n) => finding(n)).join('\n');
+  const pr = fakeTracker('o/docs', { open: { 'feature/login': 'https://github.com/o/docs/pull/8' } });
+  const s = setup({ id: AUDIT, review: null, qa: null, security, docsBranch: 'feature/login', trackers: { 'github.com/o/docs': pr } });
+  try {
+    s.deps.forgeFor = () => docsForge;
+    await postAudit({ id: AUDIT, root: s.root, marker: MARKER }, s.deps);
+    const parts = pr.calls.filter((c) => c.op === 'prComment');
+    assert.ok(parts.length >= 2);
+    parts.forEach((c, i) => {
+      assert.ok(c.body.length < 65536);
+      assert.match(c.body, new RegExp(`^\\*\\*SECURITY-REPORT\\.md\\*\\* \\(part ${i + 1} of ${parts.length}\\)`));
+    });
+  } finally { rmSync(s.root, { recursive: true, force: true }); }
+});
+
+test('--security-only with a ticket id posts only SECURITY-REPORT.md, to the ticket and to its open PR, committing and pushing reviews/<ID> as today; no review file is needed and no draft is opened', async () => {
+  const id = 'GH-web-7';
+  const ticket = fakeTracker('ticket');
+  const pr = fakeTracker('o/api', { open: { [`${id}-work`]: 'https://github.com/o/api/pull/12' } });
+  const noPr = fakeTracker('o/lib');
+  const s = setup({
+    id, review: null, qa: null, security: SECURITY, trackers: { ticket, 'github.com/o/api': pr, 'github.com/o/lib': noPr },
+    entries: [
+      { repo: 'api', path: 'api', defaultBranch: 'main', branch: `${id}-work`, onTicketBranch: true },
+      { repo: 'lib', path: 'lib', defaultBranch: 'main', branch: `${id}-web`, onTicketBranch: true },
+    ],
+  });
+  try {
+    s.deps.forgeFor = (dir) => (dir === s.root ? docsForge : { provider: 'github', host: 'github.com', path: dir.endsWith('api') ? 'o/api' : 'o/lib' });
+    const out = await postReview({ id, root: s.root, marker: MARKER, resolution: ticketOf(id), securityOnly: true }, s.deps);
+    const commit = s.log.find((l) => l.op === 'commit');
+    assert.deepEqual(commit.paths, [`reviews/${id}`]);
+    assert.equal(commit.message, `docs(${id}): security report`);
+    assert.equal(s.log.filter((l) => l.op === 'push').length, 1, 'only the documents branch');
+    const onTicket = ticket.calls.filter((c) => c.op === 'comment');
+    assert.equal(onTicket.length, 1);
+    assert.equal(onTicket[0].number, 7);
+    assert.match(onTicket[0].body, /^\*\*SECURITY-REPORT\.md\*\*/);
+    assert.doesNotMatch(onTicket[0].body, /TASK-REVIEW|QA-REPORT/);
+    const onPr = pr.calls.filter((c) => c.op === 'prComment');
+    assert.equal(onPr.length, 1);
+    assert.equal(onPr[0].url, 'https://github.com/o/api/pull/12');
+    assert.match(onPr[0].body, /^\*\*SECURITY-REPORT\.md\*\*/);
+    assert.equal(noPr.calls.filter((c) => c.op === 'createPr' || c.op === 'prComment').length, 0);
+    assert.ok(out.notes.some((n) => /lib/.test(n) && /no open pull request/i.test(n)));
+    assert.ok(!out.notes.some((n) => /--draft-pr/.test(n)), 'no hint to open a draft in this mode');
+  } finally { rmSync(s.root, { recursive: true, force: true }); }
+});
+
+test('--security-only with a ticket id and no SECURITY-REPORT.md is refused before anything is committed', async () => {
+  const id = 'GH-web-7';
+  const s = setup({ id, trackers: { ticket: fakeTracker('ticket') }, entries: [] });
+  try {
+    await assert.rejects(postReview({ id, root: s.root, marker: MARKER, resolution: ticketOf(id), securityOnly: true }, s.deps), (e) => e.code === 'no-security-report');
+    assert.equal(s.log.length, 0);
+  } finally { rmSync(s.root, { recursive: true, force: true }); }
+});
+
+test('--security-only and --draft-pr together are refused', async () => {
+  const id = 'GH-web-7';
+  const s = setup({ id, security: SECURITY, trackers: { ticket: fakeTracker('ticket') }, entries: [] });
+  try {
+    await assert.rejects(postReview({ id, root: s.root, marker: MARKER, resolution: ticketOf(id), securityOnly: true, draftPr: true }, s.deps), (e) => e.code === 'usage');
+    assert.equal(s.log.length, 0);
+  } finally { rmSync(s.root, { recursive: true, force: true }); }
+});
+
+test('the draft PR body names the security report when SECURITY-REPORT.md exists, and is unchanged when it does not', async () => {
+  const id = 'GH-web-7';
+  const bodies = [];
+  for (const security of [SECURITY, null]) {
+    const prTracker = fakeTracker('api', { createdUrl: 'https://github.com/o/api/pull/40' });
+    const s = setup({ id, security, trackers: { ticket: fakeTracker('ticket'), 'github.com/o/api': prTracker }, entries: [{ repo: 'api', path: 'api', defaultBranch: 'main', branch: `${id}-work`, onTicketBranch: true }] });
+    try {
+      s.deps.forgeFor = (dir) => (dir === s.root ? docsForge : { provider: 'github', host: 'github.com', path: 'o/api' });
+      await postReview({ id, root: s.root, marker: MARKER, resolution: ticketOf(id), draftPr: true }, s.deps);
+      bodies.push(prTracker.calls.find((c) => c.op === 'createPr').body);
+    } finally { rmSync(s.root, { recursive: true, force: true }); }
+  }
+  assert.match(bodies[0], /The review, the QA report and the security report follow as comments\./);
+  assert.match(bodies[1], /The review and the QA report follow as comments\./);
+  assert.doesNotMatch(bodies[1], /security/i);
+});
+
+test('the CLI: --security-only with --draft-pr exits 2, an id that is neither audit-<date> nor a ticket exits 4, an audit id without a project exits 3, a local ticket exits 5', () => {
+  const root = mkdtempSync(join(tmpdir(), 'post-review-cli-sec-'));
+  const bare = mkdtempSync(join(tmpdir(), 'post-review-bare-sec-'));
+  try {
+    mkdirSync(join(root, '.agents'), { recursive: true });
+    writeFileSync(join(root, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'fx' }));
+    const both = cli(root, ['--security-only', '--draft-pr', AUDIT]);
+    assert.equal(both.status, 2);
+    assert.match(both.stderr, /ERROR: .*--security-only.*--draft-pr/);
+    assert.equal(cli(root, ['--security-only']).status, 2);
+    assert.equal(cli(bare, ['--security-only', AUDIT]).status, 3);
+    for (const bad of ['../x', 'audit-2026-10-11/..', '-audit-2026-10-11']) {
+      assert.equal(cli(root, ['--security-only', bad]).status, 4, bad);
+    }
+    const local = cli(root, ['--security-only', '501']);
+    assert.equal(local.status, 5);
+    assert.match(local.stderr, /ERROR: local-ticket/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(bare, { recursive: true, force: true });
   }
 });

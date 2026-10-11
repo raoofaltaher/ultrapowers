@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // post-review.mjs <ticket> [--draft-pr] [--cwd <dir>]
+// post-review.mjs --security-only <ticket | audit-YYYY-MM-DD> [--cwd <dir>]
 //
 // Step 6 of ultrapowers:task-review, run only when the invocation carried --post. Posts the full
 // reviews/<ticket>/TASK-REVIEW.md, QA-REPORT.md and, when the vulnerability hunt wrote one,
@@ -19,12 +20,22 @@
 //   - The pull or merge request is found by branch name, never by the ticket number. With none open and
 //     --draft-pr, the ticket branch is pushed through the guarded push and a draft is opened first.
 //
+// --security-only (the standalone door of ultrapowers:vulnerability-hunt) posts reviews/<id>/SECURITY-REPORT.md
+// alone. With a ticket id it does what the full post does for that one report: the ticket, and the open pull
+// or merge request of each repository on a ticket branch (commit and guarded push of reviews/<ticket>/ as
+// above), never a draft. With an audit id (audit-YYYY-MM-DD, a hunt without a ticket) there is no ticket and no
+// ticket branch: the report goes as numbered comments on the open pull or merge request of the branch checked
+// out in the project root, found through the tracker's findOpenPr(branch); none open is a refusal (no-open-pr).
+// The folder reviews/audit-<date>/ is committed and pushed through the guarded push only when that branch starts
+// with "audit-<date>-"; on any other branch nothing is committed or pushed and the output says so. It never
+// opens a draft and combining it with --draft-pr is a usage error.
+//
 // Exit codes: 0 posted; 2 usage; 3 no project root; 4 invalid ticket; 5 refused (local ticket, no review,
 // documents not on a ticket branch, a tracker or git failure).
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { AutopilotError, loadSecretsFile, reviewFolderProblem } from '../../autopilot/scripts/autopilot-lib.mjs';
+import { AutopilotError, loadSecretsFile, pushAllowed, reviewFolderProblem } from '../../autopilot/scripts/autopilot-lib.mjs';
 import { trackerFor } from '../../autopilot/scripts/tracker.mjs';
 import { commitPaths, forgeFor, git, push } from '../../autopilot/scripts/repos.mjs';
 import { resolveTicket, TicketError } from '../../new-task/scripts/ticket-sources.mjs';
@@ -265,7 +276,10 @@ function repoForge(deps, marker, resolution, name, dir) {
   return owner ? { provider: resolution.provider, host: resolution.host, path: `${owner}/${name}` } : null;
 }
 
-export async function postReview({ id, root, marker, resolution, draftPr = false, env = process.env }, deps = defaultDeps) {
+export async function postReview({ id, root, marker, resolution, draftPr = false, securityOnly = false, env = process.env }, deps = defaultDeps) {
+  if (securityOnly && draftPr) {
+    throw new AutopilotError('usage', '--security-only never opens a draft; drop --draft-pr');
+  }
   if (resolution.provider === 'local') {
     throw new AutopilotError('local-ticket', `${id} is a local ticket: there is no tracker to post to. --post needs a ticket from a configured GitHub, GitLab or Odoo source`);
   }
@@ -276,16 +290,23 @@ export async function postReview({ id, root, marker, resolution, draftPr = false
   // refused before anything is read, committed or pushed.
   const folder = reviewFolderProblem(root, id) ?? reviewFolderProblem(root, id, 'artifacts');
   if (folder) throw new AutopilotError('bad-artifact', `${folder}; nothing was posted`);
-  const reviewFile = path.join(root, 'reviews', id, 'TASK-REVIEW.md');
-  if (!fs.existsSync(reviewFile)) {
-    throw new AutopilotError('no-review', `reviews/${id}/TASK-REVIEW.md does not exist; run the review before posting it`);
-  }
-  const documents = [{ name: 'TASK-REVIEW.md', text: fs.readFileSync(reviewFile, 'utf8') }];
-  const qaFile = path.join(root, 'reviews', id, 'QA-REPORT.md');
-  if (fs.existsSync(qaFile)) documents.push({ name: 'QA-REPORT.md', text: fs.readFileSync(qaFile, 'utf8') });
-  // The vulnerability hunt's report (Step 3b) is the third part, only when the hunt wrote one.
   const securityFile = path.join(root, 'reviews', id, 'SECURITY-REPORT.md');
-  if (fs.existsSync(securityFile)) documents.push({ name: 'SECURITY-REPORT.md', text: fs.readFileSync(securityFile, 'utf8') });
+  const hasSecurity = fs.existsSync(securityFile);
+  const documents = [];
+  if (securityOnly) {
+    if (!hasSecurity) throw new AutopilotError('no-security-report', `reviews/${id}/SECURITY-REPORT.md does not exist; run the vulnerability hunt before posting it`);
+    documents.push({ name: 'SECURITY-REPORT.md', text: fs.readFileSync(securityFile, 'utf8') });
+  } else {
+    const reviewFile = path.join(root, 'reviews', id, 'TASK-REVIEW.md');
+    if (!fs.existsSync(reviewFile)) {
+      throw new AutopilotError('no-review', `reviews/${id}/TASK-REVIEW.md does not exist; run the review before posting it`);
+    }
+    documents.push({ name: 'TASK-REVIEW.md', text: fs.readFileSync(reviewFile, 'utf8') });
+    const qaFile = path.join(root, 'reviews', id, 'QA-REPORT.md');
+    if (fs.existsSync(qaFile)) documents.push({ name: 'QA-REPORT.md', text: fs.readFileSync(qaFile, 'utf8') });
+    // The vulnerability hunt's report (Step 3b) is the third part, only when the hunt wrote one.
+    if (hasSecurity) documents.push({ name: 'SECURITY-REPORT.md', text: fs.readFileSync(securityFile, 'utf8') });
+  }
 
   const docsBranch = deps.currentBranch(root);
   if (!docsBranch.startsWith(`${id}-`)) {
@@ -295,7 +316,7 @@ export async function postReview({ id, root, marker, resolution, draftPr = false
   const docsForge = deps.forgeFor(root, { provider: resolution.provider, host: resolution.host })
     ?? (['github', 'gitlab'].includes(resolution.provider) ? { provider: resolution.provider, host: resolution.host, path: resolution.path } : null);
   const trailer = typeof marker?.commitTrailer === 'string' ? marker.commitTrailer : '';
-  deps.commitPaths(root, [`reviews/${id}`], `docs(${id}): task review`, trailer);
+  deps.commitPaths(root, [`reviews/${id}`], securityOnly ? `docs(${id}): security report` : `docs(${id}): task review`, trailer);
   if (docsForge) {
     deps.push(root, docsBranch, { state: { ticket: id, scope: { frozen: [] } }, repoName: 'docs', ticket: id });
   }
@@ -337,7 +358,9 @@ export async function postReview({ id, root, marker, resolution, draftPr = false
     let created = false;
     if (!prUrl) {
       if (!draftPr) {
-        notes.push(`${entry.repo}: no open pull request for ${branch}; pass --draft-pr to push the branch and open a draft`);
+        notes.push(securityOnly
+          ? `${entry.repo}: no open pull request for ${branch}; the security report was not posted there`
+          : `${entry.repo}: no open pull request for ${branch}; pass --draft-pr to push the branch and open a draft`);
         continue;
       }
       try {
@@ -350,7 +373,7 @@ export async function postReview({ id, root, marker, resolution, draftPr = false
         }
         prUrl = await tracker.createPr({
           head: branch, base: entry.defaultBranch, title, draft: true,
-          body: `Task review for ${id}. The review and the QA report follow as comments. This draft is opened by ultrapowers:task-review and is never merged by it.`,
+          body: `Task review for ${id}. The ${hasSecurity ? 'review, the QA report and the security report' : 'review and the QA report'} follow as comments. This draft is opened by ultrapowers:task-review and is never merged by it.`,
         });
         created = true;
       } catch (error) {
@@ -366,9 +389,49 @@ export async function postReview({ id, root, marker, resolution, draftPr = false
   return { ticket: id, docsBranch, posted, notes };
 }
 
+// --security-only <audit-YYYY-MM-DD>: no ticket. Comments the security report on the open pull or merge
+// request of the branch checked out in the project root; refuses with no-open-pr when there is none.
+export async function postAudit({ id, root, marker, env = process.env }, deps = defaultDeps) {
+  const folder = reviewFolderProblem(root, id) ?? reviewFolderProblem(root, id, 'artifacts');
+  if (folder) throw new AutopilotError('bad-artifact', `${folder}; nothing was posted`);
+  const securityFile = path.join(root, 'reviews', id, 'SECURITY-REPORT.md');
+  if (!fs.existsSync(securityFile)) {
+    throw new AutopilotError('no-security-report', `reviews/${id}/SECURITY-REPORT.md does not exist; run the vulnerability hunt before posting it`);
+  }
+  const documents = [{ name: 'SECURITY-REPORT.md', text: fs.readFileSync(securityFile, 'utf8') }];
+  const branch = deps.currentBranch(root);
+  if (!branch) throw new AutopilotError('no-open-pr', `the project at ${root} is on a detached HEAD: there is no branch whose open pull request could take the report`);
+  const forge = deps.forgeFor(root, {});
+  if (!forge) throw new AutopilotError('no-forge', `the origin of ${root} is not a GitHub or GitLab repository: there is no pull request to comment`);
+  const tracker = deps.trackerFor({ provider: forge.provider, host: forge.host, path: forge.path }, env);
+  // Looked up before anything is committed: a refusal leaves the repository as it was.
+  const prUrl = await tracker.findOpenPr(branch);
+  if (!prUrl) {
+    throw new AutopilotError('no-open-pr', `no open pull or merge request for ${branch} in ${forge.path}; open one for this branch first (--security-only never opens a draft)`);
+  }
+  const notes = [];
+  const state = { ticket: id, scope: { frozen: [] } };
+  const pushable = pushAllowed(state, 'docs', branch, id);
+  if (pushable) {
+    const trailer = typeof marker?.commitTrailer === 'string' ? marker.commitTrailer : '';
+    deps.commitPaths(root, [`reviews/${id}`], `docs(${id}): security report`, trailer);
+    deps.push(root, branch, { state, repoName: 'docs', ticket: id });
+  } else {
+    notes.push(`reviews/${id}/ was not committed or pushed: ${branch} does not start with ${id}-, which the guarded push requires; the report is only in the comment`);
+  }
+  const base = pushable ? { raw: rawBase(forge, branch), link: linkBase(forge, branch) } : { raw: null, link: null };
+  let how = { mode: 'plain' };
+  if (forge.provider === 'gitlab') how = { mode: 'upload', base: base.raw };
+  else if (base.link) how = { mode: 'raw', base: base.link, imageQuery: '?raw=true' };
+  for (const c of await commentsFor(documents, { id, ...how, limit: LIMITS[forge.provider] ?? LIMITS.github, root, tracker, notes })) {
+    await tracker.prComment(prUrl, c.body);
+  }
+  return { ticket: id, docsBranch: branch, posted: [{ to: 'pr', repo: forge.path, url: prUrl, created: false }], notes };
+}
+
 function usage(message) {
   if (message) process.stderr.write(`${message}\n`);
-  process.stderr.write('usage: node post-review.mjs <ticket> [--draft-pr] [--cwd <dir>]\n');
+  process.stderr.write('usage: node post-review.mjs <ticket> [--draft-pr] [--cwd <dir>]\n       node post-review.mjs --security-only <ticket | audit-YYYY-MM-DD> [--cwd <dir>]\n');
   return 2;
 }
 
@@ -377,6 +440,10 @@ async function main(argv) {
   const draftIndex = args.indexOf('--draft-pr');
   const draftPr = draftIndex !== -1;
   if (draftPr) args.splice(draftIndex, 1);
+  const securityIndex = args.indexOf('--security-only');
+  const securityOnly = securityIndex !== -1;
+  if (securityOnly) args.splice(securityIndex, 1);
+  if (securityOnly && draftPr) return usage('ERROR: --security-only and --draft-pr cannot be combined: the security-only door never opens a draft');
   const cwdIndex = args.indexOf('--cwd');
   let cwd = process.cwd();
   if (cwdIndex !== -1) {
@@ -398,17 +465,25 @@ async function main(argv) {
     return 3;
   }
   const pattern = typeof marker.ticketPattern === 'string' && marker.ticketPattern.trim() ? marker.ticketPattern : DEFAULT_TICKET_PATTERN;
-  if (/^(\.|\.\.|-.*)$/.test(id) || /[/\\\s]/.test(id) || !new RegExp(pattern).test(id)) {
+  // An audit id (a hunt without a ticket) is audit-YYYY-MM-DD; anything else must be a ticket id.
+  const auditId = securityOnly && /^audit-\d{4}-\d{2}-\d{2}$/.test(id);
+  if (!auditId && (/^(\.|\.\.|-.*)$/.test(id) || /[/\\\s]/.test(id) || !new RegExp(pattern).test(id))) {
     process.stderr.write(`ERROR: ticket ${JSON.stringify(id)} is not a plain folder name matching ticketPattern ${pattern}\n`);
     return 4;
   }
   try {
     loadSecretsFile(root, process.env);
+    if (auditId) {
+      const audit = await postAudit({ id, root, marker });
+      for (const p of audit.posted) process.stdout.write(`posted on the pull request of ${p.repo}: ${p.url}\n`);
+      for (const note of audit.notes) process.stdout.write(`note: ${note}\n`);
+      return 0;
+    }
     const resolution = resolveTicket(marker, id);
     if (resolution.provider === 'odoo' && !process.env.ODOO_API_KEY) {
       throw new AutopilotError('no-credentials', `ODOO_API_KEY is not set; the tracker client reaches ${resolution.url} with the technical user's API key. Set it in the environment or in .agents/mcp-secrets.env`);
     }
-    const result = await postReview({ id, root, marker, resolution, draftPr });
+    const result = await postReview({ id, root, marker, resolution, draftPr, securityOnly });
     for (const p of result.posted) {
       process.stdout.write(p.to === 'ticket'
         ? `posted on the ticket: ${p.url} (${p.chars} characters${p.attachments.length ? `, attached: ${p.attachments.join(', ')}` : ''})\n`

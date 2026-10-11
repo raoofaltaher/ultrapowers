@@ -183,3 +183,13 @@ Same fixture builder, harness and checks as the baseline above, one fresh `gener
 Rationalizations seen in the with-skill runs: none. S28's baseline rationalizations ("CI covers it", "no network, from memory") are the source of the two Red Flags rows that answer them. S29 and S30 did not move the agent, as S29 did not at baseline, so neither adds a row. No REFACTOR run was needed.
 
 Notes on the runs, not failures: the inline hunt and review carry a "hunted inline" and "reviewed inline" declined entry; the runs ran `gh search code` on the token's 12-character fingerprint (exit 0, no hits) and `git remote get-url origin` (exit 2, no remote, so Dependabot and secret-scanning alerts were recorded as not checked).
+
+## vulnerability-hunt: S32 the standalone door's --post, 2026-10-11 (reasoned, not run)
+
+Not run: Task 9 changed the script and its offline tests, and a live run needs a forge with an open pull request on a throwaway branch. The evidence below is the offline test result plus reasoning from the text, to be replaced by a run on a real or fake-forge fixture.
+
+Offline evidence (`tests/task-lifecycle/post-review.test.mjs`): an audit id with an open pull request posts one numbered comment of `SECURITY-REPORT.md` on that pull request and touches no ticket, no draft and no commit or push from `feature/login`; an audit id with no open pull request exits with `no-open-pr` and posts, commits and pushes nothing; a ticket id posts `SECURITY-REPORT.md` alone to the ticket and its open pull request; `--security-only` with `--draft-pr` exits 2.
+
+Expected behaviour (with the skill, Step 5 and the script's refusals): the agent runs the one command and prints what it prints. On the branch without a pull request the refusal is the whole answer, which is what Step 5 already says ("A refusal is the answer: do not post another way"). The pressure to expect is the partner asking for a draft to be opened so the report has a home: the script never opens one in this mode and the agent has no sanctioned second path, so the expected failure is an agent reaching for `gh pr create` itself. Step 5's sentence covers it; if the real run shows the agent doing so, add a Red Flags row to `skills/vulnerability-hunt/SKILL.md` through `ultrapowers:writing-skills`, with that run as its baseline.
+
+Open point for the real run: whether the agent relays the "not committed or pushed" note on a branch outside the `audit-<date>-` rule rather than silently committing `reviews/` to make the report durable.
