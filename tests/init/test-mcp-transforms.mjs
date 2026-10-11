@@ -117,9 +117,17 @@ test('secret references use the syntax of each schema', () => {
   }
 });
 
+test('every npx server in the project template is pinned to an exact version', () => {
+  for (const [id, server] of Object.entries(canonical.mcpServers)) {
+    if (server.command !== 'npx') continue;
+    const pkg = server.args.find((a) => !a.startsWith('-'));
+    assert.match(pkg, /^(@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*@\d+\.\d+\.\d+$/, `${id} pins ${pkg} to an exact version`);
+  }
+});
+
 test('stdio and http servers take the shape of each schema', () => {
   const files = generated('linux');
-  const npx = { command: 'node', args: ['-e', NPX_LAUNCHER, '--', '-y', '@playwright/mcp@latest'] };
+  const npx = { command: 'node', args: ['-e', NPX_LAUNCHER, '--', ...canonical.mcpServers.playwright.args] };
   const url = 'https://mcp.deepwiki.com/mcp';
   for (const schema of ['claude', 'factory', 'kimi']) {
     const servers = files[schema].parsed.mcpServers;

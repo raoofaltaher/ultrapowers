@@ -60,6 +60,8 @@ Nested clones are separate git repositories. This repository ignores them throug
 
 Every harness needs the ultrapowers plugin installed; skills are not copied into this repository.
 
+The npm MCP servers are pinned to exact versions in `.mcp.json` (and in each harness MCP file); to update one, run `npm view <package> version`, change the version in every MCP file your team uses, and review the change like any dependency bump.
+
 ## Contributing
 
 - Read `AGENTS.md` first. It is the contract for people and agents alike.

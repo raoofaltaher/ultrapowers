@@ -3,19 +3,19 @@
     "playwright": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@playwright/mcp@latest"],
+      "args": ["-y", "@playwright/mcp@0.0.83"],
       "env": {}
     },
     "context7": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp@latest"],
+      "args": ["-y", "@upstash/context7-mcp@4.3.0"],
       "env": { "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY}" }
     },
     "sequentialthinking": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking@1.0.0"],
       "env": {}
     },
     "microsoftdocs": {
@@ -29,19 +29,19 @@
     "Firecrawl": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "firecrawl-mcp"],
+      "args": ["-y", "firecrawl-mcp@3.29.1"],
       "env": { "FIRECRAWL_API_KEY": "${FIRECRAWL_API_KEY}" }
     },
     "brave": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@brave/brave-search-mcp-server"],
+      "args": ["-y", "@brave/brave-search-mcp-server@2.1.4"],
       "env": { "BRAVE_API_KEY": "${BRAVE_API_KEY}" }
     },
     "chrome-devtools": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "chrome-devtools-mcp@latest", "--headless", "--isolated", "--channel", "stable"],
+      "args": ["-y", "chrome-devtools-mcp@1.10.1", "--headless", "--isolated", "--channel", "stable"],
       "env": {}
     }
   }
