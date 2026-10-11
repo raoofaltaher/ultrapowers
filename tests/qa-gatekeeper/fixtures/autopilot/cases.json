@@ -288,6 +288,7 @@
   {"name":"deny_kill_pgrep_substitution","event":{"tool_name":"Bash","tool_input":{"command":"kill -9 $(pgrep node)"}}},
   {"name":"deny_pkill_split_quote","event":{"tool_name":"Bash","tool_input":{"command":"p''kill node"}}},
   {"name":"deny_kill_background_pid_variable","event":{"tool_name":"Bash","tool_input":{"command":"(sleep 1 & kill $!)"}}},
+  {"name":"deny_py_V_tag_inline_code","event":{"tool_name":"Bash","tool_input":{"command":"py -V:3.12 -c \"print(1)\""}}},
   {"name":"deny_python_versioned_c","event":{"tool_name":"Bash","tool_input":{"command":"python3.11 -c 'print(1)'"}}},
   {"name":"deny_node_pe_cluster","event":{"tool_name":"Bash","tool_input":{"command":"node -pe '1+1'"}}},
   {"name":"deny_python_heredoc_stdin","event":{"tool_name":"Bash","tool_input":{"command":"python3 <<'EOF'\nprint(1)\nEOF"}}},

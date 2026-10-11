@@ -407,11 +407,15 @@ function inlineInterpreterReason(kind, prog, rest, { inPlaceOk = false } = {}) {
       if (v === '-') return STDIN_WHY;
       if (v === '--') return '';
       if (v.startsWith('--')) { if (v === '--version' || v === '--help') return ''; continue; }
+      // Only a group that is exactly -V, -VV or -h asks for the version or the help and runs nothing. On the
+      // Windows `py` launcher -V:<tag> selects a runtime and the real command line follows it, so that group
+      // is skipped whole (its tag is no flag letters) and the scan goes on.
+      if (/^-(V+|h)$/.test(v)) return '';
+      if (/^-V:/.test(v)) continue;
       for (let c = 1; c < v.length; c++) {
         const ch = v[c];
         if (ch === 'c') return INLINE_WHY;
         if (ch === 'm') return '';
-        if (ch === 'V' || ch === 'h') return '';
         if ('WXQ'.includes(ch)) { if (c === v.length - 1) k++; break; }
       }
     }
@@ -475,15 +479,17 @@ function inlineInterpreterReason(kind, prog, rest, { inPlaceOk = false } = {}) {
 // built-in that no script of the project can shadow: npm and pnpm audit (npm only, with
 // --package-lock-only) and ls/list; pip and pip3 list and freeze; cargo audit and tree --locked;
 // dotnet list package --vulnerable --no-restore; go nothing; yarn, bun, uv, poetry, pipenv and pdm
-// nothing (they run a script of the project for a word they do not know). composer, bundle, gem, pipx,
-// corepack, brew, apt, apt-get, choco and winget are refused for every subcommand. The listing forms take
-// a fixed option set (nothing that names an index, a registry or a file). Every other subcommand, and
-// any program started through a package runner (npx, npm exec, uvx, pipx run ...), is refused with
-// HUNT_NO_INSTALL. python -m pip and ensurepip are refused, and the -m module is found the way the
-// interpreter rule walks the options (pyModule). Test commands (and `git worktree add`, in the git branch of simple()) are refused
-// with HUNT_NO_SUITE. pip-audit, osv-scanner, gh and glab are allowed only in the forms below. A program
-// outside these families is left to the QA rules. The hunters run the tools with no variable prefix, so
-// SAFE_ENV_RE (the QA variable gate) gets no addition: NPM_CONFIG_AUDIT_LEVEL=high npm audit is refused,
+// nothing (they run a script of the project for a word they do not know). The other installers
+// (HUNT_INSTALLERS: composer, bundle, gem, pipx, corepack, brew, apt, dnf, apk, conda, nuget ...) are
+// refused for every subcommand. The listing forms take a fixed option set (nothing that names an
+// index, a registry or a file). Every other subcommand, and any program started through a package
+// runner (npx, npm exec, uvx, pipx run ...), is refused with HUNT_NO_INSTALL. The installers and
+// environments that python can start as a module (HUNT_PY_MODULES) are refused too, and the -m module
+// is found the way the interpreter rule walks the options (pyModule). Test commands (and
+// `git worktree add`, in the git branch of simple()) are refused with HUNT_NO_SUITE. pip-audit,
+// osv-scanner, gh and glab are allowed only in the forms below. A program outside these families is
+// left to the QA rules. The hunters run the tools with no variable prefix, so SAFE_ENV_RE (the QA
+// variable gate) gets no addition: NPM_CONFIG_AUDIT_LEVEL=high npm audit is refused,
 // --audit-level=high is the spelling.
 const HUNT_NO_SUITE = 'the hunt reads; it runs no suite and makes no worktree';
 const HUNT_NO_INSTALL = 'the hunt installs nothing and runs nothing';
@@ -499,7 +505,15 @@ const HUNT_TEST_MODULES = new Set(['pytest', 'unittest', 'nose', 'nose2', 'tox']
 const NPM_AUDIT_LEVELS = /^(info|low|moderate|high|critical|none)$/;
 // Installers outside the families below: refused for every subcommand (and a bare call), the way the package
 // managers are. A read-only form for one of them (composer audit, bundler-audit) would be a later allow-form.
-const HUNT_INSTALLERS = new Set(['composer', 'bundle', 'gem', 'pipx', 'corepack', 'brew', 'apt', 'apt-get', 'choco', 'winget']);
+const HUNT_INSTALLERS = new Set([
+  'composer', 'bundle', 'bundler', 'bundler-audit', 'bundle-audit', 'gem', 'pipx', 'corepack', 'brew', 'apt', 'apt-get', 'choco', 'winget',
+  'dnf', 'yum', 'apk', 'pacman', 'zypper', 'snap', 'scoop', 'nix-env', 'conda', 'mamba', 'dpkg', 'rpm', 'nuget', 'pod',
+]);
+// What python can start as a module that installs software, makes an environment or serves files
+// (the first dotted segment of the module name).
+const HUNT_PY_MODULES = new Set([
+  'pip', 'ensurepip', 'uv', 'pipx', 'pipenv', 'poetry', 'pdm', 'virtualenv', 'venv', 'conda', 'mamba', 'easy_install', 'setuptools', 'build', 'wheel', 'twine', 'http',
+]);
 const HUNT_PY_MANAGERS = /^(pip[0-9]*(\.[0-9]+)*|uv|poetry|pipenv|pdm)$/;
 const INFO_FLAGS = ['--version', '-v', '-V', '--help', '-h'];
 
@@ -535,18 +549,21 @@ function huntOptions(words, spec) {
 }
 
 // The hunt's judgement of one simple command: null when the program is not for it to judge, { reason }
-// to refuse, { allow: true, outputs } to allow it (outputs: the paths, as written, of files it writes,
-// which the caller holds to the report area).
+// to refuse, { allow: true, outputs, prefixes } to allow it (outputs: the paths, as written, of files it
+// writes, which the caller holds to the report area; prefixes: the { path, form } of the project folders
+// the command is pointed at, which the caller holds inside the project).
 export function huntCheck(prog0, words, { viaRunner = false, interpreter = '' } = {}) {
-  const prog = prog0.replace(/\.(cmd|bat|ps1)$/, '');
+  const prog = prog0.replace(/\.(cmd|bat|ps1|phar)$/, '');
   const refuse = (reason) => ({ reason });
-  const allow = (outputs = []) => ({ allow: true, outputs });
+  const allow = (outputs = [], prefixes = []) => ({ allow: true, outputs, prefixes });
   const before = words.indexOf('--') === -1 ? words : words.slice(0, words.indexOf('--'));
   const infoOnly = (list) => list.length > 0 && list.every((v) => INFO_FLAGS.includes(v));
   const notListed = (what, forms) => refuse(`${what} is not on the hunt's list; ${HUNT_NO_INSTALL} (the forms it runs: ${forms})`);
   if (HUNT_TEST_RUNNERS.has(prog)) return refuse(HUNT_NO_SUITE);
   if ((prog === 'make' || prog === 'gmake') && before.some((v) => v === 'test' || v === 'check')) return refuse(HUNT_NO_SUITE);
   if (HUNT_INSTALLERS.has(prog)) return refuse(`${prog} installs software or runs a script of the project; the hunt installs nothing (${prog} is refused for every subcommand)`);
+  // composer is a phar that php runs: `php composer.phar install`.
+  if (prog === 'php' && words.some((v) => v !== null && /(^|[\\/])composer(\.phar)?$/i.test(v))) return refuse('composer installs software or runs a script of the project; the hunt installs nothing (composer is refused for every subcommand)');
   if (viaRunner && HUNT_AUDIT_TOOLS.has(prog)) return refuse(`${prog} started through a package runner installs it first; the hunt runs the audit tools that are already installed (${prog} on PATH)`);
   if (viaRunner) return refuse(`${prog} started through a package runner (npx, npm exec, uvx, pipx run ...) is downloaded and run; ${HUNT_NO_INSTALL}`);
 
@@ -556,7 +573,7 @@ export function huntCheck(prog0, words, { viaRunner = false, interpreter = '' } 
     if (pm.unreadable) return refuse('the options of python before its script or module cannot be read during the hunt; write python -m <module> or python <script> with plain flags');
     const mod = pm.mod;
     if (HUNT_TEST_MODULES.has(mod)) return refuse(HUNT_NO_SUITE);
-    if (/^(pip|ensurepip)(\.|$)/.test(mod)) return refuse(`python -m ${mod} is not on the hunt's list; ${HUNT_NO_INSTALL} (python -m pip_audit is the form it runs)`);
+    if (HUNT_PY_MODULES.has(mod.split('.')[0])) return refuse(`python -m ${mod} is not on the hunt's list; ${HUNT_NO_INSTALL} (python -m pip_audit is the form it runs)`);
     if (mod === 'pip_audit') {
       // An interpreter option that takes a value (-W ignore, -X dev) before -m would shift the words after it.
       if (!pm.pure) return refuse('python options before -m pip_audit cannot be verified during the hunt; write python -m pip_audit first');
@@ -591,10 +608,14 @@ export function huntCheck(prog0, words, { viaRunner = false, interpreter = '' } 
       return refuse(`${prog} options before the subcommand cannot be verified during the hunt; write ${prog} <command> first`);
     }
     if (is('audit')) {
-      if (!isNpm) return notListed(`${prog} audit`, 'npm audit --package-lock-only --json, npm ls');
-      const bad = (what) => refuse(`npm audit may run only as npm audit --package-lock-only [--json] [--audit-level=<level>] during the hunt; ${what} changes a file or reads more than the report (npm audit fix is never run)`);
+      const name = isNpm ? 'npm audit' : 'pnpm audit';
+      const form = isNpm
+        ? 'npm audit --package-lock-only [--json] [--audit-level=<level>] [--prefix <folder inside the project>]'
+        : 'pnpm audit [--json] [--audit-level=<level>] [--prefix <folder inside the project>]';
+      const bad = (what) => refuse(`${name} may run only as ${form} during the hunt; ${what} changes a file or reads more than the report (${name} fix is never run)`);
       const rest = words.slice(1);
       let lockOnly = false;
+      const prefixes = [];
       for (let k = 0; k < rest.length; k++) {
         const v = rest[k];
         if (v === null) return bad('an argument built from a variable or substitution');
@@ -603,10 +624,19 @@ export function huntCheck(prog0, words, { viaRunner = false, interpreter = '' } 
         if (v === '--audit-level') { if (rest[k + 1] === undefined || rest[k + 1] === null || !NPM_AUDIT_LEVELS.test(rest[k + 1])) return bad('--audit-level without a level'); k += 1; continue; }
         const m = /^--audit-level=(.*)$/.exec(v);
         if (m && NPM_AUDIT_LEVELS.test(m[1])) continue;
+        // --prefix names the folder of the manifest: a literal path, which the caller then holds inside the project.
+        if (v === '--prefix' || v.startsWith('--prefix=')) {
+          const dirWord = v === '--prefix' ? rest[k + 1] : v.slice('--prefix='.length);
+          if (dirWord === undefined || dirWord === null || dirWord === '' || dirWord.startsWith('-')) return bad('--prefix without a literal folder');
+          if (/^~|[*?[\]{}$`]|(^|[\\/])\.\.([\\/]|$)/.test(dirWord)) return bad(`--prefix ${dirWord} (a home, glob, expansion or parent-folder path)`);
+          prefixes.push(dirWord);
+          if (v === '--prefix') k += 1;
+          continue;
+        }
         return bad(v === 'fix' ? 'fix' : `"${v}"`);
       }
-      if (!lockOnly) return refuse('npm audit must run with --package-lock-only during the hunt: without it npm reads the installed tree, which the hunt does not build (npm audit --package-lock-only --json)');
-      return allow();
+      if (isNpm && !lockOnly) return refuse('npm audit must run with --package-lock-only during the hunt: without it npm reads the installed tree, which the hunt does not build (npm audit --package-lock-only --json)');
+      return allow([], prefixes.map((path) => ({ path, form })));
     }
     if (is('list', ['ls'])) return huntLsOptions(words.slice(1), prog, refuse, allow);
     return notListed(`${prog} ${sub}`, `${prog} audit${isNpm ? ' --package-lock-only --json' : ''}, ${prog} ls`);
@@ -723,6 +753,10 @@ function pyModule(words) {
       if (v === '--version' || v === '--help') return null;
       return { unreadable: true };
     }
+    // Exactly -V, -VV or -h: the version or the help, nothing runs. -V:<tag> on the Windows `py` launcher
+    // selects a runtime and the command line goes on after it (the same walk as the interpreter rule).
+    if (/^-(V+|h)$/.test(v)) return null;
+    if (/^-V:/.test(v)) { pure = false; continue; }
     for (let c = 1; c < v.length; c++) {
       const ch = v[c];
       if (ch === 'm') {
@@ -731,7 +765,6 @@ function pyModule(words) {
         if (words[k + 1] === undefined || words[k + 1] === null) return { unreadable: true };
         return { mod: words[k + 1], rest: k + 2, pure };
       }
-      if (ch === 'V' || ch === 'h') return null;
       if ('WXQ'.includes(ch)) { pure = false; if (c === v.length - 1) k += 1; break; }
       if (!'bBdEiIOqRsSuvx'.includes(ch)) pure = false;
     }
@@ -758,7 +791,8 @@ function huntPipListOptions(prog, sub, args, refuse, allow) {
     if (v === '--all') continue;
     if (/^--format=(columns|freeze|json)$/.test(v)) continue;
     if (v === '--format' && /^(columns|freeze|json)$/.test(args[k + 1] || '')) { k += 1; continue; }
-    return refuse(`${prog} ${sub} takes only --format (columns, freeze or json) and --all during the hunt ("${v}" is not allowed: an index option or --outdated reaches a host, -r reads a file); ${HUNT_NO_INSTALL}`);
+    const shown = v === '--format' && args[k + 1] !== undefined ? `--format ${args[k + 1] === null ? '<built from a variable>' : args[k + 1]}` : v;
+    return refuse(`${prog} ${sub} takes only --format (columns, freeze or json) and --all during the hunt ("${shown}" is not allowed: an index option or --outdated reaches a host, -r reads a file); ${HUNT_NO_INSTALL}`);
   }
   return allow();
 }
@@ -870,6 +904,18 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     // the patterns name the contents of a protected folder, so the folder is judged as one.
     if (protectedPath(real) || protectedPath(`${real}/_`)) return deny(`${what} (${raw}) is a protected path; the config, hooks, CI, settings and key material are never written during ${runKind}`);
     if (!inArea(real)) deny(`${what} (${raw}) is outside ${areaText}; shell writes during ${runKind} are limited to ${autopilot ? 'the workspace' : 'those folders'}`);
+  };
+  // A folder a hunt command is pointed at (npm audit --prefix <dir>): a literal path that resolves inside the
+  // project, symlinks and 8.3 names resolved. Anywhere else the tool would read a tree the hunt was not given.
+  const checkProjectDir = (raw, form, dir) => {
+    let p = normPath(raw);
+    if (!p.startsWith('/')) {
+      if (dir === null) return deny(`${form} during the hunt; --prefix ${raw} is relative to a directory the command changed to through a variable; use a literal path`);
+      p = `${dir}/${p.replace(/^\.\//, '')}`;
+    }
+    if (p.split('/').includes('..')) return deny(`${form} during the hunt; --prefix ${raw} has a parent-directory segment and cannot be verified`);
+    const real = realCanonical(p, rootC);
+    if (rel(real, rootC, ignoreCase) === null) deny(`${form} during the hunt; --prefix ${raw} is outside the project ${rootC}`);
   };
 
   // A word spelled with an 8.3 alias that resolves to key material, whatever reads it (issue #31).
@@ -993,13 +1039,32 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       };
       // export NAME=value, declare -x, typeset -x: the variable reaches every later command.
       // (Without a name the same words dump the environment; that rule is further down.)
-      if (['export', 'declare', 'typeset'].includes(progName(args[0].v)) && args.slice(1).some((x) => x.v === null || !x.v.startsWith('-'))) {
+      // A hunt walks readonly too (zsh exports with readonly -x), and judges the NAME of every word, from its
+      // leading literal part up to `=`, before a value built from an expansion hides it: only the harmless
+      // names pass, however their value is built.
+      const declWord = progName(args[0].v);
+      if (['export', 'declare', 'typeset', ...(hunt ? ['readonly'] : [])].includes(declWord) && args.slice(1).some((x) => x.v === null || !x.v.startsWith('-'))) {
+        const how = declWord === 'export' ? 'exported' : declWord === 'readonly' ? 'made readonly' : 'set by declare or typeset';
         for (const x of args.slice(1)) {
+          if (hunt && !(x.v !== null && x.v.startsWith('-')) && !(x.w.parts[0] && x.w.parts[0].t === 'lit' && x.w.parts[0].v.startsWith('-'))) {
+            let literal = '';
+            let named = false;
+            for (const part of x.w.parts) {
+              if (part.t !== 'lit') break;
+              const at = part.v.indexOf('=');
+              if (at !== -1) { literal += part.v.slice(0, at); named = true; break; }
+              literal += part.v;
+            }
+            // A name that ends before any expansion (`NAME=$X`, `NAME`) is known; one cut short by an expansion
+            // (`$NAME=x`, `GH_$X=x`) is not.
+            const known = named || x.w.parts.every((part) => part.t === 'lit');
+            if (!known || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(literal)) return deny(`a variable ${how} during ${runKind} (a name built from an expansion) cannot be verified; only the listed harmless variables pass`);
+            if (!SAFE_ENV_RE.test(literal)) return deny(`a variable ${how} during ${runKind} (${literal}) can redirect the audit tools (a host, a registry, a config file); only the listed harmless variables pass`);
+          }
           if (x.v === null) { if (x.w.parts.some((p) => p.t === 'lit' && /PGUSER|PSQLRC|PGSERVICE|PGOPTIONS|PGPASSFILE/.test(p.v))) walkEnv.pgUser = null; continue; }
           if (x.v.startsWith('-')) continue;
           const eq = x.v.indexOf('=');
           const name = eq === -1 ? x.v : x.v.slice(0, eq);
-          if (hunt && !SAFE_ENV_RE.test(name)) return deny(`a variable exported during ${runKind} (${name}) can redirect the audit tools (a host, a registry, a config file); only the listed harmless variables pass`);
           exportedNames.add(name);
           const value = eq === -1 ? (vars.has(name) ? vars.get(name) : undefined) : x.v.slice(eq + 1);
           if (eq !== -1) vars.set(name, value);
@@ -1180,6 +1245,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         if (h && h.reason) return deny(h.reason);
         if (h && h.allow) {
           for (const p of h.outputs) checkTarget({ k: 'w', parts: [{ t: 'lit', v: p }] }, dir, `${prog} output file`, container);
+          for (const { path: p, form } of h.prefixes || []) checkProjectDir(p, `${prog} audit may run only as ${form}`, dir);
           return;
         }
       }
@@ -1205,7 +1271,21 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       }
       // Commands that print the whole environment: set and compgen -e, and export, declare,
       // typeset and readonly when they name nothing to set.
-      if (prog === 'set') { if (rest.length === 0 && !nullOut) deny(ENV_DUMP); return; }
+      if (prog === 'set') {
+        if (rest.length === 0 && !nullOut) deny(ENV_DUMP);
+        // set -a (-o allexport) exports every later assignment with no export word to judge, so the variable
+        // gate would never see GH_HOST=evil: refused during a hunt, as a group of short options holding `a` too (-euao).
+        if (hunt) {
+          for (let k = 0; k < rest.length; k++) {
+            const v = rest[k].v;
+            if (v === null) return deny('set with an option built from a variable or substitution cannot be verified; a variable set for a shell or interpreter can make it run code before the command, and only the listed harmless variables pass');
+            if (/^-[A-Za-z]*a[A-Za-z]*$/.test(v) || (/^-[A-Za-z]*o$/.test(v) && rest[k + 1] && rest[k + 1].v === 'allexport')) {
+              return deny('set -a (allexport) exports every later assignment, and a variable set for a shell or interpreter can make it run code before the command; only the listed harmless variables pass, so allexport is refused during the hunt');
+            }
+          }
+        }
+        return;
+      }
       if (prog === 'compgen') { if (rest.some((x) => /^-[a-z]*e/.test(x.v || '')) && !nullOut) deny(ENV_DUMP); return; }
       if (['export', 'declare', 'typeset', 'readonly'].includes(prog) && plain.length === 0 && !nullOut) deny(ENV_DUMP);
       if (prog === 'export' || prog === 'local' || prog === 'declare' || prog === 'typeset' || prog === 'readonly') {
