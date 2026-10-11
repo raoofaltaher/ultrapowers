@@ -625,7 +625,8 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       // ENV / BASH_ENV name a file the shell sources at start (ksh, sh, bash, zsh) and ZDOTDIR the folder
       // zsh reads its init files from: set for this command by a prefix or an env wrapper, or exported earlier.
       const shellInitVars = new Set();
-      for (const n of ['ENV', 'BASH_ENV', 'ZDOTDIR']) if (assigns.some(([m]) => m === n) || vars.has(n)) shellInitVars.add(n);
+      // HOME moves every shell's rc and profile files (.bashrc, .zshenv, .profile, .config/fish) to a directory of the caller's choosing.
+      for (const n of ['ENV', 'BASH_ENV', 'ZDOTDIR', 'HOME']) if (assigns.some(([m]) => m === n) || vars.has(n)) shellInitVars.add(n);
       // A word for analyzePsql: its value, PSQL_VAR + NAME for a pure $NAME, else PSQL_DYN.
       const psqlWord = (x) => {
         if (x.v !== null) return x.v;
@@ -752,7 +753,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
             if (['-u', '--unset', '-C', '--chdir'].includes(args[0].v)) { args = args.slice(2); continue; }
             if (args[0].v.startsWith('PGUSER=')) pgUser = args[0].v.slice('PGUSER='.length);
             if (PSQL_ENV.has(args[0].v.split('=')[0])) psqlEnv = true;
-            const initVar = /^(ENV|BASH_ENV|ZDOTDIR)=/.exec(args[0].v);
+            const initVar = /^(ENV|BASH_ENV|ZDOTDIR|HOME)=/.exec(args[0].v);
             if (initVar) shellInitVars.add(initVar[1]);
             args = args.slice(1);
           }
@@ -988,7 +989,8 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         };
         if (rest.some((x) => x.v !== null && initOpt(x.v))) return deny(INIT_CODE);
         if ((shellInitVars.has('ENV') || shellInitVars.has('BASH_ENV')) && !['fish', 'csh', 'tcsh'].includes(prog)) return deny(INIT_CODE);
-        if (shellInitVars.has('ZDOTDIR') && prog === 'zsh') return deny(INIT_CODE);        // -c may be bundled with other short flags (-lc, -ec, -xc); the next word is the command.
+        if (shellInitVars.has('ZDOTDIR') && prog === 'zsh') return deny(INIT_CODE);
+        if (shellInitVars.has('HOME')) return deny(INIT_CODE);        // -c may be bundled with other short flags (-lc, -ec, -xc); the next word is the command.
         // fish takes the long spelling too: --command CMD, --command=CMD.
         const eqi = rest.findIndex((x) => x.v !== null && x.v.startsWith('--command='));
         if (eqi !== -1) { walkNested(rest[eqi].v.slice('--command='.length), dir, container, depth + 1, pgUser); return; }

@@ -447,5 +447,11 @@
   {"name":"deny_reserved_case_after_and","event":{"tool_name":"Bash","tool_input":{"command":"true && case x in *) rm x;; esac"}}},
   {"name":"allow_reserved_if_then_git_status","event":{"tool_name":"Bash","tool_input":{"command":"if true; then git status; fi"}}},
   {"name":"allow_reserved_coproc_read","event":{"tool_name":"Bash","tool_input":{"command":"coproc ls reviews"}}},
-  {"name":"allow_reserved_for_loop_read","event":{"tool_name":"Bash","tool_input":{"command":"for f in a b; do ls reviews; done"}}}
+  {"name":"allow_reserved_for_loop_read","event":{"tool_name":"Bash","tool_input":{"command":"for f in a b; do ls reviews; done"}}},
+  {"name":"deny_shell_init_bash_home_prefix","event":{"tool_name":"Bash","tool_input":{"command":"HOME=reviews/1234/h bash -c ls"}}},
+  {"name":"deny_shell_init_fish_home_prefix","event":{"tool_name":"Bash","tool_input":{"command":"HOME=reviews/1234/h fish -c ls"}}},
+  {"name":"deny_shell_init_sh_home_env_wrapper","event":{"tool_name":"Bash","tool_input":{"command":"env HOME=reviews/1234/h sh -c ls"}}},
+  {"name":"deny_shell_init_dash_home_env_i","event":{"tool_name":"Bash","tool_input":{"command":"env -i HOME=reviews/1234/h dash -c ls"}}},
+  {"name":"deny_shell_init_zsh_home_exported","event":{"tool_name":"Bash","tool_input":{"command":"export HOME=reviews/1234/h; zsh -c ls"}}},
+  {"name":"allow_shell_init_home_not_a_shell","event":{"tool_name":"Bash","tool_input":{"command":"HOME=reviews/1234/h ls reviews"}}}
 ]
