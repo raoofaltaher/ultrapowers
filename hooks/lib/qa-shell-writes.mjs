@@ -347,6 +347,25 @@ export function analyzePsql(args, { roRole = 'qa_agent_ro', pgUser, psqlEnv = fa
   return '';
 }
 
+// The global options before a container CLI's subcommand, fail closed: an option on the flag-only or
+// the valued list is skipped (with its argument); any other option could take an argument and shift
+// the subcommand, so it is refused. Returns { idx } (the position of the first word) or { reason }.
+function walkGlobalOptions(list, spec, who) {
+  let g = 0;
+  while (g < list.length) {
+    const w = list[g].v;
+    if (w === null) return { reason: `a ${who} argument built from a variable or substitution cannot be verified; spell it out` };
+    if (!w.startsWith('-') || w === '-') break;
+    const eq = w.indexOf('=');
+    const name = w.startsWith('--') && eq !== -1 ? w.slice(0, eq) : w;
+    if (spec.flags.has(name) && eq === -1) { g += 1; continue; }
+    if (spec.valued.has(name)) { g += eq === -1 ? 2 : 1; continue; }
+    if (!w.startsWith('--') && w.length > 2 && spec.valued.has(w.slice(0, 2))) { g += 1; continue; }
+    return { reason: `unrecognised option ${w} before the ${who} subcommand; run the read command without it` };
+  }
+  return { idx: g };
+}
+
 // ---------- inline interpreters ----------
 // An interpreter given code on its command line or on stdin is an unbounded execution and egress path
 // (python -c, node -e, perl -ne, php -r, a heredoc into python3): the hook's text rule saw only the
@@ -825,13 +844,36 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         walkNested(rest.map((x) => x.v).join(' '), dir, container, depth + 1, pgUser);
         return;
       }
+      if (prog === 'helm') {
+        // helm reads: list, status, get, show, search, history, template, lint, env, version, repo list,
+        // plugin list, dependency list. Everything else (install, upgrade, uninstall, rollback, repo add ...)
+        // changes the cluster or the machine.
+        const HELM_SPEC = { flags: new Set(['--debug', '-h', '--help', '--version']), valued: new Set(['-n', '--namespace', '--kube-context', '--kubeconfig', '--kube-apiserver', '--kube-token', '--kube-as-user', '--kube-as-group', '--kube-ca-file', '--registry-config', '--repository-cache', '--repository-config', '--burst-limit', '--qps']) };
+        const helmWalk = walkGlobalOptions(rest, HELM_SPEC, 'helm');
+        if (helmWalk.reason) return deny(helmWalk.reason);
+        const top = rest[helmWalk.idx];
+        if (!top) return;
+        if (top.v === null) return deny('the helm verb is built from a variable or substitution and cannot be verified; spell it out');
+        const next = rest.slice(helmWalk.idx + 1).find((x) => x.v === null || !x.v.startsWith('-'));
+        if (['repo', 'plugin', 'dependency', 'dep'].includes(top.v)) {
+          if (next && next.v === null) return deny(`the helm ${top.v} verb is built from a variable or substitution and cannot be verified; spell it out`);
+          if (next && ['list', 'ls'].includes(next.v)) return;
+          return deny(`helm ${top.v} ${next ? next.v : ''} changes the machine or the cluster; only read verbs run during ${runKind}`);
+        }
+        if (['list', 'ls', 'status', 'get', 'show', 'search', 'history', 'template', 'lint', 'env', 'version', 'help'].includes(top.v)) return;
+        return deny(`helm ${top.v} changes the cluster; the stack stays as found, only read verbs (list, status, get, show, history, template ...) run during ${runKind}`);
+      }
       if (prog === 'kubectl' || prog === 'oc') {
         // The verb is the first word after the global options; those that take a separate argument
         // (--context X, -n NS, --kubeconfig F, --server S, --token T ...) must be skipped, or the
         // argument is taken for the verb.
-        const KUBE_VALUED = new Set(['--kubeconfig', '--context', '-n', '--namespace', '--server', '-s', '--token', '--cluster', '--user', '--as', '--as-group', '--as-uid', '--certificate-authority', '--client-certificate', '--client-key', '--cache-dir', '--request-timeout', '--tls-server-name', '--username', '--password', '--profile', '--profile-output', '--log-flush-frequency', '-v', '--v', '--vmodule', '--log-file', '--log-dir']);
-        let g = 0;
-        while (g < rest.length && rest[g].v !== null && rest[g].v.startsWith('-')) g += KUBE_VALUED.has(rest[g].v) ? 2 : 1;
+        const KUBE_SPEC = {
+          flags: new Set(['--insecure-skip-tls-verify', '--warnings-as-errors', '--disable-compression', '-h', '--help', '--version']),
+          valued: new Set(['--kubeconfig', '--context', '-n', '--namespace', '--server', '-s', '--token', '--cluster', '--user', '--as', '--as-group', '--as-uid', '--certificate-authority', '--client-certificate', '--client-key', '--cache-dir', '--request-timeout', '--tls-server-name', '--username', '--password', '--profile', '--profile-output', '--log-flush-frequency', '-v', '--v', '--vmodule', '--log-file', '--log-dir']),
+        };
+        const kubeWalk = walkGlobalOptions(rest, KUBE_SPEC, prog);
+        if (kubeWalk.reason) return deny(kubeWalk.reason);
+        const g = kubeWalk.idx;
         const top = rest[g];
         if (!top) {
           if (rest.every((x) => x.v !== null && ['--version', '-h', '--help', 'version'].includes(x.v)) ) return;
@@ -904,36 +946,53 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         return;
       }
       if (prog === 'docker' || prog === 'docker-compose' || prog === 'podman' || prog === 'podman-compose' || prog === 'nerdctl') {
-        // The subcommand is the first word after the global options (-H HOST, --context NAME, -f FILE,
-        // -p NAME ...), however it is quoted: the text rules of the hook read `docker rm`, this reads
-        // `docker -H tcp://h "rm"`.
-        const GLOBAL_VALUED = new Set(['-H', '--host', '-c', '--context', '--config', '-l', '--log-level', '--tlscacert', '--tlscert', '--tlskey', '--namespace', '-n', '--address', '-a',
-          // podman and nerdctl
-          '--url', '--connection', '--identity', '--root', '--runroot', '--storage-driver', '--storage-opt', '--cgroup-manager', '--network-backend', '--hooks-dir', '--conmon', '--events-backend', '--runtime', '--tmpdir', '--imagestore', '--data-root', '--cni-path', '--cni-netconfpath', '--snapshotter', '--cgroup-manager']);
-        const COMPOSE_VALUED = new Set(['-f', '--file', '-p', '--project-name', '--profile', '--env-file', '--project-directory', '--ansi', '--parallel', '--progress']);
-        const skipGlobals = (list, valued) => { let g = 0; while (g < list.length && list[g].v !== null && list[g].v.startsWith('-')) g += valued.has(list[g].v) ? 2 : 1; return g; };
-        const composeProg = prog === 'docker-compose' || prog === 'podman-compose';
-        const topIdx = skipGlobals(rest, composeProg ? COMPOSE_VALUED : GLOBAL_VALUED);
-        const top = rest[topIdx];
-        if (top && top.v === null) return deny(`the ${prog} subcommand is built from a variable or substitution and cannot be verified; spell it out`);
-        if (!top && rest.length && !rest.every((x) => x.v !== null && ['--version', '-v', '-h', '--help', 'version'].includes(x.v))) return deny(`the ${prog} subcommand cannot be located after its global options; spell the command plainly`);
-        let sub = top ? top.v : '';
-        let noun = '';
-        if (composeProg || sub === 'compose') {
-          const from = composeProg ? topIdx : topIdx + 1;
-          const subIdx = composeProg ? topIdx : from + skipGlobals(rest.slice(from), COMPOSE_VALUED);
-          noun = 'compose';
-          sub = rest[subIdx] && rest[subIdx].v !== null ? rest[subIdx].v : (rest[subIdx] ? null : '');
-        } else if (['container', 'volume', 'network', 'image', 'system', 'builder', 'service', 'stack', 'node', 'secret', 'config'].includes(sub)) {
-          noun = sub;
-          // The verb after the noun (docker container $X): an unreadable verb is not a read.
-          sub = rest[topIdx + 1] ? rest[topIdx + 1].v : '';
+        // Fail closed (docker, podman, nerdctl, compose): walk the global options and accept only those on
+        // a small known list (flag-only or valued); an option that is on neither list could take an
+        // argument and shift the subcommand, so it is refused. The verb path (a management noun plus
+        // its verb, or one verb) must be literal and in the read set; exec and run go on to the
+        // inspection of the command they carry, below.
+        {
+          const composeProg = prog === 'docker-compose' || prog === 'podman-compose';
+          const DOCKER_SPEC = { flags: new Set(['--debug', '-D', '--tls', '--tlsverify', '-v', '--version', '-h', '--help']), valued: new Set(['-H', '--host', '-c', '--context', '--config', '-l', '--log-level', '--tlscacert', '--tlscert', '--tlskey']) };
+          if (prog === 'nerdctl') for (const o of ['-n', '--namespace', '-a', '--address']) DOCKER_SPEC.valued.add(o);
+          const COMPOSE_SPEC = { flags: new Set(['--verbose', '--compatibility', '--dry-run', '--all-resources', '-h', '--help', '--version', '-v', '--debug']), valued: new Set(['-f', '--file', '-p', '--project-name', '--profile', '--env-file', '--project-directory', '--ansi', '--progress', '--parallel']) };
+          const walkGlobals = walkGlobalOptions;
+          const NOUN_READ = {
+            container: ['ls', 'list', 'ps', 'logs', 'inspect', 'top', 'stats', 'port', 'diff', 'exec'], image: ['ls', 'list', 'inspect', 'history'], volume: ['ls', 'list', 'inspect'], network: ['ls', 'list', 'inspect'],
+            system: ['info', 'df', 'events'], context: ['ls', 'list', 'inspect', 'show'], node: ['ls', 'inspect', 'ps'], service: ['ls', 'ps', 'inspect', 'logs'], stack: ['ls', 'ps', 'services'], secret: ['ls', 'inspect'], config: ['ls', 'inspect'], manifest: ['inspect'], plugin: ['ls'], builder: [], buildx: ['ls', 'inspect', 'du'],
+          };
+          const TOP_READ = new Set(['ps', 'images', 'version', 'info', 'logs', 'inspect', 'top', 'stats', 'events', 'port', 'diff', 'history', 'help', 'exec', 'run']);
+          const COMPOSE_READ = new Set(['ps', 'logs', 'config', 'version', 'ls', 'top', 'events', 'images', 'port', 'help', 'exec', 'run']);
+          const REMOVE = new Set(['rm', 'kill', 'stop', 'prune', 'rmi', 'remove', 'down']);
+          const CHANGE = new Set(['restart', 'start', 'pause', 'unpause', 'update', 'up', 'build', 'create']);
+          const verbReason = (who, verb) => (REMOVE.has(verb) ? 'container stop, remove, down or prune is never allowed; the stack stays as found'
+            : CHANGE.has(verb) ? 'restarting, starting, rebuilding or pausing containers is never allowed; the stack stays as found'
+              : `${who} ${verb} is not on the read allow-list (ps, ls, logs, inspect, images, version, info, top, stats, events, port, diff, history, exec, run); the stack stays as found`);
+          const gate = (verbList, set, who) => {
+            const v0 = verbList[0];
+            if (!v0) return '';
+            if (v0.v === null) return `the ${who} subcommand is built from a variable or substitution and cannot be verified; spell it out`;
+            if (set.has(v0.v)) return '';
+            return verbReason(who, v0.v);
+          };
+          const first = walkGlobals(rest, composeProg ? COMPOSE_SPEC : DOCKER_SPEC, prog);
+          if (first.reason) return deny(first.reason);
+          const after = rest.slice(first.idx);
+          const top = after[0];
+          let why = '';
+          if (!top) why = '';
+          else if (top.v === null) why = `the ${prog} subcommand is built from a variable or substitution and cannot be verified; spell it out`;
+          else if (composeProg) why = gate(after, COMPOSE_READ, prog);
+          else if (top.v === 'compose') {
+            const second = walkGlobals(after.slice(1), COMPOSE_SPEC, `${prog} compose`);
+            why = second.reason || gate(after.slice(1 + second.idx), COMPOSE_READ, `${prog} compose`);
+          } else if (Object.prototype.hasOwnProperty.call(NOUN_READ, top.v)) {
+            const verb = after[1];
+            if (verb && verb.v === null) why = `the ${prog} ${top.v} verb is built from a variable or substitution and cannot be verified; spell it out`;
+            else if (verb && !NOUN_READ[top.v].includes(verb.v)) why = verbReason(`${prog} ${top.v}`, verb.v);
+          } else why = gate(after, TOP_READ, prog);
+          if (why) return deny(why);
         }
-        const REMOVE = noun === 'compose' ? ['down', 'stop', 'rm'] : ['rm', 'kill', 'stop', 'prune', 'rmi', 'remove', 'down'];
-        const CHANGE = noun === 'compose' ? ['up', 'build', 'restart', 'start', 'kill', 'pause', 'unpause', 'create'] : ['restart', 'start', 'pause', 'unpause', 'update'];
-        if (sub === null) return deny(`the ${prog} subcommand is built from a variable or substitution and cannot be verified; spell it out`);
-        if (REMOVE.includes(sub)) return deny('container stop, remove, down or prune is never allowed; the stack stays as found');
-        if (CHANGE.includes(sub)) return deny('restarting, starting, rebuilding or pausing containers is never allowed; the stack stays as found');
         const ei = rest.findIndex((x) => x.v === 'exec' || x.v === 'run');
         if (ei === -1) return;
         const after = rest.slice(ei + 1);

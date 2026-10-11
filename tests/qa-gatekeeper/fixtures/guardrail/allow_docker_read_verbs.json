@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"docker images; docker version; docker info; docker inspect api; docker top api; docker stats --no-stream; docker network ls; docker volume ls; docker image ls; docker system df; docker context ls; docker compose ps; docker compose logs api; docker compose config; docker compose version; docker logs --tail 20 api"}}

@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"helm list -A; helm -n ns status x; helm get values x; helm template x ./chart; helm repo list; helm history x"}}
