@@ -96,9 +96,14 @@ export function ensureOnTicketBranch(dir, id) {
   return branch;
 }
 
+// Where the engine keeps the worktree of `branch` in a clone: the path is recomputed, never read from state.
+export function worktreePath(cloneDir, branch) {
+  return path.join(cloneDir, WORKTREES, branch);
+}
+
 // A worktree for `branch` under <clone>/.worktrees/<branch>, created from the base when the branch is new.
 export function ensureWorktree(cloneDir, branch, base) {
-  const target = path.join(cloneDir, WORKTREES, branch);
+  const target = worktreePath(cloneDir, branch);
   if (fs.existsSync(path.join(target, '.git'))) return target;
   fs.mkdirSync(path.join(cloneDir, WORKTREES), { recursive: true });
   const ignore = path.join(cloneDir, WORKTREES, '.gitignore');
@@ -148,7 +153,9 @@ export function push(dir, branch, { state, repoName, ticket = state.ticket }) {
   if (!pushAllowed(state, repoName, branch, ticket)) {
     throw new AutopilotError('scope-violation', `push of ${branch} in ${repoName} is outside the ticket's frozen scope`);
   }
-  must(dir, ['push', '--quiet', '-u', 'origin', branch], 'push');
+  // git's own check too, then a full refspec: the name can only ever be a branch of the same name.
+  must(dir, ['check-ref-format', '--branch', branch], 'check branch name');
+  must(dir, ['push', '--quiet', '-u', 'origin', `refs/heads/${branch}:refs/heads/${branch}`], 'push');
 }
 
 // Short shas of the commits on the local base that origin/<base> does not have, oldest first;

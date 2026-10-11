@@ -490,10 +490,19 @@ export function freezeScope(state, { specRepos = [], planRepos = [], knownRepos 
   return { ...state, scope: { proposed: spec, frozen } };
 }
 
+// A ticket branch name: `<ID>-` and then letters, digits, `.`, `_` and `-` only, so the name read
+// from the state file can never be a refspec (`:`), a path (`/`), a range (`..`) or an option.
+export function isTicketBranch(ticket, branch) {
+  if (typeof branch !== 'string' || typeof ticket !== 'string' || !ticket || ticket.startsWith('-')) return false;
+  const escaped = ticket.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!new RegExp(`^${escaped}-[A-Za-z0-9._-]+$`).test(branch)) return false;
+  return !branch.includes('..') && !branch.endsWith('.') && !branch.endsWith('.lock');
+}
+
 // A push is allowed only to a `<ID>-` branch, to the docs repository or a frozen repository.
 // `ticket` is the id the command validated; the state file's copy is not trusted for this.
 export function pushAllowed(state, repoName, branch, ticket = state.ticket) {
-  if (!String(branch).startsWith(`${ticket}-`)) return false;
+  if (!isTicketBranch(String(ticket), branch)) return false;
   if (repoName === 'docs') return true;
   return Array.isArray(state.scope?.frozen) && state.scope.frozen.includes(repoName);
 }

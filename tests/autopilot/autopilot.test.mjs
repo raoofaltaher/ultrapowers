@@ -1074,6 +1074,64 @@ const approveThenExecute = (ws) => {
   git(ws.root, 'commit', '-q', '-m', 'feat: the work');
 };
 
+// Security: the state file is writable from inside a stage; the engine takes neither the mode
+// nor the repositories it pushes from it.
+test('a state file that says mode full under a gated project does not self-approve', () => {
+  const ws = workspace();
+  throughPlan(ws);
+  writeStateFile(ws, { ...state(ws), mode: 'full' });
+  const p = run(ws, ['packet', 'GH-16']);
+  assert.equal(p.code, 0, p.stdout + p.stderr);
+  assert.equal(p.json.mode, 'gated');
+  assert.equal(state(ws).approval, null);
+  assert.ok(!logLines(ws).some((l) => l.event === 'approved'), 'no engine approval in the log');
+  const n = run(ws, ['next', 'GH-16']);
+  assert.deepEqual([n.json.action, n.json.reason], ['wait', 'awaiting-approval']);
+  // A full-mode approval written into the state file does not open execute either.
+  const s = state(ws);
+  writeStateFile(ws, { ...s, scope: { ...s.scope, frozen: ['.'] }, approval: { mode: 'full', actor: 'engine', eventId: null, at: s.packet.postedAt, docsTip: s.packet.docsTip, tips: s.packet.tips } });
+  const b = run(ws, ['begin', 'GH-16', 'execute']);
+  assert.equal(b.code, 2, b.stdout);
+  assert.equal(b.json.error.code, 'approval-unverified');
+});
+
+test('pr refuses a state file whose repositories, scope or branch were rewritten', () => {
+  const ws = workspace({ nested: true });
+  throughPlan(ws, { scope: ['backend'] });
+  run(ws, ['packet', 'GH-16']);
+  ws.setMap({
+    ...approvedBy('alice'),
+    'pr create -R o/r --head GH-16-fix-it-now-please --base main': { stdout: 'https://github.com/o/r/pull/9\n' },
+    'pr create -R o/backend --head GH-16-fix-it-now-please --base main': { stdout: 'https://github.com/o/backend/pull/3\n' },
+  });
+  run(ws, ['next', 'GH-16']);
+  assert.equal(run(ws, ['begin', 'GH-16', 'execute']).code, 0);
+  const wt = path.join(ws.root, 'backend', '.worktrees', 'GH-16-fix-it-now-please');
+  fs.writeFileSync(path.join(wt, 'feature.js'), 'ok\n');
+  git(wt, 'add', '-A');
+  git(wt, 'commit', '-q', '-m', 'feat: backend work');
+  run(ws, ['end', 'GH-16', 'execute', '--result', JSON.stringify({ ok: true })]);
+  const good = state(ws);
+  const refused = (s, field) => {
+    writeStateFile(ws, s);
+    const r = run(ws, ['pr', 'GH-16']);
+    assert.equal(r.code, 2, r.stdout + r.stderr);
+    assert.equal(r.json.error.code, 'state-tampered', r.stdout);
+    assert.match(r.json.error.message, field);
+    writeStateFile(ws, good);
+  };
+  refused({ ...good, repos: [...good.repos, { ...good.repos[0], name: 'evil' }] }, /repos\[\]\.name/);
+  refused({ ...good, scope: { ...good.scope, frozen: ['backend', '.'] } }, /scope\.frozen/);
+  refused({ ...good, docs: { ...good.docs, branch: 'GH-16-fix:main' } }, /docs\.branch/);
+  refused({ ...good, repos: [{ ...good.repos[0], branch: 'GH-16-fix:main' }] }, /repos\[\]\.branch/);
+  // A rewritten worktree path is not followed: the engine recomputes it and the PR opens.
+  writeStateFile(ws, { ...good, repos: [{ ...good.repos[0], worktree: ws.root }] });
+  const r = run(ws, ['pr', 'GH-16']);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.match(git(ws.backendOrigin, 'branch', '--list', 'GH-16-fix-it-now-please'), /GH-16/);
+  assert.doesNotMatch(git(ws.backendOrigin, 'log', '--format=%s', '-n', '1', 'main'), /backend work/, 'main is untouched');
+});
+
 test('the changes label is taken when the changes stage begins, so the gate does not loop', () => {
   const ws = workspace();
   throughPlan(ws);

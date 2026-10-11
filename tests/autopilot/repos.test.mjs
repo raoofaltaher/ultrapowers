@@ -146,6 +146,14 @@ test('push refuses a branch outside <ID>- or a repo outside scope.frozen', () =>
   assert.equal(sh(origin, 'branch', '--list', 'GH-16-x'), '', 'the remote has no such branch');
 });
 
+test('push refuses a refspec-shaped branch before any git call', () => {
+  // A directory that does not exist: any git call would fail as git-failed, not scope-violation.
+  const nowhere = path.join(os.tmpdir(), 'autopilot-no-such-dir', String(Date.now()));
+  const S = { ticket: 'GH-12', scope: { proposed: ['.'], frozen: ['.'] } };
+  assert.throws(() => push(nowhere, 'GH-12-fix:main', { state: S, repoName: 'docs', ticket: 'GH-12' }), { code: 'scope-violation' });
+  assert.throws(() => push(nowhere, 'GH-12-fix:main', { state: S, repoName: '.', ticket: 'GH-12' }), { code: 'scope-violation' });
+});
+
 test('push succeeds inside scope and for the docs repository', () => {
   const { clone, origin } = fixture();
   ensureBranch(clone, 'GH-16-x', 'dev');

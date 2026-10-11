@@ -440,6 +440,18 @@ test('freezeScope accepts the documents root beside code repositories', () => {
   assert.throws(() => freezeScope(S, { specRepos: [], planRepos: [], knownRepos: ['.', 'backend'] }), { code: 'no-scope' }, 'nested: the spec must name its repositories');
 });
 
+// Security: a branch from the state file must not be a refspec, a path or a range.
+test('pushAllowed refuses a branch that is not a plain <ID>- branch name', () => {
+  const S = stateWith({ scope: { proposed: ['.'], frozen: ['.', 'backend'] } });
+  for (const b of ['GH-16-fix:main', 'GH-16-x:refs/heads/main', 'GH-16-a/b', 'GH-16-a..b', 'GH-16-', 'GH-16- x', '+GH-16-x', 'GH-16-x\n', 'GH-16-x.lock', 'GH-16-x.']) {
+    assert.equal(pushAllowed(S, 'docs', b, 'GH-16'), false, JSON.stringify(b));
+    assert.equal(pushAllowed(S, 'backend', b, 'GH-16'), false, JSON.stringify(b));
+  }
+  assert.equal(pushAllowed({ ...S, ticket: 'GH-12' }, 'docs', 'GH-12-fix:main'), false);
+  assert.equal(pushAllowed(S, 'docs', 'GH-16-fix-it.v2_x', 'GH-16'), true);
+  assert.equal(pushAllowed(S, 'docs', 'ODOO-13627-integration', 'ODOO-13627'), true);
+});
+
 test('pushAllowed takes the validated ticket id, not the state file', () => {
   const S = stateWith({ scope: { proposed: ['.'], frozen: ['.'] } });
   assert.equal(pushAllowed({ ...S, ticket: 'main' }, 'docs', 'main-x', 'GH-16'), false, 'a tampered state cannot rename the ticket');

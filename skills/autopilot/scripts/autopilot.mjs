@@ -20,11 +20,11 @@ import {
   nextStage, acquireLock, releaseLock, liveLock, readLock, lockPath,
   writeActiveMarker, clearActiveMarker, readActiveMarker, verifyApproval, observeTags,
   renderPacket, assumptionsFrom, scopeFrom, freezeScope, pushAllowed, loadSecretsFile, packetId, hashLine,
-  reviewFolderProblem,
+  reviewFolderProblem, isTicketBranch,
 } from './autopilot-lib.mjs';
 import { trackerFor } from './tracker.mjs';
 import { HARNESSES, GUARDED_HARNESSES, PLUGIN_ROOT } from './harnesses.mjs';
-import { ensureBranch, ensureOnTicketBranch, ensureWorktree, remoteHead, forgeFor, tip, workTip, commitPaths, push, repoDirs, baseAhead, pathsChanged, git } from './repos.mjs';
+import { ensureBranch, ensureOnTicketBranch, ensureWorktree, worktreePath, ticketBranch, remoteHead, forgeFor, tip, workTip, commitPaths, push, repoDirs, baseAhead, pathsChanged, git } from './repos.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PACKET_TEMPLATE = path.join(HERE, '..', 'templates', 'packet.md');
@@ -218,12 +218,15 @@ async function blockStage(ctx, id, door, stage, message, { label = true } = {}) 
 // A recorded approval is checked again before execute and before the pull request: the event
 // is still on the tracker's timeline with its actor, and it belongs to the packet that was approved.
 // A full-mode approval has no event; it belongs to its packet all the same.
-async function recheckApproval(ctx, state) {
+async function recheckApproval(ctx, state, mode = null) {
   const a = state.approval;
   if (!a || !state.packet || a.docsTip !== state.packet.docsTip) {
     throw new AutopilotError('approval-unverified', `${state.ticket}: the recorded approval does not belong to the current packet`);
   }
-  if (a.mode === 'full') return;
+  if (a.mode === 'full') {
+    if (mode !== 'full') throw new AutopilotError('approval-unverified', `${state.ticket}: the recorded approval is a full-mode one and the ticket's mode is ${mode ?? 'unknown'}`);
+    return;
+  }
   // A last-writer approval (Odoo without tag tracking, spec D3) has no timeline event to find again:
   // the engine's own tag removal at the gate made it the task's last writer. What can be checked is
   // the hash-chained log: intact, and holding the `approved` line this record claims.
@@ -450,6 +453,9 @@ async function postPacket(ctx, opts, state) {
   // repository this workspace does not have, blocks the gate here instead of at the approval.
   const preview = previewScope(ctx, state);
   state.scope = { ...state.scope, proposed: preview.frozen.scope.frozen };
+  // The mode comes from the project, the permitted labels and the argument, as in next; the state
+  // file is writable from inside a stage, so its `mode` never decides the engine's own approval.
+  state.mode = await derivedMode(ctx, opts);
   writeState(ctx.root, opts.id, state);
   appendLog(ctx.root, opts.id, { stage: 'gate', event: 'started', actor: 'engine', trigger: opts.door, repo: 'docs' });
   commitState(ctx, opts.id, `chore(${opts.id}): autopilot gate started`);
@@ -506,6 +512,40 @@ async function postPacket(ctx, opts, state) {
   clearActiveMarker(ctx.root);
   releaseLock(ctx.root, opts.id);
   return { ticket: opts.id, stage: 'gate', packet: state.packet, lines: body.split('\n').length, mode: state.mode };
+}
+
+// The mode next decides with: the argument, then a permitted `up:mode:` label, then the project.
+async function derivedMode(ctx, opts) {
+  return modeFor(ctx.marker.autopilot ?? { mode: 'off' }, { arg: opts.mode, labels: await permittedLabels(ctx) });
+}
+
+function tampered(field, detail) {
+  return new AutopilotError('state-tampered', `tasks/<ID>/autopilot.json: ${field} ${detail}; the engine does not take it from the state file. Restore the file from git history and run again`);
+}
+
+// The fields of the state file that choose what is pushed and where pull requests open, checked
+// against what the engine derives itself: the frozen scope from the committed spec and plan, the
+// repositories from repos[] of .agents/ultrapowers.json, the worktrees from the engine's convention.
+function trustState(ctx, id, state) {
+  if (!isTicketBranch(id, state.docs?.branch)) throw tampered('docs.branch', `(${JSON.stringify(state.docs?.branch)}) is not a ${id}- branch name`);
+  const current = ticketBranch(ctx.dirs.docs, id);
+  if (current && current !== state.docs.branch) throw tampered('docs.branch', `(${state.docs.branch}) is not the ticket's branch ${current}`);
+  let derived;
+  try {
+    derived = previewScope(ctx, state).frozen.scope.frozen;
+  } catch (err) {
+    throw tampered('scope.frozen', `cannot be derived from the committed spec and plan (${err.code}: ${err.message})`);
+  }
+  const frozen = Array.isArray(state.scope?.frozen) ? state.scope.frozen : [];
+  if (frozen.length !== derived.length || frozen.some((n) => !derived.includes(n))) {
+    throw tampered('scope.frozen', `(${frozen.join(', ')}) differs from the scope of the committed spec and plan (${derived.join(', ')})`);
+  }
+  for (const r of state.repos ?? []) {
+    const dir = typeof r?.name === 'string' && r.name !== '.' && Object.hasOwn(ctx.dirs.repos, r.name) ? ctx.dirs.repos[r.name] : undefined;
+    if (!dir) throw tampered('repos[].name', `(${JSON.stringify(r?.name)}) is not a repository of repos[] in .agents/ultrapowers.json`);
+    if (r.branch !== state.docs.branch) throw tampered('repos[].branch', `(${JSON.stringify(r.branch)}) of ${r.name} is not the ticket branch ${state.docs.branch}`);
+    if (r.worktree) r.worktree = worktreePath(dir, r.branch);
+  }
 }
 
 // The explicit form of the approval check; `next` does the same when it finds one.
@@ -602,7 +642,8 @@ async function runPr(opts) {
   }
   const qaOn = qaConfigured(ctx.marker);
   if (qaOn && !state.qa) throw new AutopilotError('qa-missing', `${opts.id}: QA is configured for this project and no verdict was recorded; no pull request opens without one`);
-  await recheckApproval(ctx, state);
+  await recheckApproval(ctx, state, await derivedMode(ctx, opts));
+  trustState(ctx, opts.id, state);
   if (planChangedSince(ctx, state)) throw new AutopilotError('plan-changed', `${opts.id}: specs/${opts.id} or plans/${opts.id} changed after the approval at ${state.approval.docsTip}; the gate must approve them again`);
   const lock = acquireLock(ctx.root, opts.id, opts.door, opts.pid);
   if (!lock.ok) throw new AutopilotError('locked', `${opts.id} is being run by the ${lock.door} door`);
@@ -820,7 +861,8 @@ async function runBegin(opts) {
         throw new AutopilotError('not-approved', `${opts.id} has no verified approval; execute follows one`);
       }
       try {
-        await recheckApproval(ctx, state);
+        await recheckApproval(ctx, state, await derivedMode(ctx, opts));
+        trustState(ctx, opts.id, state);
       } catch (err) {
         releaseLock(ctx.root, opts.id);
         throw err;
