@@ -173,7 +173,7 @@ hook_dir_node="$hook_dir"
 if command -v cygpath >/dev/null 2>&1; then hook_dir_node="$(cygpath -m "$hook_dir" 2>/dev/null || printf '%s' "$hook_dir")"; fi
 
 parse_status=""; tool=""; cmd=""; wpath=""; url=""; event_cwd=""; allowed=""; forbidden=""; ticket=""; keypaths=""; tracker_hosts=""; ignore_case="0"
-wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""; role_vars=""; ro_role=""; marker_age=""; marker_stage=""; known_issues=""
+wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""; role_vars=""; ro_role=""; marker_age=""; marker_stage=""; known_issues=""; workdir_state=""; workdir_real=""
 {
   IFS= read -r -d '' parse_status || true
   IFS= read -r -d '' tool || true
@@ -196,6 +196,8 @@ wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""; role_vars=""; ro_r
   IFS= read -r -d '' marker_age || true
   IFS= read -r -d '' marker_stage || true
   IFS= read -r -d '' known_issues || true
+  IFS= read -r -d '' workdir_state || true
+  IFS= read -r -d '' workdir_real || true
 } < <(printf '%s' "$event" | node -e '
 const fs = require("node:fs");
 const path = require("node:path");
@@ -302,6 +304,17 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
   try { if (str(ev.cwd) && fs.statSync(guard.toNative(str(ev.cwd))).isDirectory()) base = str(ev.cwd); } catch (e) { /* keep the process cwd */ }
   const rootReal = guard.realCanonical(root, root);
   const ignoreCase = guard.rootIgnoresCase(root);
+  // A tool call may carry its own working directory (OpenCode workdir, Hermes working_directory,
+  // Gemini dir_path, Antigravity Cwd, Cursor and Codex cwd): relative targets resolve against it,
+  // and one outside the project is reported to the shell rules.
+  let workdirState = "";
+  let workdirReal = "";
+  for (const key of ["workdir", "working_directory", "workingDirectory", "dir_path", "Cwd", "cwd"]) {
+    if (!str(inp[key]).trim()) continue;
+    workdirReal = guard.realCanonical(str(inp[key]).trim(), base);
+    if (guard.rel(workdirReal, rootReal, ignoreCase) === null) workdirState = "outside"; else { workdirState = "ok"; base = workdirReal; }
+    break;
+  }
   const resolve = (p) => {
     const real = guard.realCanonical(p, base);
     const inner = guard.rel(real, rootReal, ignoreCase);
@@ -330,6 +343,7 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
     markerAge, markerStage,
     // The QA baseline file (qa.knownIssues) inside the project, "" when it is not set or lies outside.
     str(qa.knownIssues).trim() ? resolve(path.resolve(root, str(qa.knownIssues).trim())).rel.replace(/^\.\//, "") : "",
+    workdirState, workdirReal,
   ].join("\0") + "\0");
 }, (e) => {
   process.stdout.write(["noresolver:" + String(e.message).split("\n")[0], "", "", "", "", "", "", "", ""].join("\0") + "\0");
@@ -354,6 +368,10 @@ if [ -n "$event_cwd" ]; then
     fi
   fi
 fi
+
+# The call's own working directory (workdir, working_directory, dir_path, Cwd): the write analyzer
+# resolves relative targets against it, as the node block did for the file tools.
+[ "$workdir_state" = "ok" ] && base_cwd="$(norm_path "$workdir_real")"
 
 tool_lc="$(lower "$tool")"
 
@@ -423,6 +441,12 @@ case "$tool" in
         [ -n "$wpath" ] && is_write_tool=1 ;;
     esac ;;
 esac
+
+# A command or a write run from a directory outside the project cannot be judged by the project's
+# rules: its relative targets land elsewhere.
+if [ "$workdir_state" = "outside" ] && { [ -n "$cmd" ] || [ "$is_write_tool" -eq 1 ]; }; then
+  deny "the call's working directory ($workdir_real) is outside the project $root; commands and writes run from outside it cannot be verified"
+fi
 
 # Codex and Droid apply edits through a patch (apply_patch, ApplyPatch): the patch text names the
 # files. Every named file is checked as a write; the patch is not a shell command, so the
