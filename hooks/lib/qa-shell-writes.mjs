@@ -54,8 +54,14 @@ const WRITE_PROGRAMS = new Set(['rm', 'unlink', 'mv', 'cp', 'tee', 'sed', 'perl'
 
 // ---------- tokenizer ----------
 // A word is a list of parts: { t: 'lit', v } | { t: 'var', v: NAME } | { t: 'dyn' }.
+// toks.subs lists every command substitution, backtick and process substitution the text holds,
+// wherever it sits (a word, a quoted string, an arithmetic or ${...} expansion, an unquoted
+// here-document body): { kind: 'cmd', src } when its inner text was cut out, { kind: 'proc' } for
+// <( ) and >( ), and { kind: 'opaque' } when the inner text cannot be cut out reliably.
+const SUB_RE = /\$\(|`/;
 function tokenize(src) {
   const toks = [];
+  toks.subs = [];
   let i = 0;
   let word = null;
   const heredocs = [];
@@ -73,33 +79,56 @@ function tokenize(src) {
     if (next === '(') { // $( ... ) or $(( ... ))
       let depth = 0; let j = i + 1;
       for (; j < src.length; j++) { if (src[j] === '(') depth++; else if (src[j] === ')') { depth--; if (depth === 0) break; } }
+      const inner = src.slice(i + 2, Math.min(j, src.length));
+      // $(( ... )) is arithmetic, unless it holds a substitution of its own.
+      if (src[i + 2] === '(') { if (SUB_RE.test(inner)) toks.subs.push({ kind: 'opaque' }); }
+      else toks.subs.push(j >= src.length ? { kind: 'opaque' } : { kind: 'cmd', src: inner });
       i = j + 1; push({ t: 'dyn' }); return;
     }
     if (next === '{') {
       const j = src.indexOf('}', i + 2);
       const name = j === -1 ? '' : src.slice(i + 2, j);
+      // ${X:-$(cmd)}: the `}` found may sit inside the substitution, so its text is not cut out.
+      if (SUB_RE.test(j === -1 ? src.slice(i + 2) : name)) toks.subs.push({ kind: 'opaque' });
       i = j === -1 ? src.length : j + 1;
       push(/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? { t: 'var', v: name } : { t: 'dyn' });
       return;
     }
+    // $'...' (ANSI-C quoting: \x2e\x2e is `..`) and $"..." (a translated string) are expanded by the
+    // shell, so their words are never literal text. $"..." is read as a double-quoted string after
+    // the dynamic mark, so a substitution inside it is still seen.
+    if (!inDouble && next === "'") {
+      let j = i + 2;
+      while (j < src.length && src[j] !== "'") j += src[j] === '\\' ? 2 : 1;
+      i = j + 1; push({ t: 'dyn' }); return;
+    }
+    if (!inDouble && next === '"') { i += 1; push({ t: 'dyn' }); return; }
     const m = /^[A-Za-z_][A-Za-z0-9_]*/.exec(src.slice(i + 1));
     if (m) { i += 1 + m[0].length; push({ t: 'var', v: m[0] }); return; }
     // $! is the pid of the last background command: a variable, not a substitution.
     if (next === '!') { i += 2; push({ t: 'var', v: '!' }); return; }
     if (next && /[0-9@*#?$!-]/.test(next)) { i += 2; push({ t: 'dyn' }); return; }
-    i += 1; lit('$'); void inDouble;
+    i += 1; lit('$');
+  };
+  const backtick = () => { // at src[i] === '`'
+    const j = src.indexOf('`', i + 1);
+    toks.subs.push(j === -1 ? { kind: 'opaque' } : { kind: 'cmd', src: src.slice(i + 1, j) });
+    i = j === -1 ? src.length : j + 1;
+    push({ t: 'dyn' });
   };
   while (i < src.length) {
     const c = src[i];
     if (c === '\n') {
       op(';'); i++;
       while (heredocs.length) { // skip each pending here-document body
-        const delim = heredocs.shift();
+        const { delim, quoted } = heredocs.shift();
         for (;;) {
           const nl = src.indexOf('\n', i);
           const line = src.slice(i, nl === -1 ? src.length : nl);
           i = nl === -1 ? src.length : nl + 1;
           if (line.replace(/^\t+/, '') === delim || nl === -1) break;
+          // An unquoted delimiter: the body is expanded, and a substitution in it runs.
+          if (!quoted && SUB_RE.test(line)) toks.subs.push({ kind: 'opaque' });
         }
       }
       continue;
@@ -114,14 +143,16 @@ function tokenize(src) {
       while (i < src.length && src[i] !== '"') {
         if (src[i] === '\\' && '"\\$`\n'.includes(src[i + 1] || '')) { lit(src[i + 1]); i += 2; continue; }
         if (src[i] === '$') { readVar(true); continue; }
-        if (src[i] === '`') { const j = src.indexOf('`', i + 1); i = j === -1 ? src.length : j + 1; push({ t: 'dyn' }); continue; }
+        if (src[i] === '`') { backtick(); continue; }
         lit(src[i]); i++;
       }
       i++; continue;
     }
     if (c === '$') { readVar(false); continue; }
-    if (c === '`') { const j = src.indexOf('`', i + 1); i = j === -1 ? src.length : j + 1; push({ t: 'dyn' }); continue; }
+    if (c === '`') { backtick(); continue; }
     // operators; a word made only of digits right before < or > is a file descriptor
+    // <( ... ) and >( ... ) are process substitutions: the walk reads the parenthesis as a subshell.
+    if ((c === '>' || c === '<') && src[i + 1] === '(') toks.subs.push({ kind: 'proc' });
     if (c === '>' || c === '<') {
       let fd = null;
       if (word && word.length === 1 && word[0].t === 'lit' && /^[0-9]+$/.test(word[0].v)) { fd = word[0].v; word = null; }
@@ -133,9 +164,11 @@ function tokenize(src) {
       op(v);
       toks[toks.length - 1].fd = fd;
       if (v === '<<') { // remember the delimiter so the body is skipped at the next newline
+        // The delimiter word with its quotes and backslashes removed (<<'EOF', <<"EOF", <<\EOF, <<E"O"F
+        // all end at a line EOF); any quote or backslash in it leaves the body unexpanded.
         let j = i; while (src[j] === ' ' || src[j] === '\t') j++;
-        const m = /^(['"]?)([^\s'"<>;&|()]+)\1/.exec(src.slice(j));
-        if (m) heredocs.push(m[2]);
+        const m = /^(?:'[^']*'|"[^"]*"|\\.|[^\s<>;&|()'"\\])+/.exec(src.slice(j));
+        if (m) heredocs.push({ delim: m[0].replace(/\\(.)/g, '$1').replace(/['"]/g, ''), quoted: /['"\\]/.test(m[0]) });
       }
       continue;
     }
@@ -817,6 +850,7 @@ function huntPipAudit(words, refuse, allow) {
 
 // ---------- analysis ----------
 const ENV_DUMP = 'dumping the environment is blocked; check a variable with ${NAME:+set} instead';
+const SUBST_WHY = 'a command substitution cannot be analysed; spell the command out (run the inner command as its own call)';
 // A stage reads no tracker credential and nothing named like a secret out of the environment.
 const TRACKER_VARS = /^(GH_TOKEN|GITHUB_TOKEN|GITLAB_TOKEN|GLAB_TOKEN|ODOO_API_KEY|ULTRAPOWERS_STAGE_.*)$/i;
 const SECRET_VARS = /TOKEN|KEY|SECRET|PASS|CREDENTIAL|AUTH|COOKIE|SESSION|PRIVATE/i;
@@ -938,6 +972,26 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     if (depth > 4) return deny('the command nests shells too deeply to be verified');
     let dir = startDir;
     const toks = tokenize(src);
+    // A command substitution runs a command of its own inside a word. A QA run and a hunt refuse
+    // every one: the inner text is cut out by a scan that is not a shell parser, so a substitution
+    // it misreads could hide a write. An autopilot stage writes anywhere in the workspace, so its
+    // inner commands are walked under the same rules (the code-running and write-capable programs
+    // the profile gates are judged there), and what cannot be cut out cleanly is refused.
+    if (toks.subs.length) {
+      if (!autopilot) return deny(SUBST_WHY);
+      for (const s of toks.subs) {
+        if (s.kind === 'proc') continue; // read as a subshell by the walk below
+        if (s.kind !== 'cmd' || /\$\(|`|<\(|>\(/.test(s.src)) return deny(`${SUBST_WHY} (a substitution inside a here-document, a \${...} or an arithmetic expansion, or a nested one)`);
+        // An odd quote count means the scan cut the text at the wrong parenthesis.
+        const quotes = (q) => (s.src.replace(/\\./g, '').split(q).length - 1) % 2;
+        if (quotes("'") || quotes('"')) return deny(`${SUBST_WHY} (its quotes do not balance)`);
+        // The substitution runs where the command is at that point; a cd earlier in it makes that unknown.
+        const at = toks.some((t) => t.k === 'w' && ['cd', 'pushd', 'popd'].includes(progName(resolveWord(t) || ''))) ? null : startDir;
+        const saved = { ...walkEnv };
+        try { walk(s.src, at, container, depth + 1); } finally { Object.assign(walkEnv, saved); }
+        if (reason) return;
+      }
+    }
     let cmd = [];
     const flush = () => { if (cmd.length) simple(cmd); cmd = []; };
     // countWords is false when a wrapper's tail is re-run and the outer command counted it already.
@@ -1322,9 +1376,14 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       }
       if (prog === 'eval') {
         if (rest.some((x) => x.v === null)) return deny('eval runs a command built from a variable; it cannot be verified');
-        walkNested(rest.map((x) => x.v).join(' '), dir, container, depth + 1, pgUser);
+        const text = rest.map((x) => x.v).join(' ');
+        walkNested(text, dir, container, depth + 1, pgUser);
+        // eval runs in the current shell: a cd inside it moves every later command.
+        if (/(^|[\s;&|(])(cd|pushd|popd)(\s|$|[;&|)])/.test(text)) dir = null;
         return;
       }
+      // A sourced script runs in the current shell and may change its directory.
+      if (prog === 'source' || prog === '.') { dir = null; return; }
       if (prog === 'helm') {
         // Not modelled: its read verbs (template, install --dry-run, lint, show) take --post-renderer BINARY.
         return deny('helm can run a post-renderer; a QA run or a stage has no use for it');
@@ -1867,9 +1926,41 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         if (!explicit) checkTarget({ k: 'w', parts: [{ t: 'lit', v: 'download' }] }, dir, 'wget (writes into the working directory)', container);
       }
     };
+    // The tracked directory follows the shell's scoping: a subshell ( ), each side of a pipeline and
+    // a backgrounded command run in a child, so a cd inside one of them does not reach the next
+    // command. pipeBase is the directory the current pipeline started in, listBase the one the
+    // current and-or list started in; a ( or { group saves both and the ) or } restores them (and
+    // the ) the directory too: a brace group runs in the current shell).
+    let pipeBase = dir;
+    let listBase = dir;
+    let inPipe = false;
+    const frames = [];
+    const endPipe = () => { if (inPipe) { dir = pipeBase; inPipe = false; } };
+    const open = (paren) => { frames.push({ paren, dir, pipeBase, listBase, inPipe }); pipeBase = dir; listBase = dir; inPipe = false; };
+    const close = () => {
+      const f = frames.pop();
+      if (!f) return;
+      endPipe();
+      if (f.paren) dir = f.dir;
+      ({ pipeBase, listBase, inPipe } = f);
+    };
     for (const t of toks) {
-      if (t.k === 'op' && [';', '&&', '||', '|', '&', '(', ')'].includes(t.v)) flush();
-      else cmd.push(t);
+      if (t.k === 'op' && [';', '&&', '||', '|', '&', '(', ')'].includes(t.v)) {
+        flush();
+        if (t.v === '|') { dir = pipeBase; inPipe = true; }
+        else if (t.v === '&') { inPipe = false; dir = listBase; pipeBase = dir; }
+        else if (t.v === ';') { endPipe(); pipeBase = dir; listBase = dir; }
+        else if (t.v === '&&' || t.v === '||') { endPipe(); pipeBase = dir; }
+        else if (t.v === '(') open(true);
+        else close();
+        continue;
+      }
+      if (t.k === 'w' && cmd.length === 0) {
+        const v = resolveWord(t);
+        if (v === '{') open(false);
+        else if (v === '}') close();
+      }
+      cmd.push(t);
     }
     flush();
   };

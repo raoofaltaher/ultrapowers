@@ -125,10 +125,13 @@ for f in "$FIXTURES"/*.json; do
   code="${result%%|*}"
   rest="${result#*|}"
   err="${rest%%|*}"
+  # A fixture may carry a top-level "reason" (the hook ignores it): the deny must hold that text.
+  want=""
+  if [[ "$event" =~ \"reason\":\"([^\"]*)\" ]]; then want="${BASH_REMATCH[1]}"; fi
   case "$name" in
     deny_*)
       if [[ "$code" -eq 2 ]] && printf '%s' "$err" | grep -q '^QA-GUARDRAIL DENY: '; then
-        pass "$name denied"
+        if [[ -n "$want" && "$err" != *"$want"* ]]; then fail "$name is denied for another reason than '$want' (stderr: $err)"; else pass "$name denied"; fi
       else
         fail "$name denied (exit $code, stderr: $err)"
       fi ;;

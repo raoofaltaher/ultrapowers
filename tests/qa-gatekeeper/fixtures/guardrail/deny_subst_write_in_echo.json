@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"echo $(echo x > src/app.js)"},"reason":"a command substitution cannot be analysed"}

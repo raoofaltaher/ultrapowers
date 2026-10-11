@@ -495,5 +495,14 @@
   {"name":"deny_env_gate_env_wrapper_perl","event":{"tool_name":"Bash","tool_input":{"command":"env FOO=1 perl x.pl"}}},
   {"name":"allow_env_ap_database_url_npm_test","event":{"tool_name":"Bash","tool_input":{"command":"DATABASE_URL=x npm test"}}},
   {"name":"allow_env_ap_exported_then_non_interpreter","event":{"tool_name":"Bash","tool_input":{"command":"export FOO=1; ls"}}},
-  {"name":"allow_env_ap_safe_names_everywhere","event":{"tool_name":"Bash","tool_input":{"command":"LC_ALL=C CI=1 git status"}}}
+  {"name":"allow_env_ap_safe_names_everywhere","event":{"tool_name":"Bash","tool_input":{"command":"LC_ALL=C CI=1 git status"}}},
+  {"name":"deny_subst_write_protected","reason":"protected path","event":{"tool_name":"Bash","tool_input":{"command":"echo $(echo x > .github/workflows/ci.yml)"}}},
+  {"name":"deny_backtick_write_protected","reason":"protected path","event":{"tool_name":"Bash","tool_input":{"command":"echo `cp x .github/workflows/ci.yml`"}}},
+  {"name":"deny_subst_inline_interpreter","reason":"inline interpreter","event":{"tool_name":"Bash","tool_input":{"command":"echo \"$(python3 -c 'print(1)')\""}}},
+  {"name":"deny_subst_in_heredoc_body","reason":"substitution","event":{"tool_name":"Bash","tool_input":{"command":"cat <<EOF > repo-a/notes.md\n$(cp x .github/workflows/ci.yml)\nEOF"}}},
+  {"name":"deny_subst_in_param_default","reason":"substitution","event":{"tool_name":"Bash","tool_input":{"command":"echo ${X:-$(cp x .github/workflows/ci.yml)}"}}},
+  {"name":"allow_subst_read_only","event":{"tool_name":"Bash","tool_input":{"command":"echo \"head: $(git rev-parse HEAD)\" > repo-a/head.txt"}}},
+  {"name":"allow_subst_date_in_commit","event":{"tool_name":"Bash","tool_input":{"command":"git commit -m \"wip $(date +%F)\""}}},
+  {"name":"deny_cd_in_subshell_then_protected_write","reason":"protected path","event":{"tool_name":"Bash","tool_input":{"command":"(cd repo-a); echo x > AGENTS.md"}}},
+  {"name":"deny_ansi_c_quote_target","reason":"cannot be verified","event":{"tool_name":"Bash","tool_input":{"command":"echo x > $'.github'/workflows/ci.yml"}}}
 ]
