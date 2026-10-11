@@ -491,6 +491,7 @@ Everything above the original methodology, built from real daily work across man
 **Quality gate** *(beta)*
 - **qa-specialist** - Run the seven-lane QA gate for a ticket and leave one verdict in `reviews/<ID>/QA-REPORT.md`
 - **task-review** - Review a ticket's finished work end to end (code review with the test-first and root-cause lenses, then the QA gate), write `reviews/<ID>/TASK-REVIEW.md`, and with `--post` comment the full reports on the tracker
+- **vulnerability-hunt** - Hunt a ticket's change or the whole tree for CVEs, secrets and insecure patterns with the installed audit tools and a verifier for every High or Medium finding, write `reviews/<ID>/SECURITY-REPORT.md`, and with `--post` comment it on the tracker
 - **qa-lane-1-ui**, **qa-lane-2-logs**, **qa-lane-3-api**, **qa-lane-4-db**, **qa-lane-5-observability**, **qa-lane-6-suites**, **qa-lane-7-content**, **qa-report** - The lanes and the report format the QA agent uses; not invoked directly
 
 **Testing**

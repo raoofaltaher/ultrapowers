@@ -226,6 +226,17 @@ else
   fail "Muse manifest registers both team-memory hooks"
 fi
 
+# The Muse manifest lists the vulnerability-hunt skill, next to the other quality-gate skills.
+if node -e '
+const m = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+const s = m.capabilities.skills.find((x) => x.id === "vulnerability-hunt");
+process.exit(s && s.path === "skills/vulnerability-hunt/SKILL.md" ? 0 : 1);
+' "$REPO_ROOT/.muse-plugin/plugin.json"; then
+  pass "Muse manifest lists vulnerability-hunt"
+else
+  fail "Muse manifest lists vulnerability-hunt"
+fi
+
 # The hook scripts are bash ([[ =~ ]], read -d, ${s//}, +=); sh is dash on many systems.
 if node -e '
 const m = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
