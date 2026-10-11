@@ -576,7 +576,8 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
             args = args.slice(1);
           }
         } else if (prog === 'timeout') {
-          while (args.length && args[0].v && args[0].v.startsWith('-')) args = args.slice(1);
+          // -s SIGNAL / --signal SIGNAL and -k DURATION / --kill-after DURATION take the next word.
+          while (args.length && args[0].v && args[0].v.startsWith('-')) args = args.slice(['-s', '-k', '--signal', '--kill-after'].includes(args[0].v) ? 2 : 1);
           args = args.slice(1);
         } else if (prog === 'sudo') {
           // sudo -u <user>: with peer authentication the OS user is the database role.
