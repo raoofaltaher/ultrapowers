@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"TOKEN=\"$(sed -n 's/.*\"access_token\":\"\\([^\"]*\\)\".*/\\1/p' {{ROOT}}/.ultrapowers/qa-token.json)\"; curl -s -o {{ROOT}}/.ultrapowers/qa-api-items.txt -w '%{http_code}\\n' -H \"Authorization: Bearer $TOKEN\" http://localhost:3000/api/items"}}

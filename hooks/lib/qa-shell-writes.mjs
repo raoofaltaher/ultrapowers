@@ -879,6 +879,7 @@ function huntPipAudit(words, refuse, allow) {
 // ---------- analysis ----------
 const ENV_DUMP = 'dumping the environment is blocked; check a variable with ${NAME:+set} instead';
 const SUBST_WHY = 'a command substitution cannot be analysed; spell the command out (run the inner command as its own call)';
+const SUBST_DEPTH = 3;
 // The run markers of the QA and hunt profiles: the gatekeeper's switches, never the run's to change.
 const MARKER_RE = /(^|\/)\.ultrapowers\/(qa-active|hunt-active)$/;
 const MARKER_WHY = 'is the run marker; the run marker is not the run\'s to change, the gatekeeper ends the run (with rm of its own marker as a call of its own)';
@@ -898,6 +899,8 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
   // words: bare psql words seen anywhere; inspected: psql invocations judged. More words than
   // inspections means a psql the walk did not reach, which is refused at the end.
   const psqlCount = { words: 0, inspected: 0 };
+  // How many command substitutions deep the walk is (each one is walked as its own command).
+  let subDepth = 0;
   // Every compare below is between real canonical paths (8.3 short names, Git Bash forms and
   // symlinks resolved), exact unless the project's folder ignores case.
   const rootC = realCanonical(root, root);
@@ -1019,18 +1022,32 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     // it misreads could hide a write. An autopilot stage writes anywhere in the workspace, so its
     // inner commands are walked under the same rules (the code-running and write-capable programs
     // the profile gates are judged there), and what cannot be cut out cleanly is refused.
+    // Every profile: the inner text of $( ) and of a backtick is cut out and walked as a command of
+    // its own in the same profile, up to SUBST_DEPTH levels deep; the outer command is then judged
+    // with the substitution as a word built at run time (null). Refused: what cannot be cut out
+    // cleanly (inside a here-document, a ${...} or an arithmetic expansion, or a cut whose quotes do
+    // not balance), and in a QA run or a hunt a process substitution <( ) or >( ).
     if (toks.subs.length) {
-      if (!autopilot) return deny(SUBST_WHY);
       for (const s of toks.subs) {
-        if (s.kind === 'proc') continue; // read as a subshell by the walk below
-        if (s.kind !== 'cmd' || /\$\(|`|<\(|>\(/.test(s.src)) return deny(`${SUBST_WHY} (a substitution inside a here-document, a \${...} or an arithmetic expansion, or a nested one)`);
+        if (s.kind === 'proc') { if (!autopilot) return deny(`${SUBST_WHY} (a process substitution)`); continue; }
+        if (s.kind !== 'cmd') return deny(`${SUBST_WHY} (a substitution inside a here-document, a \${...} or an arithmetic expansion)`);
         // An odd quote count means the scan cut the text at the wrong parenthesis.
-        const quotes = (q) => (s.src.replace(/\\./g, '').split(q).length - 1) % 2;
-        if (quotes("'") || quotes('"')) return deny(`${SUBST_WHY} (its quotes do not balance)`);
+        // Read as the shell quotes: inside '...' only ' ends it; elsewhere a backslash escapes.
+        let q = '';
+        for (let k = 0; k < s.src.length; k++) {
+          const ch = s.src[k];
+          if (q === "'") { if (ch === "'") q = ''; continue; }
+          if (ch === '\\') { k++; continue; }
+          if (q === '"') { if (ch === '"') q = ''; continue; }
+          if (ch === "'" || ch === '"') q = ch;
+        }
+        if (q) return deny(`${SUBST_WHY} (its quotes do not balance)`);
+        if (subDepth >= SUBST_DEPTH) return deny(`${SUBST_WHY} (substitutions nested more than ${SUBST_DEPTH} deep)`);
         // The substitution runs where the command is at that point; a cd earlier in it makes that unknown.
         const at = toks.some((t) => t.k === 'w' && ['cd', 'pushd', 'popd'].includes(progName(resolveWord(t) || ''))) ? null : startDir;
         const saved = { ...walkEnv };
-        try { walk(s.src, at, container, depth + 1); } finally { Object.assign(walkEnv, saved); }
+        subDepth += 1;
+        try { walk(s.src, at, container, depth); } finally { subDepth -= 1; Object.assign(walkEnv, saved); }
         if (reason) return;
       }
     }
