@@ -14,7 +14,7 @@
 // command substitution). A regex hook cannot contain a determined adversary; this closes the
 // ordinary spellings of a write.
 import { readFileSync, statSync } from 'node:fs';
-import { inside, realCanonical, rel } from './guard-paths.mjs';
+import { inside, realCanonical, rel, keyGlobReaches } from './guard-paths.mjs';
 
 const DEVICES = new Set(['/dev/null', '/dev/stdout', '/dev/stderr', '/dev/tty', 'nul', '/dev/fd/1', '/dev/fd/2']);
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'ash', 'mksh', 'rbash', 'fish', 'csh', 'tcsh']);
@@ -209,7 +209,7 @@ const PROTECTED_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|(^|\/)
 // Key material no stage may read through a shell (the same list as the hook's shell rule). The
 // hook tests the typed command; an 8.3 short name (MCP-SE~1.ENV) hides the name from it, so any
 // word with an alias-shaped segment is resolved here and its real name is tested.
-const KEY_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|\.aws\/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|\/)\.env($|\.)/;
+const KEY_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|\.aws\/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|\/)\.env($|\.)|\.git-credentials|(^|\/)\.netrc$|(^|\/)\.npmrc$|(^|\/)\.config\/(gh|glab-cli)(\/|$)|(^|\/)\.docker\/config\.json|(^|\/)\.kube(\/|$)|(^|\/)\.gnupg(\/|$)/;
 const SHORT_SEG = /[^\\/]~[0-9]/;
 const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)hooks\/(qa-guardrail|session-start|team-memory-[a-z]+|lib\/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|\/)\.gemini\/hooks\/|(^|\/)\.husky\/|(^|\/)\.pre-commit-config\.ya?ml$|(^|\/)lefthook\.ya?ml$|(^|\/)\.env($|\.)|(^|\/)qa\/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|\/)\.ultrapowers\/(qa-active|hunt-active|autopilot-active|autopilot-stop)$/;
 // Git subcommands an autopilot stage may run: the read-only set plus the commands that build the
@@ -1152,10 +1152,21 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     if (rel(real, rootC, ignoreCase) === null) deny(`${form} during the hunt; ${opt} ${raw} is outside the project ${rootC}`);
   };
 
-  // A word spelled with an 8.3 alias that resolves to key material, whatever reads it (issue #31).
+  // Key material named by a word, whatever reads it: the word as the shell resolves it (quotes removed,
+  // `.e"n"v` is `.env`), the literal text around an expansion (`$HOME/.git-credentials`), a glob that can expand to
+  // a key name (`.en?`, `.e[n]v`), and a word spelled with an 8.3 alias that resolves to key material (issue #31).
+  const keyText = (s) => String(s).replace(/\\/g, '/').toLowerCase().replace(/\.env\.example/g, '');
   const checkAlias = (w, dir) => {
     const raw = resolveWord(w);
-    if (raw === null || !SHORT_SEG.test(raw)) return;
+    const keyWhy = (what) => deny(`key material (${what}) is never read, searched, uploaded or written during ${runKind}`);
+    if (raw === null) {
+      const lit = w.parts.filter((p) => p.t === 'lit').map((p) => p.v).join('');
+      if (lit && KEY_RE.test(keyText(lit))) keyWhy(lit);
+      return;
+    }
+    if (KEY_RE.test(keyText(raw))) return keyWhy(raw);
+    if (/[*?[\]{}]/.test(raw) && keyGlobReaches(raw.replace(/\.env\.example/gi, ''))) return deny(`a glob (${raw}) can expand to key material, which is never read, searched, uploaded or written during ${runKind}; name the file`);
+    if (!SHORT_SEG.test(raw)) return;
     let p = normPath(raw);
     if (!p.startsWith('/')) p = `${dir === null ? rootC : dir}/${p.replace(/^\.\//, '')}`;
     const real = realCanonical(p, rootC);
@@ -1211,17 +1222,19 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     // countWords is false when a wrapper's tail is re-run and the outer command counted it already.
     const simple = (items, countWords = true) => {
       for (const t of items) if (t.k === 'w') checkAlias(t, dir);
-      // An autopilot stage never reads a credential out, whatever prints it: `echo $GH_TOKEN`,
-      // `printf '%s' "$ODOO_API_KEY"`. A presence check stays: `${NAME:+set}`, `[ -n "$NAME" ]`.
-      if (autopilot) {
+      // A stage never reads a credential out, whatever prints it: `echo $GH_TOKEN`, `printf '%s' "$ODOO_API_KEY"`.
+      // A presence check stays: `${NAME:+set}`, `[ -n "$NAME" ]`. Autopilot and the hunt refuse every credential-shaped
+      // name (SECRET_VARS); a QA run refuses the tracker credentials (TRACKER_VARS) and keeps its role variables and
+      // the token a lane mints into its own shell variable (qa-lane-3-api: -H "Authorization: Bearer $TOKEN").
+      {
         const first = items.find((t) => t.k === 'w');
         const firstWord = first ? (resolveWord(first) ?? '') : '';
         const isTest = ['[', '[[', 'test'].includes(firstWord);
         if (!isTest) {
           for (const t of items) {
             if (t.k !== 'w') continue;
-            const hit = t.parts.find((p) => p.t === 'var' && (TRACKER_VARS.test(p.v) || SECRET_VARS.test(p.v)));
-            if (hit) return deny(`$${hit.v} would print or pass on a credential or secret; an autopilot stage never reads one out, check it with \${NAME:+set}`);
+            const hit = t.parts.find((p) => p.t === 'var' && !roleVars.includes(p.v) && (TRACKER_VARS.test(p.v) || ((autopilot || hunt) && SECRET_VARS.test(p.v))));
+            if (hit) return deny(`$${hit.v} would print or pass on a credential or secret; ${runKind} never reads one out, check it with \${NAME:+set}`);
           }
         }
       }

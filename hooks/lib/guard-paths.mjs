@@ -106,3 +106,63 @@ export function rel(target, root, ignoreCase) {
   if (!inside(target, root, ignoreCase)) return null;
   return String(target).slice(String(root).length).replace(/^\/+/, '');
 }
+
+// Key material by name, for a glob: the names a glob word can expand to that the key-material rule refuses.
+// A shell expands `.en?` or `.e[n]v` to `.env` after the hook has judged the word, so a word with a glob
+// character is matched against these names instead: from its last segments, the way it would be applied
+// under some folder, and with the shell's rule that `*` and `?` match no leading dot. A glob whose only
+// literal-free segments are wildcards (`*`, `repo/*`) reaches no name by itself, and a name inside a dot folder
+// (.config/gh/hosts.yml) is reached only by a glob that covers the folder too (so `*.json` is not `.docker/config.json`).
+const KEY_GLOB_NAMES = ['.env', '.env.local', '.env.production', '.env.development', '.env.test', '.ssh/id_rsa', '.ssh/id_ed25519', '.ssh/authorized_keys', '.aws/credentials',
+  '.git-credentials', '.netrc', '.npmrc', '.config/gh/hosts.yml', '.config/glab-cli/config.yml', '.docker/config.json', '.kube/config', '.gnupg/private-keys-v1.d',
+  'mcp-secrets.env', 'secrets.local', 'id_rsa', 'id_ed25519', 'authorized_keys'];
+function globSegmentRegExp(seg) {
+  let out = '';
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i];
+    if (c === '*') { out += '[^/]*'; continue; }
+    if (c === '?') { out += '[^/]'; continue; }
+    if (c === '[') {
+      const end = seg.indexOf(']', i + 2);
+      if (end === -1) return null;
+      let body = seg.slice(i + 1, end);
+      if (body[0] === '!' || body[0] === '^') body = `^${body.slice(1)}`;
+      out += `[${body.replace(/\\/g, '\\\\')}]`;
+      i = end;
+      continue;
+    }
+    if (c === '{') {
+      const end = seg.indexOf('}', i + 1);
+      if (end === -1) return null;
+      out += `(?:${seg.slice(i + 1, end).split(',').map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`;
+      i = end;
+      continue;
+    }
+    out += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+  try { return new RegExp(`^${out}$`, 'i'); } catch { return null; }
+}
+export function keyGlobReaches(word) {
+  const s = String(word).replace(/\\/g, '/');
+  if (!/[*?[\]{}]/.test(s)) return false;
+  const g = s.split('/').filter((x) => x !== '' && x !== '.' && x !== '~');
+  if (g.length === 0) return false;
+  for (const name of KEY_GLOB_NAMES) {
+    const p = name.split('/');
+    if (p.length > 1 && g.length < p.length) continue;
+    let literal = false;
+    let ok = true;
+    for (let i = 1; i <= Math.min(g.length, p.length) && ok; i++) {
+      const gs = g[g.length - i];
+      const ps = p[p.length - i];
+      const re = globSegmentRegExp(gs);
+      if (re === null) { ok = false; break; } // an unbalanced [ or { is a literal character to the shell
+      if (!re.test(ps)) { ok = false; break; }
+      // The shell's `*` and `?` match no leading dot: only a literal dot, a class or a brace can.
+      if (ps.startsWith('.') && !/^[.[{]/.test(gs)) { ok = false; break; }
+      if (/[^*?]/.test(gs)) literal = true;
+    }
+    if (ok && literal) return true;
+  }
+  return false;
+}

@@ -430,7 +430,11 @@ test('an autopilot stage never prints a credential through a variable; a presenc
   for (const cmd of ['echo ${GH_TOKEN:+set}', '[ -n "$GH_TOKEN" ] && echo set', 'test -z "$ODOO_API_KEY"', 'echo $HOME', 'echo "$PATH"']) {
     assert.equal(analyze(cmd, apEnv), '', cmd);
   }
-  assert.equal(analyze('echo $GH_TOKEN', qaEnv), '', 'the QA profile has its own role-variable rule');
+  // A QA run and a hunt refuse the tracker credentials too; a QA run keeps its role variables and the token a lane mints into its own variable.
+  assert.match(analyze('echo $GH_TOKEN', qaEnv), /credential or secret/, 'a QA run never reads a tracker credential out');
+  assert.equal(analyze('curl -s -H "Authorization: Bearer $TOKEN" http://localhost:3000/', { ...qaEnv, roleVars: ['QA_USER'] }), '', 'the lane-3 token variable stays');
+  assert.equal(analyze('echo $QA_USER', { ...qaEnv, roleVars: ['QA_USER'] }), '', 'a role variable stays');
+  assert.match(analyze('echo $MY_API_SECRET', { ...qaEnv, profile: 'hunt', ticket: 'audit-1' }), /credential or secret/, 'the hunt refuses every credential-shaped name');
 });
 
 test('a path-qualified or quoted psql inside a command string is counted', () => {
@@ -498,4 +502,17 @@ test('the hunt is a program allow-list', () => {
   }
   assert.match(analyze('make build', h), /the hunt reads; make is not on its list/);
   assert.match(analyze('curl http://localhost/', h), /the hunt's network is its audit tools and gh api; curl is refused/);
+});
+
+test('key material is judged on the resolved words and on globs that can expand to a key name', () => {
+  for (const profile of ['qa', 'hunt', 'autopilot']) {
+    const c = { ...ctx, ticket: profile === 'hunt' ? 'audit-1' : '1234', profile };
+    for (const cmd of ['cat .e"n"v', "cat '.e'nv", 'cat .en?', 'cat .e[n]v', 'cat .e*', 'cat repo-a/.en*', 'cat ~/.ssh/id_r?a', 'cat ~/.git-credentials', 'cat $HOME/.git-credentials', 'cat ~/.config/gh/hosts.yml',
+      'cat ~/.config/glab-cli/config.yml', 'cat ~/.npmrc', 'cat ~/.netrc', 'cat ~/.docker/config.json', 'ls ~/.kube', 'ls ~/.gnupg']) {
+      assert.match(analyze(cmd, c), /key material|expand to key material/, `${profile}: ${cmd}`);
+    }
+    for (const cmd of ['cat .env.example', 'cat repo-a/*.ts', 'ls repo-a/*', 'echo "a b"', '[ -f x ]', '{ ls; }']) {
+      assert.doesNotMatch(analyze(cmd, c), /key material/, `${profile}: ${cmd}`);
+    }
+  }
 });

@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"curl -s -H \"Authorization: Bearer $TOKEN\" http://localhost:3000/api/items"}}
