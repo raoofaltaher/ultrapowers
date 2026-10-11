@@ -261,6 +261,15 @@ async function commentsFor(documents, { id, mode, base, limit, root, imageQuery 
   return out;
 }
 
+// How a destination shows a screenshot: Odoo attaches it, GitLab uploads it to the project (raw
+// link as the fallback), GitHub links the blob with ?raw=true; a destination without a documents
+// forge gets a plain line. `raw` and `link` are the documents branch's bases, null when none.
+function modeFor(provider, raw, link) {
+  if (provider === 'odoo') return { mode: 'attach' };
+  if (provider === 'gitlab') return { mode: 'upload', base: raw };
+  return link ? { mode: 'raw', base: link, imageQuery: '?raw=true' } : { mode: 'plain' };
+}
+
 function sourceOf(marker, resolution) {
   return (marker?.tickets?.sources ?? []).find((s) => s.prefix === resolution.prefix) ?? {};
 }
@@ -326,18 +335,9 @@ export async function postReview({ id, root, marker, resolution, draftPr = false
   const posted = [];
   const notes = [];
 
-  // How a destination shows a screenshot: Odoo attaches it, GitLab uploads it to the project (raw
-  // link as the fallback), GitHub links the blob with ?raw=true; a destination without a documents
-  // forge gets a plain line.
-  const modeFor = (provider) => {
-    if (provider === 'odoo') return { mode: 'attach' };
-    if (provider === 'gitlab') return { mode: 'upload', base: docsRaw };
-    return docsLink ? { mode: 'raw', base: docsLink, imageQuery: '?raw=true' } : { mode: 'plain' };
-  };
-
   const ticketTracker = deps.trackerFor(resolution, env);
-  const ticketMode = modeFor(resolution.provider).mode;
-  for (const c of await commentsFor(documents, { id, ...modeFor(resolution.provider), limit: LIMITS[resolution.provider], root, tracker: ticketTracker, notes })) {
+  const ticketMode = modeFor(resolution.provider, docsRaw, docsLink).mode;
+  for (const c of await commentsFor(documents, { id, ...modeFor(resolution.provider, docsRaw, docsLink), limit: LIMITS[resolution.provider], root, tracker: ticketTracker, notes })) {
     const url = ticketMode === 'attach' && c.attachments.length
       ? await ticketTracker.comment(resolution.number, c.body, { attachments: c.attachments })
       : await ticketTracker.comment(resolution.number, c.body);
@@ -381,7 +381,7 @@ export async function postReview({ id, root, marker, resolution, draftPr = false
         continue;
       }
     }
-    for (const c of await commentsFor(documents, { id, ...modeFor(forge.provider), limit: LIMITS[forge.provider] ?? LIMITS.github, root, tracker, notes })) {
+    for (const c of await commentsFor(documents, { id, ...modeFor(forge.provider, docsRaw, docsLink), limit: LIMITS[forge.provider] ?? LIMITS.github, root, tracker, notes })) {
       await tracker.prComment(prUrl, c.body);
     }
     posted.push({ to: 'pr', repo: entry.repo, url: prUrl, created });
@@ -420,9 +420,7 @@ export async function postAudit({ id, root, marker, env = process.env }, deps = 
     notes.push(`reviews/${id}/ was not committed or pushed: ${branch} does not start with ${id}-, which the guarded push requires; the report is only in the comment`);
   }
   const base = pushable ? { raw: rawBase(forge, branch), link: linkBase(forge, branch) } : { raw: null, link: null };
-  let how = { mode: 'plain' };
-  if (forge.provider === 'gitlab') how = { mode: 'upload', base: base.raw };
-  else if (base.link) how = { mode: 'raw', base: base.link, imageQuery: '?raw=true' };
+  const how = modeFor(forge.provider, base.raw, base.link);
   for (const c of await commentsFor(documents, { id, ...how, limit: LIMITS[forge.provider] ?? LIMITS.github, root, tracker, notes })) {
     await tracker.prComment(prUrl, c.body);
   }
