@@ -20,7 +20,7 @@ Set up, join or upgrade an ultrapowers project. A bundled engine renders the tem
 ## Before running anything
 
 - `<SKILL_DIR>` is the directory this SKILL.md was loaded from. `<ROOT>` is the directory your agent was opened in: the scaffold root. Fill both in before running a block.
-- Run `node --version`. If it fails or prints a version below 18, tell your human partner the engine needs Node 18 or newer (the Playwright MCP server needs it too) and stop. Never write the payload by hand.
+- Run `node --version`. If it fails or prints a version below 22, tell your human partner the engine needs Node 22 or newer (18 and 20 are end-of-life) and stop. Never write the payload by hand.
 - Every engine run prints one JSON object. Exit 0 is a report. Exit 2 is `{ "error": { "code": ..., "message": ... } }`: print both verbatim, act on the Errors table, and stop. Any other exit: print the output verbatim and stop.
 
 ## Detect

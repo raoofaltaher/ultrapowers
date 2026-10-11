@@ -50,7 +50,7 @@ Ultrapowers is a skills plugin for coding agents: a `skills/` library, a session
 
 ## Running the tests
 
-All of these run offline. Prerequisites: bash, node 18+, python 3 with pytest, `jq`, `yq` (mikefarah v4), `shellcheck`.
+All of these run offline. Prerequisites: bash, Node 22 or newer, python 3 with pytest, `jq`, `yq` (mikefarah v4), `shellcheck`.
 
 ```bash
 bash tests/hooks/test-session-start.sh
