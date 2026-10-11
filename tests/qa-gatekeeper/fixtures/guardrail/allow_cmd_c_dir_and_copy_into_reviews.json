@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"cmd /c \"dir reviews\\1234\" && cmd /c \"copy repo-a\\src\\app.js reviews\\1234\\artifacts\\app.js\""}}

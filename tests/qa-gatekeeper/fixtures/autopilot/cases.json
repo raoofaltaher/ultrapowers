@@ -269,5 +269,9 @@
   {"name":"allow_cp_into_repo_dir","event":{"tool_name":"Bash","tool_input":{"command":"cp repo-a/src/x.sh repo-a/src"}}},
   {"name":"deny_patch_command_hook_diff","event":{"tool_name":"Bash","tool_input":{"command":"patch -p1 -i changes.diff"}}},
   {"name":"deny_git_subcommand_from_variable","event":{"tool_name":"Bash","tool_input":{"command":"git \"$GIT_SUB\" origin main"}}},
+  {"name":"deny_cmd_c_redirect_workflow","event":{"tool_name":"Bash","tool_input":{"command":"cmd /c \"echo x > .github\\workflows\\ci.yml\""}}},
+  {"name":"deny_cmd_c_del_hook","event":{"tool_name":"Bash","tool_input":{"command":"cmd /c \"del .husky\\pre-commit\""}}},
+  {"name":"deny_pwsh_command_redirect_hook","event":{"tool_name":"Bash","tool_input":{"command":"pwsh -NoProfile -Command \"echo x > .husky/pre-commit\""}}},
+  {"name":"allow_cmd_c_copy_in_repo","event":{"tool_name":"Bash","tool_input":{"command":"cmd /c \"copy repo-a\\src\\a.ts repo-a\\src\\b.ts\""}}},
   {"name":"allow_write_nested_agents_md","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/repo-a/AGENTS.md","content":"x"}}}
 ]

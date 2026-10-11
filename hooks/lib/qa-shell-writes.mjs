@@ -718,6 +718,36 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         }
         return;
       }
+      if (prog === 'cmd') {
+        // cmd /c COMMAND... (also /k, /r, /d /s /c): the rest of the line is the command, with
+        // backslash separators. Its own builtins (del, copy, move, ren, md) are judged below.
+        const ci = rest.findIndex((x) => x.v !== null && /^\/[ckr]$/i.test(x.v));
+        if (ci === -1) return deny('cmd without /c reads its commands from stdin, which cannot be inspected; run the command directly');
+        const tail = rest.slice(ci + 1);
+        if (!tail.length || tail.some((x) => x.v === null)) return deny('cmd /c runs a command built from a variable or missing; it cannot be verified');
+        walkNested(tail.map((x) => x.v).join(' ').replace(/\\/g, '/'), dir, container, depth + 1, pgUser);
+        return;
+      }
+      if (prog === 'pwsh' || prog === 'powershell') {
+        if (rest.some((x) => x.v !== null && /^-(e|ec|encodedcommand)$/i.test(x.v))) return deny(`${prog} -EncodedCommand hides the command in base64; it cannot be verified`);
+        const ci = rest.findIndex((x) => x.v !== null && /^-(c|command)$/i.test(x.v));
+        if (ci !== -1) {
+          const tail = rest.slice(ci + 1);
+          if (!tail.length || tail.some((x) => x.v === null)) return deny(`${prog} -Command runs a command built from a variable or missing; it cannot be verified`);
+          walkNested(tail.map((x) => x.v).join(' '), dir, container, depth + 1, pgUser);
+          return;
+        }
+        if (rest.some((x) => x.v !== null && /^-(f|file)$/i.test(x.v))) return;
+        if (rest.length && rest.every((x) => x.v !== null && /^-(version|help|\?)$/i.test(x.v))) return;
+        return deny(`${prog} reads its commands from stdin, which cannot be inspected; run the command directly or from a script file`);
+      }
+      // cmd.exe's own file commands. Flags are /x or /x:value; the destination is the last operand.
+      if (['del', 'erase', 'rd', 'md', 'copy', 'xcopy', 'move', 'ren', 'rename'].includes(prog)) {
+        const ops = rest.filter((x) => x.v === null || !(/^\/[a-zA-Z?](:.*)?$/.test(x.v) || x.v.startsWith('-')));
+        const list = ['copy', 'xcopy'].includes(prog) ? ops.slice(-1) : ['move', 'ren', 'rename'].includes(prog) ? ops : ops;
+        for (const x of list) checkTarget(x.w, dir, `${prog} operand`, container);
+        return;
+      }
       if (SHELLS.has(prog)) {
         // -c may be bundled with other short flags (-lc, -ec, -xc); the next word is the command.
         // fish takes the long spelling too: --command CMD, --command=CMD.
