@@ -16,5 +16,5 @@
     "best-practices",
     "workflows"
   ],
-  "agents": "./agents/"
+  "agents": ["./agents/qa-specialist.md", "./agents/vulnerability-hunter.md"]
 }

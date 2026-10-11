@@ -304,4 +304,15 @@ test('8. every skill with context: fork names an agent that exists, and its body
     assert.match(body, /this harness did not fork/, `skills/${dir}/SKILL.md lost the inline branch ("this harness did not fork")`);
     assert.match(body, /contract inline: this harness does not fork\./, `skills/${dir}/SKILL.md lost the inline announcement`);
   }
+  const manifest = JSON.parse(read('.claude-plugin/plugin.json'));
+  if ('agents' in manifest) {
+    assert.ok(Array.isArray(manifest.agents), 'plugin.json agents must be an array of .md files; a directory value fails to load');
+    for (const entry of manifest.agents) {
+      assert.ok(entry.endsWith('.md'), `plugin.json agents entry ${entry} must end with .md`);
+      assert.ok(fs.existsSync(path.join(ROOT, entry)), `plugin.json agents entry ${entry} does not exist`);
+    }
+    for (const file of fs.readdirSync(path.join(ROOT, 'agents')).filter((n) => n.endsWith('.md'))) {
+      assert.ok(manifest.agents.map((e) => path.normalize(e)).includes(path.normalize(`./agents/${file}`)), `agents/${file} is not listed in plugin.json agents`);
+    }
+  }
 });
