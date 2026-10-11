@@ -50,13 +50,15 @@ Nested clones are separate git repositories. This repository ignores them throug
 
 - Claude Code: reads `CLAUDE.md` (which imports `AGENTS.md`), `.claude/settings.json` and `.mcp.json`. Approve the project MCP servers when prompted.
 - Codex: reads `AGENTS.md` and `.codex/config.toml`.
-- Cursor: reads `AGENTS.md` and `.cursor/mcp.json`.
+- Cursor: reads `AGENTS.md`, `.cursor/mcp.json`, `.cursorignore` and `.cursor/cli.json` (the last two deny reads of secret files).
 - GitHub Copilot and VS Code: read `.github/copilot-instructions.md`, `.vscode/settings.json` and `.vscode/mcp.json`.
 - Gemini CLI: reads `GEMINI.md` and `.gemini/settings.json`, which lists `AGENTS.md` as a context file.
-- Qwen Code: reads `.qwen/settings.json`, which lists `AGENTS.md` as a context file.
-- OpenCode: reads `AGENTS.md` and `opencode.json`.
+- Qwen Code: reads `.qwen/settings.json`, which lists `AGENTS.md` as a context file and denies reads of secret files.
+- OpenCode: reads `AGENTS.md` and `opencode.json`, which denies reads of secret files.
 - Factory, Kimi: read `AGENTS.md`; their MCP files are best-effort and may need adjustment.
 - Devin, Antigravity, Hermes, Pi, Muse: read `AGENTS.md`.
+
+Secret-read denies (`.env` files, `.agents/mcp-secrets.env`) are in place for Claude Code, Qwen Code, OpenCode and Cursor. Codex, Gemini CLI, Factory, Kimi and Copilot/VS Code document no project-level setting for it, so on those the guardrail hook during a QA or autopilot run is the only brake: keep secrets out of the project folder and out of reach of the agent's user.
 
 Every harness needs the ultrapowers plugin installed; skills are not copied into this repository.
 
