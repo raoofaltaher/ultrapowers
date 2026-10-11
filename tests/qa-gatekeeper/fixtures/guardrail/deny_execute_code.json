@@ -1,0 +1,1 @@
+{"tool_name":"execute_code","tool_input":{"code":"import os; print(os.environ)"}}

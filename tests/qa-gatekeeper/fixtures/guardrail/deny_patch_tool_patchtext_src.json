@@ -1,0 +1,1 @@
+{"tool_name":"patch","tool_input":{"patchText":"*** Begin Patch\n*** Update File: repo-a/src/app.js\n@@\n-a\n+b\n*** End Patch"}}

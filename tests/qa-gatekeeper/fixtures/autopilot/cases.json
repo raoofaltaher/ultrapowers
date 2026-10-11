@@ -216,5 +216,13 @@
   {"name":"deny_workdir_relative_git_config","event":{"tool_name":"bash","tool_input":{"command":"echo x > config","workdir":".git"}}},
   {"name":"deny_workdir_outside_root","event":{"tool_name":"bash","tool_input":{"command":"echo x > f.txt","workdir":"{{ELSEWHERE}}"}}},
   {"name":"allow_workdir_inside_repo","event":{"tool_name":"bash","tool_input":{"command":"echo x > out.txt","workdir":"{{ROOT}}/repo-a"}}},
+  {"name":"deny_patch_tool_patchtext_workflow","event":{"tool_name":"patch","tool_input":{"patchText":"*** Begin Patch\n*** Update File: .github/workflows/ci.yml\n@@\n+x\n*** End Patch"}}},
+  {"name":"deny_patch_tool_v4a_hook","event":{"tool_name":"patch","tool_input":{"mode":"patch","patch":"*** Begin Patch\n*** Add File: .husky/pre-commit\n+x\n*** End Patch"}}},
+  {"name":"deny_patch_tool_crlf_env","event":{"tool_name":"patch","tool_input":{"patch":"*** Begin Patch\r\n*** Update File: .env\r\n@@\r\n+x\r\n*** End Patch"}}},
+  {"name":"deny_patch_tool_move_to_marker","event":{"tool_name":"multi_patch","tool_input":{"diff":"*** Begin Patch\n*** Update File: repo-a/src/x.ts\n*** Move to: .ultrapowers/autopilot-active\n@@\n+x\n*** End Patch"}}},
+  {"name":"deny_patch_tool_names_no_file","event":{"tool_name":"apply_patch","tool_input":{"patch":"*** Begin Patch\n*** End Patch"}}},
+  {"name":"allow_patch_tool_patchtext_src","event":{"tool_name":"patch","tool_input":{"patchText":"*** Begin Patch\n*** Update File: repo-a/src/x.ts\n@@\n-a\n+b\n*** End Patch"}}},
+  {"name":"allow_patch_tool_git_push_in_text","event":{"tool_name":"patch","tool_input":{"patch":"*** Begin Patch\n*** Add File: repo-a/docs/ci.md\n+run git push origin main\n*** End Patch"}}},
+  {"name":"deny_execute_code","event":{"tool_name":"execute_code","tool_input":{"code":"print(1)"}}},
   {"name":"allow_write_nested_agents_md","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/repo-a/AGENTS.md","content":"x"}}}
 ]

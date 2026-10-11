@@ -326,9 +326,11 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
   const keyReal = pathFields.map((p) => { const r = resolve(p); return r.rel ? r.rel.slice(2) : r.real; }).filter(Boolean);
   // The files a patch names (Codex apply_patch, Droid ApplyPatch), each as raw, rel and real.
   const patchRecs = [];
-  if (/^(apply_?patch)$/i.test(toolName)) {
-    for (const line of command.split("\n")) {
-      const m = /^\*\*\* (?:Add|Update|Delete) File: *(.+)$/.exec(line) || /^\*\*\* Move to: *(.+)$/.exec(line);
+  // Any tool whose name holds "patch" (apply_patch, OpenCode patch, Hermes patch in V4A mode) can
+  // carry such a patch under command, patch, patchText, input or diff.
+  if (isPatchTool) {
+    for (const line of command.split(/\r?\n/)) {
+      const m = /^\s*\*\*\* (?:Add|Update|Delete) File:\s*(.+?)\s*$/.exec(line) || /^\s*\*\*\* Move to:\s*(.+?)\s*$/.exec(line);
       if (!m) continue;
       const r = resolve(m[1]);
       patchRecs.push([m[1], r.rel, r.real].join("\u0001"));
@@ -451,9 +453,16 @@ fi
 # Codex and Droid apply edits through a patch (apply_patch, ApplyPatch): the patch text names the
 # files. Every named file is checked as a write; the patch is not a shell command, so the
 # command rules below do not see it.
+# A patch tool that names files in its patch text is judged by those files; one that names none
+# (a path-and-text edit of the Hermes patch tool) goes through the write-tool rules below.
+patch_mode=0
 case "$tool_lc" in
-  apply_patch|applypatch)
+  *patch*) if [ -n "$patch_recs" ] || [ "$tool_lc" = "apply_patch" ] || [ "$tool_lc" = "applypatch" ]; then patch_mode=1; fi ;;
+esac
+case "$patch_mode" in
+  1)
     [ -n "$cmd" ] || deny "an empty patch cannot be verified during $run_kind"
+    [ -n "$patch_recs" ] || deny "a patch that names no file cannot be verified during $run_kind"
     # Each record: the path as written, its path inside the project ("./..." or empty when the
     # path is outside it) and its real canonical path, resolved by the node block.
     while IFS=$'\001' read -r ppath prel preal; do
@@ -523,7 +532,7 @@ fi
 
 # --- Arbitrary in-page code is an egress and exfiltration bypass; never.
 case "$tool_lc" in
-  *run_code*|*browser_evaluate*|*evaluate_script*|*javascript_tool*) deny "arbitrary in-page code execution is never allowed during $run_kind; it is an egress and exfiltration path no host list can see" ;;
+  *run_code*|*execute_code*|*executecode*|*browser_evaluate*|*evaluate_script*|*javascript_tool*) deny "arbitrary in-page code execution is never allowed during $run_kind; it is an egress and exfiltration path no host list can see" ;;
 esac
 
 host_of() {
