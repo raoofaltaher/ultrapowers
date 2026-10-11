@@ -41,5 +41,16 @@ assert(r.status === 2 && /^AUTOPILOT-GUARDRAIL DENY: git push is never allowed/.
 r = hook({ ...push, tool_input: { command: 'git status' } }, { ULTRAPOWERS_AUTOPILOT_INSIDE: '1' });
 assert(r.status === 0, `a read passes inside the flagged stage (exit ${r.status}: ${r.stderr})`);
 
+// A vulnerability hunt (.ultrapowers/hunt-active): the HUNT profile denies a push, allows an audit and refuses a source write.
+const hunt = project();
+fs.mkdirSync(path.join(hunt, '.ultrapowers'), { recursive: true });
+fs.writeFileSync(path.join(hunt, '.ultrapowers', 'hunt-active'), 'audit-2026-10-11\n');
+r = hook({ ...push, cwd: hunt });
+assert(r.status === 2 && /^HUNT-GUARDRAIL DENY: /.test(r.stderr), `a push during a hunt (exit ${r.status}: ${r.stderr})`);
+r = hook({ ...push, tool_input: { command: 'npm audit --package-lock-only --json' }, cwd: hunt });
+assert(r.status === 0, `an audit during a hunt passes (exit ${r.status}: ${r.stderr})`);
+r = hook({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: path.join(hunt, 'repo-a', 'src', 'x.ts'), content: 'x' }, cwd: hunt });
+assert(r.status === 2 && /^HUNT-GUARDRAIL DENY: /.test(r.stderr), `a source write during a hunt (exit ${r.status}: ${r.stderr})`);
+
 console.log('Kimi guardrail hook looks good');
 JS

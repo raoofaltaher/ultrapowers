@@ -242,7 +242,7 @@ def _guardrail_cli(skills_dir):
 
 
 def _run_active(start_dir):
-    """The deny prefix of the run marker at or above start_dir (the QA profile wins), or None.
+    """The deny prefix of the run marker at or above start_dir (qa, then hunt, then autopilot), or None.
 
     A headless watcher stage carries ULTRAPOWERS_AUTOPILOT_INSIDE=1: without a marker the run is
     then an autopilot stage, and the hook decides (outside any project it denies), as in the hook.
@@ -252,6 +252,8 @@ def _run_active(start_dir):
         base = os.path.join(current, ".ultrapowers")
         if os.path.isfile(os.path.join(base, "qa-active")):
             return "QA-GUARDRAIL"
+        if os.path.isfile(os.path.join(base, "hunt-active")):
+            return "HUNT-GUARDRAIL"
         if os.path.isfile(os.path.join(base, "autopilot-active")):
             return "AUTOPILOT-GUARDRAIL"
         parent = os.path.dirname(current)
@@ -293,7 +295,7 @@ def _guardrail_verdict(skills_dir, tool_name, args, cwd):
         if "GUARDRAIL DENY: " in line:
             deny_line = line.strip()
     if proc.returncode == 2:
-        # The hook's own line, with the profile's prefix: QA-GUARDRAIL DENY or AUTOPILOT-GUARDRAIL DENY.
+        # The hook's own line, with the profile's prefix: QA-GUARDRAIL DENY, HUNT-GUARDRAIL DENY or AUTOPILOT-GUARDRAIL DENY.
         return {"action": "block", "message": deny_line or "ultrapowers guardrail: denied"}
     return {"action": "block", "message": f"{prefix} DENY: the ultrapowers guardrail could not run (exit {proc.returncode}); a tool call during a run is refused without it"}
 

@@ -55,6 +55,23 @@ await assert.rejects(
   'the workdir is a marker candidate too',
 );
 
+// A vulnerability hunt (.ultrapowers/hunt-active): a push is refused with the HUNT prefix, an audit
+// passes, a source write is refused.
+const hunt = project(false);
+fs.writeFileSync(path.join(hunt, '.ultrapowers', 'hunt-active'), 'audit-2026-10-11\n');
+const huntHooks = await mod.UltrapowersPlugin({ client: null, directory: hunt });
+await assert.rejects(
+  huntHooks['tool.execute.before']({ tool: 'bash', sessionID: 's3', callID: 'h1' }, { args: { command: 'git push origin x' } }),
+  /^Error: HUNT-GUARDRAIL DENY: /,
+  'a push during a hunt is refused with the HUNT prefix',
+);
+await huntHooks['tool.execute.before']({ tool: 'bash', sessionID: 's3', callID: 'h2' }, { args: { command: 'npm audit --package-lock-only --json' } });
+await assert.rejects(
+  huntHooks['tool.execute.before']({ tool: 'write', sessionID: 's3', callID: 'h3' }, { args: { filePath: path.join(hunt, 'repo-a', 'src', 'x.ts'), content: 'x' } }),
+  /HUNT-GUARDRAIL DENY: /,
+  'a source write during a hunt is refused',
+);
+
 // A headless stage (ULTRAPOWERS_AUTOPILOT_INSIDE=1) is guarded even when the marker is gone.
 process.env.ULTRAPOWERS_AUTOPILOT_INSIDE = '1';
 try {

@@ -63,5 +63,15 @@ assert(out.decision === 'deny' && /outside the project root/.test(out.reason), `
 out = hook(runCommand('git status', path.join(stage, '.agents'), [stage]));
 assert(out.decision === 'allow', `Cwd inside the project: the hook decides (${JSON.stringify(out)})`);
 
+// A vulnerability hunt (.ultrapowers/hunt-active): the HUNT profile denies a push, allows an audit and refuses a source write.
+const hunt = project();
+fs.writeFileSync(path.join(hunt, '.ultrapowers', 'hunt-active'), 'audit-2026-10-11\n');
+out = hook(runCommand('git push origin x', hunt, [hunt]));
+assert(out.decision === 'deny' && /^HUNT-GUARDRAIL DENY: /.test(out.reason), `a push during a hunt: denied with the HUNT prefix (${JSON.stringify(out)})`);
+out = hook(runCommand('npm audit --package-lock-only --json', hunt, [hunt]));
+assert(out.decision === 'allow', `an audit during a hunt: allowed (${JSON.stringify(out)})`);
+out = hook({ toolCall: { name: 'write_to_file', args: { TargetFile: path.join(hunt, 'repo-a', 'src', 'x.ts'), CodeContent: 'x' } }, workspacePaths: [hunt] });
+assert(out.decision === 'deny' && /^HUNT-GUARDRAIL DENY: /.test(out.reason), `a source write during a hunt: denied (${JSON.stringify(out)})`);
+
 console.log('test-antigravity-guardrail: OK');
 JS

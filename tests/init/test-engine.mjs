@@ -643,6 +643,9 @@ test('the Gemini project hook names the run profile and the marker when the exte
   const qa = withMarker('qa-active');
   assert.equal(qa.status, 2);
   assert.match(qa.stderr, /^QA-GUARDRAIL DENY: .*\.ultrapowers[\\/]qa-active/);
+  const hunt = withMarker('hunt-active');
+  assert.equal(hunt.status, 2);
+  assert.match(hunt.stderr, /^HUNT-GUARDRAIL DENY: .*\.ultrapowers[\\/]hunt-active/);
   const auto = withMarker('autopilot-active');
   assert.equal(auto.status, 2);
   assert.match(auto.stderr, /^AUTOPILOT-GUARDRAIL DENY: .*\.ultrapowers[\\/]autopilot-active/);
@@ -682,6 +685,18 @@ test('Gemini launcher: ULTRAPOWERS_AUTOPILOT_INSIDE=1 keeps the envelope without
   assert.equal(missing.status, 2, missing.stderr);
   assert.match(missing.stderr, /extension was not found/);
   assert.equal(geminiLaunch(push, {}).status, 0, 'the extension missing outside a run: inert');
+});
+
+test('Gemini launcher: a hunt marker is judged by the hook with the HUNT prefix', () => {
+  const root = geminiProject();
+  fs.mkdirSync(path.join(root, '.ultrapowers'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.ultrapowers', 'hunt-active'), 'audit-2026-10-11\n');
+  const call = (command) => ({ hook_event_name: 'BeforeTool', tool_name: 'run_shell_command', tool_input: { command }, cwd: root });
+  const denied = geminiLaunch(call('git push origin x'), { pluginRoot: repoRoot });
+  assert.equal(denied.status, 2, denied.stderr);
+  assert.match(denied.stderr, /^HUNT-GUARDRAIL DENY: /);
+  const audit = geminiLaunch(call('npm audit --package-lock-only --json'), { pluginRoot: repoRoot });
+  assert.equal(audit.status, 0, audit.stderr);
 });
 
 test('Gemini launcher: the run is looked for from the event cwd, the process cwd and dir_path', () => {

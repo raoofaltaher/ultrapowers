@@ -131,7 +131,7 @@ changes_at() { node -e 'const c=require(process.argv[1]);process.stdout.write(St
 for entry in AGENTS.md:2.0.0 CLAUDE.md:2.0.2 .claude/settings.json:2.1.0 README.md:2.1.0 .mcp.json:2.0.2 \
   .codex/config.toml:2.0.2 .cursor/mcp.json:2.0.2 .gemini/settings.json:2.0.2 .qwen/settings.json:2.0.2 opencode.json:2.0.2 \
   .factory/mcp.json:2.0.2 .kimi/mcp.json:2.0.2 .vscode/mcp.json:2.0.2 .githooks/pre-commit:2.0.2 \
-  .gemini/hooks/ultrapowers-guardrail.mjs:2.0.2; do
+  .gemini/hooks/ultrapowers-guardrail.mjs:2.1.0; do
   target="${entry%:*}"
   version="${entry##*:}"
   if [ "$(changes_at "$target")" = "$version" ]; then

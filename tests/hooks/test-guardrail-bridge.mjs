@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BRIDGE = path.resolve(HERE, '..', '..', 'hooks', 'lib', 'guardrail-bridge.mjs');
-const { runGuardrail, guardrailEvent, markerRoot } = await import(`file://${BRIDGE.replace(/\\/g, '/')}`);
+const { runGuardrail, guardrailEvent, markerRoot, markerPrefix } = await import(`file://${BRIDGE.replace(/\\/g, '/')}`);
 
 function project({ marker = 'autopilot' } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrail-bridge-'));
@@ -19,8 +19,50 @@ function project({ marker = 'autopilot' } = {}) {
   fs.writeFileSync(path.join(root, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'p', autopilot: { mode: 'gated' }, qa: { urls: {}, hosts: { allowed: [], forbidden: ['prod.example.com'] } } }));
   if (marker === 'autopilot') fs.writeFileSync(path.join(root, '.ultrapowers', 'autopilot-active'), JSON.stringify({ ticket: 'GH-16', branch: 'GH-16-x', scope: ['.'], stage: 'execute' }));
   if (marker === 'qa') fs.writeFileSync(path.join(root, '.ultrapowers', 'qa-active'), 'GH-16\n');
+  if (marker === 'hunt') fs.writeFileSync(path.join(root, '.ultrapowers', 'hunt-active'), 'audit-2026-10-11\n');
   return root;
 }
+
+test('inside a vulnerability hunt a push is denied with the HUNT prefix, an audit passes and a source write is denied', () => {
+  const root = project({ marker: 'hunt' });
+  assert.equal(markerRoot(path.join(root, 'repo-a', 'src')), fs.realpathSync.native(root));
+  assert.equal(markerPrefix(path.join(root, 'repo-a', 'src')), 'HUNT-GUARDRAIL');
+  const push = runGuardrail({ toolName: 'bash', input: { command: 'git push origin x' }, cwd: root });
+  assert.equal(push.deny, true, JSON.stringify(push));
+  assert.equal(push.prefix, 'HUNT-GUARDRAIL');
+  assert.match(push.reason, /git push is never allowed|never publishes/);
+  assert.deepEqual(runGuardrail({ toolName: 'bash', input: { command: 'npm audit --package-lock-only --json' }, cwd: root }), { deny: false });
+  const src = runGuardrail({ toolName: 'write', input: { filePath: path.join(root, 'repo-a', 'src', 'x.ts'), content: 'x' }, cwd: root });
+  assert.equal(src.deny, true, JSON.stringify(src));
+  assert.equal(src.prefix, 'HUNT-GUARDRAIL');
+});
+
+test('the marker order is QA, then hunt, then autopilot', () => {
+  const root = project({ marker: 'autopilot' });
+  const at = path.join(root, 'repo-a');
+  assert.equal(markerPrefix(at), 'AUTOPILOT-GUARDRAIL');
+  fs.writeFileSync(path.join(root, '.ultrapowers', 'hunt-active'), 'audit-2026-10-11\n');
+  assert.equal(markerPrefix(at), 'HUNT-GUARDRAIL');
+  fs.writeFileSync(path.join(root, '.ultrapowers', 'qa-active'), 'GH-16\n');
+  assert.equal(markerPrefix(at), 'QA-GUARDRAIL');
+});
+
+test('a hook deny line under the HUNT profile keeps its prefix and reason', () => {
+  const root = project({ marker: 'hunt' });
+  const hookDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-hook-'));
+  fs.writeFileSync(path.join(hookDir, 'qa-guardrail'), '#!/usr/bin/env bash\necho "HUNT-GUARDRAIL DENY: x" >&2\nexit 2\n');
+  const r = runGuardrail({ toolName: 'bash', input: { command: 'ls' }, cwd: root, hookDir });
+  assert.deepEqual(r, { deny: true, prefix: 'HUNT-GUARDRAIL', reason: 'x' });
+});
+
+test('a HUNT deny line wins over the prefix of the marker it was found from', () => {
+  const root = project({ marker: 'autopilot' });
+  const hookDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-hook-'));
+  fs.writeFileSync(path.join(hookDir, 'qa-guardrail'), '#!/usr/bin/env bash\necho "HUNT-GUARDRAIL DENY: x" >&2\nexit 2\n');
+  const r = runGuardrail({ toolName: 'bash', input: { command: 'ls' }, cwd: root, hookDir });
+  assert.equal(r.prefix, 'HUNT-GUARDRAIL');
+  assert.equal(r.reason, 'x');
+});
 
 test('guardrailEvent speaks the shell-hook contract for OpenCode and Pi inputs', () => {
   const oc = guardrailEvent({ toolName: 'write', input: { filePath: '/p/a.ts', content: 'x' }, cwd: '/p' });
@@ -82,6 +124,15 @@ test('guardrail-cli answers exit 2 and the reason on stderr for a deny, exit 0 f
   assert.equal(allow.status, 0, allow.stderr);
   const kimi = runCli({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: path.join(root, 'tasks', 'GH-16', 'stage-log.jsonl'), content: 'x' }, cwd: root });
   assert.equal(kimi.status, 2);
+});
+
+test('guardrail-cli under a hunt marker denies a push with the HUNT prefix and allows an audit', () => {
+  const root = project({ marker: 'hunt' });
+  const deny = runCli({ tool_name: 'Bash', tool_input: { command: 'git push origin x' }, cwd: root });
+  assert.equal(deny.status, 2, deny.stderr);
+  assert.match(deny.stderr, /^HUNT-GUARDRAIL DENY: /);
+  const audit = runCli({ tool_name: 'Bash', tool_input: { command: 'npm audit --package-lock-only --json' }, cwd: root });
+  assert.equal(audit.status, 0, audit.stderr);
 });
 
 test('guardrail-cli --antigravity reads its payload and answers its JSON', () => {

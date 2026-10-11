@@ -2,7 +2,7 @@
 // hook, so their plugin calls this before every tool: it runs hooks/qa-guardrail with the same
 // event JSON a shell-hook harness sends ({ tool_name, tool_input, cwd }) and reports the
 // verdict. One rule of the hook is kept here too: nothing is spawned unless a run marker
-// (.ultrapowers/qa-active or .ultrapowers/autopilot-active) exists at or above the cwd, or the
+// (.ultrapowers/qa-active, hunt-active or autopilot-active) exists at or above the cwd, or the
 // session is a headless stage (ULTRAPOWERS_AUTOPILOT_INSIDE=1), so an ordinary session pays a
 // directory walk and no process. Node built-ins only.
 import fs from 'node:fs';
@@ -11,7 +11,12 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const HOOK_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const DENY_RE = /((?:QA|AUTOPILOT)-GUARDRAIL) DENY: (.*)/;
+const DENY_RE = /((?:QA|HUNT|AUTOPILOT)-GUARDRAIL) DENY: (.*)/;
+
+// The run markers and the deny prefix of each, in the order the hook applies them when several
+// exist in one directory: the QA run, the vulnerability hunt, the autopilot stage.
+const RUN_MARKERS = ['qa-active', 'hunt-active', 'autopilot-active'];
+const MARKER_PREFIX = { 'qa-active': 'QA-GUARDRAIL', 'hunt-active': 'HUNT-GUARDRAIL', 'autopilot-active': 'AUTOPILOT-GUARDRAIL' };
 
 // The directory holding a run marker at or above `startDir`, or null.
 export function markerRoot(startDir) {
@@ -22,19 +27,20 @@ export function markerRoot(startDir) {
     return null;
   }
   for (;;) {
-    if (fs.existsSync(path.join(dir, '.ultrapowers', 'qa-active')) || fs.existsSync(path.join(dir, '.ultrapowers', 'autopilot-active'))) return dir;
+    if (RUN_MARKERS.some((m) => fs.existsSync(path.join(dir, '.ultrapowers', m)))) return dir;
     const parent = path.dirname(dir);
     if (parent === dir) return null;
     dir = parent;
   }
 }
 
-// The deny prefix of the run marker found at or above `startDir`: the QA profile when a QA marker
-// exists (it wins when both do, as in the hook), else the autopilot profile.
+// The deny prefix of the run marker found at or above `startDir`: the first of qa, hunt, autopilot
+// that exists in the directory holding a marker, as in the hook.
 export function markerPrefix(startDir) {
   const root = markerRoot(startDir);
   if (!root) return null;
-  return fs.existsSync(path.join(root, '.ultrapowers', 'qa-active')) ? 'QA-GUARDRAIL' : 'AUTOPILOT-GUARDRAIL';
+  const marker = RUN_MARKERS.find((m) => fs.existsSync(path.join(root, '.ultrapowers', m)));
+  return MARKER_PREFIX[marker] ?? 'AUTOPILOT-GUARDRAIL';
 }
 
 // A headless watcher stage carries ULTRAPOWERS_AUTOPILOT_INSIDE=1: the hook then treats the run
