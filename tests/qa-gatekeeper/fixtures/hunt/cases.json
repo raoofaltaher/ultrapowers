@@ -345,5 +345,9 @@
   {"name":"deny_nested_run_dir_decoy_bridge","reason":"npm install is not on the hunt's list","dir":"{{ELSEWHERE}}","env":{"ULTRAPOWERS_RUN_DIR":"{{ROOT}}"},"event":{"tool_name":"Bash","tool_input":{"command":"npm install left-pad","ultrapowers_run_dir":"{{DECOY}}"},"cwd":"{{ROOT}}"}},
   {"name":"deny_nested_cwd_decoy_bridge","reason":"is outside the project","dir":"{{ELSEWHERE}}","env":{"ULTRAPOWERS_RUN_DIR":"{{ROOT}}"},"event":{"tool_name":"Bash","tool_input":{"command":"npm install left-pad","cwd":"{{DECOY}}"},"cwd":"{{ROOT}}"}},
   {"name":"deny_nested_run_dir_decoy_direct","reason":"npm install is not on the hunt's list","dir":"{{ELSEWHERE}}","event":{"tool_name":"Bash","tool_input":{"command":"npm install left-pad","ultrapowers_run_dir":"{{DECOY}}"},"cwd":"{{ROOT}}"}},
-  {"name":"deny_nested_cwd_decoy_direct","reason":"is outside the project","dir":"{{ELSEWHERE}}","event":{"tool_name":"Bash","tool_input":{"command":"npm install left-pad","cwd":"{{DECOY}}"},"cwd":"{{ROOT}}"}}
+  {"name":"deny_nested_cwd_decoy_direct","reason":"is outside the project","dir":"{{ELSEWHERE}}","event":{"tool_name":"Bash","tool_input":{"command":"npm install left-pad","cwd":"{{DECOY}}"},"cwd":"{{ROOT}}"}},
+  {"name":"deny_powershell_tool_alias_sc","reason":"the PowerShell tool is not analysed","event":{"tool_name":"PowerShell","tool_input":{"command":"sc src/a x"},"cwd":"{{ROOT}}"}},
+  {"name":"deny_powershell_tool_ri_marker","reason":"the PowerShell tool is not analysed","event":{"tool_name":"PowerShell","tool_input":{"command":"ri .ultrapowers/hunt-active"},"cwd":"{{ROOT}}"}},
+  {"name":"deny_powershell_tool_iex","reason":"the PowerShell tool is not analysed","event":{"tool_name":"PowerShell","tool_input":{"command":"iex \"node x.mjs\""},"cwd":"{{ROOT}}"}},
+  {"name":"deny_powershell_tool_lowercase_copilot","reason":"the PowerShell tool is not analysed","event":{"tool_name":"powershell","tool_input":{"command":"sc src/a x"},"cwd":"{{ROOT}}"}}
 ]

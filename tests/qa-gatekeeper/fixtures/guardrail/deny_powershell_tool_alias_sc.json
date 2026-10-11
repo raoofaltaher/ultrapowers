@@ -1,0 +1,1 @@
+{"tool_name":"PowerShell","tool_input":{"command":"sc .git/config x"},"reason":"the PowerShell tool is not analysed"}
