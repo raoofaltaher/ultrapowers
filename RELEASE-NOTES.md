@@ -1,6 +1,19 @@
 # Ultrapowers Release Notes
 
-## v2.0.2 (2026-10-11)
+## v2.1.0 (2026-10-11)
+
+**Vulnerability hunt and audit**
+
+- New skill `ultrapowers:vulnerability-hunt` with two doors: `/ultrapowers:vulnerability-hunt <ticket> [repo...] [--post]` hunts the files a ticket's change set touched, and `--full-audit` (or no ticket) audits the whole tree under `reviews/audit-<date>/`. It is read-only: it installs nothing, fixes nothing and commits nothing, and a secret is named by file, line and a hash prefix, never printed.
+- New agent `agents/vulnerability-hunter.md`, the hunt's contract, forked where the harness supports it and read inline elsewhere. A preflight (`hunt-preflight.mjs`) finds the manifests and the installed audit tools, plans the hunters and reports a stale marker.
+- Five lanes, each in parallel hunters: dependencies (CVEs only from an audit tool's own report, never from memory), code, secrets and supply chain, the AI and agent surface, and open-source intelligence on what the public can already see. A verifier on the most capable model tries to refute every High or Medium finding before it counts. One verdict (`PASS`, `PASS-WITH-ISSUES`, `FAIL` or `INCOMPLETE`) goes to `reviews/<ID>/SECURITY-REPORT.md`, with `security-findings.json` beside it.
+- `task-review` runs the hunt as its Step 3b, between the code review and the QA gate, and folds its verdict into the one it writes: a security `FAIL` makes the review `FAIL`, a security `PASS-WITH-ISSUES` makes it `PASS-WITH-ISSUES`, and a security `INCOMPLETE` is named in the verdict but never blocks. A finding without a numeric confidence is an error, and a Red Flags row without a run behind it is dropped.
+- `--post` comments the report on the ticket and on the open pull or merge request through the autopilot tracker clients; for an audit without a ticket it comments the open pull or merge request of the current branch (`post-review.mjs --security-only`).
+- A third guardrail profile, `hunt`, under the marker `.ultrapowers/hunt-active`, runs on the same hooks and harnesses as the QA and autopilot profiles: it reads everywhere in the project, allows the audit tools and `gh api` reads, and denies every write outside `reviews/`, every push and tracker write, key material, worktrees and test runs.
+- New project setting `hunt.maxHuntersPerLane` in `.agents/ultrapowers.json` (default 8, documented in the README's project configuration table). The scaffold template carries the block and the project README template describes it, and the Claude Code settings template pre-approves the new skill, so upgrade mode offers the new `README.md` and `.claude/settings.json`.
+- The autopilot hunt stage is not part of this release; it is tracked in issue #43.
+
+**Security fixes from a review of the plugin's own code**
 
 A security release from a review of the plugin's own code: five read-only investigators (injection, secrets and approval logic, prompt injection, supply chain, the guardrail entry points), one finding at a time verified by the orchestrator, and one fixer per batch, test-first. No CVE was found in any dependency; the plugin still has none at run time.
 
