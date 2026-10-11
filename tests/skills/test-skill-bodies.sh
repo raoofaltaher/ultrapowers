@@ -106,6 +106,27 @@ else
 fi
 
 echo ""
+echo "=== Test: the rebuilt brainstorming skill (upstream 7.0.0 port) and what it keeps ==="
+B=skills/brainstorming/SKILL.md
+expect $B 'skip the questions' 'brainstorming offers to skip the questions in the first message'
+expect $B 'One open question|one open question' 'brainstorming asks one open question first'
+expect $B 'short menu only when'  'brainstorming offers a menu only when stuck'
+expect $B 'about 200-300 words' 'brainstorming plays each part back in 200-300 words'
+expect $B 'builder-check-prompt.md' 'brainstorming dispatches the builder check'
+expect $B 'How it gets made' 'brainstorming asks which how-it-gets-made choices are theirs'
+expect $B 'This holds even when they skip the questions' 'the how-it-gets-made question survives a skipped conversation'
+expect $B '## Autopilot form' 'brainstorming keeps the Autopilot form section'
+expect $B 'Assumption' 'brainstorming keeps the assumption ledger'
+expect $B 'Repositories in scope' 'brainstorming keeps the Repositories in scope section'
+expect $B 'Three Paths' 'brainstorming keeps the three paths'
+expect $B 'The ratchet is' 'brainstorming keeps the one-way ratchet'
+expect $B 'human partner' 'brainstorming keeps the human partner voice'
+expect $B 'ultrapowers:brainstorm-task' 'brainstorming names its ticket caller'
+expect $B 'writing-plans' 'brainstorming hands off to writing-plans'
+expect $B 'visual-companion.md' 'brainstorming points at the visual companion guide'
+if grep -Eqi 'token-intensive|token cost' "$REPO_ROOT/$B"; then fail 'brainstorming no longer warns about the companion token cost'; else pass 'brainstorming no longer warns about the companion token cost'; fi
+if [[ -f "$REPO_ROOT/skills/brainstorming/builder-check-prompt.md" && ! -e "$REPO_ROOT/skills/brainstorming/spec-document-reviewer-prompt.md" ]]; then pass 'the builder check replaces the spec-document reviewer prompt'; else fail 'the builder check replaces the spec-document reviewer prompt'; fi
+echo ""
 if [[ "$FAILURES" -ne 0 ]]; then
     echo "FAILED: $FAILURES assertion(s)."
     exit 1
