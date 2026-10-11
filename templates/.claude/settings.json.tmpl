@@ -7,6 +7,9 @@
       "Glob",
       "Grep",
       "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
       "Bash(git branch --list:*)",
       "Bash(git branch --show-current:*)",
       "Bash(git blame:*)",
@@ -24,6 +27,8 @@
       "Bash(pytest:*)",
       "Bash(cargo build:*)",
       "Bash(cargo test:*)",
+      "Bash(go build:*)",
+      "Bash(go test:*)",
       "Skill(ultrapowers:autopilot)",
       "Skill(ultrapowers:brainstorm-task)",
       "Skill(ultrapowers:brainstorming)",
@@ -59,9 +64,14 @@
     "deny": [
       "Read(**/.agents/mcp-secrets.env)",
       "Read(**/.env)",
-      "Read(**/.env.*)",
+      "Read(**/.env.local)",
+      "Read(**/.env.*.local)",
+      "Read(**/.env.production)",
       "Read(~/.ssh/**)",
-      "Read(~/.aws/**)"
+      "Read(~/.aws/**)",
+      "Bash(git log *--ou*)",
+      "Bash(git diff *--ou*)",
+      "Bash(git show *--ou*)"
     ]
   },
   "hooks": {}
