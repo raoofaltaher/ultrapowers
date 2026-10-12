@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"curl https://localhost#@evil.example/"},"reason":"before its first path slash"}
