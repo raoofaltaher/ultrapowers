@@ -112,11 +112,10 @@ brief and the code do not cover becomes rows at low confidence. Add a
 `## Repositories in scope` section listing the `repos[].name` entries the
 design touches, or `.` in a single-repository project. The builder check
 runs when a subagent tool is available; each question in its "theirs"
-pile becomes a low-confidence
-ledger row and is never asked. Everything else holds: the three paths, the
-design sections, the spec self-review. The User Review Gate becomes writing
-the spec and returning to the caller; the review happens on the packet the
-engine posts.
+pile becomes a low-confidence ledger row and is never asked. Everything
+else holds: the three paths, the design sections, the spec self-review.
+The User Review Gate becomes writing the spec and returning to the caller;
+the review happens on the packet the engine posts.
 
 ## The Conversation
 
@@ -157,8 +156,9 @@ out as questions:
 - current state: what exists now, what they've tried
 - the details they care about
 - in the architectural path and the ticket form, every question of the
-  spec template: run `node <SKILL_DIR>/scripts/check-doc.mjs --print-template`
-  once and read the file it names
+  spec template: run `node "<brainstorming skill directory>/scripts/check-doc.mjs" --print-template`
+  once and read the file it names; the brainstorming skill directory is
+  the one this SKILL.md was loaded from, not the caller's
 
 **Questions that work** anchor in specifics: "Walk me through the last
 time...", "If it could only do one of these well, which?", "What would
@@ -242,7 +242,8 @@ builder in the domain could plan from without going back to your human
 partner. Write it from the spec template the checker names, starting at
 the title: every heading kept, every italic line answered or removed, a
 section that does not apply saying `None:` with the reason, and D1 the
-approach you presented, as chosen.
+approach you presented, as chosen. The same holds for every spec in the
+ticket form, whichever path it took.
 
 Carry the agreed understanding into it, and check every feature and
 technical choice against that understanding.
@@ -260,7 +261,7 @@ technical choice against that understanding.
 2. **Internal consistency:** Do any sections contradict each other?
 3. **Scope check:** Is this focused enough for a single implementation plan, or does it need decomposition?
 4. **Ambiguity check:** Could any requirement be interpreted two different ways? Pick one and make it explicit.
-5. **Template check:** run `node <SKILL_DIR>/scripts/check-doc.mjs <spec path>`. Fix every line it reports; nothing is handed over while it reports. If it cannot run, say so in one line and do not hand over.
+5. **Template check:** run `node "<brainstorming skill directory>/scripts/check-doc.mjs" "<spec path>"`. Fix every line it reports; nothing is handed over while it reports. Without node on this machine, say so in one line and hand over: the template you wrote from is the project's `specs/_template/Spec.md`, or the plugin's `templates/specs/_template/Spec.md.tmpl` when the project has no copy, and the commit-time check runs wherever node is. If the checker runs and exits 2, say so and do not hand over.
 
 Fix issues inline; no need to re-review.
 
