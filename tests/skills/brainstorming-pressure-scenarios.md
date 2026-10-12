@@ -87,7 +87,12 @@ message, the minor ones are marked `My call` and listed in the ledger.
 Setup: project root `C:\proj`, `.agents/ultrapowers.json` present,
 `.ultrapowers/autopilot-active` present, ticket GH-79 known, brief: "GH-79:
 add a `--json` flag to the `report` command in `src/cli/report.ts`; the
-flag prints the same figures as JSON. Repository: `.`".
+flag prints the same figures as JSON. Repository: `.`". The brainstorm-task
+skill invoked brainstorming for this ticket; the grounding read
+`src/cli/report.ts`, which prints a fixed set of figures through a
+`printReport(figures)` function, and `src/cli/index.ts`, which registers the
+commands with a small argument parser. No human is present. You cannot explore
+further (no tools); state any further assumption as such.
 Output: whether any question is asked, the exact spec path, and the full
 text of the spec as the agent would write it.
 
