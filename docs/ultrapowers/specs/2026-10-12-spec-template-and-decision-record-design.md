@@ -313,6 +313,9 @@ Interfaces others depend on:
 - The checker's command line: new, used by the prose, the commit script and
   the hook.
 - `checkDoc`: new, imported by the engine and the tests.
+- `textLines`: new, the lines of a document with its fenced blocks and comment
+  lines blanked, imported by the engine's lib so `scopeFrom` and
+  `assumptionsFrom` skip a fenced copy of the template.
 - The finding line `path:line: rule: message` and the exit codes 0, 1, 2.
 
 What a future upstream port must keep: the template file, the checker, the
@@ -551,14 +554,21 @@ thoughts; and the absence of "only when it helps them decide".
   and before `git add`, run the checker on the spec when `have_node` of
   `ticket-lib.sh` says node is available. Exit 1 from the checker prints
   `=== SPEC-CHECK-FAILED ===`, the findings, and exits 1 with nothing staged.
-  Exit 2 prints `ERROR:` with the reason and exits 1. Without node, the
+  Exit 2, or a checker file that is missing, prints `ERROR:` with the reason
+  and exits 1; the failed-check line carries no `ERROR:` prefix, because
+  brainstorm-task reads `ERROR` as stop and a spec with findings is fixed and
+  run again. Without node, the
   script prints `=== SPEC-CHECK-SKIPPED ===` with the reason and commits: the
   ticket scripts keep their promise to work without node, and the skip is
   visible in the transcript (ledger row 9). `have_node` is the existing
   helper the ticket scripts use; it treats the test-only variable
   `ULTRAPOWERS_NO_NODE` as "no node". No setting is added anywhere.
 - `skills/new-task/scripts/ticket-lib.sh:119-124`: `_*` joins the refused
-  ids, with the error text extended by "leading _".
+  ids, with the error text extended by "leading _". The four scripts that copy
+  the rule in JavaScript (`qa-preflight.mjs`, `hunt-preflight.mjs`,
+  `assemble-review.mjs`, `post-review.mjs`) refuse a leading `_` too, because
+  the next change puts its templates under `reviews/_template/` and they write
+  under `reviews/<id>/`.
 - `skills/autopilot/scripts/autopilot.mjs`, `runEnd` (`:928-1002`): when
   `opts.stage` is `spec` or `changes` and the stage ended ok (the changes
   stage revises the spec, so a revised spec reaches the next packet checked),
@@ -658,12 +668,15 @@ Offline suites, each in the `AGENTS.md` list and in `.github/workflows/ci.yml`:
   the project copy, then the payload; exit codes 0, 1 and 2; and the dogfood
   cases: this spec passes against the payload template, and its fenced copy
   of the template equals the payload file byte for byte.
-- `bash tests/task-lifecycle/test-task-lifecycle.sh` gains three cases: a
+- `bash tests/task-lifecycle/test-task-lifecycle.sh` gains cases: a
   ticket spec with a surviving question gets `=== SPEC-CHECK-FAILED ===`,
-  exit 1 and nothing staged, and a clean one commits; with
-  `ULTRAPOWERS_NO_NODE=1` the same failing spec gets
-  `=== SPEC-CHECK-SKIPPED ===` and commits; `_template` and `_x` are refused
-  as ticket ids.
+  exit 1 and nothing staged, without an `ERROR:` prefix, and a clean one
+  commits; with `ULTRAPOWERS_NO_NODE=1` the same failing spec gets
+  `=== SPEC-CHECK-SKIPPED ===` (reason `node not available`) and commits; a
+  missing checker file is an `ERROR:` with nothing staged; `_template` and
+  `_x` are refused as ticket ids. The suites of the four JavaScript scripts
+  that copy the rule each refuse a leading `_` under a `ticketPattern` that
+  would allow it.
 - `bash tests/autopilot/run-tests.sh` gains cases in `autopilot.test.mjs`: a
   spec stage ended with a failing spec ends blocked with `spec-incomplete`,
   the ticket comment names the first findings, and `next` does not move to

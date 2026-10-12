@@ -240,9 +240,9 @@ else
   fail "a renamed old spec without a decision record is not checked"; show
 fi
 
-# 7c. A spec that carries a record is checked when it is renamed, even when the
-# rename is the only thing the commit says about it: it is moved and a section is
-# emptied to a bare None.
+# 7c. A spec that carries a record is checked when it is renamed: here it moves
+# to another folder and one section is emptied to a bare None in the same commit,
+# which git reports as a rename with a change, not as an addition.
 clean_spec | put specs/GH-10/Spec.md
 stage specs/GH-10/Spec.md
 commit_with_plugin "a spec with a record"
