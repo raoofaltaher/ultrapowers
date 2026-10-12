@@ -13,6 +13,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { execFile } from 'node:child_process';
 import { resolveTicket, TicketError } from '../../new-task/scripts/ticket-sources.mjs';
+import { checkDoc, resolveTemplate } from '../../brainstorming/scripts/check-doc.mjs';
 import { fileURLToPath } from 'node:url';
 import {
   AutopilotError, STAGES, QA_STOPS, effectiveAutopilot, modeFor, branchName, initialState,
@@ -955,6 +956,22 @@ async function runEnd(opts) {
     else if (qaConfigured(ctx.marker) && ok) {
       ok = false;
       message = `qa-missing: no committed ${report} with a Verdict line; the QA gate fails closed`;
+    }
+  }
+  if (opts.stage === 'spec' && ok) {
+    // The spec has to pass the check brainstorming runs before it commits one, against the project's
+    // template (the plugin's own copy when the project has none). A template the checker cannot use
+    // blocks the stage with its reason too, rather than crashing `end` with the stage left open.
+    try {
+      const specFile = path.join(ctx.root, 'specs', opts.id, 'Spec.md');
+      const findings = checkDoc(readText(specFile), readText(resolveTemplate(path.dirname(specFile)).path));
+      if (findings.length) {
+        ok = false;
+        message = `spec-incomplete: ${findings.slice(0, 3).map((f) => `${f.line}: ${f.rule}: ${f.message}`).join('; ')}`;
+      }
+    } catch (err) {
+      ok = false;
+      message = `spec-incomplete: ${err.message}`;
     }
   }
   if (opts.stage === 'execute' && ok && planChangedSince(ctx, state)) {

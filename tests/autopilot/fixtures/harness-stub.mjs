@@ -14,6 +14,8 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ENGINE = path.resolve(HERE, '..', '..', '..', 'skills', 'autopilot', 'scripts', 'autopilot.mjs');
+// The engine checks the spec when the spec stage ends, so the stub writes the checker's own minimal valid spec.
+const MINIMAL_SPEC = path.resolve(HERE, '..', '..', 'brainstorming', 'fixtures', 'minimal-valid.md');
 const args = process.argv.slice(2);
 // The credentials a stage must not hold are logged as seen, so a test can check the watcher scrubbed them.
 const seen = Object.fromEntries(['GH_TOKEN', 'GITHUB_TOKEN', 'GITLAB_TOKEN', 'GLAB_TOKEN', 'GITLAB_ACCESS_TOKEN', 'CI_JOB_TOKEN', 'GITLAB_PRIVATE_TOKEN', 'GL_TOKEN', 'GH_CONFIG_DIR', 'GLAB_CONFIG_DIR', 'GIT_TERMINAL_PROMPT', 'ODOO_API_KEY', 'ULTRAPOWERS_STAGE_ODOO_API_KEY']
@@ -43,7 +45,7 @@ if (stage === 'scaffold') {
   result.title = 'Fix it now please';
 } else if (stage === 'spec') {
   fs.mkdirSync(path.join(root, 'specs', id), { recursive: true });
-  fs.writeFileSync(path.join(root, 'specs', id, 'Spec.md'), '# Spec\n\n## Repositories in scope\n\n- .\n\n## Assumption ledger\n\n| # | Question | Chosen answer | Confidence | Reason |\n|---|---|---|---|---|\n| 1 | Which? | this | low | stub |\n');
+  fs.writeFileSync(path.join(root, 'specs', id, 'Spec.md'), `${fs.readFileSync(MINIMAL_SPEC, 'utf8').replace(/\r\n/g, '\n')}| 1 | Which? | this | low | stub |\n`);
   git('add', '-A');
   git('commit', '-q', '-m', `spec(${id}): stub`);
   result.scope = ['.'];

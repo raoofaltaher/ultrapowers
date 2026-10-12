@@ -12,7 +12,15 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..');
 const ENGINE = path.join(REPO, 'skills', 'autopilot', 'scripts', 'autopilot.mjs');
 
-const SPEC = (scope) => `# Spec\n\n## Repositories in scope\n\n${scope.map((s) => `- ${s}`).join('\n')}\n\n## Assumption ledger\n\n| # | Question | Chosen answer | Confidence | Reason |\n|---|---|---|---|---|\n| 1 | Which cache? | none | low | not asked |\n| 2 | Which auth? | OIDC | high | the app uses it |\n`;
+// The spec a stage writes has to pass the spec check at `end spec`, so SPEC is the checker's own
+// minimal valid spec with the scope and the two ledger rows these tests read. INVALID_SPEC is the
+// same scope and ledger with no sections, status line or decision record, so it fails the check.
+const MINIMAL_SPEC = fs.readFileSync(path.join(REPO, 'tests', 'brainstorming', 'fixtures', 'minimal-valid.md'), 'utf8').replace(/\r\n/g, '\n');
+const LEDGER_ROWS = '| 1 | Which cache? | none | low | not asked |\n| 2 | Which auth? | OIDC | high | the app uses it |\n';
+const SPEC = (scope) => MINIMAL_SPEC
+  .replace(/^(## Repositories in scope\n)(?:- .*\n)+/m, (_, heading) => `${heading}${scope.map((s) => `- ${s}`).join('\n')}\n`)
+  .replace(/^\|---\|---\|---\|---\|---\|\n/m, (separator) => `${separator}${LEDGER_ROWS}`);
+const INVALID_SPEC = (scope) => `# Spec\n\n## Repositories in scope\n\n${scope.map((s) => `- ${s}`).join('\n')}\n\n## Assumption ledger\n\n| # | Question | Chosen answer | Confidence | Reason |\n|---|---|---|---|---|\n${LEDGER_ROWS}`;
 const PLAN = (scope) => `# Plan\n\n## Repositories in scope\n\n${scope.map((s) => `- ${s}`).join('\n')}\n\n### Task 1\n`;
 
 // Runs scaffold, spec and plan as the agent would, up to the gate.
@@ -27,7 +35,8 @@ function throughPlan(ws, { scope = ['.'], planScope = scope, id = 'GH-16' } = {}
   fs.writeFileSync(path.join(ws.root, 'specs', id, 'Spec.md'), SPEC(scope));
   git(ws.root, 'add', '-A');
   git(ws.root, 'commit', '-q', '-m', `spec(${id}): spec`);
-  run(ws, ['end', id, 'spec', '--result', JSON.stringify({ ok: true })]);
+  const specEnd = run(ws, ['end', id, 'spec', '--result', JSON.stringify({ ok: true })]);
+  assert.equal(specEnd.json?.status, 'finished', `a valid spec finishes the spec stage: ${specEnd.stdout}${specEnd.stderr}`);
   run(ws, ['begin', id, 'plan']);
   fs.mkdirSync(path.join(ws.root, 'plans', id), { recursive: true });
   fs.writeFileSync(path.join(ws.root, 'plans', id, 'Plan.md'), PLAN(planScope));
@@ -167,6 +176,50 @@ test('end with ok false logs blocked, labels and comments; a third attempt stops
   assert.equal(state(ws).attempt, 3);
   run(ws, ['end', 'GH-16', 'spec', '--result', JSON.stringify({ ok: false, message: 'and again' })]);
   assert.deepEqual([run(ws, ['next', 'GH-16']).json.action, run(ws, ['next', 'GH-16']).json.reason], ['stop', 'blocked']);
+});
+
+test('end spec blocks a spec that fails the check and next retries the stage', () => {
+  const ws = workspace();
+  run(ws, ['begin', 'GH-16', 'scaffold']);
+  fs.mkdirSync(path.join(ws.root, 'tasks', 'GH-16'), { recursive: true });
+  run(ws, ['end', 'GH-16', 'scaffold', '--result', JSON.stringify({ ok: true })]);
+  run(ws, ['begin', 'GH-16', 'spec']);
+  fs.mkdirSync(path.join(ws.root, 'specs', 'GH-16'), { recursive: true });
+  fs.writeFileSync(path.join(ws.root, 'specs', 'GH-16', 'Spec.md'), INVALID_SPEC(['.']));
+  git(ws.root, 'add', 'specs/GH-16/Spec.md');
+  git(ws.root, 'commit', '-q', '-m', 'spec(GH-16): spec');
+  const r = run(ws, ['end', 'GH-16', 'spec', '--result', JSON.stringify({ ok: true })]);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.equal(state(ws).stageStatus, 'blocked');
+  assert.equal(logLines(ws).at(-1).event, 'blocked');
+  assert.ok(ws.calls().some((a) => a.includes('--add-label') && a.includes('up:blocked')));
+  assert.ok(ws.calls().some((a) => a[0] === 'issue' && a[1] === 'comment'), 'the ticket is told');
+  // The checker orders its findings by line and then by rule, and the engine posts the first three:
+  // for this spec, the first three missing sections (line 0), not the missing status line.
+  assert.match(commentBodies(ws).at(-1), /spec-incomplete: 0: heading: "Intent" is missing; 0: heading: "Goals, non-goals and anti-goals" is missing; 0: heading: "Constraints" is missing$/);
+  const n = run(ws, ['next', 'GH-16']);
+  assert.deepEqual([n.json.action, n.json.stage, n.json.reason], ['run', 'spec', 'spec-retry']);
+});
+
+test('end spec blocks with the reason when the project template has no section heading', () => {
+  const ws = workspace();
+  run(ws, ['begin', 'GH-16', 'scaffold']);
+  fs.mkdirSync(path.join(ws.root, 'tasks', 'GH-16'), { recursive: true });
+  run(ws, ['end', 'GH-16', 'scaffold', '--result', JSON.stringify({ ok: true })]);
+  run(ws, ['begin', 'GH-16', 'spec']);
+  // A template with no "## " heading makes the checker throw: the stage ends blocked with that
+  // reason on the ticket, and the command does not crash with the stage left open.
+  fs.mkdirSync(path.join(ws.root, 'specs', '_template'), { recursive: true });
+  fs.writeFileSync(path.join(ws.root, 'specs', '_template', 'Spec.md'), '# A template with no sections\n');
+  fs.mkdirSync(path.join(ws.root, 'specs', 'GH-16'), { recursive: true });
+  fs.writeFileSync(path.join(ws.root, 'specs', 'GH-16', 'Spec.md'), SPEC(['.']));
+  git(ws.root, 'add', 'specs');
+  git(ws.root, 'commit', '-q', '-m', 'spec(GH-16): spec');
+  const r = run(ws, ['end', 'GH-16', 'spec', '--result', JSON.stringify({ ok: true })]);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.equal(state(ws).stageStatus, 'blocked');
+  assert.match(commentBodies(ws).at(-1), /spec-incomplete: the template has no "## " heading$/);
+  assert.equal(fs.existsSync(lockFile(ws)), false, 'the lock is released');
 });
 
 test('a stale lock from a dead pid is removed by begin', () => {
