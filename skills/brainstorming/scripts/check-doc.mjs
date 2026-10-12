@@ -16,7 +16,9 @@
 //
 // checkDoc(document, template) returns [{ line, rule, message }] in document
 // order, line being 1-based and 0 when the finding concerns the whole document.
-// It throws an Error when the template has no "## " heading.
+// A code fence that never closes is the one finding, rule heading at its line,
+// since every later line would read as code. It throws an Error when the
+// template has no "## " heading.
 
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -43,21 +45,54 @@ const clip = (text, max = 60) => (text.length > max ? `${text.slice(0, max - 3)}
 // The lines of a text with every line of a fenced block (the fences included)
 // and every whole-line HTML comment blanked. Line n is index n - 1. A fence
 // closes on the same character, at least as long, with nothing after it, so a
-// shorter fence quoted inside a longer one stays inside.
+// shorter fence quoted inside a longer one stays inside. `open` is the 1-based
+// line of a fence that never closes, 0 when every fence does.
 function linesOf(text) {
   let fence = null;
-  return text.replace(/\r/g, '').split('\n').map((line) => {
+  const lines = text.replace(/\r/g, '').split('\n').map((line, index) => {
     const marker = FENCE_RE.exec(line);
     if (fence) {
       if (marker && marker[1][0] === fence.char && marker[1].length >= fence.size && marker[2].trim() === '') fence = null;
       return '';
     }
     if (marker && !(marker[1][0] === '`' && marker[2].includes('`'))) {
-      fence = { char: marker[1][0], size: marker[1].length };
+      fence = { char: marker[1][0], size: marker[1].length, line: index + 1 };
       return '';
     }
     return COMMENT_RE.test(line) ? '' : line;
   });
+  return { lines, open: fence ? fence.line : 0 };
+}
+
+// The paragraphs of the lines, the runs between blank lines, each as its first
+// index and its text: the lines joined with "\n", each inline code span blanked
+// to spaces with its newlines kept, so a span that wraps a soft line break
+// still counts as code and every line keeps its number.
+function paragraphsOf(lines) {
+  const found = [];
+  let start = 0;
+  while (start < lines.length) {
+    if (lines[start].trim() === '') {
+      start += 1;
+      continue;
+    }
+    let end = start;
+    while (end < lines.length && lines[end].trim() !== '') end += 1;
+    found.push({ start, text: lines.slice(start, end).join('\n').replace(CODE_SPAN_RE, (span) => span.replace(/[^\n]/g, ' ')) });
+    start = end;
+  }
+  return found;
+}
+
+// The lines with every inline code span blanked, as paragraphsOf reads them.
+function spanless(lines) {
+  const plain = [...lines];
+  for (const { start, text } of paragraphsOf(lines)) {
+    text.split('\n').forEach((line, k) => {
+      plain[start + k] = line;
+    });
+  }
+  return plain;
 }
 
 // The "## " headings of the lines, each with the index of its line and the
@@ -80,14 +115,17 @@ function isQuestion(line) {
   return text.startsWith('_') && text.endsWith('_') && /[^_\s]/.test(text);
 }
 
+// The template's section names and its question lines. A question is kept as
+// the document's lines are read, with its inline code spans blanked, so one that
+// holds a span of its own is still found when it survives in a document.
 function parseTemplate(template) {
-  const lines = linesOf(template);
+  const { lines } = linesOf(template);
   const headings = [];
   for (const { text } of headingsOf(lines)) {
     if (text && !headings.includes(text)) headings.push(text);
   }
   if (!headings.length) throw new Error('the template has no "## " heading');
-  return { headings, questions: new Set(lines.filter(isQuestion).map((line) => line.trim())) };
+  return { headings, questions: new Set(spanless(lines).filter(isQuestion).map((line) => line.trim())) };
 }
 
 // Which of a series of items must move for their template positions, in
@@ -188,44 +226,37 @@ const CHECKS = {
     }
   },
 
-  question({ lines, spec }, add) {
-    lines.forEach((line, i) => {
-      if (spec.questions.has(line.trim())) add(i + 1, `the template line is still here, answer it or remove it: ${clip(line.trim())}`);
+  // A line is compared with the template's questions with its inline code spans
+  // blanked, as the template's own lines are, so a question quoted inside a span
+  // that wraps is no survivor and one with a span of its own still is.
+  question({ lines, plain, spec }, add) {
+    plain.forEach((line, i) => {
+      if (spec.questions.has(line.trim())) add(i + 1, `the template line is still here, answer it or remove it: ${clip(lines[i].trim())}`);
     });
   },
 
-  // Per paragraph, the lines up to a blank line, with each inline code span
-  // blanked (newlines kept) before the matching, so a span that wraps still
-  // counts as code. One finding per line.
+  // Per paragraph, with each inline code span blanked before the matching, so a
+  // span that wraps still counts as code. One finding per line.
   placeholder({ lines }, add) {
-    let start = 0;
-    while (start < lines.length) {
-      if (lines[start].trim() === '') {
-        start += 1;
-        continue;
-      }
-      let end = start;
-      while (end < lines.length && lines[end].trim() !== '') end += 1;
-      const text = lines.slice(start, end).join('\n').replace(CODE_SPAN_RE, (span) => span.replace(/[^\n]/g, ' '));
+    for (const { start, text } of paragraphsOf(lines)) {
       const reported = new Set();
       for (const match of text.matchAll(PLACEHOLDER_RE)) {
         if (match[0].startsWith('<http')) continue;
         const line = start + text.slice(0, match.index).split('\n').length;
         if (reported.has(line)) continue;
         reported.add(line);
-        add(line, `"${clip(match[0].replace(/\s+/g, ' '))}" is still in the text`);
+        add(line, `"${clip(match[0].replace(/\s+/g, ' '))}" is still in the text; fill it in, or wrap literal text in backticks`);
       }
-      start = end;
     }
   },
 
-  empty({ lines, h2, spec }, add) {
+  empty({ lines, plain, h2, spec }, add) {
     for (const want of spec.headings) {
       const section = h2.find((h) => h.text === want);
       if (!section) continue;
-      const filled = lines.slice(section.index + 1, section.end).some((line) => {
+      const filled = lines.slice(section.index + 1, section.end).some((line, k) => {
         const text = line.trim();
-        return text !== '' && !spec.questions.has(text) && !/^None:?$/.test(text);
+        return text !== '' && !spec.questions.has(plain[section.index + 1 + k].trim()) && !/^None:?$/.test(text);
       });
       if (!filled) add(section.index + 1, `"${want}" has no content; write it, or write "None:" and the reason`);
     }
@@ -282,8 +313,11 @@ const CHECKS = {
 
 export function checkDoc(document, template) {
   const spec = parseTemplate(template);
-  const lines = linesOf(document);
-  const context = { lines, h2: headingsOf(lines), spec };
+  const { lines, open } = linesOf(document);
+  // Every line after a fence that never closes reads as code, so the rules would report the
+  // sections it swallowed as missing: the fence is the one finding.
+  if (open) return [{ line: open, rule: 'heading', message: 'this code fence is never closed, so every line after it is read as code; close it' }];
+  const context = { lines, plain: spanless(lines), h2: headingsOf(lines), spec };
   const findings = [];
   for (const rule of RULES) {
     CHECKS[rule](context, (line, message) => findings.push({ line, rule, message }));

@@ -18,7 +18,7 @@ const TEMPLATE = read(payloadPath);
 const FIXTURE = read(resolve(__dirname, 'fixtures/minimal-valid.md'));
 
 const rulesOf = (findings) => findings.map((f) => f.rule);
-const linesOf = (findings) => findings.map((f) => f.line);
+const findingLines = (findings) => findings.map((f) => f.line);
 
 // One-line edit of a document. It fails when the text to replace is missing,
 // so a typo cannot turn a test into a pass.
@@ -101,7 +101,7 @@ test('a reordered heading is reported at its line', () => {
   const swapped = swapSections(FIXTURE, 'Components', 'Testing');
   const two = checkDoc(swapped, TEMPLATE);
   assert.deepEqual(rulesOf(two), ['heading', 'heading']);
-  assert.deepEqual(linesOf(two), [lineOf(swapped, '## Testing'), lineOf(swapped, '## Components')]);
+  assert.deepEqual(findingLines(two), [lineOf(swapped, '## Testing'), lineOf(swapped, '## Components')]);
   // Two neighbours swapped: the heading that came early is the one finding.
   const neighbours = swapSections(FIXTURE, 'Data flow', 'Error handling');
   const pair = checkDoc(neighbours, TEMPLATE);
@@ -132,6 +132,9 @@ test('a missing status line is reported', () => {
   for (const word of ['approved', 'superseded']) {
     assert.deepEqual(checkDoc(mutate(FIXTURE, 'Status: draft,', `Status: ${word},`), TEMPLATE), [], word);
   }
+  // The status starts its line: the same words after other text on the line are no status line.
+  const after = mutate(FIXTURE, 'Status: draft, 2026-10-12. Ticket: none.', 'Ticket: none. Status: draft, 2026-10-12.');
+  assert.deepEqual(rulesOf(checkDoc(after, TEMPLATE)), ['status']);
 });
 
 test('a surviving italic question line is reported at its line', () => {
@@ -144,7 +147,7 @@ test('a surviving italic question line is reported at its line', () => {
   assert.equal(findings[0].line, lineOf(doc, question));
   assert.equal(findings[0].line, 6);
   // Lines are compared trimmed.
-  assert.deepEqual(linesOf(checkDoc(mutate(FIXTURE, '## Intent\n', `## Intent\n  ${question}  \n`), TEMPLATE)), [6]);
+  assert.deepEqual(findingLines(checkDoc(mutate(FIXTURE, '## Intent\n', `## Intent\n  ${question}  \n`), TEMPLATE)), [6]);
   // A reworded question is an answer, not a survivor.
   assert.deepEqual(checkDoc(mutate(FIXTURE, '## Intent\n', '## Intent\n_What is the moment?_\n'), TEMPLATE), []);
   // A section that holds nothing but the question is empty as well.
@@ -155,11 +158,39 @@ test('a surviving italic question line is reported at its line', () => {
   assert.deepEqual(checkDoc(mutate(FIXTURE, '## Intent\n', '## Intent\n___\n'), ruled), []);
 });
 
+test('a question inside a code span is quoted, not left over; one with spans of its own still counts', () => {
+  const lines = TEMPLATE.split('\n');
+  const question = lines[lines.indexOf('## Intent') + 1];
+  // On a line of its own inside a span that wraps, the document quotes the question.
+  const quoted = mutate(FIXTURE, '## Intent\nNone: fixture.', `## Intent\nThe template asks \`\n${question}\n\` and this answers it.`);
+  assert.deepEqual(checkDoc(quoted, TEMPLATE), []);
+  // With the span closed before the line, it is a survivor again.
+  const closed = mutate(FIXTURE, '## Intent\nNone: fixture.', `## Intent\nThe template asks \`x\`\n${question}\nand this answers it.`);
+  assert.deepEqual(rulesOf(checkDoc(closed, TEMPLATE)), ['question']);
+  // A template question that holds code spans is read the same way on both sides, so it is caught when it
+  // survives: the line with `repos[].name` and the line with `Assumption:` and `My call:`.
+  const repos = '_Which `repos[].name` entries does the design touch? `.` in a single-repository project._';
+  const source = '_A line with no source says `Assumption:` with the reason, or `My call:` for a minor choice. Both kinds also appear in the ledger below._';
+  assert.ok(TEMPLATE.includes(`${repos}\n`) && TEMPLATE.includes(`${source}\n`), 'the template still carries both lines');
+  const scope = mutate(FIXTURE, '## Repositories in scope\n- .\n', `## Repositories in scope\n${repos}\n`);
+  const left = checkDoc(scope, TEMPLATE);
+  assert.deepEqual(rulesOf(left), ['empty', 'question']);
+  assert.equal(left[1].line, lineOf(scope, repos));
+  const record = mutate(FIXTURE, '## Decision record\n', `## Decision record\n${source}\n`);
+  const kept = checkDoc(record, TEMPLATE);
+  assert.deepEqual(rulesOf(kept), ['question']);
+  assert.equal(kept[0].line, lineOf(record, source));
+  // A reworded line is an answer, spans or not.
+  assert.deepEqual(checkDoc(mutate(FIXTURE, '## Repositories in scope\n- .\n', '## Repositories in scope\n_Which `repos[].name` entries? `.` here._\n'), TEMPLATE), []);
+});
+
 test('TBD outside code is a placeholder; inside a code span it is not', () => {
   const tbd = checkDoc(withIntent('None: TBD with the owner.'), TEMPLATE);
   assert.deepEqual(rulesOf(tbd), ['placeholder']);
   assert.equal(tbd[0].line, 6);
   assert.match(tbd[0].message, /TBD/);
+  // The message tells the writer the way out for text that is meant literally.
+  assert.match(tbd[0].message, /wrap literal text in backticks/);
   const todo = checkDoc(withIntent('None: TODO later.'), TEMPLATE);
   assert.deepEqual(rulesOf(todo), ['placeholder']);
   assert.match(todo[0].message, /TODO/);
@@ -179,7 +210,7 @@ test('an angle placeholder is reported; one starting with http or inside a code 
   // One finding per line, however many placeholders the line holds.
   assert.equal(checkDoc(withIntent('None: <a> and <b> and TBD.'), TEMPLATE).length, 1);
   // A placeholder that wraps is reported at the line it starts on.
-  assert.deepEqual(linesOf(checkDoc(withIntent('None: fill in <the\n  decision> now.'), TEMPLATE)), [6]);
+  assert.deepEqual(findingLines(checkDoc(withIntent('None: fill in <the\n  decision> now.'), TEMPLATE)), [6]);
 });
 
 test('a bare None is an empty section; None with a reason is content', () => {
@@ -209,7 +240,7 @@ test('a missing D1 block is reported', () => {
   // A document with no record section at all misses the heading and the record.
   const none = checkDoc(dropSection(FIXTURE, 'Decision record'), TEMPLATE);
   assert.deepEqual(rulesOf(none), ['heading', 'record']);
-  assert.deepEqual(linesOf(none), [0, 0]);
+  assert.deepEqual(findingLines(none), [0, 0]);
 });
 
 test('a missing label is reported by block and label', () => {
@@ -277,6 +308,18 @@ test('a wrapped bullet whose tag is on its second line passes', () => {
   assert.equal(findings[0].line, lineOf(bare, '- **Edge cases:** none known.'));
 });
 
+test('a blank line inside a bullet item does not end it', () => {
+  const edge = '- **Edge cases:** none known. Evidence: this file';
+  // An indented line after the gap still continues the item, so its tag may sit there.
+  const gap = mutate(FIXTURE, edge, '- **Edge cases:** none known.\n\n  Evidence: this file');
+  assert.deepEqual(checkDoc(gap, TEMPLATE), []);
+  // A line after the gap that is not indented does not, and the item stays untagged.
+  const flush = mutate(FIXTURE, edge, '- **Edge cases:** none known.\n\nEvidence: this file');
+  const findings = checkDoc(flush, TEMPLATE);
+  assert.deepEqual(rulesOf(findings), ['record', 'record']);
+  assert.deepEqual(findingLines(findings), [lineOf(flush, '- **Edge cases:** none known.'), lineOf(flush, 'Evidence: this file')]);
+});
+
 test('a non-bullet line inside a block is reported', () => {
   const edge = '- **Edge cases:** none known. Evidence: this file\n';
   const stray = mutate(FIXTURE, edge, `${edge}A stray sentence in the block.\n`);
@@ -314,6 +357,10 @@ test('a bad ledger header and a confidence outside the set are reported', () => 
   assert.deepEqual(checkDoc(withRows('| 1 | `a \\| b` | a | high | r |'), TEMPLATE), []);
   // The second table line is the separator.
   assert.deepEqual(rulesOf(checkDoc(mutate(FIXTURE, '|---|---|---|---|---|', '| 1 | q | a | high | r |'), TEMPLATE)), ['ledger']);
+  // It may carry alignment colons, but every cell needs its dashes and there are five cells.
+  assert.deepEqual(checkDoc(mutate(FIXTURE, '|---|---|---|---|---|', '|:---|:---:|---:|---|:-|'), TEMPLATE), []);
+  assert.deepEqual(rulesOf(checkDoc(mutate(FIXTURE, '|---|---|---|---|---|', '|---|:::|---|---|---|'), TEMPLATE)), ['ledger']);
+  assert.deepEqual(rulesOf(checkDoc(mutate(FIXTURE, '|---|---|---|---|---|', '|---|---|---|---|'), TEMPLATE)), ['ledger']);
   // The ledger ends at the next "## " heading: a table in a later section is not its business.
   assert.deepEqual(checkDoc(`${FIXTURE}\n## Rollout\n| a | b |\n|---|---|\n| x | y |\n`, `${TEMPLATE}\n## Rollout\n_How?_\n`), []);
 });
@@ -330,9 +377,39 @@ test('a fenced copy of the template is ignored by every rule', () => {
   assert.equal(findings[0].line, lineOf(after, 'TBD after the fence'));
   // A fence line with text after it does not close a fence, and a code span at the start of a line does not open one.
   const inner = `${FIXTURE}${'```\n```js\n<x> TBD\n```\n'}TBD after it\n`;
-  assert.deepEqual(linesOf(checkDoc(inner, TEMPLATE)), [lineOf(inner, 'TBD after it')]);
+  assert.deepEqual(findingLines(checkDoc(inner, TEMPLATE)), [lineOf(inner, 'TBD after it')]);
   const span = `${FIXTURE}${'```not a fence``` but a span\n'}TBD after it\n`;
-  assert.deepEqual(linesOf(checkDoc(span, TEMPLATE)), [lineOf(span, 'TBD after it')]);
+  assert.deepEqual(findingLines(checkDoc(span, TEMPLATE)), [lineOf(span, 'TBD after it')]);
+});
+
+test('an indented fence is a fence', () => {
+  // Inside a list item a fence is indented, and its lines are code all the same. The blank lines keep
+  // the two fence lines out of one paragraph, so it is the fence that hides the placeholder, not a span.
+  const item = `${FIXTURE}- an item\n  ${'```js\n'}\n  <x> TBD\n\n  ${'```\n'}`;
+  assert.deepEqual(checkDoc(item, TEMPLATE), []);
+});
+
+test('a fence that is never closed is one finding at its line', () => {
+  const open = mutate(FIXTURE, '## Components\nNone: fixture.\n', `## Components\nNone: fixture.\n${'```js\n'}x\n`);
+  const findings = checkDoc(open, TEMPLATE);
+  assert.deepEqual(rulesOf(findings), ['heading']);
+  assert.deepEqual(findingLines(findings), [lineOf(open, '```js')]);
+  assert.match(findings[0].message, /never closed/);
+  // Closed, the same document is clean again.
+  assert.deepEqual(checkDoc(mutate(open, '```js\nx\n', '```js\nx\n```\n'), TEMPLATE), []);
+  // The finding is at the fence that has no end, not at an earlier one that has.
+  const later = `${FIXTURE}${'```\na\n```\n'}${'~~~\nb\n'}`;
+  assert.deepEqual(findingLines(checkDoc(later, TEMPLATE)), [lineOf(later, '~~~')]);
+  // A closing fence shorter than the opening one does not close it.
+  const shorter = `${FIXTURE}${'````\nc\n```\n'}`;
+  assert.deepEqual(findingLines(checkDoc(shorter, TEMPLATE)), [lineOf(shorter, '````')]);
+  // The command line prints it like any finding and exits 1.
+  const file = join(plainDir(), 'open.md');
+  writeFileSync(file, open);
+  const printed = run([file]);
+  assert.equal(printed.status, 1);
+  assert.ok(printed.stdout.startsWith(`${file}:${lineOf(open, '```js')}: heading: `), printed.stdout);
+  assert.equal(printed.stdout.trimEnd().split('\n').length, 1);
 });
 
 test('a generated-by comment line is ignored', () => {
@@ -341,7 +418,7 @@ test('a generated-by comment line is ignored', () => {
   // The project copy of the template starts with that line too.
   assert.deepEqual(checkDoc(FIXTURE, comment + TEMPLATE), []);
   // Line numbers stay those of the file: the comment is line 1.
-  assert.deepEqual(linesOf(checkDoc(comment + withIntent('None: TBD'), TEMPLATE)), [7]);
+  assert.deepEqual(findingLines(checkDoc(comment + withIntent('None: TBD'), TEMPLATE)), [7]);
   // A comment line hides what it holds.
   assert.deepEqual(checkDoc(mutate(FIXTURE, '## Intent\n', '## Intent\n<!-- TBD <note> -->\n'), TEMPLATE), []);
 });
@@ -351,8 +428,8 @@ test('a code span across a line break hides its placeholder', () => {
   // The same words without the span are a placeholder, at the line it is on.
   const bare = checkDoc(withIntent('Run node <skill dir>/x.mjs\n  --print-template first.'), TEMPLATE);
   assert.deepEqual(rulesOf(bare), ['placeholder']);
-  assert.deepEqual(linesOf(bare), [6]);
-  assert.deepEqual(linesOf(checkDoc(withIntent('Run it\n  with <the thing> now.'), TEMPLATE)), [7]);
+  assert.deepEqual(findingLines(bare), [6]);
+  assert.deepEqual(findingLines(checkDoc(withIntent('Run it\n  with <the thing> now.'), TEMPLATE)), [7]);
   // Text after the span is still text, and a span may hold a backtick between longer fences.
   assert.deepEqual(rulesOf(checkDoc(withIntent('`x` and <y>'), TEMPLATE)), ['placeholder']);
   assert.deepEqual(checkDoc(withIntent('Use ``a ` <b>`` here.'), TEMPLATE), []);
@@ -522,4 +599,15 @@ test('--print-template prints the resolved path alone', () => {
 
 test("this feature's spec passes against the payload template", () => {
   assert.deepEqual(checkDoc(read(specPath), TEMPLATE), []);
+});
+
+test("the four-backtick copy of the template in this feature's spec is the payload file, byte for byte", () => {
+  const rest = read(specPath).split('\n');
+  const from = rest.indexOf('### The template');
+  assert.notEqual(from, -1, 'the spec has no "### The template" heading');
+  const open = rest.findIndex((line, i) => i > from && /^`{4}/.test(line));
+  assert.notEqual(open, -1, 'no four-backtick block follows the heading');
+  const close = rest.findIndex((line, i) => i > open && line === '````');
+  assert.notEqual(close, -1, 'the four-backtick block is never closed');
+  assert.equal(`${rest.slice(open + 1, close).join('\n')}\n`, TEMPLATE);
 });
