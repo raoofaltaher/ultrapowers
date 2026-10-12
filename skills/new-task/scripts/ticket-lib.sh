@@ -115,10 +115,11 @@ validate_ticket() { # $1=root $2=id -> rc 0 ok; rc 2 with ERROR
     return 2
   fi
   # The id becomes a folder name under tasks/, specs/, plans/ and reviews/, so
-  # anything that names another path is refused whatever ticketPattern allows.
+  # anything that names another path is refused whatever ticketPattern allows,
+  # and so is a leading _, which marks a template folder such as specs/_template.
   case "$2" in
-    . | .. | -* | */* | *\\* | *[[:space:]]*)
-      printf 'ERROR: ticket [%s] is not a plain folder name (no /, backslash, whitespace, leading -, . or ..)\n' "$2" >&2
+    . | .. | -* | _* | */* | *\\* | *[[:space:]]*)
+      printf 'ERROR: ticket [%s] is not a plain folder name (no /, backslash, whitespace, leading -, leading _, . or ..)\n' "$2" >&2
       return 2
       ;;
   esac
