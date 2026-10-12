@@ -275,6 +275,22 @@ test('end spec refuses a spec behind a folder link that leaves the project', () 
   assert.match(commentBodies(ws).at(-1), /spec-incomplete: the spec check could not run: .*specs\/GH-16\/Spec\.md is not a regular file inside the project$/);
 });
 
+test('end spec refuses the project template when its folder links out of the project', () => {
+  const ws = openSpecStage();
+  const outside = path.join(path.dirname(ws.root), 'outside-template');
+  fs.mkdirSync(outside, { recursive: true });
+  fs.copyFileSync(path.join(ws.root, 'specs', '_template', 'Spec.md'), path.join(outside, 'Spec.md'));
+  fs.rmSync(path.join(ws.root, 'specs', '_template'), { recursive: true, force: true });
+  fs.symlinkSync(outside, path.join(ws.root, 'specs', '_template'), 'junction');
+  fs.mkdirSync(path.join(ws.root, 'specs', 'GH-16'), { recursive: true });
+  fs.writeFileSync(path.join(ws.root, 'specs', 'GH-16', 'Spec.md'), SPEC(['.']));
+  // The spec would pass against that template: it is the link that is refused.
+  const r = run(ws, ['end', 'GH-16', 'spec', '--result', JSON.stringify({ ok: true })]);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.equal(state(ws).stageStatus, 'blocked');
+  assert.match(commentBodies(ws).at(-1), /spec-incomplete: the spec check could not run: specs\/_template\/Spec\.md is not a regular file inside the project$/);
+});
+
 test('end changes blocks a revised spec that fails the check, and next retries the changes stage', () => {
   const ws = workspace();
   throughPlan(ws);
