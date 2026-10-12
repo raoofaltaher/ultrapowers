@@ -737,9 +737,17 @@ test_brainstorm_task() {
     else
         fail "commit-spec refuses a spec that fails the check and stages nothing"; echo "    out: $out"
     fi
+    # brainstorm-task reads the word ERROR as "stop", so a spec with findings, which is fixed and run
+    # again, says "fails the spec check" with no ERROR prefix.
+    if [[ "$out" == *"fails the spec check"* && "$out" != *"ERROR"* ]]; then
+        pass "commit-spec says a failed check without the ERROR prefix"
+    else
+        fail "commit-spec says a failed check without the ERROR prefix"; echo "    out: $out"
+    fi
     rc=0
     out="$(cd "$proj" && ULTRAPOWERS_NO_NODE=1 bash "$COMMIT_SPEC" 1234 "skipped" 2>&1)" || rc=$?
-    if [[ "$rc" -eq 0 && "$out" == *"=== SPEC-CHECK-SKIPPED ==="* && "$out" == *"=== COMMITTED ==="* ]]; then
+    # The skip also fires under ULTRAPOWERS_NO_NODE, so the reason says "not available", not "not found".
+    if [[ "$rc" -eq 0 && "$out" == *"=== SPEC-CHECK-SKIPPED ==="* && "$out" == *"node not available"* && "$out" == *"=== COMMITTED ==="* ]]; then
         pass "commit-spec without node prints the skipped marker and commits"
     else
         fail "commit-spec without node prints the skipped marker and commits"; echo "    out: $out"
@@ -765,6 +773,22 @@ test_brainstorm_task() {
         pass "commit-spec stops with an ERROR when the spec check cannot run and stages nothing"
     else
         fail "commit-spec stops with an ERROR when the spec check cannot run and stages nothing"; echo "    out: $out"
+    fi
+    # A checker file that is missing is a spec check that cannot run: an ERROR, never the findings
+    # marker over a node stack trace. The plugin copy below holds the script and its library only.
+    local noplugin="$TEST_ROOT/noplugin" nochk="$TEST_ROOT/nochecker"
+    mkdir -p "$noplugin/skills/brainstorm-task/scripts" "$noplugin/skills/new-task/scripts"
+    cp "$COMMIT_SPEC" "$noplugin/skills/brainstorm-task/scripts/commit-spec.sh"
+    cp "$LIB" "$noplugin/skills/new-task/scripts/ticket-lib.sh"
+    bash "$FIXTURE" "$nochk" >/dev/null
+    mkdir -p "$nochk/specs/78"
+    cp "$REPO_ROOT/tests/brainstorming/fixtures/minimal-valid.md" "$nochk/specs/78/Spec.md"
+    rc=0
+    out="$(cd "$nochk" && bash "$noplugin/skills/brainstorm-task/scripts/commit-spec.sh" 78 "no checker" 2>&1)" || rc=$?
+    if [[ "$rc" -eq 1 && "$out" == *"ERROR: the spec check could not run"* && "$out" != *"=== SPEC-CHECK-FAILED ==="* && "$out" != *"=== COMMITTED ==="* && -z "$(git -C "$nochk" diff --cached --name-only)" ]]; then
+        pass "commit-spec stops with an ERROR when the checker file is missing and stages nothing"
+    else
+        fail "commit-spec stops with an ERROR when the checker file is missing and stages nothing"; echo "    out: $out"
     fi
 }
 
@@ -906,7 +930,9 @@ test_review_fixes() {
     cp "$REPO_ROOT/tests/brainstorming/fixtures/minimal-valid.md" "$hooked/specs/5556/Spec.md"
     rc=0
     out="$(cd "$hooked" && bash "$COMMIT_SPEC" 5556 "hooked" 2>&1)" || rc=$?
-    if [[ "$rc" -ne 0 && "$out" == *"ERROR"* && "$out" != *"=== COMMITTED ==="* ]]; then
+    # The spec passes the check, so it is the commit that the hook rejects: pin that message, as the
+    # word ERROR alone would also be satisfied by a refusal from the spec check.
+    if [[ "$rc" -ne 0 && "$out" == *"ERROR"* && "$out" == *"git commit failed"* && "$out" != *"=== COMMITTED ==="* ]]; then
         pass "commit-spec reports a rejected commit as an ERROR, not COMMITTED"
     else
         fail "commit-spec reports a rejected commit as an ERROR, not COMMITTED"

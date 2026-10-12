@@ -433,7 +433,8 @@ function main(argv) {
     process.stderr.write('ERROR: .agents/ultrapowers.json is not valid JSON\n');
     return 3;
   }
-  if (/^(\.|\.\.|-.*)$/.test(id) || /[/\\\s]/.test(id) || !new RegExp(pattern).test(id)) {
+  // A leading _ marks a template folder such as reviews/_template, as in ticket-lib.sh.
+  if (/^(\.|\.\.|[-_].*)$/.test(id) || /[/\\\s]/.test(id) || !new RegExp(pattern).test(id)) {
     process.stderr.write(`ERROR: ticket ${JSON.stringify(id)} is not a plain folder name matching ticketPattern ${pattern}\n`);
     return 4;
   }

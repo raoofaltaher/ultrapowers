@@ -278,12 +278,15 @@ test('ids that name a path are refused whatever ticketPattern allows', () => {
   const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
   cfg.ticketPattern = '.*';
   writeFileSync(cfgPath, JSON.stringify(cfg));
-  for (const id of ['../x', 'a/b', 'a\\b', 'a b', '.', '..', '-x', 'a\nb']) {
+  for (const id of ['../x', 'a/b', 'a\\b', 'a b', '.', '..', '-x', '_x', '_template', 'a\nb']) {
     const result = preflight({ cwd: root, ticket: id, env: ENV_ALL });
     assert.equal(result.exitCode, 4, `id ${JSON.stringify(id)}`);
     assert.match(result.errors[0], /^ERROR: ticket/);
   }
+  // A leading _ marks a template folder such as reviews/_template, and the message says so.
+  assert.match(preflight({ cwd: root, ticket: '_template', env: ENV_ALL }).errors[0], /leading _/);
   assert.equal(preflight({ cwd: root, ticket: '#12', env: ENV_ALL }).exitCode, 0);
+  assert.equal(preflight({ cwd: root, ticket: 'a_b', env: ENV_ALL }).exitCode, 0, 'only a leading underscore is refused');
   rmSync(root, { recursive: true, force: true });
 });
 

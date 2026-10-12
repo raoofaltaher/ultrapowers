@@ -32,18 +32,24 @@ fi
 
 check="$here/../../brainstorming/scripts/check-doc.mjs"
 if have_node; then
+  if [ ! -f "$check" ]; then
+    printf 'ERROR: the spec check could not run: %s is missing. Nothing was staged.\n' "$check" >&2
+    exit 1
+  fi
   check_status=0
   check_out=$(node "$check" "$root/$spec" 2>&1) || check_status=$?
   if [ "$check_status" -eq 1 ]; then
+    # Findings are fixed and the script run again, so this line carries no ERROR prefix:
+    # brainstorm-task reads ERROR as "stop".
     printf '=== SPEC-CHECK-FAILED ===\n%s\n' "$check_out"
-    printf 'ERROR: %s fails the spec check (listed above); fix the lines and run again. Nothing was staged.\n' "$spec" >&2
+    printf '%s fails the spec check (listed above); fix the lines and run again. Nothing was staged.\n' "$spec" >&2
     exit 1
   elif [ "$check_status" -ne 0 ]; then
     printf 'ERROR: the spec check could not run (exit %s): %s\n' "$check_status" "$check_out" >&2
     exit 1
   fi
 else
-  printf '=== SPEC-CHECK-SKIPPED ===\nnode not found; %s was not checked\n' "$spec"
+  printf '=== SPEC-CHECK-SKIPPED ===\nnode not available; %s was not checked\n' "$spec"
 fi
 
 trailer=$(config_string "$root" commitTrailer '') || exit 1
