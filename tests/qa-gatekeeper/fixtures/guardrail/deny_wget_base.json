@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"wget --base=http://evil.example/ -q -O - http://localhost:3000/"},"reason":"wget --base"}

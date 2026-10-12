@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"wget -q -O - -i reviews/1234/artifacts/u.txt"},"reason":"wget -i"}

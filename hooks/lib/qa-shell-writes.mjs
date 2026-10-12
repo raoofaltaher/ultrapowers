@@ -891,18 +891,18 @@ const CURL_LONG_VALUED = new Set(['--output', '--header', '--data', '--data-raw'
   '--referer', '--cookie', '--cookie-jar', '--write-out', '--max-time', '--connect-timeout', '--retry', '--retry-delay', '--retry-max-time', '--upload-file', '--form', '--form-string',
   '--cacert', '--cert', '--key', '--capath', '--limit-rate', '--range', '--output-dir', '--dump-header', '--trace', '--trace-ascii', '--stderr', '--json', '--max-redirs',
   '--time-cond', '--continue-at', '--oauth2-bearer', '--aws-sigv4', '--proto', '--proto-redir']);
-const CURL_REFUSED_LONG = /^--(connect-to|resolve|url|doh-url|dns-servers|dns-interface|unix-socket|abstract-unix-socket|preproxy|socks[0-9a-z]*|proxy[a-z0-9-]*)$/;
+const CURL_REFUSED_LONG = /^--(config|location|location-trusted|connect-to|resolve|url|doh-url|dns-servers|dns-interface|unix-socket|abstract-unix-socket|preproxy|socks[0-9a-z]*|proxy[a-z0-9-]*)$/;
 const WGET_SHORT_VALUED = new Set(['O', 'P', 'o', 'a', 'i', 't', 'T', 'w', 'Q', 'l', 'A', 'R', 'D', 'I', 'X', 'B', 'U', 'Y', 'e']);
 const WGET_LONG_VALUED = new Set(['--output-document', '--directory-prefix', '--output-file', '--append-output', '--header', '--user-agent', '--timeout', '--tries', '--wait', '--waitretry',
   '--read-timeout', '--connect-timeout', '--dns-timeout', '--limit-rate', '--post-data', '--post-file', '--body-data', '--body-file', '--http-user', '--http-password', '--user', '--password',
   '--referer', '--load-cookies', '--save-cookies', '--ca-certificate', '--certificate', '--private-key', '--level', '--accept', '--reject', '--quota', '--bind-address', '--base', '--method']);
 // The host of a literal http(s) URL, lowercase: scheme, userinfo, path and port removed (the hook's host_of_r).
 function urlHost(u) {
-  let s = u.replace(/^[A-Za-z][A-Za-z0-9+.-]*:\/\//, '');
-  if (/^[^/?@]*@/.test(s)) s = s.replace(/^[^/?@]*@/, '');
-  let a = s.split(/[/?]/)[0];
-  if (/:[0-9]+$/.test(a)) a = a.replace(/:[0-9]+$/, '');
-  return a.toLowerCase();
+  try {
+    const url = new URL(u);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    return url.hostname.toLowerCase().replace(/\.$/, '');
+  } catch { return null; }
 }
 // The reason curl or wget (prog) may not run under the allow-list of hosts, or ''. rest: the words after the program.
 function egressWhy(prog, rest, allowedHosts) {
@@ -929,6 +929,7 @@ function egressWhy(prog, rest, allowedHosts) {
       const eq = v.indexOf('=');
       const name = eq === -1 ? v : v.slice(0, eq);
       if (curl && CURL_REFUSED_LONG.test(name)) return `${prog} ${name} can point a listed host at another server; ${noEscape}`;
+      if (!curl && (name === '--input-file' || name === '--base' || name === '--config')) return `${prog} ${name} reads targets or settings from a file or a base that cannot be inspected; ${noEscape}`;
       if (!curl && (name === '--execute' || name === '--use-proxy')) return `${prog} ${name} runs a setting (a proxy, a host) that can point a listed host at another server; ${noEscape}`;
       if (name === '--header') {
         const why = headerWhy(eq === -1 ? rest[k + 1] : { v: v.slice(eq + 1), w: null });
@@ -940,6 +941,8 @@ function egressWhy(prog, rest, allowedHosts) {
     if (v !== null && v.startsWith('-') && v !== '-') {
       for (let c = 1; c < v.length; c++) {
         const ch = v[c];
+        if (curl && (ch === 'K' || ch === 'L')) return `curl -${ch} reads a config file or follows a redirect, either of which can leave a listed host; ${noEscape}`;
+        if (!curl && (ch === 'i' || ch === 'B')) return `wget -${ch} reads targets from a file or a base that cannot be inspected; ${noEscape}`;
         if (curl && ch === 'x') return `curl -x names a proxy and can point a listed host at another server; ${noEscape}`;
         if (!curl && ch === 'e') return `wget -e runs a setting (a proxy, a host) that can point a listed host at another server; ${noEscape}`;
         if (SHORT.has(ch)) {
@@ -959,9 +962,10 @@ function egressWhy(prog, rest, allowedHosts) {
   for (; k < rest.length; k++) operands.push(rest[k]);
   for (const x of operands) {
     if (x.v === null) return `a ${prog} operand is built from a variable or command substitution and cannot be verified; use a literal http(s) URL on a host in qa.hosts.allowed`;
+    if (/^https?:\/\/[^/]*[#@;]/i.test(x.v)) return `${prog} operand "${x.v.slice(0, 60)}" has an @, # or ; before its first path slash, which curl and the URL parser read differently; write the plain host`;
     if (!/^https?:\/\//i.test(x.v) || /[\s\\]/.test(x.v)) return `${prog} operand "${x.v.slice(0, 60)}" is not a literal http(s) URL on a host in qa.hosts.allowed; a bare host, a second target or a URL with a space or backslash is refused`;
     const h = urlHost(x.v);
-    if (!allowedHosts.includes(h)) return `${prog} operand host '${h}' is not in qa.hosts.allowed`;
+    if (h === null || !allowedHosts.includes(h)) return `${prog} operand host '${h}' is not in qa.hosts.allowed (or is not a URL the parser reads)`;
   }
   return '';
 }
