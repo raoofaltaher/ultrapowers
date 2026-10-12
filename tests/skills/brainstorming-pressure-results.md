@@ -882,9 +882,40 @@ No finding: the status line, the thirteen headings in order, no surviving italic
 
 Observed: Against the Expected after line, the run asked nothing, gave the path C:\proj\specs\GH-79\Spec.md, and wrote the template's thirteen headings in order, with a Decision record holding D1 and D2 blocks that each carry the five labels. The spec has a fifteen-row Assumption ledger, and each of its thirteen `Assumption:` and `My call:` lines has a ledger row. Ledger row 8 says the agent could not run the checker in the simulation; the controller's mechanical run above exits 0. The spec cites `src/cli/report.ts` and `src/cli/index.ts` as read in this session; the run itself read only the skill and the template, and those citations rest on the scenario setup's grounding sentence, which states that the grounding read the two files and what they hold; the spec's statements about them are consistent with that sentence; two details go beyond it, the words 'as text' and the edge case for any other `report` option, and the spec does not flag them; its ledger row 8 discloses that no line numbers were recorded.
 
+## G, GREEN (skill at cdbe251)
+
+Scenario G was added by the whole-branch review's fix wave, for the
+self-review sentence that changed at cdbe251: without node, the hand-over
+proceeds with a one-line note. Fresh Sonnet subagent, one Read of the skill
+and one of the payload template, no file written. No RED run: the previous
+wording ("If it cannot run, say so in one line and do not hand over")
+stalled by construction, which the E and F GREEN records note ("a live
+session would stop at that step").
+
+### Self-review, item 5 (verbatim)
+
+5. Template check: I run `node "S:/ultrapowers/.claude/worktrees/spec-template/skills/brainstorming/scripts/check-doc.mjs" "docs/ultrapowers/specs/2026-10-13-stale-feature-flags-design.md"` and the shell answers `node: command not found`. The checker never ran, so there is nothing to fix, no exit 2 to obey and no pass to claim; I do not stop, do not ask for node, and go on to the hand-over. I say to the partner, in one line: "There is no node on this machine, so I could not run the template check; I wrote the spec from the plugin's `templates/specs/_template/Spec.md.tmpl` (this project has no copy of its own), and the commit-time check runs wherever node is."
+
+### Hand-over message (verbatim)
+
+Spec written and committed to `docs/ultrapowers/specs/2026-10-13-stale-feature-flags-design.md`. Please review it and let me know if you want to make any changes before we start writing out the implementation plan.
+
+### Answers (verbatim)
+
+1. Handed over. Without node the skill says to say so in one line and hand over; only a checker that runs and exits 2 stops the hand-over, and a shell's "command not found" is not that.
+
+2. Once, at item 5, in one line: "There is no node on this machine, so I could not run the template check; I wrote the spec from the plugin's `templates/specs/_template/Spec.md.tmpl` (this project has no copy of its own), and the commit-time check runs wherever node is."
+
+3. The plugin's `templates/specs/_template/Spec.md.tmpl` (the file I read: `S:\ultrapowers\.claude\worktrees\spec-template\templates\specs\_template\Spec.md.tmpl`), because the project has no `specs/_template/Spec.md` of its own.
+
+4. No: I asked nothing about node and waited on nothing for it, so the partner's "ok" authorizes nothing there. The only wait is the gate's, for their review of the spec.
+
+Observed: the agent hands over with a one-line note that names the template it wrote from and the commit-time check; it neither stalls nor asks for node; the command it ran names the brainstorming skill's own directory, quoted. Items 1 to 4 of the self-review were carried out as before.
+
 ## Verdict
 
 - D: RED named three approaches (per-server memory counters, Redis fixed windows as the recommendation, a Redis token bucket) and why the other two lose, but gave no labelled failure points or edge cases and no source on any claim. GREEN names three approaches in its own words (a Redis-backed limiter in the existing chain as the recommendation, counting in each server's memory, and limiting at the edge in a proxy; the token bucket is not among them). The recommended approach carries labelled Why this one, Failure points and Edge cases parts, each bullet under them is tagged `Evidence:`, `Assumption:` or `My call:` (two Evidence lines, both citing RFCs), and each alternative has a Why not and a Main failure point. The one line without a tag is the `What it is` description.
 - E: RED marked its calls, but sorted nothing before writing (the sort came after the draft existed) and never asked the partner about the uncovered section. GREEN sorted the sections before writing into covered, minor and theirs, asked the partner about Error handling in one message before writing, got "You decide.", and marked the settled items `My call:`, with nine ledger rows, each referenced from the spec. Checker exit code: 0.
 - F: RED asked nothing and routed to `C:\proj\specs\GH-79\Spec.md`, but wrote an ad-hoc section set with no status line and no decision record. GREEN asks nothing, routes to the same path, and writes the template's thirteen headings in order, with D1 and D2 decision blocks and a fifteen-row ledger; its code citations rest on the grounding the scenario's setup supplies, not on a file the run read, which the Observed paragraph records. Checker exit code: 0.
-- The D and E GREEN runs observed that the partner's own words in the conversation are not in the template's list of sources, which the controller has queued as a one-line template change.
+- The D and E GREEN runs observed that the partner's own words in the conversation are not in the template's list of sources; the template now names them as a source (commit 69c2669).
+- G: no RED (the previous sentence stalled by construction). GREEN hands over without node, with a one-line note that names the template it wrote from, and neither stalls nor asks for node.

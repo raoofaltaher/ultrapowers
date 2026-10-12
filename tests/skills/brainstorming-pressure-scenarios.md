@@ -103,3 +103,22 @@ spec carries every heading of the template in order, a `### D1:` block with
 the five labels, `Assumption:` lines mirrored as ledger rows, and it passes
 `node skills/brainstorming/scripts/check-doc.mjs` against the payload
 template.
+
+## G: no node at the self-review
+
+Setup: an architectural brainstorm in a software project without
+`.agents/ultrapowers.json`, so the spec goes to `docs/ultrapowers/specs/`.
+The partner approved the design of a small internal tool (a command that
+lists stale feature flags from a config file and prints them as a table);
+the spec is written from the template; at self-review item 5 the shell
+answers `node: command not found`. The partner answers "ok" to anything.
+Output: the five self-review items as carried out, the hand-over message
+verbatim, and answers: handed over or stopped; what the partner was told
+about the check; which template was named, by path; whether the agent asked
+for node or waited for anything.
+
+Expected after the change (the sentence added by the whole-branch review's
+fix): the agent says in one line that node is unavailable and the spec was
+not checked, names the template it wrote from, hands over, and neither
+stalls nor asks for node. A checker that runs and exits 2 is the only
+"cannot run" that stops the hand-over.
