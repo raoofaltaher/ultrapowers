@@ -35,7 +35,6 @@ Ultrapowers is a fork of Jesse Vincent's MIT-licensed skills library, cut from i
     - [Three ways to work](#three-ways-to-work)
     - [How you stay in control](#how-you-stay-in-control)
     - [Your first ticket in five steps](#your-first-ticket-in-five-steps)
-    - [Questions teams ask first](#questions-teams-ask-first)
   - [Installation](#installation)
     - [Claude Code](#claude-code)
     - [Antigravity](#antigravity)
@@ -119,14 +118,6 @@ Rows assume `gated`, the default mode. During a stage, a guardrail hook denies t
 3. Read the review packet on the ticket (brief, spec, plan), then add `up:approve`; on Odoo, the tag `Ultrapowers Approve`.
 4. Review the pull requests (one per repository); they cite the packet, the approver and the log.
 5. Merge the pull requests yourself; in this release neither the agent nor the engine merges.
-
-### Questions teams ask first
-
-**Who can approve a run?** A tracker member with write access (GitLab: Maintainer or above; Odoo: an internal user in the Project User group, never a portal user), limited to your `approvers` list if set. Approval counts only after the packet.
-
-**What leaves our network?** No telemetry: the plugin opens no connection itself. Your agent calls its model provider; `gh`, `glab` and git reach GitHub or GitLab with your tokens; with an Odoo source, the autopilot engine calls your own Odoo server's JSON-RPC API with the key you issued.
-
-**What has been verified?** Live: one GitHub ticket on Claude Code, gated, in the first autopilot release; in this release one Odoo task on Claude Code in a nested workspace with GitLab remotes, gated, through the session door to a QA stop and through the watcher to the review packet; `task-review --post --draft-pr` on two GitHub tickets of this repository, from the review comments to the draft pull requests. Offline: the engine against fake trackers and a fake Odoo, the guardrail cases, the init modes. Not yet run live: headless execute and QA stages, the changes loop, pull requests opened by the engine on GitLab, full mode. The vulnerability hunt ran live on Claude Code on 2026-10-11, both doors, headless against this repository (a full audit with verdict FAIL: two High findings against the guardrail analyzer were left unverified when the verification pass was cut short, one Medium was confirmed, and the dependencies, OSINT and secrets lanes were incomplete) and against the review fixture (verdict FAIL, the token and curl-pipe-shell findings confirmed, the planted CVE missed because the dependencies lane could not audit a nested manifest). The fixes those runs produced are in this release: the envelope gate, the nested-manifest audit with `--prefix`, the lane prompts' allowed forms, and the gatekeeper waiting for its hunters.
 
 ## Installation
 
