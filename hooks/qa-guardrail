@@ -544,6 +544,13 @@ fi
 
 tool_lc="$(lower "$tool")"
 
+# The PowerShell tool (Claude Code's `PowerShell`, Copilot CLI's `powershell`) runs its command in
+# PowerShell, and every shell rule below reads POSIX shell: `sc`, `ri`, `iex` and .NET calls would
+# pass, the run's own marker among them. The Bash tool is the shell of a run.
+case "$tool_lc" in
+  *powershell*) deny "the PowerShell tool is not analysed during $run_kind; use the Bash tool" ;;
+esac
+
 # Key material: never read, searched, uploaded or written by any tool during a run. A
 # `.env.example` file is the documented template and stays readable.
 KEY_RE='(^|/)\.ssh(/|$)|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws(/|$)|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|/)\.env($|\.)'
