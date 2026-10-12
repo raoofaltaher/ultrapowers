@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"ls ~/.gnupg/private-keys-v1.d"},"reason":"key material"}

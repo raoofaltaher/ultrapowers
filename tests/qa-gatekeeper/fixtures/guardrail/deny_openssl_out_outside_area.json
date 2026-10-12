@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"openssl enc -aes256 -in a.txt -out repo-a/src/a.enc"},"reason":"is outside reviews/1234/"}

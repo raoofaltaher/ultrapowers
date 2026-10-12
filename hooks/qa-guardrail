@@ -287,7 +287,7 @@ hook_dir_node="$hook_dir"
 if command -v cygpath >/dev/null 2>&1; then hook_dir_node="$(cygpath -m "$hook_dir" 2>/dev/null || printf '%s' "$hook_dir")"; fi
 
 parse_status=""; tool=""; cmd=""; wpath=""; url=""; event_cwd=""; allowed=""; forbidden=""; ticket=""; keypaths=""; tracker_hosts=""; ignore_case="0"
-wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""; role_vars=""; ro_role=""; marker_age=""; marker_stage=""; known_issues=""; workdir_state=""; workdir_real=""
+wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""; role_vars=""; ro_role=""; marker_age=""; marker_stage=""; known_issues=""; workdir_state=""; workdir_real=""; keyglob=""
 {
   IFS= read -r -d '' parse_status || true
   IFS= read -r -d '' tool || true
@@ -312,6 +312,7 @@ wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""; role_vars=""; ro_r
   IFS= read -r -d '' known_issues || true
   IFS= read -r -d '' workdir_state || true
   IFS= read -r -d '' workdir_real || true
+  IFS= read -r -d '' keyglob || true
 } < <(printf '%s' "$event" | node -e '
 const fs = require("node:fs");
 const path = require("node:path");
@@ -407,6 +408,9 @@ try {
 // Every path-shaped field any tool carries (a read, a search, an upload), for the
 // key-material check that applies to all tools, not only to file writes.
 const pathFields = [];
+// The glob a search tool narrows its files with (Grep glob, include, file_pattern): files whose content it reads,
+// so a glob that can expand to a key name is judged like a key path (the shell cannot be asked to expand it here).
+const globFields = [];
 // Keys are compared with case and separators folded (file_path, filePath, FilePath; AbsolutePath,
 // absolute_path; DirectoryPath, dir_path; Url).
 const PATH_KEYS = new Set(["filepath", "notebookpath", "path", "source", "destination", "destinationpath", "filename", "absolutepath", "dirpath", "directorypath", "url", "uri", "targetfile", "targetpath", "target", "searchdirectory", "file", "folder", "directory", "outputpath", "newpath"]);
@@ -414,6 +418,9 @@ for (const [key, value] of Object.entries(inp)) {
   const k = key.toLowerCase().replace(/[_-]/g, "");
   if (PATH_KEYS.has(k) && str(value)) pathFields.push(str(value));
   if ((k === "paths" || k === "files" || k === "filepaths" || k === "absolutepaths") && Array.isArray(value)) for (const v of value) if (str(v)) pathFields.push(str(v));
+  if (["glob", "globs", "include", "includes", "filepattern", "filepatterns"].includes(k)) {
+    for (const v of Array.isArray(value) ? value : [value]) if (str(v)) { globFields.push(str(v)); pathFields.push(str(v)); }
+  }
 }
 {
   const dir = str(inp.dir_path) || str(inp.DirectoryPath);
@@ -506,6 +513,7 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
     // The QA baseline file (qa.knownIssues) inside the project, "" when it is not set or lies outside.
     str(qa.knownIssues).trim() ? resolve(path.resolve(root, str(qa.knownIssues).trim())).rel.replace(/^\.\//, "") : "",
     workdirState, workdirReal,
+    globFields.find((g) => guard.keyGlobReaches(g)) || "",
   ].join("\0") + "\0");
 }, (e) => {
   process.stdout.write(["noresolver:" + String(e.message).split("\n")[0], "", "", "", "", "", "", "", ""].join("\0") + "\0");
@@ -553,7 +561,7 @@ esac
 
 # Key material: never read, searched, uploaded or written by any tool during a run. A
 # `.env.example` file is the documented template and stays readable.
-KEY_RE='(^|/)\.ssh(/|$)|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws(/|$)|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|/)\.env($|\.)'
+KEY_RE='(^|/)\.ssh(/|$)|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws(/|$)|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|/)\.env($|\.)|\.git-credentials|(^|/)\.netrc$|(^|/)\.npmrc$|(^|/)\.config/(gh|glab-cli)(/|$)|(^|/)\.docker/config\.json|(^|/)\.kube(/|$)|(^|/)\.gnupg(/|$)'
 if [ -n "$keypaths" ]; then
   while IFS= read -r kp; do
     [ -n "$kp" ] || continue
@@ -570,6 +578,8 @@ if [ -n "$keypaths_real" ]; then
     [[ "$kl" =~ $KEY_RE ]] && deny "key material ($kp) is never read, searched, uploaded or written during $run_kind"
   done <<< "$keypaths_real"
 fi
+
+[ -z "$keyglob" ] || deny "key material (the glob $keyglob can expand to a key name) is never read, searched, uploaded or written during $run_kind; name the file"
 
 # --- File tools. QA profile: the only legitimate writes are the report, its artifacts and
 # run-state under reviews/<ticket>/, plus the run's own state under .ultrapowers/. Autopilot
@@ -755,13 +765,35 @@ on_list() {
   [ -n "$1" ] && [ -n "$2" ] && [[ ",$1," == *",$2,"* ]]
 }
 
+# --- The hunt reaches no URL: its network is its audit tools and gh/glab api, called from the shell, so a
+# fetch or search tool and any tool whose input holds a url is refused whatever qa.hosts lists. The local
+# file readers are not URL tools (a search for a URL string is a file search).
+if [ "$PROFILE" = "hunt" ]; then
+  tool_flat="${tool_lc//[_ :.-]/}"
+  tool_flat="${tool_flat////}"
+  case "$tool_flat" in
+    webfetch|websearch|*googlewebsearch*|*fetchurl*|*urlfetch*|*searchweb*|*webbrowse*|*webread*) deny "the hunt's network is its audit tools and gh api; $tool is refused" ;;
+  esac
+  if [ -n "$url" ]; then
+    case "$tool_lc" in
+      read|grep|glob|ls|lsp|notebookread|read_file|read_many_files|list_directory|grep_search|search_file_content|find_by_name|view_file|list_dir|codebase_search|file_search) ;;
+      *) deny "the hunt's network is its audit tools and gh api; $tool carrying a URL is refused" ;;
+    esac
+  fi
+fi
+
 # --- Any tool that carries a url (navigation, fetch, scrape, crawl, whatever its name), under
 # `url`, `uri`, `link` or a `urls` array: forbidden hosts never; allowed hosts only when a list is set.
+# An autopilot stage has no open egress: a host that no list names is refused (the hook cannot read the
+# ticket's own links, so a host to use is listed in qa.hosts.allowed; the ticket tracker's host stands for them
+# while the list is empty).
 for u in $url; do
   host_of_r "$u"; h="$REPLY"
   on_list "$forbidden" "$h" && deny "host '$h' is on qa.hosts.forbidden"
   if [ -n "$allowed" ]; then
     on_list "$allowed" "$h" || deny "host '$h' is not in qa.hosts.allowed"
+  elif [ "$PROFILE" = "autopilot" ]; then
+    on_list "$tracker_hosts" "$h" || deny "host '$h' is not in qa.hosts.allowed or qa.urls; an autopilot stage reaches only listed hosts (the hook cannot read the ticket's own links, so list the host to use it)"
   fi
 done
 
@@ -886,8 +918,15 @@ printf '%s' "$lc" | grep -Eq "${B}(chmod|chown|chgrp|icacls|takeown)[[:space:]]"
   && deny "permission or ownership change is blocked"
 
 # Remote shells and copies; inline interpreters; raw network redirection.
-printf '%s' "$lc" | grep -Eq "${B}(ssh|scp|sftp|rsync|telnet|nc|ncat|netcat|socat|ftp|tftp|lftp)(\\.exe)?[[:space:]]|${B}openssl(\\.exe)?[[:space:]]+s_(client|server)\\b" \
-  && deny "remote shell or copy is blocked"
+remote_re="${B}(ssh|scp|sftp|rsync|telnet|nc|ncat|netcat|socat|ftp|tftp|lftp)(\\.exe)?[[:space:]]|${B}openssl(\\.exe)?[[:space:]]+s_(client|server)\\b"
+if printf '%s' "$lc" | grep -Eq "$remote_re"; then
+  if [ "$PROFILE" = "hunt" ]; then
+    remote_hit="$(printf '%s' "$lc" | grep -Eo "$remote_re" | head -n 1)"
+    remote_hit="${remote_hit//[^a-z0-9]/}"; remote_hit="${remote_hit%exe}"
+    deny "the hunt's network is its audit tools and gh api; ${remote_hit:-a remote shell or copy} is refused"
+  fi
+  deny "remote shell or copy is blocked"
+fi
 printf '%s' "$lc" | grep -Eq "${B}(python3?|node|nodejs|perl|ruby|php|deno|bun)(\\.exe)?[[:space:]]+(-c|-e|-p|--print|--eval|-)([[:space:]]|\$)" \
   && deny "inline interpreter code is blocked; it is an unbounded egress and execution bypass"
 printf '%s' "$lc" | grep -Eq '/dev/(tcp|udp)/' \
@@ -896,7 +935,7 @@ printf '%s' "$lc" | grep -Eq '/dev/(tcp|udp)/' \
 # Key material named anywhere in a command, whatever reads or sends it; environment dumps;
 # uploads. `.env.example` is the documented template and stays readable.
 key_lc="${lc//.env.example/}"
-printf '%s' "$key_lc" | grep -Eq '(^|/)\.ssh([^a-z0-9_.-]|$)|authorized_keys|id_rsa|id_ed25519|\.aws/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|[/[:space:]@"'"'"'=])\.env([^a-z0-9_]|$)' \
+printf '%s' "$key_lc" | grep -Eq '(^|/)\.ssh([^a-z0-9_.-]|$)|authorized_keys|id_rsa|id_ed25519|\.aws/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|[/[:space:]@"'"'"'=])\.env([^a-z0-9_]|$)|\.git-credentials|(^|[/[:space:]@"'"'"'=])\.(netrc|npmrc)([^a-z0-9_]|$)|\.config/(gh|glab-cli)(/|[^a-z0-9_.-]|$)|\.docker/config\.json|(^|[/[:space:]@"'"'"'=])\.(kube|gnupg)(/|[^a-z0-9_.-]|$)' \
   && deny "reading or transferring key material is blocked"
 printf '%s' "$lc" | grep -Eq "${B}(printenv|env)[[:space:]]*(\$|[;&|])" \
   && deny "dumping the environment is blocked; check a variable with \${NAME:+set} instead"
@@ -919,7 +958,7 @@ writes_js="$hook_dir_node/lib/qa-shell-writes.mjs"
 # Lane 4's psql rules live in the analyzer too: it walks xargs, find -exec, eval, sudo, su -c,
 # kubectl exec and brace groups, refuses a program built from a variable, and refuses a psql
 # word it did not inspect (fail closed on its own count), so no text check is repeated here.
-wreason="$(printf '%s\0%s\0%s\0%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$ignore_case" "$role_vars" "$ro_role" "$cmd" | ULTRAPOWERS_GUARD_PROFILE="$PROFILE" node "$writes_js" 2>&1)" \
+wreason="$(printf '%s\0%s\0%s\0%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$ignore_case" "$role_vars" "$ro_role" "$cmd" | ULTRAPOWERS_GUARD_PROFILE="$PROFILE" ULTRAPOWERS_GUARD_HOSTS="$allowed" node "$writes_js" 2>&1)" \
   || wreason="the command could not be analysed for writes; it is refused during $run_kind"
 [ -z "$wreason" ] || deny "$wreason"
 
@@ -928,8 +967,10 @@ wreason="$(printf '%s\0%s\0%s\0%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$i
 # upload or data flag (-d, --data*, -F, --form, -T, --upload-file, -X POST|PUT|PATCH|DELETE, wget
 # --post-data|--post-file|--body-data|--body-file, iwr -Body|-InFile|-Form) sends bytes out: its host
 # must be in qa.hosts.allowed (an empty list names no host). Plain GETs to other hosts stay as before.
+# The hunt runs none of these programs (the analyzer above refuses each by name), so the word curl in a
+# search (git grep curl) is no call and the text rules of this section do not apply to it.
 NET_RE="${B}(curl|wget)(\\.exe)?[[:space:]]|invoke-webrequest|invoke-restmethod|${B}(iwr|irm)[[:space:]]"
-if printf '%s' "$lc" | grep -Eq "$NET_RE"; then
+if [ "$PROFILE" != "hunt" ] && printf '%s' "$lc" | grep -Eq "$NET_RE"; then
   printf '%s' "$cmd" | grep -Eq '://[^[:space:]]*(\$\(|`|\$\{)' \
     && deny "a command or variable substitution inside a URL can carry data out in the URL and is blocked; use a literal URL"
   # curl reads more options (a URL, data, a header) from a --config file, which cannot be inspected.
@@ -968,7 +1009,7 @@ if [ "$PROFILE" = "autopilot" ] && [ -n "$tracker_hosts" ] \
   done <<< "$turls"
 fi
 
-if [ -n "$allowed" ] && printf '%s' "$lc" | grep -Eq "${B}(curl|wget)(\\.exe)?[[:space:]]|invoke-webrequest|invoke-restmethod|${B}(iwr|irm)[[:space:]]"; then
+if [ "$PROFILE" != "hunt" ] && [ -n "$allowed" ] && printf '%s' "$lc" | grep -Eq "${B}(curl|wget)(\\.exe)?[[:space:]]|invoke-webrequest|invoke-restmethod|${B}(iwr|irm)[[:space:]]"; then
   urls="$(printf '%s' "$cmd" | grep -Eoi 'https?://[^/"'"'"'[:space:];&|()<>]+' || true)"
   [ -n "$urls" ] || deny "curl/wget without a literal http(s) URL; the target cannot be verified"
   while IFS= read -r u; do

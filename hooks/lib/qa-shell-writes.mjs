@@ -13,8 +13,8 @@
 // fails closed on what it cannot resolve (a target built from an unknown variable or a
 // command substitution). A regex hook cannot contain a determined adversary; this closes the
 // ordinary spellings of a write.
-import { readFileSync } from 'node:fs';
-import { inside, realCanonical, rel } from './guard-paths.mjs';
+import { readFileSync, statSync } from 'node:fs';
+import { inside, realCanonical, rel, keyGlobReaches } from './guard-paths.mjs';
 
 const DEVICES = new Set(['/dev/null', '/dev/stdout', '/dev/stderr', '/dev/tty', 'nul', '/dev/fd/1', '/dev/fd/2']);
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'ash', 'mksh', 'rbash', 'fish', 'csh', 'tcsh']);
@@ -29,7 +29,10 @@ const XARGS_VALUE_OPTS = new Set(['-I', '-i', '-n', '-P', '-L', '-d', '-a', '-E'
 // The SQL argument of an inspected psql is the one text that is not counted.
 // This analyzer matches the shapes a cooperative agent types; it is not a sandbox. A program
 // spelled with a glob, copied under another name or run from a script file is beyond a text rule,
-// and the read-only database role's grants are the guarantee behind it.
+// and the read-only database role's grants are the guarantee behind it. That is the QA and autopilot
+// limit (they run the project's own suites and scripts); the hunt is a program allow-list instead
+// (huntProgramWhy): a script of the project, a path-named program of the project and any program off the
+// list are refused there.
 const PSQL_PROGRAMS = new Set(['psql']);
 // psql as a token inside a word that holds whitespace (a command string for another program).
 const PSQL_TOKEN_RE = /(^|[\s;&|(`'"])(?:[^\s'"`;&|()]*[\\/])?psql(\.exe)?(?=[\s;&|)`'"]|$)/gi;
@@ -206,7 +209,7 @@ const PROTECTED_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|(^|\/)
 // Key material no stage may read through a shell (the same list as the hook's shell rule). The
 // hook tests the typed command; an 8.3 short name (MCP-SE~1.ENV) hides the name from it, so any
 // word with an alias-shaped segment is resolved here and its real name is tested.
-const KEY_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|\.aws\/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|\/)\.env($|\.)/;
+const KEY_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|\.aws\/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|\/)\.env($|\.)|\.git-credentials|(^|\/)\.netrc$|(^|\/)\.npmrc$|(^|\/)\.config\/(gh|glab-cli)(\/|$)|(^|\/)\.docker\/config\.json|(^|\/)\.kube(\/|$)|(^|\/)\.gnupg(\/|$)/;
 const SHORT_SEG = /[^\\/]~[0-9]/;
 const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)hooks\/(qa-guardrail|session-start|team-memory-[a-z]+|lib\/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|\/)\.gemini\/hooks\/|(^|\/)\.husky\/|(^|\/)\.pre-commit-config\.ya?ml$|(^|\/)lefthook\.ya?ml$|(^|\/)\.env($|\.)|(^|\/)qa\/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|\/)\.ultrapowers\/(qa-active|hunt-active|autopilot-active|autopilot-stop)$/;
 // Git subcommands an autopilot stage may run: the read-only set plus the commands that build the
@@ -876,6 +879,197 @@ function huntPipAudit(words, refuse, allow) {
   return files.reason || allow(parsed.valued.filter(([name]) => name === '-o' || name === '--output').map(([, , v]) => v), files.out);
 }
 
+// ---------- curl and wget under an egress allow-list ----------
+// With qa.hosts.allowed set, curl and wget reach only listed hosts. The hook's text check reads the literal
+// http(s) URLs of the command; this reads the words the way the program does, so what that check cannot see
+// is refused: an option that redirects a listed host (a proxy, a resolve or connect override, a Host header), a
+// URL given as an option, and any operand that is not a literal http(s) URL on a listed host. A valued option
+// is skipped only when it is known to take a value (the short ones by letter, the long ones by name, or attached
+// with =); an option this list does not know stands for a flag, so its value is judged as an operand: refused.
+const CURL_SHORT_VALUED = new Set(['A', 'b', 'c', 'C', 'd', 'D', 'e', 'E', 'F', 'H', 'K', 'm', 'o', 'P', 'Q', 'r', 't', 'T', 'u', 'U', 'w', 'X', 'y', 'Y', 'z']);
+const CURL_LONG_VALUED = new Set(['--output', '--header', '--data', '--data-raw', '--data-binary', '--data-ascii', '--data-urlencode', '--request', '--user', '--user-agent',
+  '--referer', '--cookie', '--cookie-jar', '--write-out', '--max-time', '--connect-timeout', '--retry', '--retry-delay', '--retry-max-time', '--upload-file', '--form', '--form-string',
+  '--cacert', '--cert', '--key', '--capath', '--limit-rate', '--range', '--output-dir', '--dump-header', '--trace', '--trace-ascii', '--stderr', '--json', '--max-redirs',
+  '--time-cond', '--continue-at', '--oauth2-bearer', '--aws-sigv4', '--proto', '--proto-redir']);
+const CURL_REFUSED_LONG = /^--(connect-to|resolve|url|doh-url|dns-servers|dns-interface|unix-socket|abstract-unix-socket|preproxy|socks[0-9a-z]*|proxy[a-z0-9-]*)$/;
+const WGET_SHORT_VALUED = new Set(['O', 'P', 'o', 'a', 'i', 't', 'T', 'w', 'Q', 'l', 'A', 'R', 'D', 'I', 'X', 'B', 'U', 'Y', 'e']);
+const WGET_LONG_VALUED = new Set(['--output-document', '--directory-prefix', '--output-file', '--append-output', '--header', '--user-agent', '--timeout', '--tries', '--wait', '--waitretry',
+  '--read-timeout', '--connect-timeout', '--dns-timeout', '--limit-rate', '--post-data', '--post-file', '--body-data', '--body-file', '--http-user', '--http-password', '--user', '--password',
+  '--referer', '--load-cookies', '--save-cookies', '--ca-certificate', '--certificate', '--private-key', '--level', '--accept', '--reject', '--quota', '--bind-address', '--base', '--method']);
+// The host of a literal http(s) URL, lowercase: scheme, userinfo, path and port removed (the hook's host_of_r).
+function urlHost(u) {
+  let s = u.replace(/^[A-Za-z][A-Za-z0-9+.-]*:\/\//, '');
+  if (/^[^/?@]*@/.test(s)) s = s.replace(/^[^/?@]*@/, '');
+  let a = s.split(/[/?]/)[0];
+  if (/:[0-9]+$/.test(a)) a = a.replace(/:[0-9]+$/, '');
+  return a.toLowerCase();
+}
+// The reason curl or wget (prog) may not run under the allow-list of hosts, or ''. rest: the words after the program.
+function egressWhy(prog, rest, allowedHosts) {
+  const curl = prog === 'curl';
+  const SHORT = curl ? CURL_SHORT_VALUED : WGET_SHORT_VALUED;
+  const LONG = curl ? CURL_LONG_VALUED : WGET_LONG_VALUED;
+  const operands = [];
+  // The text a word starts with, before its first expansion: enough to see a Host header.
+  const lead = (x) => (x.v !== null ? x.v : x.w.parts.reduce((acc, p) => (acc.done || p.t !== 'lit' ? { ...acc, done: true } : { text: acc.text + p.v, done: false }), { text: '', done: false }).text);
+  const headerWhy = (x) => {
+    if (!x) return '';
+    const t = lead(x);
+    if (/^\s*host\s*[:;]/i.test(t)) return `${prog} with a Host header can send a request for a listed host to another server; qa.hosts.allowed is set`;
+    if (curl && t.startsWith('@')) return `${prog} -H @file reads its headers from a file that cannot be inspected (a Host header there redirects a listed host); qa.hosts.allowed is set`;
+    return '';
+  };
+  const noEscape = `qa.hosts.allowed is set, so ${prog} takes none of the options that point a listed host at another server`;
+  let k = 0;
+  for (; k < rest.length; k++) {
+    const x = rest[k];
+    const v = x.v;
+    if (v === '--') { k++; break; }
+    if (v !== null && v.startsWith('--')) {
+      const eq = v.indexOf('=');
+      const name = eq === -1 ? v : v.slice(0, eq);
+      if (curl && CURL_REFUSED_LONG.test(name)) return `${prog} ${name} can point a listed host at another server; ${noEscape}`;
+      if (!curl && (name === '--execute' || name === '--use-proxy')) return `${prog} ${name} runs a setting (a proxy, a host) that can point a listed host at another server; ${noEscape}`;
+      if (name === '--header') {
+        const why = headerWhy(eq === -1 ? rest[k + 1] : { v: v.slice(eq + 1), w: null });
+        if (why) return why;
+      }
+      if (LONG.has(name) && eq === -1) k++;
+      continue;
+    }
+    if (v !== null && v.startsWith('-') && v !== '-') {
+      for (let c = 1; c < v.length; c++) {
+        const ch = v[c];
+        if (curl && ch === 'x') return `curl -x names a proxy and can point a listed host at another server; ${noEscape}`;
+        if (!curl && ch === 'e') return `wget -e runs a setting (a proxy, a host) that can point a listed host at another server; ${noEscape}`;
+        if (SHORT.has(ch)) {
+          const attached = v.slice(c + 1);
+          if (ch === 'H') {
+            const why = headerWhy(attached ? { v: attached, w: null } : rest[k + 1]);
+            if (why) return why;
+          }
+          if (!attached) k++;
+          break;
+        }
+      }
+      continue;
+    }
+    operands.push(x);
+  }
+  for (; k < rest.length; k++) operands.push(rest[k]);
+  for (const x of operands) {
+    if (x.v === null) return `a ${prog} operand is built from a variable or command substitution and cannot be verified; use a literal http(s) URL on a host in qa.hosts.allowed`;
+    if (!/^https?:\/\//i.test(x.v) || /[\s\\]/.test(x.v)) return `${prog} operand "${x.v.slice(0, 60)}" is not a literal http(s) URL on a host in qa.hosts.allowed; a bare host, a second target or a URL with a space or backslash is refused`;
+    const h = urlHost(x.v);
+    if (!allowedHosts.includes(h)) return `${prog} operand host '${h}' is not in qa.hosts.allowed`;
+  }
+  return '';
+}
+
+// ---------- the hunt's program list ----------
+// The hunt is a program allow-list: besides the audit tools of huntCheck, the git and gh/glab forms of the
+// walk below and the node/python scripts named here, it runs only these read verbs and shell builtins. Any
+// other program, a script of the project and a program named by a path inside the project are refused
+// with HUNT_NOT_LISTED. QA and autopilot keep their deny-list on purpose: they run the project's suites.
+const HUNT_PROGRAMS = new Set(['cat', 'ls', 'head', 'tail', 'wc', 'grep', 'rg', 'find', 'file', 'stat', 'du', 'sort', 'cut', 'tr', 'diff', 'comm',
+  'uniq', 'tac', 'nl', 'column', 'paste', 'fold', 'expand', 'which', 'type', 'sha256sum', 'shasum', 'md5sum', 'jq', 'yq', 'basename', 'dirname', 'realpath', 'readlink', 'printf', 'echo', 'true', 'false', 'test', '[', '[[', 'pwd', 'env',
+  'git', 'gh', 'glab']);
+// The hunt's network is its audit tools and gh/glab api: a program that opens a connection of its own is refused by name.
+const HUNT_NET_PROGRAMS = new Set(['curl', 'wget', 'iwr', 'irm', 'invoke-webrequest', 'invoke-restmethod', 'http', 'https', 'httpie', 'xh', 'nc', 'ncat', 'netcat', 'telnet', 'ssh', 'scp', 'sftp', 'rsync', 'socat', 'ftp', 'tftp', 'lftp']);
+const HUNT_BUILTINS = new Set(['cd', 'pushd', 'popd', 'set', 'unset', 'local', ':']);
+// The scripts of the plugin that a hunt (or a task review) runs by name when the audited project is the plugin itself.
+const HUNT_OWN_SCRIPTS_RE = /(^|\/)skills\/(vulnerability-hunt\/scripts\/hunt-preflight|task-review\/scripts\/assemble-review)\.mjs$/;
+const HUNT_NOT_LISTED = (prog) => `the hunt reads; ${prog} is not on its list (the read verbs, git read commands, the audit tools and gh/glab api GET)`;
+// The reason the hunt refuses this program ('' when it is on the list). args: the words of the command from
+// the program on ({ w, v } with v === null for a word built from a variable); dir: the directory the command
+// runs in (null when unknown); inArea: whether a real path is in the report area.
+function huntProgramWhy(prog, args, interpKind, { dir, rootC, ignoreCase, inArea }) {
+  const word = args[0].v;
+  const rest = args.slice(1);
+  const vals = rest.map((x) => x.v);
+  if (/[\\/]/.test(word)) {
+    let p = normPath(word);
+    if (!p.startsWith('/')) {
+      if (dir === null) return `the hunt reads; the program ${word} is relative to a directory the command changed to through a variable; use a plain program name`;
+      p = `${dir}/${p.replace(/^\.\//, '')}`;
+    }
+    if (p.split('/').includes('..')) return `the hunt reads; the program ${word} has a parent-folder segment and cannot be verified`;
+    if (rel(realCanonical(p, rootC), rootC, ignoreCase) !== null) return `the hunt reads; ${word} is a program of the project and is not on its list`;
+  }
+  if (rest.length > 0 && vals.every((v) => v !== null && INFO_FLAGS.includes(v))) return '';
+  if (HUNT_BUILTINS.has(prog)) return '';
+  if (['sed', 'awk', 'gawk', 'mawk', 'nawk'].includes(prog)) {
+    // A text filter only in its safe form: sed with -n, -E, -r, -e and a script made of addresses and the p, d, q, =,
+    // s and y commands (no w, W, e, r, R, never -i, -f or -s); awk with an inline program that holds no system(,
+    // getline, redirect or pipe, and no -f. A script outside that grammar cannot be told from a write or a command.
+    if (vals.some((v) => v === null)) return `the hunt reads; ${prog} is not on its list with an argument built from a variable or substitution`;
+    if (prog === 'sed') {
+      const scripts = [];
+      let k = 0;
+      for (; k < vals.length; k++) {
+        const v = vals[k];
+        if (v === '-e') { if (vals[k + 1] === undefined) return 'the hunt reads; sed is not on its list without a script after -e'; scripts.push(vals[k + 1]); k++; continue; }
+        if (/^-[nEr]+$/.test(v)) continue;
+        if (v.startsWith('-') && v !== '-') return `the hunt reads; sed is not on its list with ${v} (only -n, -E, -r and -e <script>; never -i, -f or -s)`;
+        break;
+      }
+      if (scripts.length === 0) { if (vals[k] === undefined) return 'the hunt reads; sed is not on its list without a script'; scripts.push(vals[k]); }
+      const D = '(?:[^/\\\\\\n]|\\\\.)*';
+      const SUBST = new RegExp(`s/${D}/${D}/[gpiImM0-9]*`, 'g');
+      const TRANS = new RegExp(`y/${D}/${D}/`, 'g');
+      const ADDR = new RegExp(`/${D}/[IM]?`, 'g');
+      for (const s of scripts) {
+        const rest = s.replace(SUBST, 'S').replace(TRANS, 'Y').replace(ADDR, 'A');
+        if (!/^[\s0-9,$!;{}pdq=SYA~+]*$/.test(rest)) return `the hunt reads; sed is not on its list with the script "${s.slice(0, 40)}" (only addresses and the p, d, q, =, s and y commands: no w, e, r or other command)`;
+      }
+      return '';
+    }
+    const BAD = /system\s*\(|getline|popen|[|>]/;
+    for (let k = 0; k < vals.length; k++) {
+      const v = vals[k];
+      if (v === '-F') { k++; continue; }
+      if (v === '-v') { if (BAD.test(vals[k + 1] || '')) return `the hunt reads; ${prog} is not on its list with a -v value that holds a command, a pipe or a redirect`; k++; continue; }
+      if (/^-F./.test(v)) continue;
+      if (/^-v./.test(v)) { if (BAD.test(v)) return `the hunt reads; ${prog} is not on its list with a -v value that holds a command, a pipe or a redirect`; continue; }
+      if (v.startsWith('-') && v !== '-') return `the hunt reads; ${prog} is not on its list with ${v} (an inline program with -F and -v only, never -f or -i)`;
+      if (BAD.test(v)) return `the hunt reads; ${prog} is not on its list with a program that holds system(, getline, a redirect or a pipe`;
+      return '';
+    }
+    return `the hunt reads; ${prog} is not on its list without a program`;
+  }
+  if (HUNT_PROGRAMS.has(prog)) {
+    const text = vals.filter((v) => v !== null);
+    if (prog === 'rg' && text.some((v) => /^--(pre|hostname-bin)(=|$)/.test(v))) return 'the hunt reads; rg --pre and --hostname-bin run a program';
+    if (prog === 'yq' && text.some((v) => /^-[A-Za-z]*[is]$/.test(v) || /^--(inplace|split-exp)(=|$)/.test(v))) return 'the hunt reads; yq -i and -s write files';
+    if (prog === 'yq' && text.some((v) => /(^|[^A-Za-z0-9_])(str)?env(subst)?\s*\(|(^|[^A-Za-z0-9_])(load|eval)(_str|_xml|_base64|_props|_csv|_json|_yaml)?\s*\(/.test(v))) return 'the hunt reads; a yq expression that reads the environment or loads a file cannot be verified';
+    if (prog === 'jq' && text.some((v) => /\$ENV\b|(^|[\s|(;,])env([\s|)\];,]|$)/.test(v))) return 'the hunt reads; a jq expression that reads the environment cannot be verified';
+    if (prog === 'file' && text.some((v) => /^-[A-Za-z]*C/.test(v) || v === '--compile')) return 'the hunt reads; file -C writes a compiled magic file';
+    return '';
+  }
+  if (SHELLS.has(prog)) {
+    // Only a command string, which the walk reads as a command of its own; a script file or stdin is a program of the project.
+    if (vals.some((v) => v !== null && (/^-[a-zA-Z]*c[a-zA-Z]*$/.test(v) || v === '--command' || v.startsWith('--command=')))) return '';
+    return HUNT_NOT_LISTED(prog);
+  }
+  if (['node', 'nodejs'].includes(prog) || interpKind === 'python') {
+    // The script is the first word, with no option before it (an option may take a value or load code); it runs
+    // only when it lies outside the project, or is one of the plugin's own scripts and not a file of the report area.
+    const script = args[1];
+    if (!script || script.v === null || script.v.startsWith('-')) return `the hunt reads; ${prog} runs a script given as its first word with no option before it`;
+    let p = normPath(script.v);
+    if (!p.startsWith('/')) {
+      if (dir === null) return `the hunt reads; ${prog} ${script.v} is relative to a directory the command changed to through a variable`;
+      p = `${dir}/${p.replace(/^\.\//, '')}`;
+    }
+    if (p.split('/').includes('..')) return `the hunt reads; ${prog} ${script.v} has a parent-folder segment and cannot be verified`;
+    const real = realCanonical(p, rootC);
+    if (rel(real, rootC, ignoreCase) === null) return '';
+    if (HUNT_OWN_SCRIPTS_RE.test(real.replace(/\\/g, '/')) && !inArea(real)) return '';
+    return `the hunt reads; ${prog} ${script.v} is not on its list (${prog} runs only the hunt's own preflight script or a script outside the project, never a file of the project or of the report area)`;
+  }
+  return HUNT_NOT_LISTED(prog);
+}
+
 // ---------- analysis ----------
 const ENV_DUMP = 'dumping the environment is blocked; check a variable with ${NAME:+set} instead';
 const SUBST_WHY = 'a command substitution cannot be analysed; spell the command out (run the inner command as its own call)';
@@ -887,7 +1081,7 @@ const MARKER_WHY = 'is the run marker; the run marker is not the run\'s to chang
 const TRACKER_VARS = /^(GH_TOKEN|GITHUB_TOKEN|GITLAB_TOKEN|GLAB_TOKEN|ODOO_API_KEY|ULTRAPOWERS_STAGE_.*)$/i;
 const SECRET_VARS = /TOKEN|KEY|SECRET|PASS|CREDENTIAL|AUTH|COOKIE|SESSION|PRIVATE/i;
 
-export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase = process.platform === 'win32' || process.platform === 'darwin', roleVars = [], roRole = 'qa_agent_ro', flags = null }) {
+export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase = process.platform === 'win32' || process.platform === 'darwin', roleVars = [], roRole = 'qa_agent_ro', flags = null, allowedHosts = [] }) {
   const autopilot = profile === 'autopilot';
   // The hunt profile: every QA rule (the report area is reviews/<audit id>/ and .ultrapowers/, the audit
   // id in the ticket field taking the place of a ticket), plus a closed list for the audit tools of the
@@ -997,10 +1191,21 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     if (rel(real, rootC, ignoreCase) === null) deny(`${form} during the hunt; ${opt} ${raw} is outside the project ${rootC}`);
   };
 
-  // A word spelled with an 8.3 alias that resolves to key material, whatever reads it (issue #31).
+  // Key material named by a word, whatever reads it: the word as the shell resolves it (quotes removed,
+  // `.e"n"v` is `.env`), the literal text around an expansion (`$HOME/.git-credentials`), a glob that can expand to
+  // a key name (`.en?`, `.e[n]v`), and a word spelled with an 8.3 alias that resolves to key material (issue #31).
+  const keyText = (s) => String(s).replace(/\\/g, '/').toLowerCase().replace(/\.env\.example/g, '');
   const checkAlias = (w, dir) => {
     const raw = resolveWord(w);
-    if (raw === null || !SHORT_SEG.test(raw)) return;
+    const keyWhy = (what) => deny(`key material (${what}) is never read, searched, uploaded or written during ${runKind}`);
+    if (raw === null) {
+      const lit = w.parts.filter((p) => p.t === 'lit').map((p) => p.v).join('');
+      if (lit && KEY_RE.test(keyText(lit))) keyWhy(lit);
+      return;
+    }
+    if (KEY_RE.test(keyText(raw))) return keyWhy(raw);
+    if (/[*?[\]{}]/.test(raw) && keyGlobReaches(raw.replace(/\.env\.example/gi, ''))) return deny(`a glob (${raw}) can expand to key material, which is never read, searched, uploaded or written during ${runKind}; name the file`);
+    if (!SHORT_SEG.test(raw)) return;
     let p = normPath(raw);
     if (!p.startsWith('/')) p = `${dir === null ? rootC : dir}/${p.replace(/^\.\//, '')}`;
     const real = realCanonical(p, rootC);
@@ -1056,17 +1261,19 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     // countWords is false when a wrapper's tail is re-run and the outer command counted it already.
     const simple = (items, countWords = true) => {
       for (const t of items) if (t.k === 'w') checkAlias(t, dir);
-      // An autopilot stage never reads a credential out, whatever prints it: `echo $GH_TOKEN`,
-      // `printf '%s' "$ODOO_API_KEY"`. A presence check stays: `${NAME:+set}`, `[ -n "$NAME" ]`.
-      if (autopilot) {
+      // A stage never reads a credential out, whatever prints it: `echo $GH_TOKEN`, `printf '%s' "$ODOO_API_KEY"`.
+      // A presence check stays: `${NAME:+set}`, `[ -n "$NAME" ]`. Autopilot and the hunt refuse every credential-shaped
+      // name (SECRET_VARS); a QA run refuses the tracker credentials (TRACKER_VARS) and keeps its role variables and
+      // the token a lane mints into its own shell variable (qa-lane-3-api: -H "Authorization: Bearer $TOKEN").
+      {
         const first = items.find((t) => t.k === 'w');
         const firstWord = first ? (resolveWord(first) ?? '') : '';
         const isTest = ['[', '[[', 'test'].includes(firstWord);
         if (!isTest) {
           for (const t of items) {
             if (t.k !== 'w') continue;
-            const hit = t.parts.find((p) => p.t === 'var' && (TRACKER_VARS.test(p.v) || SECRET_VARS.test(p.v)));
-            if (hit) return deny(`$${hit.v} would print or pass on a credential or secret; an autopilot stage never reads one out, check it with \${NAME:+set}`);
+            const hit = t.parts.find((p) => p.t === 'var' && !roleVars.includes(p.v) && (TRACKER_VARS.test(p.v) || ((autopilot || hunt) && SECRET_VARS.test(p.v))));
+            if (hit) return deny(`$${hit.v} would print or pass on a credential or secret; ${runKind} never reads one out, check it with \${NAME:+set}`);
           }
         }
       }
@@ -1353,6 +1560,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       // The hunt: the audit tools it may run, in the forms it may run them, and the commands it refuses
       // (a test suite, a worktree). A listed form is allowed here, after the variable gate and the
       // interpreter rules above and the redirect check at the top, which apply to it as to any command.
+      if (hunt && HUNT_NET_PROGRAMS.has(prog.replace(/.(cmd|bat|ps1)$/, ''))) return deny(`the hunt's network is its audit tools and gh api; ${prog} is refused`);
       if (hunt) {
         const h = huntCheck(prog, rest.map((x) => x.v), { viaRunner, interpreter: interpKind });
         if (h && h.reason) return deny(h.reason);
@@ -1362,6 +1570,11 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
           return;
         }
       }
+      // The hunt is a program allow-list (huntProgramWhy). The rules below still run for what is listed (sort -o, find -exec,
+      // the git, gh and glab forms) and for what is not, so a specific refusal of theirs is kept; an unlisted program they
+      // let through is refused last, with the list message.
+      const unlisted = hunt ? huntProgramWhy(prog, args, interpKind, { dir, rootC, ignoreCase, inArea }) : '';
+      const afterGate = () => {
       if (prog === 'psql') {
         psqlCheck(rest);
         // -o and -L write a file: the same area rule as a redirect.
@@ -1956,6 +2169,46 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         }
         return;
       }
+      if (prog === 'shuf') {
+        // -o FILE, -oFILE, --output FILE and --output=FILE write FILE, the same as sort -o.
+        for (let k = 0; k < rest.length; k++) {
+          const v = rest[k].v;
+          if (v === null) continue;
+          if (v === '--output') { if (rest[k + 1]) { checkTarget(rest[k + 1].w, dir, 'shuf --output', container); k++; } continue; }
+          if (v.startsWith('--output=')) { checkTarget({ k: 'w', parts: [{ t: 'lit', v: v.slice('--output='.length) }] }, dir, 'shuf --output', container); continue; }
+          const m = /^-[a-z]*o(.*)$/.exec(v);
+          if (m && !v.startsWith('--')) {
+            if (m[1]) checkTarget({ k: 'w', parts: [{ t: 'lit', v: m[1] }] }, dir, 'shuf -o', container);
+            else if (rest[k + 1]) { checkTarget(rest[k + 1].w, dir, 'shuf -o', container); k++; }
+          }
+        }
+        return;
+      }
+      if (prog === 'uniq') {
+        // uniq [OPTION]... [INPUT [OUTPUT]]: the second operand is a file it writes. -f, -s and -w take a value.
+        const operands = [];
+        for (let k = 0; k < rest.length; k++) {
+          const v = rest[k].v;
+          if (v !== null && ['-f', '-s', '-w', '--skip-fields', '--skip-chars', '--check-chars', '--group'].includes(v)) { k++; continue; }
+          if (v !== null && v.startsWith('-') && v !== '-') continue;
+          operands.push(rest[k]);
+        }
+        if (operands.length >= 2) checkTarget(operands[1].w, dir, 'uniq output file', container);
+        return;
+      }
+      if (prog === 'openssl') {
+        // -out, -keyout, -writerand and -save name a file the subcommand writes.
+        for (let k = 0; k < rest.length - 1; k++) {
+          if (['-out', '-keyout', '-writerand', '-save'].includes(rest[k].v)) { checkTarget(rest[k + 1].w, dir, `openssl ${rest[k].v}`, container); k++; }
+        }
+        return;
+      }
+      if (prog === 'sqlite3') {
+        // The first operand opens (and may create or change) a database file; ':memory:' and a blank name touch none.
+        const db = rest.find((x) => x.v === null || !x.v.startsWith('-'));
+        if (db && db.v !== ':memory:' && db.v !== '') checkTarget(db.w, dir, 'sqlite3 database', container);
+        return;
+      }
       if (prog === 'mkdir' || prog === 'touch') {
         // The operands are the paths made; -m MODE, -d DATE, -t STAMP and -r REFERENCE take a value.
         const valued = prog === 'mkdir' ? new Set(['-m', '--mode']) : new Set(['-d', '--date', '-t', '-r', '--reference', '--time']);
@@ -1968,19 +2221,47 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         return;
       }
       if (prog === 'rm' || prog === 'unlink') { for (const x of plain.filter((y) => y.v !== '--')) checkTarget(x.w, dir, `${prog} operand`, container); return; }
+      // A symbolic link (ln -s, cp -s, mklink) is a path that later commands write through, and one made in the same
+      // command is not on disk when they are judged: a QA run and a hunt make none, and an autopilot stage's link
+      // target is held to the same rules as a write (inside the workspace, nothing protected).
+      const SYMLINK_WHY = `a symlink during ${runKind} cannot be followed by the guardrail: a later path through it is judged by its spelling, not where the link leads; make no link`;
+      const linkDirOf = (destWord) => {
+        const raw = destWord ? resolveWord(destWord) : null;
+        if (raw === null) return dir;
+        let p = normPath(raw);
+        if (!p.startsWith('/')) { if (dir === null) return null; p = `${dir}/${p.replace(/^\.\//, '')}`; }
+        let isDir = /[\\/]$/.test(raw);
+        if (!isDir) { try { isDir = statSync(realCanonical(p, rootC)).isDirectory(); } catch { isDir = false; } }
+        return isDir ? p : (p.slice(0, p.lastIndexOf('/')) || '/');
+      };
+      if (prog === 'mklink') {
+        if (!autopilot) return deny(SYMLINK_WHY);
+        const ops = rest.filter((x) => x.v === null || !/^\/[A-Za-z]$/.test(x.v));
+        if (ops[0]) checkTarget(ops[0].w, dir, 'mklink link', container);
+        if (ops[1]) checkTarget(ops[1].w, linkDirOf(ops[0] && ops[0].w), 'mklink link target', container);
+        return;
+      }
       if (prog === 'cp' || prog === 'mv' || prog === 'install' || prog === 'ln') {
         const ops = plain.filter((y) => y.v !== '--');
         const ti = rest.findIndex((x) => x.v === '-t' || x.v === '--target-directory');
         const tEq = rest.find((x) => x.v && x.v.startsWith('--target-directory='));
+        const symbolic = (prog === 'ln' || prog === 'cp') && rest.some((x) => x.v !== null && (/^-[A-Za-z]*s[A-Za-z]*$/.test(x.v) || x.v === (prog === 'ln' ? '--symbolic' : '--symbolic-link')));
+        if (symbolic && !autopilot) return deny(SYMLINK_WHY);
         let dest;
         if (tEq) dest = { k: 'w', parts: [{ t: 'lit', v: tEq.v.slice('--target-directory='.length) }] };
         else if (ti !== -1 && rest[ti + 1]) dest = rest[ti + 1].w;
         else if (ops.length >= 2) dest = ops[ops.length - 1].w;
+        if (symbolic) {
+          const targets = dest && ops.length >= 2 && !tEq && ti === -1 ? ops.slice(0, -1) : ops;
+          const linkDir = linkDirOf(dest);
+          for (const x of targets) checkTarget(x.w, linkDir, `${prog} link target`, container);
+        }
         if (dest) checkTarget(dest, dir, `${prog} destination`, container);
         if (prog === 'mv') for (const x of (dest && !tEq && ti === -1 ? ops.slice(0, -1) : ops)) checkTarget(x.w, dir, 'mv source', container);
         return;
       }
       if (prog === 'curl') {
+        if (allowedHosts.length) { const why = egressWhy('curl', rest, allowedHosts); if (why) deny(why); }
         for (let k = 0; k < rest.length; k++) {
           const v = rest[k].v || '';
           const long = /^--(output|dump-header|cookie-jar|trace|trace-ascii|stderr|libcurl)(=(.*))?$/.exec(v);
@@ -1999,6 +2280,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         return;
       }
       if (prog === 'wget') {
+        if (allowedHosts.length) { const why = egressWhy('wget', rest, allowedHosts); if (why) deny(why); }
         let explicit = false;
         for (let k = 0; k < rest.length; k++) {
           const v = rest[k].v || '';
@@ -2013,6 +2295,9 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         }
         if (!explicit) checkTarget({ k: 'w', parts: [{ t: 'lit', v: 'download' }] }, dir, 'wget (writes into the working directory)', container);
       }
+      };
+      afterGate();
+      if (unlisted && !reason) deny(unlisted);
     };
     // The tracked directory follows the shell's scoping: a subshell ( ), each side of a pipeline and
     // a backgrounded command run in a child, so a cd inside one of them does not reach the next
@@ -2092,7 +2377,7 @@ function main() {
   try { input = readFileSync(0, 'utf8'); } catch { input = ''; }
   const [cwd = '', root = '', ticket = '', ignoreCaseFlag = '', roleVarsField = '', roRoleField = '', ...cmdParts] = input.split('\0');
   const profile = ['autopilot', 'hunt'].includes(process.env.ULTRAPOWERS_GUARD_PROFILE) ? process.env.ULTRAPOWERS_GUARD_PROFILE : 'qa';
-  const out = analyze(cmdParts.join('\0'), { cwd, root, ticket, profile, ignoreCase: ignoreCaseFlag === '1', roleVars: roleVarsField.split(',').filter(Boolean), roRole: roRoleField || 'qa_agent_ro' });
+  const out = analyze(cmdParts.join('\0'), { cwd, root, ticket, profile, ignoreCase: ignoreCaseFlag === '1', roleVars: roleVarsField.split(',').filter(Boolean), roRole: roRoleField || 'qa_agent_ro', allowedHosts: String(process.env.ULTRAPOWERS_GUARD_HOSTS || '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean) });
   if (out) process.stdout.write(out);
 }
 
