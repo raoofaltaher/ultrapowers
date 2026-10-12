@@ -101,6 +101,45 @@ Skills and repository:
 - `task-review` runs the review inline, with a `declined` entry, on a harness without a subagent tool.
 - CI pins its actions to commit SHAs and pytest to a version; the engine's documented floor is Node 22 (18 and 20 are end-of-life); the brainstorm-server test dependency ws moves to 8.22.0; the Kimi manifest test falls back to `python` when `python3` is the Windows Store stub.
 
+**Audit fixes**
+
+A read-only audit of the merged release, with every finding verified before a fix, found the routes below; each fix landed test-first.
+
+A, a confirmed High from the live audit:
+
+- The PowerShell tool is refused during a run. The hook read its command as POSIX shell, so `sc`, `ri`, `iex` and .NET calls passed in every profile, the run's own marker among them; the tool is now denied by name after the marker lookup, and the Bash tool is the shell of a run.
+
+B, the hunt profile:
+
+- The hunt profile is a program allow-list: it runs only the read verbs, the git and `gh`/`glab` read forms, the audit tools, and node or python on the hunt's own preflight script or a script outside the project; everything else is refused with "the hunt reads; <program> is not on its list". The hunter contract now says the hook refuses a project script too. QA and autopilot keep their deny-list and gain `shuf -o`, `uniq IN OUT`, `openssl -out` and `sqlite3 <db>` as writes held to the report area.
+- The hunt has no URL tool and no curl: `curl`, `wget`, `iwr`, `nc`, `ssh`, `rsync` and the like are refused by name, and so are WebFetch, WebSearch and any tool whose input holds a URL, whatever `qa.hosts` lists. An autopilot stage refuses a tool URL whose host no list names. QA keeps open egress on an empty list, as the README configuration table now says.
+- With `qa.hosts.allowed` set, curl and wget operands that send a request for a listed host to another server are refused: a schemeless operand, `--connect-to`, `--resolve`, a proxy, a `Host` header, `--url`, and `wget -e` or `--execute`.
+- A symlink's target is checked: `ln -s`, `cp -s` and `mklink` are refused in a QA run and a hunt, and in an autopilot stage the link target is held to the same rules as a write.
+- The key-material rule judges every word as the shell resolves it, so `.e"n"v`, `.en?` and `.e[n]v` count as `.env`, and a glob that can expand to a key name is refused; `.git-credentials`, `.netrc`, `.npmrc`, the `gh` and `glab` configs, `.docker/config.json`, `.kube` and `.gnupg` join the key files. The token-variable rule now runs in the hunt and, for the tracker credentials, in a QA run.
+- The hunt allow-list takes the read-only text filters in their safe forms: `uniq`, `tac`, `nl`, `column`, `paste`, `fold`, `expand`, `which` and `type`; `sed` only with `-n`, `-E`, `-r`, `-e` and a script of addresses and `p`, `d`, `q`, `=`, `s`, `y`; `awk` only with an inline program that holds no `system(`, `getline`, redirect or pipe. The sed and awk fixtures name the rule that refuses them first.
+
+C, the autopilot stage and the engine:
+
+- A glob or brace target (`.gi[t]/config`) is refused during an autopilot stage; a stage spells the path out.
+- MCP and harness config files are protected paths, and the engine copies `.mcp.json` to `.ultrapowers/autopilot/mcp.json` before a ticket's first stage and passes that copy, never the working file.
+- A `.git` file (a nested worktree's) is protected like the `.git/` folder, so a stage cannot point it at a config of its own.
+- The engine's git neutralises the config keys that run a program: `core.fsmonitor`, `core.sshCommand`, `diff.external`, `core.gitProxy` and `core.pager`.
+- The engine runs the ticket's hooks from an engine-owned snapshot taken when the ticket starts (`core.hooksPath` pinned to `.ultrapowers/autopilot/hooks/`), so the project's own hooks, the secret scan among them, still run and a hook a stage writes later does not. The snapshot copies what git would run (`core.hooksPath` of the project, else `.git/hooks`), not a `.githooks` folder git is not set to use.
+- The engine's git has no temp-folder fallback: outside a workspace it throws with the folder it looked in.
+- Team memory and nested `AGENTS.md` files stay writable in a stage: the team-memory skill runs inside stages and its committed edits show in the pull request diff. Only the root instruction files are protected, and `.cursor/rules/` through the harness-config rule.
+- MCP tracker and mail writes are refused in every run, not only in an autopilot stage: mail and chat servers join the tracker list, and send, reply and chat join the write verbs.
+- GitLab token variables (`GITLAB_ACCESS_TOKEN`, `CI_JOB_TOKEN`, `GITLAB_PRIVATE_TOKEN`, `GL_TOKEN`) join the stage scrub.
+
+D, scripts and templates:
+
+- The hunt preflight resolves its audit tools from absolute PATH entries outside the project and runs them without a shell, so a planted `npm.cmd` in an audited repository no longer runs on Windows.
+- The scaffolded denies cover git reads of secrets (`git diff --no-index`, `--contents`, `rev:.env`) and the credential files in the home directory, for Claude Code, Qwen Code, Cursor CLI and OpenCode, each in its own syntax.
+- The env denies name the files (`.env.development`, `.env.test`, `.env.staging`, `.env.secret` beside the existing ones) instead of a wildcard, so `.env.example` stays readable; the CLAUDE.md template paragraph names them.
+- In the autopilot form only collaborators' comments reach the stages (write, maintain or admin access, or the approvers list); the manual form keeps every comment as quoted material, and a test pins the title between the ticket markers.
+- The database recipe of `qa-lane-4-db` names the `PUBLIC` grants that PostgreSQL 14 and older keep, with the owner-decision `REVOKE`s commented out.
+
+Verified and accepted: the audit's remaining findings were each reproduced. Three are accepted with a reason: the Odoo URL is the protected configuration and is reached over https; the pre-commit hook's fail-open without Docker is deliberate and warned; the MCP servers are pinned by exact version. One is rejected: the CI action pins match their tags. Two are deferred to 2.1.1: the Antigravity and Kimi hook-command working directory needs a live check on those harnesses, and a provenance rule for the team-memory skill.
+
 **Upstream 7.0.0**
 
 What version 7.0.0 of the project this plugin was forked from changed, and this plugin did not have yet:
