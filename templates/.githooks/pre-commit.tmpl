@@ -77,14 +77,16 @@ fi
 # <<< team-memory lint
 # >>> spec check
 # Runs the ultrapowers spec check on the specs this commit stages: every spec it
-# adds, and every spec it changes that already carries a "## Decision record",
-# so an old spec edited for another reason is not held to the template. The
-# project's own template, specs/_template/Spec.md, is never checked itself.
+# adds, and every spec it changes or renames that already carries a "## Decision
+# record", so an old spec edited or moved for another reason is not held to the
+# template (a rename is a modification, not a new file). The project's own
+# template, specs/_template/Spec.md, is never checked itself. Paths are listed
+# with core.quotePath off, so a name with non-ASCII characters matches the filter.
 # Findings block the commit; an unreachable plugin or a missing node warns and
 # continues.
 spec_pattern='^(specs/[^/]+/Spec\.md|docs/ultrapowers/specs/[^/]+-design\.md)$'
-spec_files="$(git diff --cached --name-only --diff-filter=A | grep -E "$spec_pattern" | grep -v '^specs/_template/Spec\.md$')
-$(git diff --cached --name-only --diff-filter=M | grep -E "$spec_pattern" | grep -v '^specs/_template/Spec\.md$' | while IFS= read -r f; do
+spec_files="$(git -c core.quotePath=false diff --cached --name-only --diff-filter=A | grep -E "$spec_pattern" | grep -v '^specs/_template/Spec\.md$')
+$(git -c core.quotePath=false diff --cached --name-only --diff-filter=MR | grep -E "$spec_pattern" | grep -v '^specs/_template/Spec\.md$' | while IFS= read -r f; do
   git show ":$f" | grep -q '^## Decision record' && printf '%s\n' "$f"; done)"
 spec_files="$(printf '%s\n' "$spec_files" | grep .)"
 if [ -n "$spec_files" ] && command -v node >/dev/null 2>&1; then

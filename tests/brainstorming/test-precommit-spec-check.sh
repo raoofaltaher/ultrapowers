@@ -98,15 +98,17 @@ else
   fail "a change to the project's own template is not checked"; show
 fi
 
-# 2c. The checker reads the project's own template from the snapshot, not the
-# plugin's: a spec that keeps the question only the project's template has fails.
+# 2c. The checker reads the project's own template, not the plugin's: a spec
+# that keeps the question only the project's template has fails. (The template's
+# working copy equals the committed one here, so this case does not say which of
+# the two is read; 4b and 4c do that for the spec.)
 with_question "$PROJECT_QUESTION" "$FIXTURE" | put specs/GH-6/Spec.md
 stage specs/GH-6/Spec.md
 commit_with_plugin "a line of the project template"
 if [ "$status" -ne 0 ] && has ": question: " && has "$PROJECT_QUESTION"; then
-  pass "the checker reads the project's own template from the staged snapshot"
+  pass "the checker reads the project's own template, not the plugin's"
 else
-  fail "the checker reads the project's own template from the staged snapshot"; show
+  fail "the checker reads the project's own template, not the plugin's"; show
 fi
 g rm -q -f --cached -- specs/GH-6/Spec.md
 rm -rf "$PROJECT/specs/GH-6"
@@ -122,11 +124,14 @@ else
 fi
 
 # 3b. Every staged spec is checked, and one failure refuses the commit: two
-# failing specs come first in path order and a clean one last, so a status taken
-# from the last run alone would let the commit through; one name holds a space.
+# failing specs come first in path order (GH-1 and GH-4) and a clean one last
+# (GH-5), so a status taken from the last run alone would let the commit through;
+# one name holds a space. GH-1 is written and staged here, so the case does not
+# depend on what case 3 left in the index.
+question_spec | put specs/GH-1/Spec.md
 question_spec | put "specs/GH-4 with space/Spec.md"
 clean_spec | put specs/GH-5/Spec.md
-stage "specs/GH-4 with space/Spec.md" specs/GH-5/Spec.md
+stage specs/GH-1/Spec.md "specs/GH-4 with space/Spec.md" specs/GH-5/Spec.md
 commit_with_plugin "three specs"
 found="$(printf '%s\n' "$out" | grep -c ': question: ' || true)"
 if [ "$status" -ne 0 ] && [ "$found" -eq 2 ]; then
@@ -146,6 +151,32 @@ if [ "$status" -eq 0 ]; then
 else
   fail "a new spec that passes the check commits"; show
 fi
+
+# 4b. The hook checks what is being committed, not the working tree: a staged
+# spec that fails blocks the commit although the working copy was fixed after
+# staging.
+question_spec | put specs/GH-8/Spec.md
+stage specs/GH-8/Spec.md
+clean_spec | put specs/GH-8/Spec.md
+commit_with_plugin "staged spec fails, working copy clean"
+if [ "$status" -ne 0 ] && has ": question: " && has "spec check found problems"; then
+  pass "a staged spec that fails blocks the commit although the working copy is clean"
+else
+  fail "a staged spec that fails blocks the commit although the working copy is clean"; show
+fi
+
+# 4c. The reverse: a staged spec that passes commits although the working copy
+# was broken after staging.
+clean_spec | put specs/GH-8/Spec.md
+stage specs/GH-8/Spec.md
+question_spec | put specs/GH-8/Spec.md
+commit_with_plugin "staged spec clean, working copy broken"
+if [ "$status" -eq 0 ]; then
+  pass "a staged spec that passes commits although the working copy is broken"
+else
+  fail "a staged spec that passes commits although the working copy is broken"; show
+fi
+clean_spec | put specs/GH-8/Spec.md
 
 # 5. An old spec, committed without the plugin, then edited: it holds no
 # decision record, so it is not checked (its content fails every rule).
@@ -196,6 +227,52 @@ else
 fi
 g rm -q -f --cached -- docs/ultrapowers/specs/2026-10-12-x-design.md
 rm -f "$PROJECT/docs/ultrapowers/specs/2026-10-12-x-design.md"
+
+# 7b. A rename is a modification, not a new file. The old spec of case 5 holds no
+# decision record: moved to another folder it is still not checked (it would be
+# if the rename counted as an addition, and every move would force a retrofit).
+mkdir -p "$PROJECT/specs/GH-2r"
+g mv specs/GH-2/Spec.md specs/GH-2r/Spec.md
+commit_with_plugin "move the old spec"
+if [ "$status" -eq 0 ] && ! has "spec check found problems"; then
+  pass "a renamed old spec without a decision record is not checked"
+else
+  fail "a renamed old spec without a decision record is not checked"; show
+fi
+
+# 7c. A spec that carries a record is checked when it is renamed, even when the
+# rename is the only thing the commit says about it: it is moved and a section is
+# emptied to a bare None.
+clean_spec | put specs/GH-10/Spec.md
+stage specs/GH-10/Spec.md
+commit_with_plugin "a spec with a record"
+mkdir -p "$PROJECT/specs/GH-11"
+g mv specs/GH-10/Spec.md specs/GH-11/Spec.md
+bare_none_spec | put specs/GH-11/Spec.md
+stage specs/GH-11/Spec.md
+commit_with_plugin "move the spec and empty a section"
+if [ "$status" -ne 0 ] && has "spec check found problems" && has ": empty: "; then
+  pass "a renamed spec with a decision record is checked and blocked"
+else
+  fail "a renamed spec with a decision record is checked and blocked"; show
+fi
+clean_spec | put specs/GH-11/Spec.md
+stage specs/GH-11/Spec.md
+
+# 7d. A path with non-ASCII characters is listed as it is (core.quotePath off),
+# so a new spec in such a folder is still checked, not skipped as an unmatched
+# quoted name. The folder is spelled with its UTF-8 bytes to keep this file ASCII.
+accent="GH-$(printf '\303\251')"
+question_spec | put "specs/$accent/Spec.md"
+stage "specs/$accent/Spec.md"
+commit_with_plugin "a spec in a folder with a non-ASCII name"
+if [ "$status" -ne 0 ] && has ": question: " && has "spec check found problems"; then
+  pass "a new spec under a non-ASCII folder name is checked and blocked"
+else
+  fail "a new spec under a non-ASCII folder name is checked and blocked"; show
+fi
+g rm -q -f --cached -- "specs/$accent/Spec.md"
+rm -rf "${PROJECT:?}/specs/$accent"
 
 # 8. Plugin not reachable: warns and continues, the failing spec goes in.
 printf '# bad\n' | put specs/GH-3/Spec.md
