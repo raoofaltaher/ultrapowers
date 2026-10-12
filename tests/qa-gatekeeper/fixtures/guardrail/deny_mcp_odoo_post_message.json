@@ -1,0 +1,1 @@
+{"tool_name":"mcp__claude_ai_Odoo__post_message","tool_input":{"model":"project.task","res_id":1,"body":"x"},"reason":"writes through MCP tools are never run during"}

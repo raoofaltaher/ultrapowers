@@ -1467,18 +1467,35 @@ test('the watcher starts only with stage tokens, or with sharedCredentials said 
 test('with stage credentials a headless stage holds only those, and loads only the project MCP servers', () => {
   const ws = workspace();
   fs.writeFileSync(path.join(ws.root, '.mcp.json'), JSON.stringify({ mcpServers: {} }));
-  const secrets = { GH_TOKEN: 'ghp_secret', GITHUB_TOKEN: 'ghp_secret2', GITLAB_TOKEN: 'glpat', GLAB_TOKEN: 'glpat2' };
+  const secrets = { GH_TOKEN: 'ghp_secret', GITHUB_TOKEN: 'ghp_secret2', GITLAB_TOKEN: 'glpat', GLAB_TOKEN: 'glpat2', GITLAB_ACCESS_TOKEN: 'glpat3', CI_JOB_TOKEN: 'jobtok', GITLAB_PRIVATE_TOKEN: 'glpat4', GL_TOKEN: 'glpat5' };
   const r = run(ws, ['run', 'GH-16', '--once'], headless(ws, { ...secrets, ULTRAPOWERS_STAGE_GH_TOKEN: 'ghs_readonly', ULTRAPOWERS_STAGE_GITLAB_TOKEN: 'gl_readonly' }));
   assert.equal(r.code, 0, r.stdout + r.stderr);
   const call = harnessCalls(ws)[0];
   assert.deepEqual([call.env.GH_TOKEN, call.env.GITHUB_TOKEN, call.env.GITLAB_TOKEN, call.env.GLAB_TOKEN], ['ghs_readonly', null, 'gl_readonly', null], 'the engine tokens are gone, the stage tokens are in');
+  assert.deepEqual([call.env.GITLAB_ACCESS_TOKEN, call.env.CI_JOB_TOKEN, call.env.GITLAB_PRIVATE_TOKEN, call.env.GL_TOKEN], [null, null, null, null], 'the other GitLab token variables are gone too');
   assert.ok(call.env.GH_CONFIG_DIR && fs.existsSync(call.env.GH_CONFIG_DIR) && fs.readdirSync(call.env.GH_CONFIG_DIR).length === 0, 'gh sees an empty config');
   assert.ok(call.env.GLAB_CONFIG_DIR && fs.existsSync(call.env.GLAB_CONFIG_DIR), 'glab sees an empty config');
   assert.equal(call.env.GIT_TERMINAL_PROMPT, '0');
   assert.ok(call.args.includes('--strict-mcp-config'), 'only the listed MCP servers load');
   const i = call.args.indexOf('--mcp-config');
-  assert.ok(i > 0 && /\.mcp\.json$/.test(call.args[i + 1]), 'the project file is the list');
+  assert.ok(i > 0 && path.resolve(call.args[i + 1]) === path.resolve(ws.root, '.ultrapowers', 'autopilot', 'mcp.json'), 'the begin-time snapshot of the project file is the list');
   assert.ok(ws.calls().some((a) => a.includes('--add-label') && a.includes('up:running')), 'the watcher, not the stage, labels the ticket');
+});
+
+test('a .mcp.json a stage rewrote is not what the next stage loads: the begin-time snapshot is', () => {
+  const ws = workspace();
+  fs.writeFileSync(path.join(ws.root, '.mcp.json'), '{"mcpServers":{"listed":{"command":"ok"}}}');
+  const r = run(ws, ['run', 'GH-16'], headless(ws, { HARNESS_TAMPER_MCP: '1' }));
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const calls = harnessCalls(ws);
+  assert.ok(calls.length >= 2, 'more than one stage ran');
+  for (const c of calls) {
+    const i = c.args.indexOf('--mcp-config');
+    assert.ok(i > 0 && path.resolve(c.args[i + 1]) !== path.resolve(ws.root, '.mcp.json'), 'the working copy is never named: ' + c.args[i + 1]);
+    assert.match(c.mcpContent, /listed/);
+    assert.doesNotMatch(c.mcpContent, /evil/);
+  }
+  assert.match(fs.readFileSync(path.join(ws.root, '.mcp.json'), 'utf8'), /evil/, 'the stub did rewrite the working copy');
 });
 
 test('without stage credentials a headless stage shares the engine credentials, and still prompts for nothing', () => {

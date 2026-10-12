@@ -12,10 +12,56 @@ function gitBinary() {
   return process.env.ULTRAPOWERS_GIT || 'git';
 }
 
-// Runs git in `dir`. Never throws: { ok, stdout, stderr }.
-export function git(dir, args) {
+// The engine's git reads the repository's config, and a stage can reach it (a nested worktree's
+// `.git` file, a script it ran). Command-line `-c` outranks every config file, so the keys that
+// run a program are pinned: no filesystem monitor, plain ssh, no external diff, no proxy command,
+// a plain pager, and hooks only from the engine-owned snapshot of the project's hooks taken at the
+// start of the ticket (snapshotHooks), so a hook a stage writes later is not what the engine runs.
+function workspaceRoot(dir) {
+  for (let d = path.resolve(dir); ; d = path.dirname(d)) {
+    if (fs.existsSync(path.join(d, '.agents', 'ultrapowers.json'))) return d;
+    if (path.dirname(d) === d) return null;
+  }
+}
+
+function hooksSnapshotDir(root) {
+  return path.join(root, '.ultrapowers', 'autopilot', 'hooks');
+}
+
+// Copies the hooks directory git would use for the workspace (core.hooksPath of the project
+// config, else .git/hooks: what git itself would run, so a .githooks folder git is not set to use stays unused) into .ultrapowers/autopilot/hooks/, replacing an
+// earlier snapshot; an empty directory when there is none.
+export function snapshotHooks(root) {
+  let source = null;
   try {
-    const stdout = execFileSync(gitBinary(), args, { cwd: dir, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const cfg = execFileSync(gitBinary(), ['config', '--get', 'core.hooksPath'], { cwd: root, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    if (cfg) source = path.resolve(root, cfg);
+  } catch { source = null; }
+  if (!source || !fs.existsSync(source)) source = path.join(root, '.git', 'hooks');
+  const snap = hooksSnapshotDir(root);
+  fs.rmSync(snap, { recursive: true, force: true });
+  fs.mkdirSync(snap, { recursive: true });
+  if (fs.existsSync(source) && fs.statSync(source).isDirectory() && path.resolve(source) !== path.resolve(snap)) {
+    fs.cpSync(source, snap, { recursive: true });
+  }
+  return snap;
+}
+
+export function gitArgs(dir, args) {
+  const root = workspaceRoot(dir);
+  if (!root) throw new AutopilotError('no-workspace', `${dir} is not inside an ultrapowers workspace (no .agents/ultrapowers.json above it); the engine's git runs only inside one`);
+  const hooks = hooksSnapshotDir(root);
+  fs.mkdirSync(hooks, { recursive: true });
+  return ['-c', 'core.fsmonitor=false', '-c', 'core.sshCommand=ssh', '-c', 'diff.external=', '-c', 'core.gitProxy=', '-c', 'core.pager=cat',
+    '-c', 'core.hooksPath=' + hooks.split(path.sep).join('/'), ...args];
+}
+
+// Runs git in `dir`. Never throws for a git failure: { ok, stdout, stderr }. A directory outside a
+// workspace is a programming error and throws (gitArgs).
+export function git(dir, args) {
+  const argv = gitArgs(dir, args);
+  try {
+    const stdout = execFileSync(gitBinary(), argv, { cwd: dir, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     return { ok: true, stdout, stderr: '' };
   } catch (err) {
     return { ok: false, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? err.message) };

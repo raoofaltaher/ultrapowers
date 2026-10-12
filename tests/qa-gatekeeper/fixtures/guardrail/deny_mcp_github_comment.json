@@ -1,0 +1,1 @@
+{"tool_name":"mcp__github__add_issue_comment","tool_input":{"owner":"o","repo":"r","issue_number":1,"body":"x"},"reason":"writes through MCP tools are never run during"}

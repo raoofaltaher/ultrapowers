@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
-  git, remoteHead, remotePath, forgeFor, ensureBranch, ensureOnTicketBranch, ensureWorktree, tip, workTip, commitPaths, push, repoDirs,
+  git, gitArgs, snapshotHooks, remoteHead, remotePath, forgeFor, ensureBranch, ensureOnTicketBranch, ensureWorktree, tip, workTip, commitPaths, push, repoDirs,
 } from '../../skills/autopilot/scripts/repos.mjs';
 
 const GIT_ENV = {
@@ -23,6 +23,8 @@ function sh(cwd, ...args) {
 // A bare origin with `main` and `dev`, and one clone of it.
 function fixture() {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'autopilot-repos-'));
+  fs.mkdirSync(path.join(base, '.agents'));
+  fs.writeFileSync(path.join(base, '.agents', 'ultrapowers.json'), '{}');
   const origin = path.join(base, 'origin.git');
   sh(base, 'init', '-q', '--bare', '-b', 'main', origin);
   const seed = path.join(base, 'seed');
@@ -51,6 +53,40 @@ test('git wraps execFile and reports failures without throwing', () => {
   const bad = git(clone, ['rev-parse', '--verify', 'nope']);
   assert.equal(bad.ok, false);
   assert.match(bad.stderr, /fatal/);
+});
+
+test('every engine git call carries the neutralisers, so a stage-written .git/config runs nothing in the engine', () => {
+  const { clone } = fixture();
+  const argv = gitArgs(clone, ['status']);
+  assert.deepEqual(argv.slice(-1), ['status']);
+  const text = argv.join(' ');
+  assert.ok(text.includes('-c core.fsmonitor=false'));
+  assert.ok(text.includes('-c core.sshCommand=ssh'));
+  for (const k of ['-c diff.external=', '-c core.gitProxy=', '-c core.pager=cat']) assert.ok(text.includes(k), k);
+  assert.ok(argv.some((a) => a.startsWith('core.hooksPath=')), 'hooks are pinned to an engine-owned directory');
+});
+
+test('the engine runs the hooks as snapshotted at begin; a hook a stage writes into .githooks later is not run', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'autopilot-hooks-'));
+  fs.mkdirSync(path.join(root, '.agents'));
+  fs.writeFileSync(path.join(root, '.agents', 'ultrapowers.json'), '{}');
+  sh(root, 'init', '-q');
+  sh(root, 'config', 'core.hooksPath', '.githooks');
+  fs.mkdirSync(path.join(root, '.githooks'));
+  fs.writeFileSync(path.join(root, '.githooks', 'pre-commit'), 'good');
+  const snap = snapshotHooks(root);
+  const pinned = () => gitArgs(root, ['status']).find((a) => a.startsWith('core.hooksPath=')).slice('core.hooksPath='.length);
+  assert.equal(path.resolve(pinned()), path.resolve(snap));
+  assert.equal(path.resolve(snap), path.resolve(root, '.ultrapowers', 'autopilot', 'hooks'));
+  assert.equal(fs.readFileSync(path.join(snap, 'pre-commit'), 'utf8'), 'good');
+  fs.writeFileSync(path.join(root, '.githooks', 'pre-commit'), 'evil');
+  fs.writeFileSync(path.join(root, '.githooks', 'post-commit'), 'evil');
+  assert.equal(path.resolve(pinned()), path.resolve(snap), 'the pinned path is still the snapshot');
+  assert.equal(fs.readFileSync(path.join(snap, 'pre-commit'), 'utf8'), 'good');
+  assert.equal(fs.existsSync(path.join(snap, 'post-commit')), false);
+  fs.rmSync(path.join(root, '.githooks'), { recursive: true });
+  fs.rmSync(path.join(root, '.git', 'hooks'), { recursive: true, force: true });
+  assert.deepEqual(fs.readdirSync(snapshotHooks(root)), [], 'no hooks directory: an empty snapshot');
 });
 
 test('remoteHead reads origin/HEAD and falls back to main', () => {
@@ -234,4 +270,10 @@ test('repoDirs maps the marker to absolute paths', () => {
   assert.deepEqual(repoDirs(root, { topology: 'nested', repos: [{ name: 'backend', path: 'backend' }, { name: 'web', path: 'apps/web' }] }), {
     docs: root, repos: { backend: path.join(root, 'backend'), web: path.join(root, 'apps', 'web') },
   });
+});
+
+test('git outside an ultrapowers workspace throws and names the directory; there is no temp fallback', () => {
+  const lone = fs.mkdtempSync(path.join(os.tmpdir(), 'autopilot-lone-'));
+  assert.throws(() => gitArgs(lone, ['status']), (e) => e.message.includes(lone));
+  assert.throws(() => git(lone, ['status']), /not inside an ultrapowers workspace/);
 });

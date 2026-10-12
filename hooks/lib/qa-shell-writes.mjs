@@ -205,13 +205,13 @@ function normPath(p) {
 // The autopilot marker, the kill switch and the engine's lock folder are the envelope's own
 // switches, written by the engine outside the stage. The QA marker stays writable: the QA skill
 // writes and removes it itself inside the session, and so does the hunt (its marker is refused to an autopilot stage only).
-const PROTECTED_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|(^|\/)\.aws(\/|$)|mcp-secrets\.env|\.local\.(sh|env|json)$|hooks\/qa-guardrail|\.agents\/ultrapowers\.json|(^|\/)\.claude\/|(^|\/)\.git\/|(^|\/)\.githooks\/|(^|\/)\.[a-z0-9_-]+\/settings(\.local)?\.json$|(^|\/)tasks\/[^/]+\/(autopilot\.json|stage-log\.jsonl|changes-comments\.md)$|(^|\/)\.ultrapowers\/(autopilot-active|autopilot-stop)$|(^|\/)\.ultrapowers\/autopilot(\/|$)|(^|\/)\.ultrapowers$/;
+const PROTECTED_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|(^|\/)\.aws(\/|$)|mcp-secrets\.env|\.local\.(sh|env|json)$|hooks\/qa-guardrail|\.agents\/ultrapowers\.json|(^|\/)\.claude\/|(^|\/)\.git\/|(^|\/)\.git$|(^|\/)\.githooks\/|(^|\/)\.[a-z0-9_-]+\/settings(\.local)?\.json$|(^|\/)tasks\/[^/]+\/(autopilot\.json|stage-log\.jsonl|changes-comments\.md)$|(^|\/)\.ultrapowers\/(autopilot-active|autopilot-stop)$|(^|\/)\.ultrapowers\/autopilot(\/|$)|(^|\/)\.ultrapowers$/;
 // Key material no stage may read through a shell (the same list as the hook's shell rule). The
 // hook tests the typed command; an 8.3 short name (MCP-SE~1.ENV) hides the name from it, so any
 // word with an alias-shaped segment is resolved here and its real name is tested.
 const KEY_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|\.aws\/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|\/)\.env($|\.)|\.git-credentials|(^|\/)\.netrc$|(^|\/)\.npmrc$|(^|\/)\.config\/(gh|glab-cli)(\/|$)|(^|\/)\.docker\/config\.json|(^|\/)\.kube(\/|$)|(^|\/)\.gnupg(\/|$)/;
 const SHORT_SEG = /[^\\/]~[0-9]/;
-const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)hooks\/(qa-guardrail|session-start|team-memory-[a-z]+|lib\/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|\/)\.gemini\/hooks\/|(^|\/)\.husky\/|(^|\/)\.pre-commit-config\.ya?ml$|(^|\/)lefthook\.ya?ml$|(^|\/)\.env($|\.)|(^|\/)qa\/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|\/)\.ultrapowers\/(qa-active|hunt-active|autopilot-active|autopilot-stop)$/;
+const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)hooks\/(qa-guardrail|session-start|team-memory-[a-z]+|lib\/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|\/)\.gemini\/hooks\/|(^|\/)\.husky\/|(^|\/)\.pre-commit-config\.ya?ml$|(^|\/)lefthook\.ya?ml$|(^|\/)\.env($|\.)|(^|\/)qa\/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|\/)\.ultrapowers\/(qa-active|hunt-active|autopilot-active|autopilot-stop)$|(^|\/)\.mcp\.json$|(^|\/)\.cursor\/(mcp\.json|cli\.json|rules\/)|(^|\/)\.vscode\/|(^|\/)\.codex\/|(^|\/)\.kimi\/|(^|\/)\.factory\/|(^|\/)\.gemini\/|(^|\/)\.qwen\/|(^|\/)opencode\.jsonc?$|(^|\/)\.hermes\//;
 // Git subcommands an autopilot stage may run: the read-only set plus the commands that build the
 // ticket branch. Pushing and integrating belong to the engine; nothing discards work; `config` and
 // the `-c` global option are refused because an alias resolves to any command at all.
@@ -1154,6 +1154,8 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     if (raw === null) return deny(`${what} is built from a variable or command substitution and cannot be verified; write to a literal path under ${areaText}`);
     if (DEVICES.has(raw) || DEVICES.has(raw.toLowerCase()) || /^&?[0-9-]$/.test(raw)) return;
     if (container) return deny(`a write inside a container (${raw}) changes the stack; the stack stays as found`);
+    // An autopilot stage: a pattern or a brace list expands to names the text rule never sees (.gi[t]/config).
+    if (autopilot && /[*?[{]/.test(raw)) return deny(`${what} (${raw}): a glob or brace target cannot be checked against the protected paths during an autopilot stage; spell the path out`);
     let p = normPath(raw);
     if (p.startsWith('~')) return deny(`${what} (${raw}) is outside the project; writes are limited to ${areaText}`);
     if (!p.startsWith('/')) {

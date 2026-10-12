@@ -24,7 +24,7 @@ import {
 } from './autopilot-lib.mjs';
 import { trackerFor } from './tracker.mjs';
 import { HARNESSES, GUARDED_HARNESSES, PLUGIN_ROOT } from './harnesses.mjs';
-import { ensureBranch, ensureOnTicketBranch, ensureWorktree, worktreePath, ticketBranch, remoteHead, forgeFor, tip, workTip, commitPaths, push, repoDirs, baseAhead, pathsChanged, git } from './repos.mjs';
+import { ensureBranch, ensureOnTicketBranch, ensureWorktree, worktreePath, ticketBranch, remoteHead, forgeFor, tip, workTip, commitPaths, push, repoDirs, baseAhead, pathsChanged, git, snapshotHooks } from './repos.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PACKET_TEMPLATE = path.join(HERE, '..', 'templates', 'packet.md');
@@ -853,6 +853,9 @@ async function runBegin(opts) {
       releaseLock(ctx.root, opts.id);
       throw new AutopilotError('no-state', `${opts.id} has no autopilot state; the first stage is scaffold`);
     }
+    // The first stage of a ticket fixes the MCP server list every later stage loads. A stage's own
+    // `begin` (inside) never takes it: the engine did, before the stage started (run, below).
+    if (!ctx.inside) snapshotMcpConfig(ctx.root);
     const title = await ctx.tracker.title(ctx.source.number);
     const labels = await permittedLabels(ctx);
     const mode = modeFor(ctx.marker.autopilot, { arg: opts.mode, labels });
@@ -1047,7 +1050,7 @@ function stageEnvironment(root) {
   if (stageGh || stageGl) {
     // The engine's tokens, and the ssh agent: a push over ssh would not need a token at all.
     // ODOO_API_KEY stays: it is the one Odoo key, and the project's Odoo MCP server reads it.
-    for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GLAB_TOKEN', 'OAUTH_TOKEN', 'SSH_AUTH_SOCK', 'GIT_SSH_COMMAND', 'GIT_SSH']) delete env[k];
+    for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GLAB_TOKEN', 'GITLAB_ACCESS_TOKEN', 'GITLAB_PRIVATE_TOKEN', 'GL_TOKEN', 'CI_JOB_TOKEN', 'OAUTH_TOKEN', 'SSH_AUTH_SOCK', 'GIT_SSH_COMMAND', 'GIT_SSH']) delete env[k];
     for (const d of ['gh', 'glab']) fs.mkdirSync(path.join(noAuth, d), { recursive: true });
     env.GH_CONFIG_DIR = path.join(noAuth, 'gh');
     env.GLAB_CONFIG_DIR = path.join(noAuth, 'glab');
@@ -1062,11 +1065,28 @@ function stageEnvironment(root) {
 }
 
 // Only the MCP servers the project lists load into a headless stage: the user's own connectors
-// (a tracker among them) stay out. Without a project .mcp.json, none loads.
-function mcpConfigArgs(root) {
+// (a tracker among them) stay out. The list is the copy `begin` took of the project's .mcp.json
+// when the ticket started (a stage that rewrote the working copy changes nothing for the next
+// one: an MCP server's command runs outside every hook). Without a snapshot, none loads.
+function mcpSnapshotPath(root) {
+  return path.join(root, '.ultrapowers', 'autopilot', 'mcp.json');
+}
+
+function snapshotMcpConfig(root) {
+  snapshotHooks(root);
   const project = path.join(root, '.mcp.json');
-  let file = project;
-  if (!fs.existsSync(project)) {
+  const snap = mcpSnapshotPath(root);
+  if (fs.existsSync(project)) {
+    fs.mkdirSync(path.dirname(snap), { recursive: true });
+    fs.copyFileSync(project, snap);
+  } else {
+    fs.rmSync(snap, { force: true });
+  }
+}
+
+function mcpConfigArgs(root) {
+  let file = mcpSnapshotPath(root);
+  if (!fs.existsSync(file)) {
     file = path.join(root, '.ultrapowers', 'autopilot', 'mcp-none.json');
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, '{"mcpServers":{}}\n');
@@ -1168,6 +1188,7 @@ async function runStages(ctx, base, opts, stages, seen) {
       // The watcher makes the tracker writes around the stage: the stage may hold a read-only credential.
       await markRunning(ctx);
       if (stage === 'changes') await takeChangesLabel(ctx, opts.id, 'watch');
+      if (!readState(ctx.root, opts.id) && !readLock(ctx.root, opts.id)?.pending) snapshotMcpConfig(ctx.root);
       const spawned = await spawnHarness(ctx.settings.harness, stagePrompt(stage, opts.id), ctx.dirs.docs, ctx.root);
       const state = readState(ctx.root, opts.id);
       const pending = readLock(ctx.root, opts.id)?.pending;

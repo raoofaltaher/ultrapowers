@@ -536,5 +536,19 @@
   {"name":"deny_read_gh_hosts_yml","reason":"key material","event":{"tool_name":"Bash","tool_input":{"command":"cat ~/.config/gh/hosts.yml"}}},
   {"name":"deny_read_tool_gh_hosts_yml","reason":"key material","event":{"tool_name":"Read","tool_input":{"file_path":"{{ELSEWHERE}}/.config/gh/hosts.yml"}}},
   {"name":"deny_grep_glob_env","reason":"key material","event":{"tool_name":"Grep","tool_input":{"pattern":"TOKEN","path":"{{ROOT}}","glob":".env*"}}},
-  {"name":"allow_cat_env_example","event":{"tool_name":"Bash","tool_input":{"command":"cat .env.example"}}}
+  {"name":"allow_cat_env_example","event":{"tool_name":"Bash","tool_input":{"command":"cat .env.example"}}},
+  {"name":"deny_glob_git_config","reason":"a glob or brace target cannot be checked","event":{"tool_name":"Bash","tool_input":{"command":"echo x > .gi[t]/config"}}},
+  {"name":"deny_brace_git_config","reason":"a glob or brace target cannot be checked","event":{"tool_name":"Bash","tool_input":{"command":"echo x | tee {.git,x}/config"}}},
+  {"name":"deny_glob_guardrail","reason":"a glob or brace target cannot be checked","event":{"tool_name":"Bash","tool_input":{"command":"echo x > hooks/qa-guardra[i]l"}}},
+  {"name":"deny_glob_github_workflows","reason":"a glob or brace target cannot be checked","event":{"tool_name":"Bash","tool_input":{"command":"echo x > .githu*/workflows/ci.yml"}}},
+  {"name":"allow_literal_src_write","event":{"tool_name":"Bash","tool_input":{"command":"echo x > repo-a/src/x.ts"}}},
+  {"name":"deny_write_mcp_json","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.mcp.json","content":"{}"}}},
+  {"name":"deny_redirect_mcp_json","reason":"protected path","event":{"tool_name":"Bash","tool_input":{"command":"echo '{}' > .mcp.json"}}},
+  {"name":"deny_write_cursor_mcp_json","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.cursor/mcp.json","content":"{}"}}},
+  {"name":"deny_write_opencode_json","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/opencode.json","content":"{}"}}},
+  {"name":"deny_write_codex_config","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.codex/config.toml","content":"x"}}},
+  {"name":"deny_write_vscode_mcp","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.vscode/mcp.json","content":"{}"}}},
+  {"name":"deny_write_cursor_rules","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.cursor/rules/x.mdc","content":"x"}}},
+  {"name":"deny_write_tool_dotgit_file","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/repo-a/.git","content":"gitdir: /tmp/x"}}},
+  {"name":"deny_edit_tool_root_dotgit","reason":"protected path","event":{"tool_name":"Edit","tool_input":{"file_path":"{{ROOT}}/.git","old_string":"a","new_string":"b"}}}
 ]
