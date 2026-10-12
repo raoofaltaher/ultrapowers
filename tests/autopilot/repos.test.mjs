@@ -23,6 +23,8 @@ function sh(cwd, ...args) {
 // A bare origin with `main` and `dev`, and one clone of it.
 function fixture() {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'autopilot-repos-'));
+  fs.mkdirSync(path.join(base, '.agents'));
+  fs.writeFileSync(path.join(base, '.agents', 'ultrapowers.json'), '{}');
   const origin = path.join(base, 'origin.git');
   sh(base, 'init', '-q', '--bare', '-b', 'main', origin);
   const seed = path.join(base, 'seed');
@@ -265,4 +267,10 @@ test('repoDirs maps the marker to absolute paths', () => {
   assert.deepEqual(repoDirs(root, { topology: 'nested', repos: [{ name: 'backend', path: 'backend' }, { name: 'web', path: 'apps/web' }] }), {
     docs: root, repos: { backend: path.join(root, 'backend'), web: path.join(root, 'apps', 'web') },
   });
+});
+
+test('git outside an ultrapowers workspace throws and names the directory; there is no temp fallback', () => {
+  const lone = fs.mkdtempSync(path.join(os.tmpdir(), 'autopilot-lone-'));
+  assert.throws(() => gitArgs(lone, ['status']), (e) => e.message.includes(lone));
+  assert.throws(() => git(lone, ['status']), /not inside an ultrapowers workspace/);
 });

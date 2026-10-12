@@ -2,7 +2,6 @@
 // Node built-ins only; git runs through execFileSync with an argument array, never a shell.
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { AutopilotError, pushAllowed } from './autopilot-lib.mjs';
@@ -26,7 +25,7 @@ function workspaceRoot(dir) {
 }
 
 function hooksSnapshotDir(root) {
-  return path.join(root ?? path.join(os.tmpdir(), 'ultrapowers-autopilot-none'), root ? path.join('.ultrapowers', 'autopilot', 'hooks') : 'hooks');
+  return path.join(root, '.ultrapowers', 'autopilot', 'hooks');
 }
 
 // Copies the hooks directory git would use for the workspace (core.hooksPath of the project
@@ -51,16 +50,19 @@ export function snapshotHooks(root) {
 
 export function gitArgs(dir, args) {
   const root = workspaceRoot(dir);
+  if (!root) throw new AutopilotError('no-workspace', `${dir} is not inside an ultrapowers workspace (no .agents/ultrapowers.json above it); the engine's git runs only inside one`);
   const hooks = hooksSnapshotDir(root);
   fs.mkdirSync(hooks, { recursive: true });
   return ['-c', 'core.fsmonitor=false', '-c', 'core.sshCommand=ssh', '-c', 'diff.external=', '-c', 'core.gitProxy=', '-c', 'core.pager=cat',
     '-c', 'core.hooksPath=' + hooks.split(path.sep).join('/'), ...args];
 }
 
-// Runs git in `dir`. Never throws: { ok, stdout, stderr }.
+// Runs git in `dir`. Never throws for a git failure: { ok, stdout, stderr }. A directory outside a
+// workspace is a programming error and throws (gitArgs).
 export function git(dir, args) {
+  const argv = gitArgs(dir, args);
   try {
-    const stdout = execFileSync(gitBinary(), gitArgs(dir, args), { cwd: dir, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const stdout = execFileSync(gitBinary(), argv, { cwd: dir, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     return { ok: true, stdout, stderr: '' };
   } catch (err) {
     return { ok: false, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? err.message) };
