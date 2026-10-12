@@ -70,6 +70,8 @@ test('the engine runs the hooks as snapshotted at begin; a hook a stage writes i
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'autopilot-hooks-'));
   fs.mkdirSync(path.join(root, '.agents'));
   fs.writeFileSync(path.join(root, '.agents', 'ultrapowers.json'), '{}');
+  sh(root, 'init', '-q');
+  sh(root, 'config', 'core.hooksPath', '.githooks');
   fs.mkdirSync(path.join(root, '.githooks'));
   fs.writeFileSync(path.join(root, '.githooks', 'pre-commit'), 'good');
   const snap = snapshotHooks(root);
@@ -83,6 +85,7 @@ test('the engine runs the hooks as snapshotted at begin; a hook a stage writes i
   assert.equal(fs.readFileSync(path.join(snap, 'pre-commit'), 'utf8'), 'good');
   assert.equal(fs.existsSync(path.join(snap, 'post-commit')), false);
   fs.rmSync(path.join(root, '.githooks'), { recursive: true });
+  fs.rmSync(path.join(root, '.git', 'hooks'), { recursive: true, force: true });
   assert.deepEqual(fs.readdirSync(snapshotHooks(root)), [], 'no hooks directory: an empty snapshot');
 });
 

@@ -29,7 +29,7 @@ function hooksSnapshotDir(root) {
 }
 
 // Copies the hooks directory git would use for the workspace (core.hooksPath of the project
-// config, else .githooks, else .git/hooks) into .ultrapowers/autopilot/hooks/, replacing an
+// config, else .git/hooks: what git itself would run, so a .githooks folder git is not set to use stays unused) into .ultrapowers/autopilot/hooks/, replacing an
 // earlier snapshot; an empty directory when there is none.
 export function snapshotHooks(root) {
   let source = null;
@@ -37,8 +37,7 @@ export function snapshotHooks(root) {
     const cfg = execFileSync(gitBinary(), ['config', '--get', 'core.hooksPath'], { cwd: root, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
     if (cfg) source = path.resolve(root, cfg);
   } catch { source = null; }
-  if (!source || !fs.existsSync(source)) source = path.join(root, '.githooks');
-  if (!fs.existsSync(source)) source = path.join(root, '.git', 'hooks');
+  if (!source || !fs.existsSync(source)) source = path.join(root, '.git', 'hooks');
   const snap = hooksSnapshotDir(root);
   fs.rmSync(snap, { recursive: true, force: true });
   fs.mkdirSync(snap, { recursive: true });
