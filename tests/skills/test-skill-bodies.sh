@@ -140,7 +140,7 @@ expect $B 'The template asks it' 'brainstorming has the Red Flags row for over-a
 expect $B 'the others are obviously worse' 'brainstorming has the Red Flags row for a single approach'
 if grep -q 'only when it helps them decide' "$REPO_ROOT/$B"; then fail 'brainstorming no longer shows the comparison only when it helps'; else pass 'brainstorming no longer shows the comparison only when it helps'; fi
 expect skills/brainstorm-task/SKILL.md 'SPEC-CHECK-FAILED' 'brainstorm-task names the failed spec check'
-expect skills/autopilot/prompts/spec.md 'template' 'the spec stage prompt names the template'
+expect skills/autopilot/prompts/spec.md 'spec template' 'the spec stage prompt names the template'
 expect skills/init/SKILL.md 'spec check' 'init names the spec check among the reasons for Node'
 T=templates/specs/_template/Spec.md.tmpl
 expect $T '^## Decision record$' 'the payload template carries the decision record'

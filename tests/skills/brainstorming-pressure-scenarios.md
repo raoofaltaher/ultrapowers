@@ -2,7 +2,9 @@
 
 Run each scenario twice with a fresh subagent that may only read
 `skills/brainstorming/SKILL.md`: once on the skill before the change (RED) and
-once after (GREEN). The agent simulates the conversation, partner included, and
+once after (GREEN). A GREEN run after the spec-template change may also read
+`templates/specs/_template/Spec.md.tmpl`, which is what the D, E and F GREEN
+runs were given. The agent simulates the conversation, partner included, and
 writes no files. Results go in `brainstorming-pressure-results.md`.
 
 ## A: the hidden preference
