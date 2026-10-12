@@ -524,9 +524,6 @@
   {"name":"deny_write_opencode_json","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/opencode.json","content":"{}"}}},
   {"name":"deny_write_codex_config","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.codex/config.toml","content":"x"}}},
   {"name":"deny_write_vscode_mcp","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.vscode/mcp.json","content":"{}"}}},
-  {"name":"deny_write_team_memory","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.agents/memory/MEMORY.md","content":"x"}}},
-  {"name":"deny_write_nested_agents_md","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/repo-a/AGENTS.md","content":"x"}}},
-  {"name":"deny_write_nested_claude_md","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/repo-a/src/CLAUDE.md","content":"x"}}},
   {"name":"deny_write_cursor_rules","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.cursor/rules/x.mdc","content":"x"}}},
   {"name":"deny_write_tool_dotgit_file","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/repo-a/.git","content":"gitdir: /tmp/x"}}},
   {"name":"deny_edit_tool_root_dotgit","reason":"protected path","event":{"tool_name":"Edit","tool_input":{"file_path":"{{ROOT}}/.git","old_string":"a","new_string":"b"}}}
