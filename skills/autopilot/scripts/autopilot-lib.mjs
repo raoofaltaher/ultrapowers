@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { HARNESS_NAMES } from './harnesses.mjs';
+import { textLines } from '../../brainstorming/scripts/check-doc.mjs';
 
 export class AutopilotError extends Error {
   constructor(code, message) {
@@ -444,8 +445,11 @@ export function loadSecretsFile(root, env = process.env) {
   return loaded;
 }
 
+// The lines under the first heading with this text, up to the next heading. A spec may quote the
+// template in a fenced block, headings and all: the checker's own reading blanks those lines, so only
+// the document's own headings count.
 function section(markdown, heading) {
-  const lines = String(markdown ?? '').split('\n');
+  const lines = textLines(String(markdown ?? ''));
   const start = lines.findIndex((l) => new RegExp(`^#{1,6}\\s+${heading}\\s*$`, 'i').test(l.trim()));
   if (start < 0) return [];
   const out = [];
@@ -470,7 +474,8 @@ export function assumptionsFrom(markdown) {
   const rows = section(markdown, 'Assumption ledger')
     .filter((l) => /^\s*\|/.test(l))
     .map((l) => l.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim()));
-  const body = rows.filter((cells) => cells.length >= 5 && !/^#$/.test(cells[0]) && !/^-+$/.test(cells[0]));
+  // The header row starts with "#" and the separator row with dashes, aligned with colons or not.
+  const body = rows.filter((cells) => cells.length >= 5 && !/^#$/.test(cells[0]) && !/^:?-+:?$/.test(cells[0]));
   return body
     .map((c) => ({ question: c[1], answer: c[2], confidence: c[3].toLowerCase(), reason: c[4] }))
     .sort((a, b) => (CONFIDENCE_ORDER[a.confidence] ?? 1) - (CONFIDENCE_ORDER[b.confidence] ?? 1));

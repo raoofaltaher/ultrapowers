@@ -218,8 +218,81 @@ test('end spec blocks with the reason when the project template has no section h
   const r = run(ws, ['end', 'GH-16', 'spec', '--result', JSON.stringify({ ok: true })]);
   assert.equal(r.code, 0, r.stdout + r.stderr);
   assert.equal(state(ws).stageStatus, 'blocked');
-  assert.match(commentBodies(ws).at(-1), /spec-incomplete: the template has no "## " heading$/);
+  assert.match(commentBodies(ws).at(-1), /spec-incomplete: the spec check could not run: the template has no "## " heading$/);
   assert.equal(fs.existsSync(lockFile(ws)), false, 'the lock is released');
+});
+
+// A workspace whose spec stage is open: scaffold finished, `begin spec` ran, nothing written yet.
+function openSpecStage() {
+  const ws = workspace();
+  run(ws, ['begin', 'GH-16', 'scaffold']);
+  fs.mkdirSync(path.join(ws.root, 'tasks', 'GH-16'), { recursive: true });
+  run(ws, ['end', 'GH-16', 'scaffold', '--result', JSON.stringify({ ok: true })]);
+  run(ws, ['begin', 'GH-16', 'spec']);
+  return ws;
+}
+
+test('end spec blocks a missing spec with that reason, not a list of missing headings', () => {
+  const ws = openSpecStage();
+  // The stage ends ok and never wrote a spec.
+  const r = run(ws, ['end', 'GH-16', 'spec', '--result', JSON.stringify({ ok: true })]);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.equal(state(ws).stageStatus, 'blocked');
+  assert.match(commentBodies(ws).at(-1), /spec-incomplete: specs\/GH-16\/Spec\.md does not exist$/);
+  assert.equal(fs.existsSync(lockFile(ws)), false, 'the lock is released');
+  const n = run(ws, ['next', 'GH-16']);
+  assert.deepEqual([n.json.action, n.json.stage, n.json.reason], ['run', 'spec', 'spec-retry']);
+});
+
+test('end spec refuses a spec that is a symbolic link out of the project', (t) => {
+  const ws = openSpecStage();
+  const outside = path.join(path.dirname(ws.root), 'outside-spec.md');
+  fs.writeFileSync(outside, SPEC(['.']));
+  fs.mkdirSync(path.join(ws.root, 'specs', 'GH-16'), { recursive: true });
+  try {
+    fs.symlinkSync(outside, path.join(ws.root, 'specs', 'GH-16', 'Spec.md'));
+  } catch (err) {
+    t.skip(`this platform cannot create a symbolic link here (${err.code})`);
+    return;
+  }
+  // The link points at a spec that would pass: it is the link that is refused, not what it holds.
+  const r = run(ws, ['end', 'GH-16', 'spec', '--result', JSON.stringify({ ok: true })]);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.equal(state(ws).stageStatus, 'blocked');
+  assert.match(commentBodies(ws).at(-1), /spec-incomplete: the spec check could not run: .*specs\/GH-16\/Spec\.md is not a regular file inside the project$/);
+});
+
+test('end spec refuses a spec behind a folder link that leaves the project', () => {
+  const ws = openSpecStage();
+  const outside = path.join(path.dirname(ws.root), 'outside-specs-GH-16');
+  fs.mkdirSync(outside, { recursive: true });
+  fs.writeFileSync(path.join(outside, 'Spec.md'), SPEC(['.']));
+  // A junction needs no privilege on Windows; elsewhere this is a plain directory link.
+  fs.symlinkSync(outside, path.join(ws.root, 'specs', 'GH-16'), 'junction');
+  const r = run(ws, ['end', 'GH-16', 'spec', '--result', JSON.stringify({ ok: true })]);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.equal(state(ws).stageStatus, 'blocked');
+  assert.match(commentBodies(ws).at(-1), /spec-incomplete: the spec check could not run: .*specs\/GH-16\/Spec\.md is not a regular file inside the project$/);
+});
+
+test('end changes blocks a revised spec that fails the check, and next retries the changes stage', () => {
+  const ws = workspace();
+  throughPlan(ws);
+  run(ws, ['packet', 'GH-16']);
+  ws.setMap({ 'issue view 16 -R o/r --json labels': { stdout: { labels: [{ name: 'up:changes' }] } }, 'issue edit 16 -R o/r --remove-label up:changes': { stdout: '' } });
+  assert.equal(run(ws, ['next', 'GH-16']).json.stage, 'changes');
+  run(ws, ['begin', 'GH-16', 'changes']);
+  // The revision leaves a placeholder in the spec: the stage ends ok, the check does not agree.
+  fs.writeFileSync(path.join(ws.root, 'specs', 'GH-16', 'Spec.md'), SPEC(['.']).replace('## Intent\nNone: fixture.', '## Intent\nNone: TBD with the reviewer.'));
+  git(ws.root, 'add', 'specs/GH-16/Spec.md');
+  git(ws.root, 'commit', '-q', '-m', 'spec(GH-16): revise after review');
+  const r = run(ws, ['end', 'GH-16', 'changes', '--result', JSON.stringify({ ok: true })]);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.equal(state(ws).stageStatus, 'blocked');
+  assert.equal(logLines(ws).at(-1).event, 'blocked');
+  assert.match(commentBodies(ws).at(-1), /spec-incomplete: \d+: placeholder: "TBD" is still in the text/);
+  const n = run(ws, ['next', 'GH-16']);
+  assert.deepEqual([n.json.action, n.json.stage, n.json.reason], ['run', 'changes', 'changes-retry']);
 });
 
 test('a stale lock from a dead pid is removed by begin', () => {

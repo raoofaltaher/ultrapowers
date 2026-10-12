@@ -11,7 +11,7 @@ const repoRoot = resolve(__dirname, '../..');
 const scriptPath = resolve(repoRoot, 'skills/brainstorming/scripts/check-doc.mjs');
 const payloadPath = resolve(repoRoot, 'templates/specs/_template/Spec.md.tmpl');
 const specPath = resolve(repoRoot, 'docs/ultrapowers/specs/2026-10-12-spec-template-and-decision-record-design.md');
-const { checkDoc, resolveTemplate, RULES } = await import(pathToFileURL(scriptPath).href);
+const { checkDoc, resolveTemplate, textLines, RULES } = await import(pathToFileURL(scriptPath).href);
 
 const read = (path) => readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
 const TEMPLATE = read(payloadPath);
@@ -380,6 +380,11 @@ test('a fenced copy of the template is ignored by every rule', () => {
   assert.deepEqual(findingLines(checkDoc(inner, TEMPLATE)), [lineOf(inner, 'TBD after it')]);
   const span = `${FIXTURE}${'```not a fence``` but a span\n'}TBD after it\n`;
   assert.deepEqual(findingLines(checkDoc(span, TEMPLATE)), [lineOf(span, 'TBD after it')]);
+});
+
+test('textLines blanks fenced blocks and comment lines and keeps the line numbers', () => {
+  const text = ['a', '```js', '## b', '```', '<!-- c -->', 'd', '~~~', 'e'].join('\r\n');
+  assert.deepEqual(textLines(text), ['a', '', '', '', '', 'd', '', '']);
 });
 
 test('an indented fence is a fence', () => {

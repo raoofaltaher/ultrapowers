@@ -18,7 +18,8 @@
 // order, line being 1-based and 0 when the finding concerns the whole document.
 // A code fence that never closes is the one finding, rule heading at its line,
 // since every later line would read as code. It throws an Error when the
-// template has no "## " heading.
+// template has no "## " heading. textLines(text) is the document's lines with
+// its fenced blocks and comment lines blanked, for a reader of its sections.
 
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -63,6 +64,11 @@ function linesOf(text) {
   });
   return { lines, open: fence ? fence.line : 0 };
 }
+
+// The lines of a text as the rules read them, every fenced block and whole-line comment blanked and
+// line n at index n - 1. The autopilot engine reads a spec's sections through it, so the engine and
+// the checker agree on what is code.
+export const textLines = (text) => linesOf(text).lines;
 
 // The paragraphs of the lines, the runs between blank lines, each as its first
 // index and its text: the lines joined with "\n", each inline code span blanked

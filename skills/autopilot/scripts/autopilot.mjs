@@ -926,6 +926,51 @@ function prepareWorktrees(ctx, state) {
   }
 }
 
+// One file for the spec check. The spec and the project's own template are written by a stage, and
+// the findings quote them on the ticket, so each must be a regular file that resolves inside the
+// project: no symbolic link or junction out of it, no directory. The plugin's own template is not the
+// project's to vouch for; it is named relative to the plugin.
+function readForCheck(ctx, file, what, ofProject) {
+  const shown = path.relative(ofProject ? ctx.root : PLUGIN_ROOT, file).replace(/\\/g, '/');
+  if (ofProject) {
+    const stat = fs.lstatSync(file, { throwIfNoEntry: false });
+    let inside = false;
+    try {
+      inside = Boolean(stat?.isFile()) && fs.realpathSync(file).startsWith(fs.realpathSync(ctx.root) + path.sep);
+    } catch {
+      inside = false;
+    }
+    if (!inside) throw new Error(`${shown} is not a regular file inside the project`);
+  }
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    throw new Error(`cannot read the ${what} ${shown} (${err.code ?? err.message})`);
+  }
+}
+
+// The spec check at the end of the spec stage and of the changes stage: the message that blocks the
+// stage, or null when the spec passes the project's template (the plugin's own copy when the project
+// has none). Whatever keeps the check from running, a missing spec, a path that is not a regular file
+// inside the project, a template the checker cannot use, blocks the stage with its own reason, so
+// that `end` never crashes with the stage left open and the ticket comment says which it was.
+function specBlock(ctx, id) {
+  const spec = `specs/${id}/Spec.md`;
+  const specFile = path.join(ctx.root, spec);
+  try {
+    if (!fs.lstatSync(specFile, { throwIfNoEntry: false })) return `spec-incomplete: ${spec} does not exist`;
+    const template = resolveTemplate(path.dirname(specFile));
+    const findings = checkDoc(
+      readForCheck(ctx, specFile, 'spec', true),
+      readForCheck(ctx, template.path, 'template', template.source === 'project'),
+    );
+    if (!findings.length) return null;
+    return `spec-incomplete: ${findings.slice(0, 3).map((f) => `${f.line}: ${f.rule}: ${f.message}`).join('; ')}`;
+  } catch (err) {
+    return `spec-incomplete: the spec check could not run: ${err.message}`;
+  }
+}
+
 async function runEnd(opts) {
   const ctx = context(opts);
   const result = opts.result;
@@ -958,20 +1003,13 @@ async function runEnd(opts) {
       message = `qa-missing: no committed ${report} with a Verdict line; the QA gate fails closed`;
     }
   }
-  if (opts.stage === 'spec' && ok) {
-    // The spec has to pass the check brainstorming runs before it commits one, against the project's
-    // template (the plugin's own copy when the project has none). A template the checker cannot use
-    // blocks the stage with its reason too, rather than crashing `end` with the stage left open.
-    try {
-      const specFile = path.join(ctx.root, 'specs', opts.id, 'Spec.md');
-      const findings = checkDoc(readText(specFile), readText(resolveTemplate(path.dirname(specFile)).path));
-      if (findings.length) {
-        ok = false;
-        message = `spec-incomplete: ${findings.slice(0, 3).map((f) => `${f.line}: ${f.rule}: ${f.message}`).join('; ')}`;
-      }
-    } catch (err) {
+  if ((opts.stage === 'spec' || opts.stage === 'changes') && ok) {
+    // The spec has to pass the check brainstorming runs before it commits one. The changes stage
+    // revises the spec, so a revised spec reaches the next packet checked as well.
+    const block = specBlock(ctx, opts.id);
+    if (block) {
       ok = false;
-      message = `spec-incomplete: ${err.message}`;
+      message = block;
     }
   }
   if (opts.stage === 'execute' && ok && planChangedSince(ctx, state)) {
