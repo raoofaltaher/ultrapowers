@@ -138,6 +138,10 @@ D, scripts and templates:
 - In the autopilot form only collaborators' comments reach the stages (write, maintain or admin access, or the approvers list); the manual form keeps every comment as quoted material, and a test pins the title between the ticket markers.
 - The database recipe of `qa-lane-4-db` names the `PUBLIC` grants that PostgreSQL 14 and older keep, with the owner-decision `REVOKE`s commented out.
 
+E, the egress host:
+
+- With `qa.hosts.allowed` set, the host of a curl or wget operand is read by the URL parser (a trailing dot and any case match the listed host), and an operand with an `@`, `#` or `;` before its first path slash is refused, since curl and the parser read it differently. Config files and redirects cannot leave a listed host: curl `-K`/`--config`, `-L`/`--location` and `--location-trusted`, and wget `-i`/`--input-file`, `-B`/`--base` and `--config` are refused.
+
 Verified and accepted: the audit's remaining findings were each reproduced. Three are accepted with a reason: the Odoo URL is the protected configuration and is reached over https; the pre-commit hook's fail-open without Docker is deliberate and warned; the MCP servers are pinned by exact version. One is rejected: the CI action pins match their tags. Two are deferred to 2.1.1: the Antigravity and Kimi hook-command working directory needs a live check on those harnesses, and a provenance rule for the team-memory skill.
 
 **Upstream 7.0.0**
