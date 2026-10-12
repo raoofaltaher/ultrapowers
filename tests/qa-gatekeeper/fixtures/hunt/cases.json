@@ -432,5 +432,22 @@
   {"name":"allow_grep_tool_glob_ts","event":{"tool_name":"Grep","tool_input":{"pattern":"TOKEN","path":"{{ROOT}}/repo-a","glob":"*.ts"}}},
   {"name":"allow_glob_tool_lists_env_names","event":{"tool_name":"Glob","tool_input":{"pattern":"**/.env*","path":"{{ROOT}}"}}},
   {"name":"allow_presence_check_gh_token","event":{"tool_name":"Bash","tool_input":{"command":"[ -n \"$GH_TOKEN\" ] && echo set"}}},
-  {"name":"deny_echo_secret_var","reason":"would print or pass on a credential","event":{"tool_name":"Bash","tool_input":{"command":"echo $MY_SECRET"}}}
+  {"name":"deny_echo_secret_var","reason":"would print or pass on a credential","event":{"tool_name":"Bash","tool_input":{"command":"echo $MY_SECRET"}}},
+  {"name":"allow_sort_uniq_c","event":{"tool_name":"Bash","tool_input":{"command":"sort repo-a/x | uniq -c"}}},
+  {"name":"allow_sed_n_print","event":{"tool_name":"Bash","tool_input":{"command":"sed -n '1,20p' repo-a/src/app.ts"}}},
+  {"name":"allow_sed_substitute_expression","event":{"tool_name":"Bash","tool_input":{"command":"sed -E -e 's/a+/b/g' repo-a/x"}}},
+  {"name":"allow_awk_print_field","event":{"tool_name":"Bash","tool_input":{"command":"awk -F: '{print $1}' repo-a/x"}}},
+  {"name":"allow_xargs_cat","event":{"tool_name":"Bash","tool_input":{"command":"find repo-a -name '*.ts' | xargs cat"}}},
+  {"name":"allow_xargs_0_I_grep","event":{"tool_name":"Bash","tool_input":{"command":"find repo-a -print0 | xargs -0 -I{} grep -n x {}"}}},
+  {"name":"allow_which_and_filters","event":{"tool_name":"Bash","tool_input":{"command":"which npm; ls repo-a | tac | nl | column -t"}}},
+  {"name":"deny_sed_in_place","event":{"tool_name":"Bash","tool_input":{"command":"sed -i s/a/b/ repo-a/x"}}},
+  {"name":"deny_sed_w_command","event":{"tool_name":"Bash","tool_input":{"command":"sed -n 'w out.txt' repo-a/x"}}},
+  {"name":"deny_sed_e_command","event":{"tool_name":"Bash","tool_input":{"command":"sed 's/a/id/e' repo-a/x"}}},
+  {"name":"deny_sed_r_command","reason":"sed is not on its list","event":{"tool_name":"Bash","tool_input":{"command":"sed '1r repo-a/y' repo-a/x"}}},
+  {"name":"deny_awk_system","event":{"tool_name":"Bash","tool_input":{"command":"awk 'BEGIN{system(\"id\")}'"}}},
+  {"name":"deny_awk_redirect","event":{"tool_name":"Bash","tool_input":{"command":"awk '{print > \"x\"}' repo-a/x"}}},
+  {"name":"deny_awk_pipe","event":{"tool_name":"Bash","tool_input":{"command":"awk '{print | \"sh\"}' repo-a/x"}}},
+  {"name":"deny_awk_v_getline","reason":"awk is not on its list","event":{"tool_name":"Bash","tool_input":{"command":"awk -v c='getline x < \"f\"' 'BEGIN{print 1}'"}}},
+  {"name":"deny_xargs_rm","event":{"tool_name":"Bash","tool_input":{"command":"find repo-a | xargs rm"}}},
+  {"name":"deny_xargs_sh","reason":"sh is not on its list","event":{"tool_name":"Bash","tool_input":{"command":"find repo-a | xargs sh x"}}}
 ]

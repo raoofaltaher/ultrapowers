@@ -972,7 +972,7 @@ function egressWhy(prog, rest, allowedHosts) {
 // other program, a script of the project and a program named by a path inside the project are refused
 // with HUNT_NOT_LISTED. QA and autopilot keep their deny-list on purpose: they run the project's suites.
 const HUNT_PROGRAMS = new Set(['cat', 'ls', 'head', 'tail', 'wc', 'grep', 'rg', 'find', 'file', 'stat', 'du', 'sort', 'cut', 'tr', 'diff', 'comm',
-  'sha256sum', 'shasum', 'md5sum', 'jq', 'yq', 'basename', 'dirname', 'realpath', 'readlink', 'printf', 'echo', 'true', 'false', 'test', '[', '[[', 'pwd', 'env',
+  'uniq', 'tac', 'nl', 'column', 'paste', 'fold', 'expand', 'which', 'type', 'sha256sum', 'shasum', 'md5sum', 'jq', 'yq', 'basename', 'dirname', 'realpath', 'readlink', 'printf', 'echo', 'true', 'false', 'test', '[', '[[', 'pwd', 'env',
   'git', 'gh', 'glab']);
 // The hunt's network is its audit tools and gh/glab api: a program that opens a connection of its own is refused by name.
 const HUNT_NET_PROGRAMS = new Set(['curl', 'wget', 'iwr', 'irm', 'invoke-webrequest', 'invoke-restmethod', 'http', 'https', 'httpie', 'xh', 'nc', 'ncat', 'netcat', 'telnet', 'ssh', 'scp', 'sftp', 'rsync', 'socat', 'ftp', 'tftp', 'lftp']);
@@ -998,6 +998,45 @@ function huntProgramWhy(prog, args, interpKind, { dir, rootC, ignoreCase, inArea
   }
   if (rest.length > 0 && vals.every((v) => v !== null && INFO_FLAGS.includes(v))) return '';
   if (HUNT_BUILTINS.has(prog)) return '';
+  if (['sed', 'awk', 'gawk', 'mawk', 'nawk'].includes(prog)) {
+    // A text filter only in its safe form: sed with -n, -E, -r, -e and a script made of addresses and the p, d, q, =,
+    // s and y commands (no w, W, e, r, R, never -i, -f or -s); awk with an inline program that holds no system(,
+    // getline, redirect or pipe, and no -f. A script outside that grammar cannot be told from a write or a command.
+    if (vals.some((v) => v === null)) return `the hunt reads; ${prog} is not on its list with an argument built from a variable or substitution`;
+    if (prog === 'sed') {
+      const scripts = [];
+      let k = 0;
+      for (; k < vals.length; k++) {
+        const v = vals[k];
+        if (v === '-e') { if (vals[k + 1] === undefined) return 'the hunt reads; sed is not on its list without a script after -e'; scripts.push(vals[k + 1]); k++; continue; }
+        if (/^-[nEr]+$/.test(v)) continue;
+        if (v.startsWith('-') && v !== '-') return `the hunt reads; sed is not on its list with ${v} (only -n, -E, -r and -e <script>; never -i, -f or -s)`;
+        break;
+      }
+      if (scripts.length === 0) { if (vals[k] === undefined) return 'the hunt reads; sed is not on its list without a script'; scripts.push(vals[k]); }
+      const D = '(?:[^/\\\\\\n]|\\\\.)*';
+      const SUBST = new RegExp(`s/${D}/${D}/[gpiImM0-9]*`, 'g');
+      const TRANS = new RegExp(`y/${D}/${D}/`, 'g');
+      const ADDR = new RegExp(`/${D}/[IM]?`, 'g');
+      for (const s of scripts) {
+        const rest = s.replace(SUBST, 'S').replace(TRANS, 'Y').replace(ADDR, 'A');
+        if (!/^[\s0-9,$!;{}pdq=SYA~+]*$/.test(rest)) return `the hunt reads; sed is not on its list with the script "${s.slice(0, 40)}" (only addresses and the p, d, q, =, s and y commands: no w, e, r or other command)`;
+      }
+      return '';
+    }
+    const BAD = /system\s*\(|getline|popen|[|>]/;
+    for (let k = 0; k < vals.length; k++) {
+      const v = vals[k];
+      if (v === '-F') { k++; continue; }
+      if (v === '-v') { if (BAD.test(vals[k + 1] || '')) return `the hunt reads; ${prog} is not on its list with a -v value that holds a command, a pipe or a redirect`; k++; continue; }
+      if (/^-F./.test(v)) continue;
+      if (/^-v./.test(v)) { if (BAD.test(v)) return `the hunt reads; ${prog} is not on its list with a -v value that holds a command, a pipe or a redirect`; continue; }
+      if (v.startsWith('-') && v !== '-') return `the hunt reads; ${prog} is not on its list with ${v} (an inline program with -F and -v only, never -f or -i)`;
+      if (BAD.test(v)) return `the hunt reads; ${prog} is not on its list with a program that holds system(, getline, a redirect or a pipe`;
+      return '';
+    }
+    return `the hunt reads; ${prog} is not on its list without a program`;
+  }
   if (HUNT_PROGRAMS.has(prog)) {
     const text = vals.filter((v) => v !== null);
     if (prog === 'rg' && text.some((v) => /^--(pre|hostname-bin)(=|$)/.test(v))) return 'the hunt reads; rg --pre and --hostname-bin run a program';
