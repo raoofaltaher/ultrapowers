@@ -2,7 +2,6 @@
 // Node built-ins only; git runs through execFileSync with an argument array, never a shell.
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { AutopilotError, pushAllowed } from './autopilot-lib.mjs';
@@ -14,23 +13,11 @@ function gitBinary() {
 }
 
 // The engine's git reads the repository's config, and a stage can reach it (a nested worktree's
-// `.git` file, a script it ran). Command-line `-c` outranks every config file, so the settings
-// that run a program are pinned here: no filesystem monitor, plain ssh, and hooks only from an
-// empty engine-owned directory (under .ultrapowers/autopilot/ of the workspace, which a stage
-// cannot write; the system temp folder when no workspace is found).
-function emptyHooksDir(dir) {
-  let base = null;
-  for (let d = path.resolve(dir); ; d = path.dirname(d)) {
-    if (fs.existsSync(path.join(d, '.agents', 'ultrapowers.json'))) { base = path.join(d, '.ultrapowers', 'autopilot'); break; }
-    if (path.dirname(d) === d) break;
-  }
-  const hooks = path.join(base ?? path.join(os.tmpdir(), 'ultrapowers-autopilot'), 'hooks-empty');
-  fs.mkdirSync(hooks, { recursive: true });
-  return hooks.split(path.sep).join('/');
-}
-
+// `.git` file, a script it ran). Command-line `-c` outranks every config file, so the keys that
+// run a program are pinned: no filesystem monitor, plain ssh, no external diff, no proxy command,
+// a plain pager. The project's hooks run as before: the hook files are protected paths.
 export function gitArgs(dir, args) {
-  return ['-c', 'core.fsmonitor=false', '-c', 'core.sshCommand=ssh', '-c', `core.hooksPath=${emptyHooksDir(dir)}`, ...args];
+  return ['-c', 'core.fsmonitor=false', '-c', 'core.sshCommand=ssh', '-c', 'diff.external=', '-c', 'core.gitProxy=', '-c', 'core.pager=cat', ...args];
 }
 
 // Runs git in `dir`. Never throws: { ok, stdout, stderr }.
