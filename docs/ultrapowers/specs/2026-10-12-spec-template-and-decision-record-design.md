@@ -65,9 +65,13 @@ Anti-goals:
 - Skill bodies are code: every prose change lands with RED and GREEN evidence
   from pressure runs (`AGENTS.md` rules 2 and 3).
 - Every harness, every change (`AGENTS.md` rule 9): this change touches no
-  harness-specific surface. The prose is shared by every harness, the checker
-  runs on node, which every supported harness already needs for the ticket
-  scripts, and the hook is git. Recorded here so the gap is named, not skipped.
+  harness-specific surface. The prose is shared by every harness. The checker
+  runs on node; the ticket scripts and the hook work without node and skip the
+  check there (`skills/new-task/scripts/ticket-lib.sh:10-12`). The hook is git,
+  but it finds the checker only through `ULTRAPOWERS_ROOT` or the Claude Code
+  plugin cache, so on every other harness the spec check warns and continues
+  unless `ULTRAPOWERS_ROOT` is set, exactly as the lint block does. Recorded
+  here so the gap is named, not skipped.
 - Names (`AGENTS.md` rule 4): the folder is `_template`, like the payload's
   `_blocks` and `_nested`; the sections `Repositories in scope` and
   `Assumption ledger` keep the exact names the engine parses
@@ -235,10 +239,10 @@ D1 is the approach. D2 to D5 are the choices the design sections fixed.
 ### D5: Enforcement points
 
 - **Chosen:** self-review item 5; `commit-spec.sh` before `git add`; the
-  engine at the end of the spec stage, where the stage ends blocked with
-  `spec-incomplete` the way a QA stage ends blocked with `qa-missing`; the
-  scaffolded pre-commit hook, for specs new in the commit and for existing
-  specs that already carry a decision record.
+  engine at the end of the spec stage and of the changes stage, where the
+  stage ends blocked with `spec-incomplete` the way a QA stage ends blocked
+  with `qa-missing`; the scaffolded pre-commit hook, for specs new in the
+  commit and for existing specs that already carry a decision record.
 - **Why this one:** each door gets a mechanical stop outside the model's
   discretion: the ticket commit, the end of the engine's stage, the git
   commit. Evidence: `skills/brainstorm-task/scripts/commit-spec.sh` (the
@@ -264,10 +268,14 @@ D1 is the approach. D2 to D5 are the choices the design sections fixed.
   node with its own marker; a deliberate, warned fail-open in both.
   Evidence: the two warning branches of the lint block in
   `templates/.githooks/pre-commit.tmpl`. The engine checks only at the end
-  of the spec stage; a spec edited by hand on the docs branch afterwards is
-  not rechecked by the engine. Mitigation: the hook checks it on commit in a
-  scaffolded project, and a spec changed after approval reposts the packet
-  through the existing `plan-changed` rule. Evidence: `autopilot.mjs:960-963`.
+  of the spec stage and of the changes stage; a spec edited by hand on the
+  docs branch afterwards is not rechecked by the engine. Mitigation: the hook
+  checks it on commit in a scaffolded project, and a spec changed after
+  approval reposts the packet through the existing `plan-changed` rule.
+  Evidence: `autopilot.mjs:960-963`; `skills/autopilot/prompts/changes.md`
+  has the changes stage revise `specs/<ID>/Spec.md`, and the `AFTER` table
+  of `skills/autopilot/scripts/autopilot-lib.mjs` sends that stage on to the
+  gate, where the next packet is posted.
 - **Edge cases:** the non-ticket door in an unscaffolded repository has no
   hook: the self-review and the builder check are the stop. Recorded
   residual. Evidence: the hook exists only where init wrote it,
@@ -340,7 +348,7 @@ _Exact values. writing-plans copies this section into its Global Constraints._
 
 ## Decision record
 _D1 is the approach. Every later section that picks between options adds a block._
-_A source is a file and line read in this session, a document or standard by title, official documentation read through a docs server or the web reader, a probe or a measurement with its result, or a ticket page or attachment._
+_A source is a file and line read in this session, a document or standard by title, official documentation read through a docs server or the web reader, a probe or a measurement with its result, a ticket page or attachment, or what your human partner said in this conversation._
 _A line with no source says `Assumption:` with the reason, or `My call:` for a minor choice. Both kinds also appear in the ledger below._
 
 ### D1: <the decision>
@@ -438,6 +446,8 @@ The rules:
    headings appear in the template's order. Extra headings may sit between
    them. The first occurrence of a heading counts. Findings: a missing
    heading, reported at line 0; a heading out of order, reported at its line.
+   A code fence that is never closed is reported here too, at its line, and
+   then no other rule runs, since every later line would read as code.
 2. `status`, core: a line matching `Status: draft|approved|superseded,
    YYYY-MM-DD.` appears before the first `## ` heading. One finding at line 0
    when it does not.
@@ -550,25 +560,29 @@ thoughts; and the absence of "only when it helps them decide".
 - `skills/new-task/scripts/ticket-lib.sh:119-124`: `_*` joins the refused
   ids, with the error text extended by "leading _".
 - `skills/autopilot/scripts/autopilot.mjs`, `runEnd` (`:928-1002`): when
-  `opts.stage` is `spec` and the stage ended ok, read `specs/<ID>/Spec.md`,
-  resolve the template as the checker does (the project copy, then the
-  payload), run `checkDoc`, and on findings set `ok` false with the message
-  `spec-incomplete: <the first three findings joined by "; ">`, exactly as
-  `qa-missing` and `plan-changed` do. The stage then ends blocked through the
-  existing path: state, log, commit, label, ticket comment. The engine
-  imports `checkDoc` and the lookup from the checker module directly; no new
-  error code joins the scope-code list, and `previewScope` and `trustState`
-  are untouched (ledger row 10). The suite's `SPEC` fixture
-  (`tests/autopilot/autopilot.test.mjs:15`) becomes a minimal valid spec, so
-  every test that ends a spec stage keeps passing.
+  `opts.stage` is `spec` or `changes` and the stage ended ok (the changes
+  stage revises the spec, so a revised spec reaches the next packet checked),
+  read `specs/<ID>/Spec.md`, resolve the template as the checker does (the
+  project copy, then the payload), run `checkDoc`, and on findings set `ok`
+  false with the message `spec-incomplete: <the first three findings joined
+  by "; ">`, exactly as `qa-missing` and `plan-changed` do. The stage then
+  ends blocked through the existing path: state, log, commit, label, ticket
+  comment. The engine imports `checkDoc` and the lookup from the checker
+  module directly; no new error code joins the scope-code list, and
+  `previewScope` and `trustState` are untouched (ledger row 10). The suite's
+  `SPEC` fixture (`tests/autopilot/autopilot.test.mjs:15`) becomes a minimal
+  valid spec, so every test that ends a spec stage keeps passing.
 - `templates/.githooks/pre-commit.tmpl`: a block `# >>> spec check` to
   `# <<< spec check` after the lint block, mirroring it: the same plugin
   lookup for `skills/brainstorming/scripts/check-doc.mjs`; the staged file
   list filtered to `specs/<x>/Spec.md`, with `specs/_template/Spec.md`
   excluded, and `docs/ultrapowers/specs/<x>-design.md`; a file added in the
-  commit (`--diff-filter=A`) is always checked, a modified one
-  (`--diff-filter=M`) only when its staged content has a `## Decision record`
-  line; a staged snapshot through `checkout-index` holding the spec files,
+  commit (`--diff-filter=A`) is always checked, a modified or renamed one
+  (`--diff-filter=MR`, a rename being a modification, so a renamed old spec
+  is not forced into a retrofit) only when its staged content has a
+  `## Decision record` line; both file lists are read with
+  `-c core.quotePath=false`, so a path with non-ASCII characters matches the
+  filter; a staged snapshot through `checkout-index` holding the spec files,
   `specs/_template/Spec.md` and `.agents/ultrapowers.json`; one checker run
   per file; findings block the commit with the lines and a one-line hint; no
   plugin or no node warns and continues.
@@ -585,9 +599,10 @@ and through the hook in a scaffolded project.
 Autopilot: the engine's spec stage invokes brainstorm-task, which invokes
 brainstorming in its autopilot form; the spec is written with the ledger;
 `commit-spec.sh` checks and commits it; the engine runs the checker once
-more when the stage ends, and a finding ends the stage blocked with a
-ticket comment; `next` moves to the plan stage only from a finished spec
-stage; the packet lists the assumptions as today.
+more at the end of the spec stage and of the changes stage (which revises
+the spec), and a finding ends the stage blocked with a ticket comment;
+`next` moves to the plan stage only from a finished spec stage, and a
+blocked changes stage is retried; the packet lists the assumptions as today.
 
 Hook: the staged file list enters; the snapshot of the staged spec, the
 staged template and the config is written to a temporary directory; the
@@ -607,10 +622,15 @@ in it is executed.
   exit 1, nothing staged. A checker that cannot run with node present prints
   `ERROR:` and exits 1. Nothing is committed in either case. Without node the
   script prints `=== SPEC-CHECK-SKIPPED ===` with the reason and commits.
-- The engine: `spec-incomplete` ends the spec stage blocked through
-  `runEnd`'s existing path, which writes the state, the log, the commit, the
-  label and a ticket comment with the first findings, and releases the lock
-  and the marker. Never silent.
+- The engine: `spec-incomplete` ends the stage blocked, at the end of the
+  spec stage and of the changes stage, through `runEnd`'s existing path, which
+  writes the state, the log, the commit, the label and a ticket comment with
+  the first findings, and releases the lock and the marker. Never silent. A
+  missing spec, a spec or template that is not a regular file inside the
+  project, and a checker that cannot run end the stage blocked the same way,
+  each with a message that says which (`spec-incomplete: specs/<ID>/Spec.md
+  does not exist`, `spec-incomplete: the spec check could not run: <the
+  reason>`), not a list of missing headings.
 - The hook: findings block the commit with the lines and the hint "fix them,
   or run the spec check with your agent". No plugin checkout or no node is a
   warning and the commit continues, as for the lint.
@@ -629,23 +649,31 @@ Offline suites, each in the `AGENTS.md` list and in `.github/workflows/ci.yml`:
   a code span that is ignored, a bare `None`, a missing `D1`, a missing label,
   a reordered label, an untagged line under `Failure points`, a bad ledger
   header, a confidence outside the set; a fenced copy of the template inside
-  a spec is ignored by every rule; a generated-by comment line is ignored; a
-  code span that crosses a line break hides its placeholder; a
+  a spec is ignored by every rule; a fence that is never closed is one
+  finding at its line; a generated-by comment line is ignored; a
+  code span that crosses a line break hides its placeholder, and hides a
+  template question quoted inside it; a
   project template with an extra section makes it required; a project
   template without the record still requires it; `--print-template` resolves
   the project copy, then the payload; exit codes 0, 1 and 2; and the dogfood
-  case: this spec passes against the payload template.
+  cases: this spec passes against the payload template, and its fenced copy
+  of the template equals the payload file byte for byte.
 - `bash tests/task-lifecycle/test-task-lifecycle.sh` gains three cases: a
   ticket spec with a surviving question gets `=== SPEC-CHECK-FAILED ===`,
   exit 1 and nothing staged, and a clean one commits; with
   `ULTRAPOWERS_NO_NODE=1` the same failing spec gets
   `=== SPEC-CHECK-SKIPPED ===` and commits; `_template` and `_x` are refused
   as ticket ids.
-- `bash tests/autopilot/run-tests.sh` gains one case in
-  `autopilot.test.mjs`: a spec stage ended with a failing spec ends blocked
-  with `spec-incomplete`, the ticket comment names the first findings, and
-  `next` does not move to the plan stage; a spec stage ended with a valid
-  spec finishes. The suite's `SPEC` fixture becomes a minimal valid spec.
+- `bash tests/autopilot/run-tests.sh` gains cases in `autopilot.test.mjs`: a
+  spec stage ended with a failing spec ends blocked with `spec-incomplete`,
+  the ticket comment names the first findings, and `next` does not move to
+  the plan stage; a spec stage ended with a valid spec finishes; a changes
+  stage that leaves `TBD` in the spec ends blocked the same way and `next`
+  answers `changes-retry`; a missing spec, a template the checker cannot use
+  and a symlinked spec each end blocked with a message of their own. The
+  suite's `SPEC` fixture becomes a minimal valid spec. `autopilot-lib.test.mjs`
+  gains: the scope and the ledger are read from a spec that quotes the
+  template in a fence, and from a ledger whose separator row is aligned.
 - `bash tests/init/run-tests.sh` gains: scaffold renders `specs/_template/Spec.md`
   as the generated-by comment line followed by the payload file unchanged;
   `CHANGES.json` lists it and the hook at the new version; for a scaffold
@@ -657,10 +685,12 @@ Offline suites, each in the `AGENTS.md` list and in `.github/workflows/ci.yml`:
   `tests/team-memory/test-precommit-lint.sh` with the same fake project and
   `ULTRAPOWERS_ROOT`: a new spec with a surviving question blocks the commit;
   an old spec without a record passes unchecked; a modified spec with a record
-  and a bare `None` blocks; the template file itself, new after scaffold,
-  passes unchecked; a new `docs/ultrapowers/specs/` file without the
-  `-design.md` suffix passes unchecked; without the plugin the hook warns and
-  the commit passes.
+  and a bare `None` blocks; a renamed old spec without a record passes and a
+  renamed one with a record and a bare `None` blocks; a path with non-ASCII
+  characters is checked; the staged snapshot decides, not the working tree;
+  the template file itself, new after scaffold, passes unchecked; a new
+  `docs/ultrapowers/specs/` file without the `-design.md` suffix passes
+  unchecked; without the plugin the hook warns and the commit passes.
 - `bash tests/skills/test-skill-bodies.sh` pins the phrases listed under
   "The brainstorming prose", the `SPEC-CHECK-FAILED` marker in brainstorm-task,
   that the payload template exists and holds `## Decision record`, and that
