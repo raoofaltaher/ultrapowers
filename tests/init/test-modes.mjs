@@ -1011,6 +1011,19 @@ test('check tells an older scaffold to upgrade', () => {
   assert.ok(report.findings.some((f) => f.kind === 'upgrade-available'));
 });
 
+test('an older scaffold without the spec template gets it from upgrade', () => {
+  const root = scaffolded();
+  fs.rmSync(path.join(root, 'specs', '_template'), { recursive: true, force: true });
+  setMarkerVersion(root, '0.0.1');
+  const check = run(['check', '--root', root], { env: ALL_SET });
+  assert.ok(check.findings.some((f) => f.kind === 'upgrade-available'));
+  const report = run(['upgrade', '--root', root], { env: ALL_SET });
+  assert.equal(report.mode, 'upgrade');
+  assert.ok(JSON.stringify(report).includes('specs/_template/Spec.md'), 'the preview lists the template among the files to create');
+  const listed = report.changed.find((c) => c.path === 'specs/_template/Spec.md');
+  assert.ok(listed && listed.exists === false, `the preview's changed list holds the missing template: ${JSON.stringify(report.changed)}`);
+});
+
 test('check reports the ticket sources and the autopilot mode it found', () => {
   const root = scaffolded();
   setMarker(root, (data) => { data.tickets = twoSources(); data.autopilot = { mode: 'gated' }; });

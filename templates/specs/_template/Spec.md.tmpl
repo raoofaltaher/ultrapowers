@@ -1,0 +1,64 @@
+# <Title>
+
+Status: draft, <YYYY-MM-DD>. Ticket: <id>, or none.
+
+## Intent
+_What is the moment this exists for, and who is in it?_
+_What does success look like to them?_
+
+## Goals, non-goals and anti-goals
+_Goals: what must be true when this ships?_
+_Non-goals: what is left out on purpose, and where does it go instead?_
+_Anti-goals: what would make this a failure even if it works?_
+
+## Constraints
+_Which project-wide requirements bind every task: versions, dependencies, naming, platforms, security?_
+_Which existing patterns must the design follow?_
+_Exact values. writing-plans copies this section into its Global Constraints._
+
+## Decision record
+_D1 is the approach. Every later section that picks between options adds a block._
+_A source is a file and line read in this session, a document or standard by title, official documentation read through a docs server or the web reader, a probe or a measurement with its result, or a ticket page or attachment._
+_A line with no source says `Assumption:` with the reason, or `My call:` for a minor choice. Both kinds also appear in the ledger below._
+
+### D1: <the decision>
+- **Chosen:** <the option taken>
+- **Why this one:** <reason>. Evidence: <source>
+- **Rejected:** <option>, because <reason>. Evidence: <source>
+- **Failure points:** <how the chosen option breaks, and the mitigation>. Evidence: <source>
+- **Edge cases:** <the condition at the edge, and what happens>. Evidence: <source>
+
+## Architecture
+_Which units make up the design, and what is each one for?_
+_How do they talk, and which interfaces do others depend on?_
+
+## Components
+_Per unit: what it does, how it is used, what it depends on._
+_Which files are created or changed?_
+
+## Data flow
+_What enters, what leaves, what is stored, and where?_
+_What crosses a trust or a process boundary?_
+
+## Error handling
+_What can fail, and how does the user or the caller learn it?_
+_What is retried, refused or blocked, and what is never silent?_
+
+## Testing
+_Which test proves each requirement, and where does it live?_
+_Which gate runs it, and what is the evidence for a prose change?_
+
+## Left to the builder
+_Which choices does this spec leave open on purpose, and within what limits?_
+
+## Definition of done
+_Which observable results mean this is complete?_
+
+## Repositories in scope
+_Which `repos[].name` entries does the design touch? `.` in a single-repository project._
+
+## Assumption ledger
+| # | Question | Chosen answer | Confidence | Reason |
+|---|---|---|---|---|
+_Interactive form: the calls you made, lowest confidence first, so your partner checks them while reading._
+_Autopilot form: every question the conversation would have asked._
