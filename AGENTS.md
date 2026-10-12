@@ -79,6 +79,7 @@ bash tests/autopilot/test-adapters.sh             # skips a harness CLI that is 
 bash tests/qa-gatekeeper/run-tests.sh             # includes the QA, autopilot and hunt guardrail profile suites
 bash tests/skills/test-skill-bodies.sh
 node --test tests/brainstorming/check-doc.test.mjs
+bash tests/brainstorming/test-precommit-spec-check.sh
 node --test tests/pi/test-pi-extension.mjs
 bash tests/opencode/run-tests.sh            # unit tests; add --integration for a live OpenCode
 python -m pytest tests/hermes

@@ -30,7 +30,7 @@
   ".claude/output-styles/ste-explanatory.md": "1.0.0",
   ".agents/mcp-secrets.env.example": "1.0.0",
   ".gitleaks.toml": "1.0.0",
-  ".githooks/pre-commit": "2.0.2",
+  ".githooks/pre-commit": "2.2.0",
   ".gitignore": "1.0.0",
   ".gitattributes": "1.0.0",
   ".agents/memory/README.md": "1.0.0",

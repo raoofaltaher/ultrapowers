@@ -75,3 +75,58 @@ elif [ -f ".agents/memory/MEMORY.md" ] && ! command -v node >/dev/null 2>&1 \
   echo "pre-commit: team-memory lint skipped (node not found)" >&2
 fi
 # <<< team-memory lint
+# >>> spec check
+# Runs the ultrapowers spec check on the specs this commit stages: every spec it
+# adds, and every spec it changes that already carries a "## Decision record",
+# so an old spec edited for another reason is not held to the template. The
+# project's own template, specs/_template/Spec.md, is never checked itself.
+# Findings block the commit; an unreachable plugin or a missing node warns and
+# continues.
+spec_pattern='^(specs/[^/]+/Spec\.md|docs/ultrapowers/specs/[^/]+-design\.md)$'
+spec_files="$(git diff --cached --name-only --diff-filter=A | grep -E "$spec_pattern" | grep -v '^specs/_template/Spec\.md$')
+$(git diff --cached --name-only --diff-filter=M | grep -E "$spec_pattern" | grep -v '^specs/_template/Spec\.md$' | while IFS= read -r f; do
+  git show ":$f" | grep -q '^## Decision record' && printf '%s\n' "$f"; done)"
+spec_files="$(printf '%s\n' "$spec_files" | grep .)"
+if [ -n "$spec_files" ] && command -v node >/dev/null 2>&1; then
+  spec_check=""
+  for candidate in \
+    "${ULTRAPOWERS_ROOT:-/nonexistent}/skills/brainstorming/scripts/check-doc.mjs" \
+    "${HOME}"/.claude/plugins/cache/*/ultrapowers/*/skills/brainstorming/scripts/check-doc.mjs \
+    "${HOME}"/.claude/plugins/marketplaces/ultrapowers/skills/brainstorming/scripts/check-doc.mjs; do
+    if [ -f "$candidate" ]; then
+      spec_check="$candidate"
+      break
+    fi
+  done
+  if [ -n "$spec_check" ]; then
+    # Check the staged snapshot, not the working tree, as the memory lint does.
+    # It also holds the staged template and config (the ones that are tracked), so
+    # the checker reads the template this commit will contain.
+    spec_snapshot="$(mktemp -d 2>/dev/null)" || spec_snapshot=""
+    spec_root="."
+    if [ -n "$spec_snapshot" ]; then
+      if printf '%s\n' "$spec_files" specs/_template/Spec.md .agents/ultrapowers.json \
+          | tr '\n' '\0' \
+          | xargs -0 git ls-files -z -- \
+          | xargs -0 git checkout-index --prefix="$spec_snapshot/" -- 2>/dev/null; then
+        spec_root="$spec_snapshot"
+      fi
+    fi
+    spec_status=0
+    while IFS= read -r f; do
+      node "$spec_check" "$spec_root/$f" </dev/null || spec_status=1
+    done <<SPEC_FILES
+$spec_files
+SPEC_FILES
+    if [ -n "$spec_snapshot" ]; then rm -rf "$spec_snapshot"; fi
+    if [ "$spec_status" -ne 0 ]; then
+      echo "pre-commit: spec check found problems (listed above). Fix them, or run the spec check with your agent." >&2
+      exit 1
+    fi
+  else
+    echo "pre-commit: spec check skipped (ultrapowers plugin not found; set ULTRAPOWERS_ROOT to its checkout)" >&2
+  fi
+elif [ -n "$spec_files" ] && ! command -v node >/dev/null 2>&1; then
+  echo "pre-commit: spec check skipped (node not found)" >&2
+fi
+# <<< spec check
