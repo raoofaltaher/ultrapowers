@@ -24,7 +24,7 @@ import {
 } from './autopilot-lib.mjs';
 import { trackerFor } from './tracker.mjs';
 import { HARNESSES, GUARDED_HARNESSES, PLUGIN_ROOT } from './harnesses.mjs';
-import { ensureBranch, ensureOnTicketBranch, ensureWorktree, worktreePath, ticketBranch, remoteHead, forgeFor, tip, workTip, commitPaths, push, repoDirs, baseAhead, pathsChanged, git } from './repos.mjs';
+import { ensureBranch, ensureOnTicketBranch, ensureWorktree, worktreePath, ticketBranch, remoteHead, forgeFor, tip, workTip, commitPaths, push, repoDirs, baseAhead, pathsChanged, git, snapshotHooks } from './repos.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PACKET_TEMPLATE = path.join(HERE, '..', 'templates', 'packet.md');
@@ -1073,6 +1073,7 @@ function mcpSnapshotPath(root) {
 }
 
 function snapshotMcpConfig(root) {
+  snapshotHooks(root);
   const project = path.join(root, '.mcp.json');
   const snap = mcpSnapshotPath(root);
   if (fs.existsSync(project)) {

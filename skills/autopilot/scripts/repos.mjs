@@ -2,6 +2,7 @@
 // Node built-ins only; git runs through execFileSync with an argument array, never a shell.
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { AutopilotError, pushAllowed } from './autopilot-lib.mjs';
@@ -15,9 +16,45 @@ function gitBinary() {
 // The engine's git reads the repository's config, and a stage can reach it (a nested worktree's
 // `.git` file, a script it ran). Command-line `-c` outranks every config file, so the keys that
 // run a program are pinned: no filesystem monitor, plain ssh, no external diff, no proxy command,
-// a plain pager. The project's hooks run as before: the hook files are protected paths.
+// a plain pager, and hooks only from the engine-owned snapshot of the project's hooks taken at the
+// start of the ticket (snapshotHooks), so a hook a stage writes later is not what the engine runs.
+function workspaceRoot(dir) {
+  for (let d = path.resolve(dir); ; d = path.dirname(d)) {
+    if (fs.existsSync(path.join(d, '.agents', 'ultrapowers.json'))) return d;
+    if (path.dirname(d) === d) return null;
+  }
+}
+
+function hooksSnapshotDir(root) {
+  return path.join(root ?? path.join(os.tmpdir(), 'ultrapowers-autopilot-none'), root ? path.join('.ultrapowers', 'autopilot', 'hooks') : 'hooks');
+}
+
+// Copies the hooks directory git would use for the workspace (core.hooksPath of the project
+// config, else .githooks, else .git/hooks) into .ultrapowers/autopilot/hooks/, replacing an
+// earlier snapshot; an empty directory when there is none.
+export function snapshotHooks(root) {
+  let source = null;
+  try {
+    const cfg = execFileSync(gitBinary(), ['config', '--get', 'core.hooksPath'], { cwd: root, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    if (cfg) source = path.resolve(root, cfg);
+  } catch { source = null; }
+  if (!source || !fs.existsSync(source)) source = path.join(root, '.githooks');
+  if (!fs.existsSync(source)) source = path.join(root, '.git', 'hooks');
+  const snap = hooksSnapshotDir(root);
+  fs.rmSync(snap, { recursive: true, force: true });
+  fs.mkdirSync(snap, { recursive: true });
+  if (fs.existsSync(source) && fs.statSync(source).isDirectory() && path.resolve(source) !== path.resolve(snap)) {
+    fs.cpSync(source, snap, { recursive: true });
+  }
+  return snap;
+}
+
 export function gitArgs(dir, args) {
-  return ['-c', 'core.fsmonitor=false', '-c', 'core.sshCommand=ssh', '-c', 'diff.external=', '-c', 'core.gitProxy=', '-c', 'core.pager=cat', ...args];
+  const root = workspaceRoot(dir);
+  const hooks = hooksSnapshotDir(root);
+  fs.mkdirSync(hooks, { recursive: true });
+  return ['-c', 'core.fsmonitor=false', '-c', 'core.sshCommand=ssh', '-c', 'diff.external=', '-c', 'core.gitProxy=', '-c', 'core.pager=cat',
+    '-c', 'core.hooksPath=' + hooks.split(path.sep).join('/'), ...args];
 }
 
 // Runs git in `dir`. Never throws: { ok, stdout, stderr }.

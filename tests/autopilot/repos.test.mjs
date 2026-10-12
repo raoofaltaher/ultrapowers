@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
-  git, gitArgs, remoteHead, remotePath, forgeFor, ensureBranch, ensureOnTicketBranch, ensureWorktree, tip, workTip, commitPaths, push, repoDirs,
+  git, gitArgs, snapshotHooks, remoteHead, remotePath, forgeFor, ensureBranch, ensureOnTicketBranch, ensureWorktree, tip, workTip, commitPaths, push, repoDirs,
 } from '../../skills/autopilot/scripts/repos.mjs';
 
 const GIT_ENV = {
@@ -61,7 +61,27 @@ test('every engine git call carries the neutralisers, so a stage-written .git/co
   assert.ok(text.includes('-c core.fsmonitor=false'));
   assert.ok(text.includes('-c core.sshCommand=ssh'));
   for (const k of ['-c diff.external=', '-c core.gitProxy=', '-c core.pager=cat']) assert.ok(text.includes(k), k);
-  assert.ok(!text.includes('core.hooksPath'), 'the project hooks run as before');
+  assert.ok(argv.some((a) => a.startsWith('core.hooksPath=')), 'hooks are pinned to an engine-owned directory');
+});
+
+test('the engine runs the hooks as snapshotted at begin; a hook a stage writes into .githooks later is not run', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'autopilot-hooks-'));
+  fs.mkdirSync(path.join(root, '.agents'));
+  fs.writeFileSync(path.join(root, '.agents', 'ultrapowers.json'), '{}');
+  fs.mkdirSync(path.join(root, '.githooks'));
+  fs.writeFileSync(path.join(root, '.githooks', 'pre-commit'), 'good');
+  const snap = snapshotHooks(root);
+  const pinned = () => gitArgs(root, ['status']).find((a) => a.startsWith('core.hooksPath=')).slice('core.hooksPath='.length);
+  assert.equal(path.resolve(pinned()), path.resolve(snap));
+  assert.equal(path.resolve(snap), path.resolve(root, '.ultrapowers', 'autopilot', 'hooks'));
+  assert.equal(fs.readFileSync(path.join(snap, 'pre-commit'), 'utf8'), 'good');
+  fs.writeFileSync(path.join(root, '.githooks', 'pre-commit'), 'evil');
+  fs.writeFileSync(path.join(root, '.githooks', 'post-commit'), 'evil');
+  assert.equal(path.resolve(pinned()), path.resolve(snap), 'the pinned path is still the snapshot');
+  assert.equal(fs.readFileSync(path.join(snap, 'pre-commit'), 'utf8'), 'good');
+  assert.equal(fs.existsSync(path.join(snap, 'post-commit')), false);
+  fs.rmSync(path.join(root, '.githooks'), { recursive: true });
+  assert.deepEqual(fs.readdirSync(snapshotHooks(root)), [], 'no hooks directory: an empty snapshot');
 });
 
 test('remoteHead reads origin/HEAD and falls back to main', () => {
