@@ -465,7 +465,8 @@ async function main(argv) {
   const pattern = typeof marker.ticketPattern === 'string' && marker.ticketPattern.trim() ? marker.ticketPattern : DEFAULT_TICKET_PATTERN;
   // An audit id (a hunt without a ticket) is audit-YYYY-MM-DD; anything else must be a ticket id.
   const auditId = securityOnly && /^audit-\d{4}-\d{2}-\d{2}$/.test(id);
-  if (!auditId && (/^(\.|\.\.|-.*)$/.test(id) || /[/\\\s]/.test(id) || !new RegExp(pattern).test(id))) {
+  // A leading _ marks a template folder such as reviews/_template, as in ticket-lib.sh.
+  if (!auditId && (/^(\.|\.\.|[-_].*)$/.test(id) || /[/\\\s]/.test(id) || !new RegExp(pattern).test(id))) {
     process.stderr.write(`ERROR: ticket ${JSON.stringify(id)} is not a plain folder name matching ticketPattern ${pattern}\n`);
     return 4;
   }

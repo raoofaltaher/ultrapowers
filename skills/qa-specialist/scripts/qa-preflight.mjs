@@ -247,9 +247,10 @@ function projectFor(cwd, ticket) {
     return { fail: { ok: false, root, ticket, errors: [`ERROR: .agents/ultrapowers.json is not valid JSON: ${error.message}`], exitCode: 3 } };
   }
   // The id names the marker content and the reviews/<id>/ folder, so anything that names
-  // another path is refused whatever ticketPattern allows (the same rule as ticket-lib.sh).
-  if (/^(\.|\.\.|-.*)$/.test(String(ticket)) || /[/\\\s]/.test(String(ticket))) {
-    return { fail: { ok: false, root, ticket, errors: [`ERROR: ticket ${JSON.stringify(String(ticket))} is not a plain folder name (no /, backslash, whitespace, leading -, . or ..)`], exitCode: 4 } };
+  // another path is refused whatever ticketPattern allows, and so is a leading _, which marks
+  // a template folder such as reviews/_template (the same rule as ticket-lib.sh).
+  if (/^(\.|\.\.|[-_].*)$/.test(String(ticket)) || /[/\\\s]/.test(String(ticket))) {
+    return { fail: { ok: false, root, ticket, errors: [`ERROR: ticket ${JSON.stringify(String(ticket))} is not a plain folder name (no /, backslash, whitespace, leading -, leading _, . or ..)`], exitCode: 4 } };
   }
   const pattern = filledString(config.ticketPattern) ? config.ticketPattern : DEFAULT_TICKET_PATTERN;
   if (!new RegExp(pattern).test(String(ticket))) {

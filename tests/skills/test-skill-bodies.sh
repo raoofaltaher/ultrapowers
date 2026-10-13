@@ -126,6 +126,25 @@ expect $B 'writing-plans' 'brainstorming hands off to writing-plans'
 expect $B 'visual-companion.md' 'brainstorming points at the visual companion guide'
 if grep -Eqi 'token-intensive|token cost' "$REPO_ROOT/$B"; then fail 'brainstorming no longer warns about the companion token cost'; else pass 'brainstorming no longer warns about the companion token cost'; fi
 if [[ -f "$REPO_ROOT/skills/brainstorming/builder-check-prompt.md" && ! -e "$REPO_ROOT/skills/brainstorming/spec-document-reviewer-prompt.md" ]]; then pass 'the builder check replaces the spec-document reviewer prompt'; else fail 'the builder check replaces the spec-document reviewer prompt'; fi
+
+echo ""
+echo "=== Test: the spec template and the decision record (spec 2026-10-12) ==="
+expect $B '[-][-]print-template' 'brainstorming finds the spec template with --print-template'
+expect $B 'Failure points' 'brainstorming asks for the failure points of the recommended approach'
+expect $B 'Edge cases' 'brainstorming asks for the edge cases of the recommended approach'
+expect $B 'Evidence:' 'brainstorming names the evidence tag'
+expect $B 'theirs' 'brainstorming sorts uncovered template questions into theirs'
+expect $B 'check-doc.mjs' 'brainstorming runs the checker in the self-review'
+expect $B 'fill the section so the checker passes' 'brainstorming has the Red Flags row for filling to pass'
+expect $B 'The template asks it' 'brainstorming has the Red Flags row for over-asking'
+expect $B 'the others are obviously worse' 'brainstorming has the Red Flags row for a single approach'
+if grep -q 'only when it helps them decide' "$REPO_ROOT/$B"; then fail 'brainstorming no longer shows the comparison only when it helps'; else pass 'brainstorming no longer shows the comparison only when it helps'; fi
+expect skills/brainstorm-task/SKILL.md 'SPEC-CHECK-FAILED' 'brainstorm-task names the failed spec check'
+expect skills/autopilot/prompts/spec.md 'spec template' 'the spec stage prompt names the template'
+expect skills/init/SKILL.md 'spec check' 'init names the spec check among the reasons for Node'
+T=templates/specs/_template/Spec.md.tmpl
+expect $T '^## Decision record$' 'the payload template carries the decision record'
+if [[ "$(grep -c '^## ' "$REPO_ROOT/$T")" -eq 13 ]]; then pass 'the payload template has thirteen sections'; else fail 'the payload template has thirteen sections'; fi
 echo ""
 if [[ "$FAILURES" -ne 0 ]]; then
     echo "FAILED: $FAILURES assertion(s)."

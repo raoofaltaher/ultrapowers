@@ -466,6 +466,10 @@ test('the CLI refuses bad input with the documented exit codes', () => {
     writeFileSync(join(root, 'bad.json'), '{ not json');
     assert.equal(cli(root, ['501', '--findings', 'bad.json']).status, 2, 'findings not JSON');
     assert.equal(cli(root, ['../x', '--findings', 'bad.json']).status, 4, 'ticket names a path');
+    // A leading _ marks a template folder such as reviews/_template, refused whatever ticketPattern allows.
+    writeFileSync(join(root, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'fx', repos: [], ticketPattern: '.*' }));
+    assert.equal(cli(root, ['_template', '--findings', 'bad.json']).status, 4, 'a leading underscore marks a template folder');
+    assert.equal(cli(root, ['a_b', '--findings', 'bad.json']).status, 2, 'an underscore inside the id is fine: the bad findings file stops it');
     const outside = mkdtempSync(join(tmpdir(), 'assemble-noroot-'));
     try { assert.equal(cli(outside, ['501', '--findings', 'x.json']).status, 3, 'no project root'); }
     finally { rmSync(outside, { recursive: true, force: true }); }

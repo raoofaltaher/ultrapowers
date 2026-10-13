@@ -423,6 +423,10 @@ test('the CLI exits 3 without a project, 4 for an id that names a path, 5 for a 
     assert.equal(local.status, 5);
     assert.match(local.stderr, /ERROR: local-ticket/);
     assert.equal(cli(root, []).status, 2);
+    // A leading _ marks a template folder such as reviews/_template, refused whatever ticketPattern allows.
+    writeFileSync(join(root, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'fx', ticketPattern: '.*' }));
+    assert.equal(cli(root, ['_template']).status, 4, 'a leading underscore marks a template folder');
+    assert.equal(cli(root, ['a_b']).status, 5, 'an underscore inside the id is fine: it is a local ticket');
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(bare, { recursive: true, force: true });

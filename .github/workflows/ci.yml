@@ -58,6 +58,8 @@ jobs:
       - run: bash tests/autopilot/test-adapters.sh
       - run: bash tests/qa-gatekeeper/run-tests.sh
       - run: bash tests/skills/test-skill-bodies.sh
+      - run: node --test tests/brainstorming/check-doc.test.mjs
+      - run: bash tests/brainstorming/test-precommit-spec-check.sh
       - run: node --test tests/pi/test-pi-extension.mjs
       - run: bash tests/opencode/run-tests.sh
       - run: python -m pytest tests/hermes
@@ -100,3 +102,5 @@ jobs:
       # fetch-ticket spawns gh and glab without a shell; Windows resolves them differently.
       - run: node --test tests/task-lifecycle/fetch-ticket.test.mjs
       - run: bash tests/autopilot/run-tests.sh
+      # check-doc.mjs resolves templates by path and reads documents that a Windows checkout may hold with CRLF.
+      - run: node --test tests/brainstorming/check-doc.test.mjs

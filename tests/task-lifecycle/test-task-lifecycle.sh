@@ -89,7 +89,7 @@ test_lib() {
             fail "validate_ticket accepts [$id]"
         fi
     done
-    for id in '' -x '12 34' a/b .hidden '#'; do
+    for id in '' -x '12 34' a/b .hidden '#' _template _x; do
         rc=0
         lib_call "$proj" validate_ticket "$proj" "$id" 2>/dev/null || rc=$?
         if [[ "$rc" -eq 2 ]]; then
@@ -701,7 +701,7 @@ test_brainstorm_task() {
     fi
 
     # --- commit-spec ---
-    printf '# 1234 design\n' > "$proj/specs/1234/Spec.md"
+    cp "$REPO_ROOT/tests/brainstorming/fixtures/minimal-valid.md" "$proj/specs/1234/Spec.md"
     before="$(git -C "$proj" rev-list --count HEAD)"
     (cd "$proj/api" && bash "$COMMIT_SPEC" 1234 "define invoice totals" >/dev/null)
     after="$(git -C "$proj" rev-list --count HEAD)"
@@ -720,12 +720,75 @@ test_brainstorm_task() {
         echo "    exit: $rc"
     fi
     local trailered="$TEST_ROOT/trailered"
-    printf '# 500 design\n' > "$trailered/specs/500/Spec.md"
+    cp "$REPO_ROOT/tests/brainstorming/fixtures/minimal-valid.md" "$trailered/specs/500/Spec.md"
     (cd "$trailered" && bash "$COMMIT_SPEC" 500 "trailer check" >/dev/null)
     if [[ "$(git -C "$trailered" log -1 --format=%B | sed '/^$/d' | tail -n 1)" == "Reviewed-by: Fixture Owner" ]]; then
         pass "commit-spec ends with the configured commitTrailer"
     else
         fail "commit-spec ends with the configured commitTrailer"
+    fi
+
+    # --- the spec check ---
+    printf '%s\n' '## Intent' '_What is the moment this exists for, and who is in it?_' >> "$proj/specs/1234/Spec.md"
+    rc=0
+    out="$(cd "$proj" && bash "$COMMIT_SPEC" 1234 "unchecked" 2>&1)" || rc=$?
+    if [[ "$rc" -eq 1 && "$out" == *"=== SPEC-CHECK-FAILED ==="* && "$out" == *": question: "* && -z "$(git -C "$proj" diff --cached --name-only)" ]]; then
+        pass "commit-spec refuses a spec that fails the check and stages nothing"
+    else
+        fail "commit-spec refuses a spec that fails the check and stages nothing"; echo "    out: $out"
+    fi
+    # brainstorm-task reads the word ERROR as "stop", so a spec with findings, which is fixed and run
+    # again, says "fails the spec check" with no ERROR prefix.
+    if [[ "$out" == *"fails the spec check"* && "$out" != *"ERROR"* ]]; then
+        pass "commit-spec says a failed check without the ERROR prefix"
+    else
+        fail "commit-spec says a failed check without the ERROR prefix"; echo "    out: $out"
+    fi
+    rc=0
+    out="$(cd "$proj" && ULTRAPOWERS_NO_NODE=1 bash "$COMMIT_SPEC" 1234 "skipped" 2>&1)" || rc=$?
+    # The skip also fires under ULTRAPOWERS_NO_NODE, so the reason says "not available", not "not found".
+    if [[ "$rc" -eq 0 && "$out" == *"=== SPEC-CHECK-SKIPPED ==="* && "$out" == *"node not available"* && "$out" == *"=== COMMITTED ==="* ]]; then
+        pass "commit-spec without node prints the skipped marker and commits"
+    else
+        fail "commit-spec without node prints the skipped marker and commits"; echo "    out: $out"
+    fi
+    # The check runs before the unchanged check, so the cases after this one need
+    # a spec that passes: put the fixture back and commit it through the script.
+    cp "$REPO_ROOT/tests/brainstorming/fixtures/minimal-valid.md" "$proj/specs/1234/Spec.md"
+    rc=0
+    out="$(cd "$proj" && bash "$COMMIT_SPEC" 1234 "restored" 2>&1)" || rc=$?
+    if [[ "$rc" -eq 0 && "$out" == *"=== COMMITTED ==="* && "$out" != *"=== SPEC-CHECK"* && -z "$(git -C "$proj" status --porcelain)" ]]; then
+        pass "commit-spec commits a spec that passes the check, with no check marker"
+    else
+        fail "commit-spec commits a spec that passes the check, with no check marker"; echo "    out: $out"
+    fi
+    local badtpl="$TEST_ROOT/badtemplate"
+    bash "$FIXTURE" "$badtpl" >/dev/null
+    mkdir -p "$badtpl/specs/_template" "$badtpl/specs/77"
+    printf 'a template with no section heading\n' > "$badtpl/specs/_template/Spec.md"
+    cp "$REPO_ROOT/tests/brainstorming/fixtures/minimal-valid.md" "$badtpl/specs/77/Spec.md"
+    rc=0
+    out="$(cd "$badtpl" && bash "$COMMIT_SPEC" 77 "unusable template" 2>&1)" || rc=$?
+    if [[ "$rc" -eq 1 && "$out" == *"the spec check could not run (exit 2)"* && "$out" != *"=== COMMITTED ==="* && -z "$(git -C "$badtpl" diff --cached --name-only)" ]]; then
+        pass "commit-spec stops with an ERROR when the spec check cannot run and stages nothing"
+    else
+        fail "commit-spec stops with an ERROR when the spec check cannot run and stages nothing"; echo "    out: $out"
+    fi
+    # A checker file that is missing is a spec check that cannot run: an ERROR, never the findings
+    # marker over a node stack trace. The plugin copy below holds the script and its library only.
+    local noplugin="$TEST_ROOT/noplugin" nochk="$TEST_ROOT/nochecker"
+    mkdir -p "$noplugin/skills/brainstorm-task/scripts" "$noplugin/skills/new-task/scripts"
+    cp "$COMMIT_SPEC" "$noplugin/skills/brainstorm-task/scripts/commit-spec.sh"
+    cp "$LIB" "$noplugin/skills/new-task/scripts/ticket-lib.sh"
+    bash "$FIXTURE" "$nochk" >/dev/null
+    mkdir -p "$nochk/specs/78"
+    cp "$REPO_ROOT/tests/brainstorming/fixtures/minimal-valid.md" "$nochk/specs/78/Spec.md"
+    rc=0
+    out="$(cd "$nochk" && bash "$noplugin/skills/brainstorm-task/scripts/commit-spec.sh" 78 "no checker" 2>&1)" || rc=$?
+    if [[ "$rc" -eq 1 && "$out" == *"ERROR: the spec check could not run"* && "$out" != *"=== SPEC-CHECK-FAILED ==="* && "$out" != *"=== COMMITTED ==="* && -z "$(git -C "$nochk" diff --cached --name-only)" ]]; then
+        pass "commit-spec stops with an ERROR when the checker file is missing and stages nothing"
+    else
+        fail "commit-spec stops with an ERROR when the checker file is missing and stages nothing"; echo "    out: $out"
     fi
 }
 
@@ -864,10 +927,12 @@ test_review_fixes() {
         echo "    out: $out"
     fi
     (cd "$hooked" && bash "$SCAFFOLD" create 5556 Hooked spec >/dev/null)
-    printf '# 5556 design\n' > "$hooked/specs/5556/Spec.md"
+    cp "$REPO_ROOT/tests/brainstorming/fixtures/minimal-valid.md" "$hooked/specs/5556/Spec.md"
     rc=0
     out="$(cd "$hooked" && bash "$COMMIT_SPEC" 5556 "hooked" 2>&1)" || rc=$?
-    if [[ "$rc" -ne 0 && "$out" == *"ERROR"* && "$out" != *"=== COMMITTED ==="* ]]; then
+    # The spec passes the check, so it is the commit that the hook rejects: pin that message, as the
+    # word ERROR alone would also be satisfied by a refusal from the spec check.
+    if [[ "$rc" -ne 0 && "$out" == *"ERROR"* && "$out" == *"git commit failed"* && "$out" != *"=== COMMITTED ==="* ]]; then
         pass "commit-spec reports a rejected commit as an ERROR, not COMMITTED"
     else
         fail "commit-spec reports a rejected commit as an ERROR, not COMMITTED"
@@ -944,10 +1009,10 @@ test_review_fixes() {
         echo "    out: $out"
     fi
 
-    # --- ids that name a path are refused whatever the pattern says ---
+    # --- ids that name a path, or start with _ (the template folder), are refused whatever the pattern says ---
     local anything="$TEST_ROOT/anything"
     bash "$FIXTURE" "$anything" '.*' >/dev/null
-    for id in '../1' '1/2' '1\2' '1 2' '.' '..' '-1' "$(printf '1\n2')"; do
+    for id in '../1' '1/2' '1\2' '1 2' '.' '..' '-1' _template _x "$(printf '1\n2')"; do
         rc=0
         err="$(lib_call "$anything" validate_ticket "$anything" "$id" 2>&1)" || rc=$?
         label="$(printf '%s' "$id" | tr '
@@ -959,6 +1024,15 @@ test_review_fixes() {
             echo "    exit: $rc"
         fi
     done
+    rc=0
+    err="$(lib_call "$anything" validate_ticket "$anything" _template 2>&1)" || rc=$?
+    if [[ "$rc" -eq 2 && "$err" == *"(no /, backslash, whitespace, leading -, leading _, . or ..)"* ]]; then
+        pass "a leading underscore is refused with its reason in the message"
+    else
+        fail "a leading underscore is refused with its reason in the message"
+        echo "    exit: $rc"
+        echo "    err: $err"
+    fi
     rc=0
     err="$(lib_call "$TEST_ROOT/proj" validate_ticket "$TEST_ROOT/proj" "$(printf 'ok\n../../nl')" 2>&1)" || rc=$?
     if [[ "$rc" -eq 2 ]]; then

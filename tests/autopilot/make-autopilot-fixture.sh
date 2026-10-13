@@ -53,11 +53,16 @@ through_plan() {
   run_engine end GH-16 scaffold --result '{"ok":true}' >/dev/null
   run_engine begin GH-16 spec >/dev/null
   mkdir -p "$root/specs/GH-16"
-  {
-    printf '# Spec\n\n## Repositories in scope\n\n'
-    printf -- '- %s\n' $scope
-    printf '\n## Assumption ledger\n\n| # | Question | Chosen answer | Confidence | Reason |\n|---|---|---|---|---|\n| 1 | Which wording? | the plan path | low | not asked |\n'
-  } > "$root/specs/GH-16/Spec.md"
+  # The engine checks the spec when the spec stage ends, so the spec is the checker's own minimal valid
+  # spec (tests/brainstorming/fixtures/minimal-valid.md) with this scenario's scope and one ledger row.
+  node -e '
+const fs = require("node:fs");
+const [fixture, scope] = process.argv.slice(1);
+const list = scope.split(" ").map((name) => `- ${name}`).join("\n");
+const spec = fs.readFileSync(fixture, "utf8").replace(/\r\n/g, "\n")
+  .replace(/^(## Repositories in scope\n)(?:- .*\n)+/m, (_, heading) => `${heading}${list}\n`);
+process.stdout.write(`${spec}| 1 | Which wording? | the plan path | low | not asked |\n`);' \
+    "$repo/tests/brainstorming/fixtures/minimal-valid.md" "$scope" > "$root/specs/GH-16/Spec.md"
   git -C "$root" add -A >/dev/null && git -C "$root" -c user.name=Test -c user.email=test@example.com commit -q -m "spec(GH-16): spec"
   run_engine end GH-16 spec --result '{"ok":true}' >/dev/null
   run_engine begin GH-16 plan >/dev/null

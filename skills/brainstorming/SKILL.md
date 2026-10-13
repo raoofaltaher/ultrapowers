@@ -75,7 +75,8 @@ override it:
   app is not enough — bounded means the flow you are changing is already
   here to read. If there is no existing flow to change, the task is not
   bounded. Ask the questions that matter, present a short design IN CHAT
-  (a few sentences to a few short paragraphs), and STOP. Implementation
+  (a few sentences to a few short paragraphs), name in one line the
+  alternative you did not take and why, and STOP. Implementation
   starts only after your human partner says yes to that design — a
   bounded task's approval is as hard a gate as an architectural one. No
   spec file, no implementation plan document.
@@ -105,14 +106,16 @@ medium) are yours, decide it yourself as a senior engineer would from the
 brief, the grounded code and the project's handbooks: the existing pattern,
 the smaller change. Record each decision as one row of a `## Assumption
 ledger` table in the spec, `| # | Question | Chosen answer | Confidence |
-Reason |`, lowest confidence first, and add a `## Repositories in scope`
-section listing the `repos[].name` entries the design touches, or `.` in a
-single-repository project. The builder check runs when a subagent tool is
-available; each question in its "theirs" pile becomes a low-confidence
-ledger row and is never asked. Everything else holds: the three paths, the
-design sections, the spec self-review. The User Review Gate becomes writing
-the spec and returning to the caller; the review happens on the packet the
-engine posts.
+Reason |`, lowest confidence first; every `Assumption:` and `My call:`
+line of the decision record is a ledger row, and a whole section the
+brief and the code do not cover becomes rows at low confidence. Add a
+`## Repositories in scope` section listing the `repos[].name` entries the
+design touches, or `.` in a single-repository project. The builder check
+runs when a subagent tool is available; each question in its "theirs"
+pile becomes a low-confidence ledger row and is never asked. Everything
+else holds: the three paths, the design sections, the spec self-review.
+The User Review Gate becomes writing the spec and returning to the caller;
+the review happens on the packet the engine posts.
 
 ## The Conversation
 
@@ -152,6 +155,10 @@ out as questions:
 - prior art: what they've seen elsewhere, loved or hated
 - current state: what exists now, what they've tried
 - the details they care about
+- in the architectural path and the ticket form, every question of the
+  spec template: run `node "<brainstorming skill directory>/scripts/check-doc.mjs" --print-template`
+  once and read the file it names; the brainstorming skill directory is
+  the one this SKILL.md was loaded from, not the caller's
 
 **Questions that work** anchor in specifics: "Walk me through the last
 time...", "If it could only do one of these well, which?", "What would
@@ -165,9 +172,17 @@ Read-only exploration of the project is allowed at any time.
 
 **Think wide privately.** Before you propose anything, come up with
 several ideas and drop the weak ones, including any that fight what
-they've told you about why. Show the comparison, with trade-offs and your
-recommendation, only when it helps them decide. YAGNI ruthlessly: remove
-unnecessary features from every idea.
+they've told you about why. In the architectural path and the ticket
+form, present the approaches before the design, in one message. The
+recommended one carries, as bold-labelled bullets, what it is and then
+`Why this one`, `Failure points` and `Edge cases`, the labels the spec
+template's decision record uses. Every line under those labels
+ends with its source, `Evidence: <source>`, or says `Assumption:` with
+the reason or `My call:` for a minor choice. Each other approach carries
+why not and its main failure point, with their sources. No table. End
+with your recommendation and one question. In the autopilot form there is
+no message: the record goes straight into the spec. YAGNI ruthlessly:
+remove unnecessary features from every idea.
 
 **Show, don't tell.** Offer the visual companion (below) whenever seeing
 would help more than reading:
@@ -211,17 +226,24 @@ own. In an existing codebase, follow its patterns, include the targeted
 improvements the work needs (a file grown too large, tangled
 responsibilities), and propose no unrelated refactoring.
 
+**Cover the template before you write.** Before the written design, take
+every italic line of the spec template and sort it, the way the builder
+check sorts: covered, your partner said it; minor, a sensible builder
+could settle it without changing what gets built, so settle it and mark
+it `My call` with a ledger row; theirs, only your partner can answer and
+the answer changes what gets built. Ask the theirs pile in one message,
+most important first. A whole section nobody covered is asked, not
+filled. Then write.
+
 ## The Written Design
 
 For an architectural-path project, write a plain document a talented
 builder in the domain could plan from without going back to your human
-partner. Cover:
-
-- intent and the why
-- goals, non-goals, anti-goals
-- constraints
-- the parts of the how they decided, as they decided them
-- what's left to the builder
+partner. Write it from the spec template the checker names, starting at
+the title: every heading kept, every italic line answered or removed, a
+section that does not apply saying `None:` with the reason, and D1 the
+approach you presented, as chosen. The same holds for every spec in the
+ticket form, whichever path it took.
 
 Carry the agreed understanding into it, and check every feature and
 technical choice against that understanding.
@@ -239,6 +261,7 @@ technical choice against that understanding.
 2. **Internal consistency:** Do any sections contradict each other?
 3. **Scope check:** Is this focused enough for a single implementation plan, or does it need decomposition?
 4. **Ambiguity check:** Could any requirement be interpreted two different ways? Pick one and make it explicit.
+5. **Template check:** run `node "<brainstorming skill directory>/scripts/check-doc.mjs" "<spec path>"`. Fix every line it reports; nothing is handed over while it reports. Without node on this machine, say so in one line and hand over: the template you wrote from is the project's `specs/_template/Spec.md`, or the plugin's `templates/specs/_template/Spec.md.tmpl` when the project has no copy, and the commit-time check runs wherever node is. If the checker runs and exits 2, say so and do not hand over.
 
 Fix issues inline; no need to re-review.
 
@@ -332,6 +355,9 @@ path's reviews before implementation.
 | "I'll fill in sensible defaults" | Good. Say them out loud. A default they never heard is one they couldn't reject. |
 | "I should explain the process first" | Ask your question. The process shows itself. |
 | "They said 'sounds good' to the idea" | Approval covers what you showed them. A description you haven't written isn't approved. |
+| "I'll fill the section so the checker passes" | A filled blank is an assumption. Sort it: minor is your call, marked; theirs is a question. |
+| "The template asks it, so I'll ask them" | Sort first. Only the theirs pile reaches your partner, in one message. |
+| "I'll show one approach, the others are obviously worse" | The rejected options and why they lost are part of the design. Name them, with their failure point and its source. |
 
 ## Visual Companion
 

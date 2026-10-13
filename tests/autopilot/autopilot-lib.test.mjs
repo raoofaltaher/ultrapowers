@@ -246,6 +246,30 @@ test('scopeFrom and assumptionsFrom parse the spec sections', () => {
   assert.deepEqual(assumptionsFrom('# Spec'), []);
 });
 
+test('scopeFrom and assumptionsFrom skip a fenced copy of the template, and read an aligned ledger separator', () => {
+  const ROWS = ['| # | Question | Chosen answer | Confidence | Reason |', '|---|---|---|---|---|'];
+  // A spec may quote the template, headings and all, before its own sections: only its own count.
+  const quoted = [
+    '# Spec', '', '## Components', '', '````markdown',
+    '## Repositories in scope', '_Which `repos[].name` entries does the design touch?_', '',
+    '## Assumption ledger', ...ROWS, '| 9 | quoted | quoted | high | quoted |',
+    '````', '',
+    '## Repositories in scope', '', '- backend', '', '## Assumption ledger', '', ...ROWS,
+    '| 1 | Which auth? | OIDC | high | the app uses it |', '',
+  ].join('\n');
+  assert.deepEqual(scopeFrom(quoted), ['backend']);
+  assert.deepEqual(assumptionsFrom(quoted).map((a) => a.question), ['Which auth?']);
+  // A tilde fence, and a shorter fence quoted inside a longer one, are fences too.
+  const tilde = ['## Repositories in scope', '', '~~~', '## Repositories in scope', '- quoted', '~~~', '', '- web', ''].join('\n');
+  assert.deepEqual(scopeFrom(tilde), ['web']);
+  assert.deepEqual(scopeFrom(['````', '```', '## Repositories in scope', '- quoted', '```', '````', '', '## Repositories in scope', '- web'].join('\n')), ['web']);
+  // The separator row may carry alignment colons; none of its cells is a ledger row.
+  const aligned = ['## Assumption ledger', '', ROWS[0], '|:---|:---:|---:|---|:-|', '| 1 | q | a | LOW | r |'].join('\n');
+  assert.deepEqual(assumptionsFrom(aligned), [{ question: 'q', answer: 'a', confidence: 'low', reason: 'r' }]);
+  // CRLF text reads the same.
+  assert.deepEqual(scopeFrom(quoted.replaceAll('\n', '\r\n')), ['backend']);
+});
+
 test('freezeScope refuses widening and unknown names; root topology freezes to .', () => {
   const S = stateWith();
   assert.throws(() => freezeScope(S, { specRepos: ['backend'], planRepos: ['backend', 'web'], knownRepos: ['backend', 'web'] }), { code: 'scope-widened' });
