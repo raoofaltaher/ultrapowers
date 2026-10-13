@@ -89,6 +89,8 @@ digraph process {
     "Final findings? ONE fix dispatch, one scoped re-review, adjudicate residuals" [shape=box];
     "Final review clean: delete this plan's workspace" [shape=box];
     "Use ultrapowers:finishing-a-development-branch" [shape=box style=filled fillcolor=lightgreen];
+    "Ticket form: .agents/ultrapowers.json and a known ticket id?" [shape=diamond];
+    "Use ultrapowers:task-review: the whole-ticket review, the vulnerability hunt, the QA gate" [shape=box];
 
     "Setup: worktree, ledger check, read plan, pre-flight review" -> "Dispatch implementer subagent (./implementer-prompt.md)";
     "Dispatch implementer subagent (./implementer-prompt.md)" -> "Implementer asks questions?";
@@ -117,7 +119,10 @@ digraph process {
     "More tasks remain?" -> "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" [label="no"];
     "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" -> "Final findings? ONE fix dispatch, one scoped re-review, adjudicate residuals";
     "Final findings? ONE fix dispatch, one scoped re-review, adjudicate residuals" -> "Final review clean: delete this plan's workspace";
-    "Final review clean: delete this plan's workspace" -> "Use ultrapowers:finishing-a-development-branch";
+    "Final review clean: delete this plan's workspace" -> "Ticket form: .agents/ultrapowers.json and a known ticket id?";
+    "Ticket form: .agents/ultrapowers.json and a known ticket id?" -> "Use ultrapowers:task-review: the whole-ticket review, the vulnerability hunt, the QA gate" [label="yes"];
+    "Use ultrapowers:task-review: the whole-ticket review, the vulnerability hunt, the QA gate" -> "Use ultrapowers:finishing-a-development-branch";
+    "Ticket form: .agents/ultrapowers.json and a known ticket id?" -> "Use ultrapowers:finishing-a-development-branch" [label="no"];
 }
 ```
 
@@ -484,7 +489,15 @@ delete this plan's workspace (`rm -rf <workspace>`) — the git history is
 the record now. Sibling directories belong to other plans; leave them
 alone.
 
-Use ultrapowers:finishing-a-development-branch. In the autopilot form
+In the ticket form (`.agents/ultrapowers.json` exists at or above the
+working directory and the ticket id is known), use ultrapowers:task-review
+for the ticket first, from this workspace: the whole-ticket review, the
+vulnerability hunt and the QA gate, one verdict in
+`reviews/<ID>/TASK-REVIEW.md`. The per-task reviews and the final review
+above check the plan's work; they are not that gate. Then use
+ultrapowers:finishing-a-development-branch, which shows the verdict above
+its menu. Outside the ticket form, use
+ultrapowers:finishing-a-development-branch directly. In the autopilot form
 (`.ultrapowers/autopilot-active` exists, or the autopilot skill invoked
 this stage), return to the autopilot skill instead: it ends the stage, and
 the engine pushes and opens the pull requests. No menu, no push, no merge.
@@ -502,6 +515,8 @@ the engine pushes and opens the pull requests. No menu, no push, no merge.
 | "Reviews slow the loop down" | The loop without reviews is just unverified churn. Reviews are the loop's brakes and steering. |
 | "Ledger bookkeeping is overhead" | The ledger is what survives compaction. Controllers without one have re-dispatched entire completed task sequences. |
 | "The implementer spawned its own reviewer — free extra assurance" | It's a duplicate seat reviewing the same diff; the task review is the gate. A worker-spawned reviewer is a defect to flag, not rigor. |
+| "Every task got a review and the final review is clean, so the whole-ticket review is a repeat" | The per-task and final reviews check the plan's work. task-review reads the whole ticket with its callers, runs the vulnerability hunt and the QA gate. It is the gate; run it. |
+| "QA needs the stack up and my partner is in a hurry, so straight to the menu" | task-review confirms its scope with your human partner before it reads anything; a deferral is theirs to say there. The menu comes after the verdict. |
 
 ## Example Workflow
 
@@ -567,5 +582,5 @@ Final reviewer: All requirements met. Deferred minors triaged: none block merge.
 
 [Delete this plan's workspace — the record now lives in git]
 
-Done! Using ultrapowers:finishing-a-development-branch.
+Done! Using ultrapowers:task-review for <ID>, then ultrapowers:finishing-a-development-branch.
 ```

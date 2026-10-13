@@ -86,6 +86,8 @@ digraph process {
     "Re-grade, then: Critical/Important → ONE fix pass, each fix RED→GREEN + green suite; Minor → ledger" [shape=box];
     "Final review clean: delete this plan's workspace" [shape=box];
     "Use ultrapowers:finishing-a-development-branch" [shape=box style=filled fillcolor=lightgreen];
+    "Ticket form: .agents/ultrapowers.json and a known ticket id?" [shape=diamond];
+    "Use ultrapowers:task-review: the whole-ticket review, the vulnerability hunt, the QA gate" [shape=box];
 
     "Setup: worktree, workspace + ledger, read plan + spec, pre-flight scan" -> "task-start: brief + BASE; read the brief";
     "task-start: brief + BASE; read the brief" -> "Work the steps in order: TDD, run every verification, read every output";
@@ -101,7 +103,10 @@ digraph process {
     "More tasks remain?" -> "Final whole-branch review (fresh reviewer if you have one)" [label="no"];
     "Final whole-branch review (fresh reviewer if you have one)" -> "Re-grade, then: Critical/Important → ONE fix pass, each fix RED→GREEN + green suite; Minor → ledger";
     "Re-grade, then: Critical/Important → ONE fix pass, each fix RED→GREEN + green suite; Minor → ledger" -> "Final review clean: delete this plan's workspace";
-    "Final review clean: delete this plan's workspace" -> "Use ultrapowers:finishing-a-development-branch";
+    "Final review clean: delete this plan's workspace" -> "Ticket form: .agents/ultrapowers.json and a known ticket id?";
+    "Ticket form: .agents/ultrapowers.json and a known ticket id?" -> "Use ultrapowers:task-review: the whole-ticket review, the vulnerability hunt, the QA gate" [label="yes"];
+    "Use ultrapowers:task-review: the whole-ticket review, the vulnerability hunt, the QA gate" -> "Use ultrapowers:finishing-a-development-branch";
+    "Ticket form: .agents/ultrapowers.json and a known ticket id?" -> "Use ultrapowers:finishing-a-development-branch" [label="no"];
 }
 ```
 
@@ -324,7 +329,15 @@ When the final review is clean and its fixes are committed, delete this
 plan's workspace directory — the git history is the record now. Sibling
 directories belong to other plans; leave them alone.
 
-Use ultrapowers:finishing-a-development-branch. In the autopilot form
+In the ticket form (`.agents/ultrapowers.json` exists at or above the
+working directory and the ticket id is known), use ultrapowers:task-review
+for the ticket first, from this workspace: the whole-ticket review, the
+vulnerability hunt and the QA gate, one verdict in
+`reviews/<ID>/TASK-REVIEW.md`. The task verifications and the final review
+above check the plan's work; they are not that gate. Then use
+ultrapowers:finishing-a-development-branch, which shows the verdict above
+its menu. Outside the ticket form, use
+ultrapowers:finishing-a-development-branch directly. In the autopilot form
 (`.ultrapowers/autopilot-active` exists, or the autopilot skill invoked
 this stage), return to the autopilot skill instead: it ends the stage, and
 the engine pushes and opens the pull requests. No menu, no push, no merge.
@@ -347,6 +360,8 @@ the engine pushes and opens the pull requests. No menu, no push, no merge.
 | "The fix is obvious, no need for a failing test first" | The failing test is the only proof the finding was real and is now gone. Without it you have a diff and a hope. |
 | "I'll fix the minors too while I'm in there" | Every minor you fix is a test, a fix, and a suite run your partner did not ask for. Ledger them; your partner decides. |
 | "The call moved to the background; I'll redo the edit and move on" | A backgrounded call is a shell still running. Read its output or stop it; one left running at hand-back shows this agent as working for hours. |
+| "The final review is clean, so the whole-ticket review is a repeat" | The final review checks the plan's work. task-review reads the whole ticket with its callers, runs the vulnerability hunt and the QA gate. It is the gate; run it. |
+| "QA needs the stack up and my partner is in a hurry, so straight to the menu" | task-review confirms its scope with your human partner before it reads anything; a deferral is theirs to say there. The menu comes after the verdict. |
 
 ## Example Workflow
 
@@ -397,5 +412,5 @@ Deferred minors:
 
 [Delete this plan's workspace — the record now lives in git]
 
-Using ultrapowers:finishing-a-development-branch.
+Using ultrapowers:task-review for <ID>, then ultrapowers:finishing-a-development-branch.
 ```
