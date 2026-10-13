@@ -1,7 +1,7 @@
 {
   "name": "ultrapowers",
   "displayName": "Ultrapowers",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Skills for coding agents: design before code, test-first, systematic debugging, and a gated ticket, QA and review workflow",
   "logo": "assets/app-icon.png",
   "suggestedPrompts": [

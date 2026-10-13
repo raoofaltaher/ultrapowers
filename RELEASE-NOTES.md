@@ -1,5 +1,44 @@
 # Ultrapowers Release Notes
 
+## v2.2.0 (2026-10-13)
+
+Every spec now comes from one template and carries a decision record: the approaches considered, why one won, where it breaks and what sits at its edges, with a source on every claim line. A checker refuses a spec that misses any of it, at the self-review, at the ticket commit, at the end of the autopilot spec and changes stages, and in the scaffolded pre-commit hook. The brainstorming skill presents its approaches in the same shape before the design, sorts every template question it never covered instead of filling it, and writes the design from the template. Design: `docs/ultrapowers/specs/2026-10-12-spec-template-and-decision-record-design.md`, itself the first spec in the new shape.
+
+**Heads up:**
+
+- Upgrade mode (`/ultrapowers:init`) offers three targets: `specs/_template/Spec.md` (the template), `specs/README.md` (one bullet about it) and `.githooks/pre-commit` (the spec-check block). `templates/CHANGES.json` records each at 2.2.0. `.agents/ultrapowers.json` needs no change and no setting is added.
+- An autopilot ticket whose spec predates the template is not touched at its gate or execute stage, but a `changes` stage after this upgrade ends blocked with `spec-incomplete` until the spec is brought to the template; the ticket comment names the first three findings.
+- The pre-commit hook finds the checker the way it finds the memory lint: through `ULTRAPOWERS_ROOT` or the Claude Code plugin cache. On every other harness set `ULTRAPOWERS_ROOT` to the plugin checkout, or the spec check warns and continues.
+- Without node on the machine, the brainstorming skill hands the spec over with a one-line note, `commit-spec.sh` prints `=== SPEC-CHECK-SKIPPED ===` and commits, and the hook warns and continues. A checker that runs and exits 2 stops the hand-over and the ticket commit.
+- `_template` and any id with a leading underscore are refused as ticket ids by `validate_ticket` and by the four scripts that copy its rule, whatever `ticketPattern` allows.
+
+**The spec template and the decision record**
+
+- `templates/specs/_template/Spec.md.tmpl`, rendered to `specs/_template/Spec.md`: thirteen sections in a fixed order (Intent; Goals, non-goals and anti-goals; Constraints; Decision record; Architecture; Components; Data flow; Error handling; Testing; Left to the builder; Definition of done; Repositories in scope; Assumption ledger), two or three italic questions under each heading that the writer answers or removes, and a `### D1:` block with five labels: Chosen, Why this one, Rejected, Failure points, Edge cases. A section that does not apply says `None:` with the reason. A project may add sections and questions to its copy; the status line and the decision record are the non-removable core.
+- Every line under Why this one, Rejected, Failure points and Edge cases ends with its source, `Evidence: <source>`, or says `Assumption:` with the reason or `My call:` for a minor choice. A source is a file and line read in the session, a document or standard by title, official documentation read through a docs server or the web reader, a probe or a measurement with its result, a ticket page or attachment, or what your human partner said in the conversation. Every `Assumption:` and `My call:` line is a row of the Assumption ledger, which now serves the interactive form too: the calls you made, lowest confidence first, for your partner to check while reading.
+- The brainstorming skill (`skills/brainstorming/SKILL.md`): in the architectural path and the ticket form the approaches are presented before the design, in one message, the recommended one under the record's labels with a source on every line, each alternative with why not and its main failure point; before writing, every italic line of the template is sorted into covered, minor (settled and marked `My call` with a ledger row) or theirs (asked in one message, most important first), and a whole section nobody covered is asked, not filled; the written design starts at the title and keeps every heading, on every path in the ticket form; self-review item 5 runs the checker; the autopilot form mirrors the record's assumption lines as ledger rows; the bounded path names the alternative not taken in one line; three Red Flags rows. Evidence: scenarios D, E, F and G in `tests/skills/brainstorming-pressure-scenarios.md`, RED and GREEN in `brainstorming-pressure-results.md`.
+- `brainstorm-task` says what `=== SPEC-CHECK-FAILED ===` and `=== SPEC-CHECK-SKIPPED ===` mean; the autopilot spec-stage prompt names the template; init's node message names the spec check.
+
+**The checker**
+
+- `skills/brainstorming/scripts/check-doc.mjs`, node built-ins only: `node check-doc.mjs [--template <path>] <document>` and `--print-template`. It reads the project's `specs/_template/Spec.md` when the project has one, else the plugin's payload. Seven rules, read from the template except two that are core: `heading` (every template heading, in order), `status` (core), `question` (no italic template line survives), `placeholder` (no `TBD`, `TODO` or `<...>` outside code), `empty` (every section has content; a bare `None` is not content), `record` (core: `D1`, the five labels in order, a tag on every line under four of them), `ledger` (the engine's five columns, confidence high, medium or low). Fenced code blocks and HTML comment lines are blanked before any rule, so a spec may quote the template; an unclosed fence is one finding at its line; inline code spans are matched within a paragraph. Findings print as `path:line: rule: message`; exit 0 clean, 1 findings, 2 cannot run.
+- `commit-spec.sh` runs it before `git add`; the autopilot engine runs it at the end of the spec and changes stages and refuses a spec or template that is not a regular file inside the project; the scaffolded hook checks every staged spec that is new in the commit or already carries a decision record, treating a rename as a modification, and skips the template itself and files under `docs/ultrapowers/specs/` without the `-design.md` suffix.
+- The engine's section reader now blanks fenced code too, so a spec that quotes the template keeps its scope list and its ledger rows on the packet.
+
+**Harness parity**
+
+- Rule 9: this change touches no harness-specific surface. The prose is shared, the checker and the engine run on node, and the hook is git. The per-harness suites of the gate pass unchanged. The one surface recorded as absent: on harnesses other than Claude Code the hook needs `ULTRAPOWERS_ROOT` to find the checker, as it already does for the memory lint.
+
+**Tests**
+
+- New: `tests/brainstorming/check-doc.test.mjs` (35 tests, including the spec of this change as its own dogfood case and a test that the spec's fenced copy of the template equals the payload) and `tests/brainstorming/test-precommit-spec-check.sh` (17 cases on a throwaway project at a path with a space). Extended: the lifecycle, autopilot, init, skill-body and four ticket-id suites. The checker suite also runs in the Windows CI job.
+
+**Known residuals**
+
+- GitHub-flavoured markdown renders the template's bare `<Title>`-style placeholders as HTML tags and hides them; the raw file is the one a writer reads. Escaping them changes the template text, so it is left for an issue.
+- The engine's `isFile()` clause has no test that depends on it (a directory at the spec path blocks correctly by hand); the symlinked-spec test skips where the platform cannot create a symbolic link.
+- The templates for the plan, the QA report, the security report and the task review follow in #57; the measured cost of subagent-driven execution is reported in #56.
+
 ## v2.1.0 (2026-10-11)
 
 A vulnerability hunt for a ticket's change or a whole project, the guardrail profile that keeps it read-only on every harness that runs the guardrail, one test suite that keeps those entry points in step, and a security hardening pass over the plugin's own code. The hunt is beta. The live run of the new hunt on this repository found six guardrail bypasses that the earlier hunt on dev had missed, and this release fixes them (see "Found by the live hunt" below).
