@@ -889,8 +889,9 @@ self-review sentence that changed at cdbe251: without node, the hand-over
 proceeds with a one-line note. Fresh Sonnet subagent, one Read of the skill
 and one of the payload template, no file written. No RED run: the previous
 wording ("If it cannot run, say so in one line and do not hand over")
-stalled by construction, which the E and F GREEN records note ("a live
-session would stop at that step").
+stalled by construction, which the E GREEN record notes ("a live session
+would stop at that step") and F's ledger row 8 implies ("run it before the
+spec is committed").
 
 ### Self-review, item 5 (verbatim)
 

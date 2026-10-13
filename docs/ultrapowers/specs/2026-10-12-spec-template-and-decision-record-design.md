@@ -513,8 +513,10 @@ wording left to the builder within them:
   `None:` with the reason, D1 the approach as chosen. The paragraph on a
   talented builder, "Where it goes" and the elements-of-style line stay.
 - **Spec self-review (`:236-243`)**: item 5, run the checker on the spec,
-  fix every line it reports, hand nothing over while it reports; when it
-  cannot run, say so to the partner and do not hand over.
+  fix every line it reports, hand nothing over while it reports; without
+  node, say so in one line, name the template the spec was written from,
+  and hand over, because the commit-time check runs wherever node is; when
+  the checker runs and exits 2, say so and do not hand over.
 - **Autopilot form (`:97-115`)**: two sentences. Every `Assumption:` and
   `My call:` line of the record is a ledger row. A whole uncovered section
   becomes rows at low confidence.
@@ -645,8 +647,9 @@ in it is executed.
   or run the spec check with your agent". No plugin checkout or no node is a
   warning and the commit continues, as for the lint.
 - The skill: a checker that reports means fix and rerun before handing over.
-  A checker that cannot run (exit 2) is said to the partner in one line, and
-  the spec is not handed over until it runs.
+  A checker that runs and exits 2 is said to the partner in one line, and
+  the spec is not handed over until it runs. Without node the skill says so
+  in one line and hands over; the commit-time check runs wherever node is.
 
 ## Testing
 
@@ -783,7 +786,7 @@ to `brainstorming-pressure-results.md`:
 | 13 | May a project reorder the template's headings? | Yes; only the record's presence and labels are core | medium | Rule 1 follows the template so a project owns its order |
 | 14 | What is the version? | The next minor | medium | A feature plus a payload change; the owner decides at release |
 | 9 | What does `commit-spec.sh` do without node? | Prints `=== SPEC-CHECK-SKIPPED ===` with the reason and commits | high | The owner's answer of 2026-10-12; the ticket scripts promise to work without node (`ticket-lib.sh:11-12`), and the marker keeps the skip visible; with node present a check that cannot run still stops the commit |
-| 10 | Where does the engine run the checker? | At the end of the spec stage, in `runEnd` | high | `consumeApproval` parses the spec itself and `previewScope` runs inside `trustState`, which turns any throw into `state-tampered` (`autopilot.mjs:375-387`, `:533-545`); the end of the spec stage touches no ticket already past it |
+| 10 | Where does the engine run the checker? | At the end of the spec stage and of the changes stage, in `runEnd` | high | `consumeApproval` parses the spec itself and `previewScope` runs inside `trustState`, which turns any throw into `state-tampered` (`autopilot.mjs:375-387`, `:533-545`); a ticket already past the spec stage meets the check again only at a changes stage, where a spec that predates the template is blocked until it is brought to the template |
 | 1 | The partner picks an approach that was not recommended; when is its record completed? | After the pick, before the spec is written | high | The spec's record is for the chosen option; the chat gave the short form |
 | 12 | Does init change the template when it renders it? | Only its generated-by comment line is added | high | It carries no `{{...}}` placeholder; `init.mjs:424-430` adds the line to every markdown target; the init suite asserts the rest is unchanged |
 | 15 | Which pressure method? | The simulated-partner method of the 7.0.0 port | high | `tests/skills/brainstorming-pressure-results.md`; live evidence stays owed as before |
