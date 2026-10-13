@@ -38,7 +38,7 @@ In this order:
 1. **Position, one sentence.** What stage is the ticket at? When the `STAGE LOG` section is not `(none)`, its stage and status are the position; say so, name the packet or pull request it lists, and note a broken chain as a finding. Otherwise infer the position from the documents.
 2. **Done**, with evidence from the documents.
 3. **In flight**: uncommitted files, an open review finding, a ticket branch with work on it.
-4. **Next step**, in order.
+4. **Next step**, in order, on the ticket route: brief, spec, plan, the branch with its work, `reviews/<ID>/TASK-REVIEW.md` (the whole-ticket review with the vulnerability hunt and the QA gate), then the finish. A ticket whose plan tasks are all done and whose branch has no `TASK-REVIEW.md` is at the whole-ticket review.
 5. **Every missing part, by name.** `ABSENT` folders are normal early on; say which. When all four are absent, say the ticket does not exist yet and suggest `/ultrapowers:new-task <ID>`.
 6. **The non-markdown list**, when it is not empty: the files exist, you did not read them, name one by path to have it read.
 

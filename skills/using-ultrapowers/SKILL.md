@@ -30,6 +30,10 @@ When multiple skills apply, process skills come first — they set the approach,
 - "Let's build X" → ultrapowers:brainstorming first, then implementation skills.
 - "Fix this bug" → ultrapowers:systematic-debugging first, then domain skills.
 
+## The Ticket Route
+
+With `.agents/ultrapowers.json` present, a ticket runs: init → new-task → brainstorm-task → writing-plans → subagent-driven-development or executing-plans (worktree, TDD, reviews) → task-review (code review, vulnerability hunt, QA gate: one verdict) → finishing-a-development-branch. From new-task on, each skill names the next; `task` reports where a ticket stands. A merge or a pull request goes through finishing-a-development-branch, which checks for the task-review verdict first.
+
 ## Red Flags
 
 These thoughts mean STOP—you're rationalizing:
