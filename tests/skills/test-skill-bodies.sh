@@ -157,13 +157,15 @@ for f in skills/executing-plans/SKILL.md skills/subagent-driven-development/SKIL
     expect $f 'they are not that gate' "$f says the per-task reviews are not the gate"
     expect $f 'Using ultrapowers:task-review for <ID>, then ultrapowers:finishing-a-development-branch' "$f ends its example with task-review then the finish"
     expect $f 'whole-ticket review is a repeat' "$f has the rationalization row for a repeated review"
+    expect $f 'It is the gate; run it' "$f says the gate is run"
     if grep -q '^Use ultrapowers:finishing-a-development-branch. In the autopilot form' "$REPO_ROOT/$f"; then fail "$f still opens its Finish paragraph with the finishing skill alone"; else pass "$f no longer opens its Finish paragraph with the finishing skill alone"; fi
 done
 F=skills/finishing-a-development-branch/SKILL.md
-expect $F '^## Step 1b: Verify the Review Gate$' 'finishing has Step 1b'
-expect $F 'Verify the review gate' 'finishing names the gate in its core principle'
+expect $F '^## Step 1b: Verify the Whole-Ticket Review$' 'finishing has Step 1b'
+expect $F 'Verify the whole-ticket review' 'finishing names the gate in its core principle'
 expect $F 'reviews/<ID>/TASK-REVIEW.md' 'finishing reads the review report'
-expect $F 'first twelve characters' 'finishing compares the reviewed head'
+expect $F 'is an ancestor of `HEAD`' 'finishing checks the reviewed head is an ancestor of HEAD'
+expect $F 'touches only `reviews/<ID>/`' 'finishing tolerates the documents commit after the review'
 expect $F 'The verdict informs the integration decision; it never makes it' 'finishing keeps the decision with the partner'
 expect $F 'skip the gate, in so many words' 'finishing skips only on an explicit instruction'
 expect $F 'Push and create a draft Pull Request' 'finishing renames option 2 on FAIL or BLOCKED'
@@ -175,7 +177,7 @@ expect $F 'A hurry is not an instruction to skip' 'finishing has the rationaliza
 expect $F 'A report for another head reviewed other code' 'finishing has the rationalization row for a stale report'
 expect skills/task-review/SKILL.md '^description: Use when a ticket.s implementation is complete, before its branch is merged or opened as a pull request' 'task-review triggers before the finish'
 expect skills/task-review/SKILL.md 'next step on the ticket route' 'task-review names the finishing skill as the next step'
-expect skills/task/SKILL.md 'at the review gate' 'task reports the review gate as the next step'
+expect skills/task/SKILL.md 'at the whole-ticket review' 'task reports the whole-ticket review as the next step'
 expect README.md 'runs it for you as its last part' 'README says task-review includes the QA gate'
 expect README.md 'shows the verdict above its menu' 'README says the finishing skill shows the verdict'
 expect RELEASE-NOTES.md 'The ticket route and the review gate' 'the release notes carry the section'
