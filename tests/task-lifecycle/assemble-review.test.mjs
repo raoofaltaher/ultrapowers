@@ -60,6 +60,25 @@ test('a missing QA report is BLOCKED, never a pass', () => {
   assert.match(r.markdown, /no QA report/i);
 });
 
+const runNoQa = (findings, qaConfigured) => assemble({ id: '501', findings: { repos: findings }, qaText: null, qaConfigured, now: NOW });
+
+test('a missing QA report in a project whose qa is not configured gives the verdict from the code review and the hunt', () => {
+  const r = runNoQa([repoBlock('api')], false);
+  assert.equal(r.verdict, 'PASS');
+  assert.match(r.markdown, /^Verdict: PASS — /m);
+  assert.match(r.markdown, /QA: not configured for this project/);
+});
+
+test('with qa not configured, Important findings still give PASS-WITH-ISSUES and a Critical finding still FAILs', () => {
+  assert.equal(runNoQa([repoBlock('api', [finding('Important', 'Gap')])], false).verdict, 'PASS-WITH-ISSUES');
+  assert.equal(runNoQa([repoBlock('api', [finding('Critical', 'Broken')])], false).verdict, 'FAIL');
+});
+
+test('a missing QA report with qa configured stays BLOCKED', () => {
+  assert.equal(runNoQa([repoBlock('api')], true).verdict, 'BLOCKED');
+  assert.equal(runNoQa([repoBlock('api')], undefined).verdict, 'BLOCKED');
+});
+
 test('a QA report with no recognisable verdict line is BLOCKED', () => {
   assert.equal(run([repoBlock('api')], '# QA report\n\nlooks fine\n').verdict, 'BLOCKED');
 });
@@ -397,7 +416,7 @@ test('the date is UTC and the header names the QA report', () => {
 function project() {
   const root = mkdtempSync(join(tmpdir(), 'assemble-review-'));
   mkdirSync(join(root, '.agents'), { recursive: true });
-  writeFileSync(join(root, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'fx', repos: [] }));
+  writeFileSync(join(root, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'fx', repos: [], qa: { urls: { frontend: 'http://localhost:3000' } } }));
   mkdirSync(join(root, 'reviews', '501'), { recursive: true });
   return root;
 }

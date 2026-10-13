@@ -23,6 +23,8 @@
 // repository. No hunt file is reported as "no vulnerability hunt" and changes nothing. SECURITY-REPORT.md
 // (reviews/<ticket>/) is read only to quote its Verdict line; a disagreement is printed, not resolved.
 // The code review and hunt findings appear in the report whatever the QA gate did.
+// Carve-out: with no QA report and a project whose `qa` config is blank (as autopilot's qaConfigured),
+// the verdict comes from the code review and the hunt alone and the report says "QA: not configured for this project".
 //
 // Exit codes: 0 written; 2 usage or unreadable findings or hunt; 3 no project root; 4 invalid ticket.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -242,12 +244,13 @@ export function decideSecurity(repos) {
   return { verdict, counts, sentence };
 }
 
-export function decide(repos, qa, security = null) {
+export function decide(repos, qa, security = null, { qaConfigured = true } = {}) {
   const counts = { Critical: 0, Important: 0, Minor: 0 };
   for (const repo of repos) for (const f of repo.findings) counts[f.severity] += 1;
   const firstCritical = repos.flatMap((r) => r.findings).find((f) => f.severity === 'Critical');
   const securityValue = security ? security.verdict : null;
   const qaValue = qa ? qa.value : null;
+  const qaSkipped = qaValue === null && !qaConfigured;
   let verdict;
   let sentence;
   if (counts.Critical > 0 || qaValue === 'FAIL' || securityValue === 'FAIL') {
@@ -257,7 +260,7 @@ export function decide(repos, qa, security = null) {
     if (securityValue === 'FAIL') parts.push(security.sentence);
     if (qaValue === 'FAIL') parts.push('the QA gate failed');
     sentence = parts.join('; ');
-  } else if (qaValue === null || qaValue === 'PRECONDITION-FAILED' || qaValue === 'INCOMPLETE') {
+  } else if (!qaSkipped && (qaValue === null || qaValue === 'PRECONDITION-FAILED' || qaValue === 'INCOMPLETE')) {
     verdict = 'BLOCKED';
     const why = qaValue === null ? 'there is no usable QA verdict' : `the QA gate ended ${qaValue}`;
     sentence = `${why}; the code review found ${plural(counts.Important, 'Important finding')} and ${plural(counts.Minor, 'Minor finding')}`;
@@ -271,9 +274,12 @@ export function decide(repos, qa, security = null) {
     sentence = parts.join('; ');
   } else {
     verdict = 'PASS';
-    sentence = counts.Minor > 0 ? `only ${plural(counts.Minor, 'Minor finding')} and a QA pass` : 'no findings and a QA pass';
+    sentence = qaSkipped
+      ? (counts.Minor > 0 ? `only ${plural(counts.Minor, 'Minor finding')}` : 'no findings')
+      : (counts.Minor > 0 ? `only ${plural(counts.Minor, 'Minor finding')} and a QA pass` : 'no findings and a QA pass');
   }
   // A security INCOMPLETE never blocks; it is named wherever the verdict is explained.
+  if (qaSkipped) sentence += '; QA: not configured for this project';
   if (securityValue === 'INCOMPLETE') sentence += `; the vulnerability hunt is INCOMPLETE (${security.sentence})`;
   return { verdict, sentence, counts };
 }
@@ -356,12 +362,13 @@ function findingBlock(n, f) {
   ].join('\n');
 }
 
-export function assemble({ id, findings, qaText, securityFindings = null, securityText = null, now = new Date() }) {
+export function assemble({ id, findings, qaText, securityFindings = null, securityText = null, qaConfigured = true, now = new Date() }) {
   const repos = normalize(findings);
   const hunted = normalizeSecurity(securityFindings);
   const sec = hunted ? judgeSecurity(hunted) : null;
   const qa = parseQaVerdict(qaText);
-  const { verdict, sentence, counts } = decide(repos, qa, sec);
+  const { verdict, sentence, counts } = decide(repos, qa, sec, { qaConfigured });
+  const qaSkipped = !qa && !qaConfigured;
   const stamp = now.toISOString().slice(0, 16).replace('T', ' ');
   const out = [];
   out.push(`# Task review — ${id}`, '');
@@ -370,7 +377,7 @@ export function assemble({ id, findings, qaText, securityFindings = null, securi
   out.push('| QA report | [QA-REPORT.md](QA-REPORT.md) |', '');
   out.push(`Verdict: ${verdict} — ${sentence}.`, '');
   out.push('## Summary', '');
-  out.push(`${plural(counts.Critical, 'Critical finding')}, ${plural(counts.Important, 'Important finding')} and ${plural(counts.Minor, 'Minor finding')} across ${plural(repos.length, 'repository')}. QA gate: ${qa ? qa.value : 'no verdict'}; ${securitySummary(sec)}. ${sentence}.`, '');
+  out.push(`${plural(counts.Critical, 'Critical finding')}, ${plural(counts.Important, 'Important finding')} and ${plural(counts.Minor, 'Minor finding')} across ${plural(repos.length, 'repository')}. ${qaSkipped ? 'QA: not configured for this project' : `QA gate: ${qa ? qa.value : 'no verdict'}`}; ${securitySummary(sec)}. ${sentence}.`, '');
   out.push('## Code review', '');
   for (const repo of repos) {
     out.push(`### ${repo.repo} (${repo.branch} against ${repo.base})`, '');
@@ -390,6 +397,8 @@ export function assemble({ id, findings, qaText, securityFindings = null, securi
     out.push(`> ${qa.line}`, '');
     const embeds = [...new Set(qaText.match(EMBED) || [])];
     for (const e of embeds) out.push(e, '');
+  } else if (qaSkipped) {
+    out.push('> QA: not configured for this project', '');
   } else if (typeof qaText === 'string') {
     out.push('> The QA report has no verdict line, so the gate counts as blocked.', '');
   } else {
@@ -397,6 +406,9 @@ export function assemble({ id, findings, qaText, securityFindings = null, securi
   }
   return { verdict, sentence, counts, security: sec && { verdict: sec.verdict, counts: sec.counts, sentence: sec.sentence }, markdown: out.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\n*$/, '\n') };
 }
+
+// Mirrors qaConfigured(marker) in skills/autopilot/scripts/autopilot.mjs.
+const qaConfiguredIn = (qa) => Boolean(qa && typeof qa === 'object' && qa.urls && Object.values(qa.urls).some((v) => typeof v === 'string' && v.trim()));
 
 function usage(message) {
   if (message) process.stderr.write(`${message}\n`);
@@ -426,9 +438,11 @@ function main(argv) {
     return 3;
   }
   let pattern = DEFAULT_TICKET_PATTERN;
+  let qaConfigured = true;
   try {
     const config = JSON.parse(readFileSync(join(root, '.agents', 'ultrapowers.json'), 'utf8').replace(/^﻿/, ''));
     if (typeof config.ticketPattern === 'string' && config.ticketPattern.trim()) pattern = config.ticketPattern;
+    qaConfigured = qaConfiguredIn(config.qa);
   } catch {
     process.stderr.write('ERROR: .agents/ultrapowers.json is not valid JSON\n');
     return 3;
@@ -461,7 +475,7 @@ function main(argv) {
   const securityText = securityFindings !== null && existsSync(securityReportFile) ? readFileSync(securityReportFile, 'utf8') : null;
   let result;
   try {
-    result = assemble({ id, findings, qaText, securityFindings, securityText });
+    result = assemble({ id, findings, qaText, securityFindings, securityText, qaConfigured });
   } catch (error) {
     return usage(`ERROR: ${error.message}`);
   }
