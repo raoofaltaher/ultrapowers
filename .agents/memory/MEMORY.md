@@ -22,6 +22,7 @@ Index line format: `- [<name as title>](<dir>/<file>.md) — <one-line hook> (<Y
 - [Guardrail suites run time on Windows](gotchas/guardrail-suites-run-time-windows.md) — the two fixture suites take 10+ min each and run-tests.sh reruns them; run the combined runner once, at the gate (2026-10)
 - [Headless live run needs a clone outside .claude](gotchas/headless-live-run-needs-a-clone-outside-claude.md) — claude -p refuses writes under .claude and the --plugin-dir folder and node without allowedTools; clone outside, --add-dir, explicit allow list (2026-10)
 - [Windows node test spawn failures under load](gotchas/windows-node-test-spawn-failures-under-load.md) — autopilot.test.mjs loses dozens of tests to exit 3221225794 when several agents run at once; rerun once on a quiet machine before reading a failure as real (2026-10)
+- [Skill pressure tests see session context](gotchas/skill-pressure-tests-see-session-context.md) — a "read one file" subagent also sees the installed skill descriptions, AGENTS.md and the worktree's git status; judge RED/GREEN on the quoted file sentence, keep states neutral, commit before running (2026-10)
 
 ## Decisions
 
