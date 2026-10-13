@@ -39,7 +39,7 @@ Anti-goals, a failure even if it works:
 ## Constraints
 
 - AGENTS.md rule 2: skill bodies are code; every edit is the smallest wording that closes the gap, with evidence from pressure scenarios. Rule 3: the change goes through `ultrapowers:writing-skills`, RED before GREEN. Rule 4: the names `ultrapowers:<skill>`, `.ultrapowers/`, `.agents/ultrapowers.json`. Rule 8: one concern per commit. Rule 9: the change touches no harness-specific surface; the record of that is in the release notes.
-- Zero dependencies: prose and a bash test only; no script changes.
+- Zero dependencies: prose, a bash test, and one node-built-ins change to `assemble-review.mjs` with its node test (D8).
 - The version stays 2.2.0 and the release notes entry for v2.2.0 gains a section. `scripts/bump-version.sh --audit` must still end with "All clear". No file under `templates/` changes, so `templates/CHANGES.json` is untouched.
 - The ticket form, as this change words it: `.agents/ultrapowers.json` exists at or above the working directory, the ticket id is known, and the autopilot form does not apply. The autopilot form is the predicate the execution skills already use: `.ultrapowers/autopilot-active` exists, or the autopilot skill invoked the stage. The id is known from the conversation, else from the plan path `plans/<ID>/`, else from the branch name matched against the `tasks/` folders with `ticket_branch_match` of `skills/new-task/scripts/ticket-lib.sh`.
 - The gate's name in every new sentence is "the whole-ticket review", the README's own phrase for `task-review` (step 9); "the review gate" already names the per-task review in README step 7, `executing-plans` and the autopilot execute prompt, and is not reused.
@@ -104,7 +104,14 @@ Anti-goals, a failure even if it works:
 - **Failure points:** the release notes' first paragraph describes 2.2.0 as the template release; one added sentence names the route. My call: one sentence, no restructuring.
 - **Edge cases:** PR #58 is merged before this branch reaches `dev`; then the work is a 2.2.1 patch with its own notes, decided with your human partner at that moment. Evidence: `gh pr view 58`, open and mergeable at the time of writing.
 
-### D8: Evidence by pressure scenarios, RED before any edit
+### D8: A project with no QA configured gets a verdict, not BLOCKED
+- **Chosen:** `assemble-review.mjs` mirrors the engine's `qaConfigured` rule (a `qa.urls` value that is a non-blank string): with no QA report and no QA configured, the verdict comes from the code review and the vulnerability hunt, and the report names "QA: not configured for this project"; with QA configured and no report, `BLOCKED` stays.
+- **Why this one:** the door would otherwise end every ticket of such a project in `BLOCKED` and every pull request as a draft, since the assembler returns `BLOCKED` whenever there is no QA report and a blank `qa` never produces one; the engine already skips the stage in that state. Evidence: `skills/task-review/scripts/assemble-review.mjs:260-263`; `skills/autopilot/scripts/autopilot.mjs:360-363` and `autopilot-lib.mjs:551`; `templates/.agents/ultrapowers.json.tmpl:16-30` (blank `qa` in every scaffold); your human partner's answer in this conversation ("approved the recommendation", 2026-10-13).
+- **Rejected:** a door-only rule that reads a `BLOCKED` from "no QA configured" as a normal pull request, because the verdict word on the report would still be wrong and every reader of the report would have to know the carve-out. Evidence: the builder check of this spec, question 1.
+- **Failure points:** a project that configures QA later keeps old reports with "QA: not configured"; the head check of D3 does not see that, so a stale QA state survives until the next review. My call: a configuration change is rare, and the next `task-review` run after it runs the gate.
+- **Edge cases:** QA configured but the stack down: `PRECONDITION-FAILED` and `BLOCKED`, unchanged. Evidence: `assemble-review.mjs:260-263`. The default of the new option is "configured", so every existing caller and test keeps today's behaviour. My call: the safe default.
+
+### D9: Evidence by pressure scenarios, RED before any edit
 - **Chosen:** a body test block in `tests/skills/test-skill-bodies.sh` that fails on the current text; eight scenarios in `tests/skills/lifecycle-gates-pressure-scenarios.md`, run on fresh subagents that read only the named skill file and simulate the partner; results with verbatim excerpts in `tests/skills/lifecycle-gates-pressure-results.md`; RED runs on the text before the change, GREEN runs after.
 - **Why this one:** rule 3 asks for subagents under pressure with before and after evidence, and the writing-skills Iron Law forbids an edit without a failing test first. Evidence: AGENTS.md rule 3; writing-skills, "The Iron Law"; `tests/skills/brainstorming-pressure-results.md`, the method of the previous round.
 - **Rejected:** academic review of the wording alone, because reading is not using. Evidence: writing-skills, "Common Rationalizations for Skipping Testing".
@@ -189,6 +196,8 @@ Across a boundary: the pull request creation already crosses to the forge throug
 |---|---|---|---|---|
 | 1 | Do `gh pr create --draft` and `glab mr create --draft` exist as written? | Yes, named in the finishing skill, with "the forge's draft setting" for other forges | high | Checked by the builder check on this machine: gh 2.86.0 and glab 1.119.0 both have the flag, and `tracker.mjs:168` already passes `--draft` to gh |
 | 7 | Is a rebase after the review a re-run or a false pass? | A re-run: the reviewed head is no ancestor | high | My call: the safe side; see D3 |
+| 8 | Does the assembler's new option default to "QA configured"? | Yes | high | My call: every existing caller and test keeps today's BLOCKED behaviour; see D8 |
+| 9 | Does a report written while QA was unconfigured go stale when QA is configured later? | No; the next task-review run after the change runs the gate | medium | My call: a configuration change is rare, and the head check does not see it; see D8 |
 | 2 | Is one control scenario (D, the explicit skip) enough against over-firing? | Yes | medium | My call: the conditional has one exception, and D exercises it on both texts |
 | 3 | Does `task-review` invoke the finishing skill after its verdict? | No; it names it, the caller invokes it | high | My call: a standalone review must not push toward the menu; the execution skills own the next step |
 | 4 | Does the bootstrap get a rationalization row for "the per-task reviews were the gate"? | No; the row lives in the finishing skill | high | My call: the pressure arises at the door, and the bootstrap stays a router |
