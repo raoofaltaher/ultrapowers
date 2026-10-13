@@ -18,6 +18,14 @@
   💬 <a href="https://github.com/raoofaltaher/ultrapowers/discussions">Join the discussion</a>
 </p>
 
+<p align="center">
+  📖 <a href="https://raoofaltaher.com/blog/ai-native-sdlc-playbook">The AI-Native SDLC: A Developer's Playbook</a>
+  &nbsp;·&nbsp;
+  🧭 <a href="https://raoofaltaher.com/blog/ai-native-sdlc-with-ultrapowers">AI-Native SDLC with Ultrapowers</a>
+  &nbsp;·&nbsp;
+  🚀 <a href="https://raoofaltaher.com/blog/introducing-ultrapowers">Introducing Ultrapowers</a>
+</p>
+
 # Ultrapowers
 
 Ultrapowers is a complete software development methodology for your coding agents, built on a set of composable skills and a session-start bootstrap that makes sure your agent uses them.
@@ -61,6 +69,7 @@ Ultrapowers is a fork of Jesse Vincent's MIT-licensed skills library, cut from i
   - [Philosophy](#philosophy)
   - [Community](#community)
   - [Contributing](#contributing)
+  - [Read more](#read-more)
   - [License](#license)
   - [Pipelines](#pipelines)
 
@@ -553,6 +562,14 @@ Found a bug? [Open an issue](https://github.com/raoofaltaher/ultrapowers/issues/
 ## Contributing
 
 Pull requests are not accepted. Report bugs and request features through issues, and ask questions in Discussions. See [CONTRIBUTING.md](./CONTRIBUTING.md). This project follows the [Contributor Covenant](./CODE_OF_CONDUCT.md).
+
+## Read more
+
+Three articles on [raoofaltaher.com](https://raoofaltaher.com) put this plugin in context:
+
+- [The AI-Native SDLC: A Developer's Playbook](https://raoofaltaher.com/blog/ai-native-sdlc-playbook): what the software development life cycle is, what changes when agents join every phase, and a twelve-step cycle a developer can run.
+- [AI-Native SDLC with Ultrapowers](https://raoofaltaher.com/blog/ai-native-sdlc-with-ultrapowers): the cycle mapped step by step to the skills, one ticket walked from install to a finished branch, and an honest list of what is not covered.
+- [Introducing Ultrapowers](https://raoofaltaher.com/blog/introducing-ultrapowers): the method your coding agent follows, and how one command takes a ticket to a pull request while you approve and you merge.
 
 ## License
 
