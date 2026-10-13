@@ -146,6 +146,40 @@ T=templates/specs/_template/Spec.md.tmpl
 expect $T '^## Decision record$' 'the payload template carries the decision record'
 if [[ "$(grep -c '^## ' "$REPO_ROOT/$T")" -eq 13 ]]; then pass 'the payload template has thirteen sections'; else fail 'the payload template has thirteen sections'; fi
 echo ""
+echo "=== Test: the ticket route reaches the review gate (spec 2026-10-13) ==="
+U=skills/using-ultrapowers/SKILL.md
+expect $U '^## The Ticket Route$' 'using-ultrapowers carries the ticket route'
+expect $U 'task-review \(code review, vulnerability hunt, QA gate: one verdict\)' 'the route names task-review as the gate'
+expect $U 'checks for the task-review verdict first' 'the route sends a merge or a pull request through the finishing skill'
+for f in skills/executing-plans/SKILL.md skills/subagent-driven-development/SKILL.md; do
+    expect $f 'Ticket form: .agents/ultrapowers.json and a known ticket id\?' "$f asks for the ticket form in its flowchart"
+    expect $f 'use ultrapowers:task-review' "$f hands off to task-review"
+    expect $f 'they are not that gate' "$f says the per-task reviews are not the gate"
+    expect $f 'Using ultrapowers:task-review for <ID>, then ultrapowers:finishing-a-development-branch' "$f ends its example with task-review then the finish"
+    expect $f 'whole-ticket review is a repeat' "$f has the rationalization row for a repeated review"
+    if grep -q '^Use ultrapowers:finishing-a-development-branch. In the autopilot form' "$REPO_ROOT/$f"; then fail "$f still opens its Finish paragraph with the finishing skill alone"; else pass "$f no longer opens its Finish paragraph with the finishing skill alone"; fi
+done
+F=skills/finishing-a-development-branch/SKILL.md
+expect $F '^## Step 1b: Verify the Review Gate$' 'finishing has Step 1b'
+expect $F 'Verify the review gate' 'finishing names the gate in its core principle'
+expect $F 'reviews/<ID>/TASK-REVIEW.md' 'finishing reads the review report'
+expect $F 'first twelve characters' 'finishing compares the reviewed head'
+expect $F 'The verdict informs the integration decision; it never makes it' 'finishing keeps the decision with the partner'
+expect $F 'skip the gate, in so many words' 'finishing skips only on an explicit instruction'
+expect $F 'Push and create a draft Pull Request' 'finishing renames option 2 on FAIL or BLOCKED'
+expect $F 'gh pr create --draft' 'finishing names the GitHub draft flag'
+expect $F 'glab mr create --draft' 'finishing names the GitLab draft flag'
+expect $F 'quotes the `Verdict:` line' 'finishing quotes the verdict in the pull request'
+expect $F 'whole-ticket gate is done' 'finishing has the rationalization row for per-task reviews'
+expect $F 'A hurry is not an instruction to skip' 'finishing has the rationalization row for a hurry'
+expect $F 'A report for another head reviewed other code' 'finishing has the rationalization row for a stale report'
+expect skills/task-review/SKILL.md '^description: Use when a ticket.s implementation is complete, before its branch is merged or opened as a pull request' 'task-review triggers before the finish'
+expect skills/task-review/SKILL.md 'next step on the ticket route' 'task-review names the finishing skill as the next step'
+expect skills/task/SKILL.md 'at the review gate' 'task reports the review gate as the next step'
+expect README.md 'runs it for you as its last part' 'README says task-review includes the QA gate'
+expect README.md 'shows the verdict above its menu' 'README says the finishing skill shows the verdict'
+expect RELEASE-NOTES.md 'The ticket route and the review gate' 'the release notes carry the section'
+echo ""
 if [[ "$FAILURES" -ne 0 ]]; then
     echo "FAILED: $FAILURES assertion(s)."
     exit 1
