@@ -7,7 +7,7 @@ description: Use when implementation is complete, all tests pass, and you need t
 
 ## Overview
 
-**Core principle:** Verify tests → Detect environment → Present options → Execute choice → Clean up.
+**Core principle:** Verify tests → Verify the whole-ticket review → Detect environment → Present options → Execute choice → Clean up.
 
 **Announce at start:** "I'm using the finishing-a-development-branch skill to complete this work."
 
@@ -24,6 +24,36 @@ Tests failing (<N> failures). Must fix before completing:
 ```
 
 **If tests pass:** continue to Step 2.
+
+## Step 1b: Verify the Whole-Ticket Review
+
+This step runs in the ticket form: `.agents/ultrapowers.json` exists at or
+above the working directory, the autopilot form does not apply, and the
+ticket id is known: from the conversation, else from the plan path
+`plans/<ID>/`, else from the branch name matched against the `tasks/`
+folders (the id at the start of the branch name or after a separator).
+Outside it, continue to Step 2.
+
+Read `reviews/<ID>/TASK-REVIEW.md` under the project root, the checkout
+that holds this branch. Its `Repositories` row names each branch and the
+head it was reviewed at; take the entry whose branch is this branch, or
+whose head matches when `HEAD` is detached. The report is current when
+that head is an ancestor of `HEAD` (`git merge-base --is-ancestor <head>
+HEAD`) and every commit since it touches only `reviews/<ID>/`
+(`git diff --name-only <head> HEAD` lists nothing else).
+
+| State | Do |
+|-------|----|
+| The file is missing | Run `ultrapowers:task-review <ID>` from this workspace. The menu comes after its verdict, as it comes after a green suite. |
+| The report is not current | The verdict is stale: name the reviewed head and `HEAD`, then run `ultrapowers:task-review <ID>` again. |
+| The report is current | The whole-ticket review stands. Keep the `Verdict:` line and the Summary counts for Step 4. |
+| task-review stopped before a verdict (`NO-WORK`, `NO-CODE`, an `ERROR` line) | Keep its last message as the gate's result for Step 4. |
+
+The verdict informs the integration decision; it never makes it. Only your
+human partner's instruction to skip the gate, in so many words, skips it;
+then the menu message says the whole-ticket review was skipped at their
+request. A hurry, a demo, or "every task was reviewed" is not that
+instruction.
 
 ## Step 2: Detect Environment
 
@@ -51,6 +81,14 @@ known, ask: "This branch split from <your best guess> - is that correct?"
 Confirm before merging: merging into the wrong base is expensive to undo.
 
 ## Step 4: Present Options
+
+In the ticket form, the whole-ticket review's result comes first, above
+either menu, in two lines: the `Verdict:` line of
+`reviews/<ID>/TASK-REVIEW.md` and its finding counts, or task-review's last
+message when it stopped before a verdict. On `FAIL` or `BLOCKED`, the pull
+request option reads `Push and create a draft Pull Request` (option 2, or
+option 1 on a detached HEAD) and Option 2 below opens it as a draft. That
+wording swap is the only change the menus take.
 
 **Normal repo and named-branch worktree — present exactly these 3 options:**
 
@@ -122,6 +160,12 @@ Then create the pull/merge request against <base-branch> with the forge's
 tooling — its CLI if one is available, or the creation URL most forges
 print when you push — following the repo's PR template and conventions if
 present, and report the URL to your human partner.
+
+In the ticket form the description quotes the `Verdict:` line of
+`reviews/<ID>/TASK-REVIEW.md`, or says that the whole-ticket review was
+skipped at your human partner's request. On a `FAIL` or `BLOCKED` verdict the pull
+request is a draft: `gh pr create --draft`, `glab mr create --draft`, or the
+forge's draft setting.
 
 Keep the worktree — your human partner iterates on PR feedback there.
 
@@ -206,6 +250,7 @@ place. If your platform provides a workspace-exit tool, use it.
 |--------|-------|------|---------------|----------------|
 | 1. Merge locally | yes | - | - | yes |
 | 2. Create PR | - | yes | yes | - |
+| 2. Create PR, verdict FAIL or BLOCKED | - | yes, as a draft | yes | - |
 | 3. Keep as-is | - | - | yes | - |
 | Discard (explicit request only) | - | - | - | yes (force) |
 
@@ -223,3 +268,7 @@ place. If your platform provides a workspace-exit tool, use it.
 | "The merged-result failure is probably flaky" | A failing merged result stops everything. Branch and worktree stay put while you investigate. |
 | "The base branch is obviously main" | Confirm the fork point or ask. Merging into the wrong base is expensive to undo. |
 | "The push was rejected — force-push will fix it" | A rejected push means the remote moved. Investigate; force-push only on your human partner's explicit request. |
+| "Every task got a review, so the whole-ticket gate is done" | Per-task reviews check the plan's work. task-review reads the whole ticket with its callers, runs the vulnerability hunt and the QA gate. Without its verdict, the gate did not run. |
+| "They are in a hurry and QA takes an hour" | A hurry is not an instruction to skip. task-review confirms its scope first; a deferral is your human partner's to say, in so many words. |
+| "The verdict is FAIL, so I'll refuse to open the pull request" | The verdict informs; your human partner decides. Show it above the menu; the pull request opens as a draft. |
+| "The report exists, so the gate stands" | A report for another head reviewed other code. Compare the head; a stale verdict means task-review runs again. |

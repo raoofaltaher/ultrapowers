@@ -1,6 +1,6 @@
 ---
 name: task-review
-description: Use when a ticket's implementation is done and your human partner wants the whole of its work reviewed before merge, with one verdict and a report in reviews/<ID>/TASK-REVIEW.md that can be posted to the tracker
+description: Use when a ticket's implementation is complete, before its branch is merged or opened as a pull request, or when your human partner wants the whole of its work reviewed, with one verdict and a report in reviews/<ID>/TASK-REVIEW.md that can be posted to the tracker
 ---
 
 # Task Review
@@ -66,7 +66,7 @@ Only after every reviewer has returned (a QA run's guardrail would deny the revi
 node "<SKILL_DIR>/scripts/assemble-review.mjs" "<ID>" --findings "reviews/<ID>/review-findings.json" --qa "reviews/<ID>/QA-REPORT.md"
 ```
 
-It writes `reviews/<ID>/TASK-REVIEW.md` from [templates/TASK-REVIEW.md](templates/TASK-REVIEW.md): `FAIL` on any Critical finding, a security `FAIL` or a QA `FAIL`, `BLOCKED` on a QA `PRECONDITION-FAILED` or `INCOMPLETE`, `PASS-WITH-ISSUES` on Important findings or a security or QA `PASS-WITH-ISSUES`, else `PASS`. It reads `reviews/<ID>/security-findings.json` when the hunt wrote it; a security `INCOMPLETE` never blocks and is named in the verdict. Do not hand-edit the verdict. Tell your human partner the verdict, the finding counts and the path, in four lines at most.
+It writes `reviews/<ID>/TASK-REVIEW.md` from [templates/TASK-REVIEW.md](templates/TASK-REVIEW.md): `FAIL` on any Critical finding, a security `FAIL` or a QA `FAIL`, `BLOCKED` on a QA `PRECONDITION-FAILED` or `INCOMPLETE`, `PASS-WITH-ISSUES` on Important findings or a security or QA `PASS-WITH-ISSUES`, else `PASS`. It reads `reviews/<ID>/security-findings.json` when the hunt wrote it; a security `INCOMPLETE` never blocks and is named in the verdict. Do not hand-edit the verdict. Tell your human partner the verdict, the finding counts and the path, in four lines at most. Name ultrapowers:finishing-a-development-branch as the next step on the ticket route: it shows this verdict above its menu. Do not invoke it; the branch is finished when your human partner says so.
 
 ## Step 6: Post (only with `--post`)
 

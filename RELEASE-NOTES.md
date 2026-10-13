@@ -2,7 +2,7 @@
 
 ## v2.2.0 (2026-10-13)
 
-Every spec now comes from one template and carries a decision record: the approaches considered, why one won, where it breaks and what sits at its edges, with a source on every claim line. A checker refuses a spec that misses any of it, at the self-review, at the ticket commit, at the end of the autopilot spec and changes stages, and in the scaffolded pre-commit hook. The brainstorming skill presents its approaches in the same shape before the design, sorts every template question it never covered instead of filling it, and writes the design from the template. Design: `docs/ultrapowers/specs/2026-10-12-spec-template-and-decision-record-design.md`, itself the first spec in the new shape.
+Every spec now comes from one template and carries a decision record: the approaches considered, why one won, where it breaks and what sits at its edges, with a source on every claim line. A checker refuses a spec that misses any of it, at the self-review, at the ticket commit, at the end of the autopilot spec and changes stages, and in the scaffolded pre-commit hook. The brainstorming skill presents its approaches in the same shape before the design, sorts every template question it never covered instead of filling it, and writes the design from the template. Design: `docs/ultrapowers/specs/2026-10-12-spec-template-and-decision-record-design.md`, itself the first spec in the new shape. The same release closes the gap in the ticket route: the execution skills hand off to `task-review` before the finish, and the finishing skill verifies that gate at the door. Design: `docs/ultrapowers/specs/2026-10-13-ticket-route-and-review-gate-design.md`.
 
 **Heads up:**
 
@@ -11,6 +11,7 @@ Every spec now comes from one template and carries a decision record: the approa
 - The pre-commit hook finds the checker the way it finds the memory lint: through `ULTRAPOWERS_ROOT` or the Claude Code plugin cache. On every other harness set `ULTRAPOWERS_ROOT` to the plugin checkout, or the spec check warns and continues.
 - Without node on the machine, the brainstorming skill hands the spec over with a one-line note, `commit-spec.sh` prints `=== SPEC-CHECK-SKIPPED ===` and commits, and the hook warns and continues. A checker that runs and exits 2 stops the hand-over and the ticket commit.
 - `_template` and any id with a leading underscore are refused as ticket ids by `validate_ticket` and by the four scripts that copy its rule, whatever `ticketPattern` allows.
+- In a ticket project, `finishing-a-development-branch` now reads `reviews/<ID>/TASK-REVIEW.md` after the test suite: missing, or written for another head, it runs `task-review` (the code review, the vulnerability hunt and the QA gate) before its menu; present, it quotes the verdict above the menu, and a `FAIL` or `BLOCKED` verdict makes the pull request a draft. Your explicit instruction to skip the gate still skips it. The decision stays yours.
 
 **The spec template and the decision record**
 
@@ -25,13 +26,23 @@ Every spec now comes from one template and carries a decision record: the approa
 - `commit-spec.sh` runs it before `git add`; the autopilot engine runs it at the end of the spec and changes stages and refuses a spec or template that is not a regular file inside the project; the scaffolded hook checks every staged spec that is new in the commit or already carries a decision record, treating a rename as a modification, and skips the template itself and files under `docs/ultrapowers/specs/` without the `-design.md` suffix.
 - The engine's section reader now blanks fenced code too, so a spec that quotes the template keeps its scope list and its ledger rows on the packet.
 
+**The ticket route and the review gate**
+
+- `subagent-driven-development` and `executing-plans` end, in the ticket form, with `task-review` for the ticket and then `finishing-a-development-branch`; outside it, with the finishing skill as before; in the autopilot form they return to the engine as before. Their flowcharts, Finish sections, example end messages and rationalization tables say so.
+- `finishing-a-development-branch` has a Step 1b, Verify the Whole-Ticket Review: the report missing or stale runs `task-review`; the report is current when its reviewed head is an ancestor of the branch head and the commits since touch only `reviews/<ID>/`; a current one is quoted above the menu with its counts; a `task-review` that stopped before a verdict leaves its reason above the menu. On `FAIL` or `BLOCKED`, option 2 reads "Push and create a draft Pull Request" and opens a draft (`gh pr create --draft`, `glab mr create --draft`) whose description quotes the verdict line. Four new rationalization rows.
+- `using-ultrapowers` carries the route in sixty words, "The Ticket Route", and sends a merge or a pull request through the finishing skill. `task-review` triggers on its own when a ticket's implementation is complete and its branch is about to be merged or opened as a pull request, and names the finishing skill as the next step without invoking it. `task` reports a ticket whose plan tasks are done and whose branch has no `TASK-REVIEW.md` as "at the whole-ticket review".
+- The README's How it works and Basic Workflow follow the same route and say that `task-review` includes the QA gate; running `qa-specialist` alone refreshes `QA-REPORT.md` only.
+- `task-review`'s assembler mirrors the engine's "QA not configured" rule: in a project whose `qa.urls` are blank, a missing QA report no longer makes the verdict `BLOCKED`; the verdict comes from the code review and the vulnerability hunt, and the report says "QA: not configured for this project". With QA configured and no report, `BLOCKED` stays.
+- Not changed: the autopilot engine, which runs `qa` and no hunt stage (issue 43); projects without a scaffold, where the gates refuse to run.
+
 **Harness parity**
 
-- Rule 9: this change touches no harness-specific surface. The prose is shared, the checker and the engine run on node, and the hook is git. The per-harness suites of the gate pass unchanged. The one surface recorded as absent: on harnesses other than Claude Code the hook needs `ULTRAPOWERS_ROOT` to find the checker, as it already does for the memory lint.
+- Rule 9: this change touches no harness-specific surface. The prose is shared, the checker and the engine run on node, and the hook is git. The per-harness suites of the gate pass unchanged. The one surface recorded as absent: on harnesses other than Claude Code the hook needs `ULTRAPOWERS_ROOT` to find the checker, as it already does for the memory lint. The ticket route and the whole-ticket review touch skill prose, the README and one bash test; no harness-specific surface, and the Muse skill list is unchanged.
 
 **Tests**
 
 - New: `tests/brainstorming/check-doc.test.mjs` (35 tests, including the spec of this change as its own dogfood case and a test that the spec's fenced copy of the template equals the payload) and `tests/brainstorming/test-precommit-spec-check.sh` (17 cases on a throwaway project at a path with a space). Extended: the lifecycle, autopilot, init, skill-body and four ticket-id suites. The checker suite also runs in the Windows CI job.
+- `tests/skills/test-skill-bodies.sh` gains the section "the ticket route reaches the review gate", written before the change and failing on it; `tests/skills/lifecycle-gates-pressure-scenarios.md` and `lifecycle-gates-pressure-results.md` hold the eight scenarios and their RED and GREEN runs.
 
 **Known residuals**
 
