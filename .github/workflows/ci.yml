@@ -60,6 +60,7 @@ jobs:
       - run: bash tests/autopilot/test-adapters.sh
       - run: bash tests/qa-gatekeeper/run-tests.sh
       - run: bash tests/skills/test-skill-bodies.sh
+      - run: bash tests/skills/test-current-sources.sh
       - run: node --test tests/brainstorming/check-doc.test.mjs
       - run: bash tests/brainstorming/test-precommit-spec-check.sh
       - run: node --test tests/pi/test-pi-extension.mjs

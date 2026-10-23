@@ -45,6 +45,16 @@ Verdict: <PASS | PASS-WITH-ISSUES | FAIL | BLOCKED> — <one sentence naming the
 |---|---|---|---|---|---|
 | <package> | <version> | <GHSA or CVE id> | <critical, high, moderate or low> | <version> | <runtime or test only> |
 
+#### Advisories from research
+
+<Research tools: the tools used, or "Current sources not checked: <reason>.">
+
+| Subject | Version | Advisory | Severity | Affected | Fixed in | Runtime | Status | Verification | Source |
+|---|---|---|---|---|---|---|---|---|---|
+| <runtime, framework or package> | <version> | <CVE, GHSA or vendor id> | <critical, high, moderate or low> | <affected range> | <version> | <runtime or test only> | <applies, does not apply or unverified> | <confirmed, downgraded or not verified> | <link (date)> |
+
+<Not researched: <subject> (<reason>)>
+
 #### High
 
 1. **<title>** `<file>:<line>` (confidence <6-10>, <confirmed | plausible | unverified>; <category>)

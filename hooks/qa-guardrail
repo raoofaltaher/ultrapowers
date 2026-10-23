@@ -586,7 +586,10 @@ tool_lc="$(lower "$tool")"
 # The PowerShell tool (Claude Code's `PowerShell`, Copilot CLI's `powershell`) runs its command in
 # PowerShell, and every shell rule below reads POSIX shell: `sc`, `ri`, `iex` and .NET calls would
 # pass, the run's own marker among them. The Bash tool is the shell of a run.
+# The session-control forms (list, read, stop) carry no command and pass; the write form types into a
+# running shell and is refused with the rest.
 case "$tool_lc" in
+  list_powershell|read_powershell|stop_powershell) ;;
   *powershell*) deny "the PowerShell tool is not analysed during $run_kind; use the Bash tool" ;;
 esac
 
@@ -677,6 +680,53 @@ if [ -n "$PROFILE" ]; then
   git_mcp_re='(^|_)git_git_(push|reset)|^git_(push|reset)'
   if [ "$PROFILE" = "autopilot" ] && [[ "$tool_norm" =~ $git_mcp_re ]]; then
     deny "git push and git reset through an MCP tool are never run by an autopilot stage"
+  fi
+fi
+
+# --- The hunt: its network is its audit tools and gh/glab api, called from the shell. This runs before the
+# write rules, so a path field in a tool's input cannot carry an unknown tool past it (GH-59 review).
+# A fetch or search tool, and any tool whose input holds a url, is refused whatever qa.hosts lists; the
+# local file readers are not URL tools (a search for a URL string is a file search). Then a tool the
+# hunt does not use is refused by default, whatever its name: research tools (search, documentation,
+# scrape) have no fixed names, and a query can carry data out. The hunt's own tools pass: the write
+# tools (the write rules below judge their paths), the shell tools (the shell rules below judge the
+# command), the file readers, subagent dispatch and its lifecycle, task tracking, skills, asking the
+# user, loading a tool's schema, and tracker and mail reads (the tracker rule above has refused their
+# writes; for an `mcp__<server>__<tool>` name the tracker word must be a whole segment of the server).
+# Research belongs to STEP 0b of the hunt contract, before the run record is started. Names are matched
+# lowercased, without `_ :.-/`.
+if [ "$PROFILE" = "hunt" ]; then
+  tool_flat="${tool_lc//[_ :.-]/}"
+  tool_flat="${tool_flat////}"
+  case "$tool_flat" in
+    webfetch|websearch|*googlewebsearch*|*fetchurl*|*urlfetch*|*searchweb*|*webbrowse*|*webread*) deny "the hunt's network is its audit tools and gh api; $tool is refused" ;;
+  esac
+  if [ -n "$url" ]; then
+    case "$tool_lc" in
+      read|grep|glob|ls|lsp|notebookread|read_file|read_many_files|list_directory|grep_search|search_file_content|find_by_name|view_file|list_dir|codebase_search|file_search) ;;
+      *) deny "the hunt's network is its audit tools and gh api; $tool carrying a URL is refused" ;;
+    esac
+  fi
+  hunt_write_re='^(write|edit|multiedit|notebookedit|create|applypatch|writefile|replace|editfile|writetofile|replacefilecontent|multireplacefilecontent|strreplacefile|patch|newfile)$'
+  hunt_shell_re='^(bash|shell|runshellcommand|terminal|runterminalcmd|runcommand|execute|exec|execcommand|executecommand|powershell|monitor)$'
+  # The report and lifecycle tools are in the list on purpose: a subagent returns its lane block
+  # through its harness's hand-back tool, and a long audit command is polled and stopped through
+  # the read, list and stop forms of the shell session tools. The write forms (write_bash,
+  # write_powershell, write_stdin) type into a running shell, and the shell rules below never see
+  # that text, so they stay refused with their own reason.
+  hunt_tools_re='^(read|readfile|readmanyfiles|notebookread|view|viewfile|viewfileoutline|viewimage|grep|glob|ls|list|lsp|find|listdirectory|listdir|grepsearch|searchfilecontent|findbyname|codebasesearch|filesearch|search|searchfiles|agent|task|invokesubagent|invokeagent|delegatetask|subagentspawn|subagent|spawnagent|waitagent|listagents|followuptask|closeagent|completetask|subagenthandback|sendmessage|sendusermessage|brief|exitplanmode|enterplanmode|listmcpresourcestool|listmcpresources|managetask|commandstatus|readbash|listbash|stopbash|readpowershell|listpowershell|stoppowershell|todowrite|todoread|todolist|writetodos|todo|updatetodo|updateplan|settodolist|taskcreate|taskupdate|tasklist|taskget|taskoutput|taskstop|bashoutput|killshell|trackeradddependency|trackercreatetask|trackergettask|trackerlisttasks|trackerupdatetask|trackervisualize|skill|skills|skillslist|activateskill|skillview|askuserquestion|requestuserinput|askuser|clarify|question|toolsearch|think)$'
+  case "$tool_flat" in
+    writebash|writepowershell|writestdin) deny "the hunt's network is its audit tools and gh api; $tool types into a running shell, and input to a running shell is never judged by the shell rules" ;;
+  esac
+  hunt_tracker_re='(^|_)(github|gitlab|glab|jira|linear|odoo|bitbucket|azure_?devops|outlook|microsoft_365|gmail|slack|teams)(_|$)|^tickets_'
+  tracker_name="$tool_norm"
+  case "$tool_lc" in
+    mcp__*__*) tracker_name="${tool_lc#mcp__}"; tracker_name="${tracker_name%%__*}"; tracker_name="${tracker_name//-/_}"; tracker_name="${tracker_name//./_}" ;;
+  esac
+  tracker_read=0
+  if [[ "$tracker_name" =~ $hunt_tracker_re ]] || { [ "$tool_server_less" -eq 1 ] && [[ "$tool_norm" =~ $object_re ]]; }; then tracker_read=1; fi
+  if ! [[ "$tool_flat" =~ $hunt_write_re ]] && ! [[ "$tool_flat" =~ $hunt_shell_re ]] && ! [[ "$tool_flat" =~ $hunt_tools_re ]] && [ "$tracker_read" -eq 0 ]; then
+    deny "the hunt's network is its audit tools and gh api; $tool is not a tool the hunt uses (research belongs to STEP 0b, before the run record is started)"
   fi
 fi
 
@@ -814,32 +864,58 @@ on_list() {
   [ -n "$1" ] && [ -n "$2" ] && [[ ",$1," == *",$2,"* ]]
 }
 
-# --- The hunt reaches no URL: its network is its audit tools and gh/glab api, called from the shell, so a
-# fetch or search tool and any tool whose input holds a url is refused whatever qa.hosts lists. The local
-# file readers are not URL tools (a search for a URL string is a file search).
-if [ "$PROFILE" = "hunt" ]; then
-  tool_flat="${tool_lc//[_ :.-]/}"
-  tool_flat="${tool_flat////}"
-  case "$tool_flat" in
-    webfetch|websearch|*googlewebsearch*|*fetchurl*|*urlfetch*|*searchweb*|*webbrowse*|*webread*) deny "the hunt's network is its audit tools and gh api; $tool is refused" ;;
-  esac
-  if [ -n "$url" ]; then
-    case "$tool_lc" in
-      read|grep|glob|ls|lsp|notebookread|read_file|read_many_files|list_directory|grep_search|search_file_content|find_by_name|view_file|list_dir|codebase_search|file_search) ;;
-      *) deny "the hunt's network is its audit tools and gh api; $tool carrying a URL is refused" ;;
-    esac
-  fi
-fi
-
 # --- Any tool that carries a url (navigation, fetch, scrape, crawl, whatever its name), under
 # `url`, `uri`, `link` or a `urls` array: forbidden hosts never; allowed hosts only when a list is set.
 # An autopilot stage has no open egress: a host that no list names is refused (the hook cannot read the
 # ticket's own links, so a host to use is listed in qa.hosts.allowed; the ticket tracker's host stands for them
-# while the list is empty).
+# while the list is empty). One exception: the autopilot spec, plan and changes stages research current sources
+# (GH-59), so there a fetch, search or scrape tool may read any public host that qa.hosts.forbidden does not
+# list (a forbidden host also covers its subdomains there, and a trailing dot changes nothing). Research reads
+# public sources only: a loopback, link-local, private or single-label host, or an .internal, .local or
+# .localhost name, needs qa.hosts.allowed or qa.urls even there, and a browser tool (it can type and click)
+# keeps the listed-hosts rule. Any other stage, and a marker with no stage, keeps the listed-hosts rule.
+research_stage=0; research_browser=0
+if [ "$PROFILE" = "autopilot" ]; then
+  case "$marker_stage" in spec|plan|changes) research_stage=1 ;; esac
+  # A browser tool is told by its name (the harnesses and MCP servers spell them differently): the
+  # browser words, the engine names and the automation servers. A browser tool whose name holds
+  # none of these gets the fetch rule; that limit is documented in the README.
+  case "$tool_lc" in *browser*|*navigate*|*playwright*|*puppeteer*|*chrome*|*chromium*|*firefox*|*webkit*|*devtools*|*selenium*|*stagehand*|*browserbase*|*computer_use*|*computeruse*) [ "$research_stage" -eq 1 ] && research_browser=1; research_stage=0 ;; esac
+fi
+# 0 when the host in $1 is not a public one: loopback, link-local, private, unspecified, single-label, or a
+# reserved local suffix. Builtins only.
+non_public_host() {
+  local h="${1#[}"; h="${h%]}"
+  # An address in any form but plain dotted-decimal (a bare integer, a hex or octal segment) is
+  # how a loopback or private address hides from a pattern; it is never a public host here.
+  case "$h" in
+    *0x*|*0X*) return 0 ;;
+  esac
+  if [[ "$h" =~ ^[0-9]+$ ]] || [[ "$h" =~ ^[0-9.]+$ && ( "$h" =~ (^|\.)0[0-9] ) ]]; then return 0; fi
+  case "$h" in
+    localhost|*.localhost|*.local|*.internal|*.lan|*.home.arpa) return 0 ;;
+    127.*|0.0.0.0|0|10.*|192.168.*|169.254.*) return 0 ;;
+    172.1[6-9].*|172.2[0-9].*|172.3[01].*) return 0 ;;
+    100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*) return 0 ;;
+    ::1|::|fe80:*|fc*:*|fd*:*|::ffff:*) return 0 ;;
+    *.*|*:*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
 for u in $url; do
   host_of_r "$u"; h="$REPLY"
   on_list "$forbidden" "$h" && deny "host '$h' is on qa.hosts.forbidden"
-  if [ -n "$allowed" ]; then
+  if [ "$research_stage" -eq 1 ]; then
+    hd="${h%.}"
+    for fh in ${forbidden//,/ }; do
+      [ -n "$fh" ] && { [ "$hd" = "$fh" ] || [[ "$hd" == *".$fh" ]]; } && deny "host '$h' is on qa.hosts.forbidden (or under a host it lists)"
+    done
+    if ! on_list "$allowed" "$hd" && ! on_list "$tracker_hosts" "$hd" && non_public_host "$hd"; then
+      deny "host '$h' is not a public host; an autopilot research stage reads public hosts only (list it in qa.hosts.allowed to use it)"
+    fi
+  elif [ "$research_browser" -eq 1 ] && ! on_list "$allowed" "$h" && ! on_list "$tracker_hosts" "$h"; then
+    deny "host '$h' is not in qa.hosts.allowed; an autopilot research stage opens no browser on a host qa.hosts.allowed does not list (a browser can type and click)"
+  elif [ -n "$allowed" ]; then
     on_list "$allowed" "$h" || deny "host '$h' is not in qa.hosts.allowed"
   elif [ "$PROFILE" = "autopilot" ]; then
     on_list "$tracker_hosts" "$h" || deny "host '$h' is not in qa.hosts.allowed or qa.urls; an autopilot stage reaches only listed hosts (the hook cannot read the ticket's own links, so list the host to use it)"
