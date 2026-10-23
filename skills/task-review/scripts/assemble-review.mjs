@@ -106,6 +106,43 @@ function cveSeverity(raw, name) {
   return value;
 }
 
+// Advisories from research (the hunt's STEP 0b): repos[].research, one block per repository,
+// { tools, status: checked | not-checked, reason, notResearched[{ subject, reason }], advisories[] }.
+// An `applies` row counts in the verdict like a tool CVE of the same severity, once: a row whose
+// advisory id (compared without regard to case) is already in this repository's CVE table counts
+// through the table. `unverified` and `does-not-apply` rows never count.
+const RESEARCH_STATUSES = ['applies', 'does-not-apply', 'unverified'];
+const RESEARCH_VERIFICATIONS = ['confirmed', 'downgraded', 'not-verified'];
+
+function normalizeResearch(raw, cves) {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== 'object') throw new Error('a research block must be an object');
+  const inTable = new Set(cves.map((c) => key(c.advisory)).filter(Boolean));
+  const advisories = (Array.isArray(raw.advisories) ? raw.advisories : []).map((a) => {
+    const subject = String(a?.subject ?? '(unnamed)');
+    const status = key(a?.status);
+    if (!RESEARCH_STATUSES.includes(status)) throw new Error(`advisory from research for ${JSON.stringify(subject)} has an unknown research status ${JSON.stringify(a?.status)} (one of ${RESEARCH_STATUSES.join(', ')})`);
+    const verification = key(a?.verification) || 'not-verified';
+    if (!RESEARCH_VERIFICATIONS.includes(verification)) throw new Error(`advisory from research for ${JSON.stringify(subject)} has an unknown verification ${JSON.stringify(a?.verification)} (one of ${RESEARCH_VERIFICATIONS.join(', ')})`);
+    const advisory = String(a?.advisory ?? '');
+    const alsoReported = advisory && inTable.has(key(advisory)) ? 'the audit tools' : '';
+    return {
+      subject, version: String(a?.version ?? ''), versionSource: String(a?.versionSource ?? ''), advisory,
+      severity: cveSeverity(a?.severity, subject), affectedRange: String(a?.affectedRange ?? ''), fixedIn: String(a?.fixedIn ?? ''),
+      runtime: a?.runtime !== false, status, reason: String(a?.reason ?? ''), source: String(a?.source ?? ''),
+      sourceDate: String(a?.sourceDate ?? ''), verification, verificationReason: String(a?.verificationReason ?? ''),
+      alsoReported, counted: status === 'applies' && !alsoReported,
+    };
+  });
+  return {
+    status: key(raw.status) === 'not-checked' ? 'not-checked' : 'checked',
+    reason: String(raw.reason ?? ''),
+    tools: (Array.isArray(raw.tools) ? raw.tools : []).map(String),
+    notResearched: (Array.isArray(raw.notResearched) ? raw.notResearched : []).map((n) => ({ subject: String(n?.subject ?? ''), reason: String(n?.reason ?? '') })),
+    advisories,
+  };
+}
+
 // One entry per hunted repository: the findings that stand (confidence 6 or more, not rejected by
 // the verification of the same title in the same repository), the CVEs (deduplicated), the skipped
 // lanes, the tools, the declined lines and the counts of discarded leads and files read.
@@ -184,8 +221,9 @@ function normalizeSecurity(security) {
         cves.set(id, { ...kept, runtime });
       }
     }
+    const cveRows = [...cves.values()];
     return {
-      repo: String(block.repo ?? `repo-${i + 1}`), findings, cves: [...cves.values()], skipped, tools, declined: [...declined],
+      repo: String(block.repo ?? `repo-${i + 1}`), findings, cves: cveRows, research: normalizeResearch(block.research, cveRows), skipped, tools, declined: [...declined],
       discarded, rejected, filesRead: files.size,
       // The dependencies lane produced no block, or ran, failed and gave no advisory: the audit is missing, not clean.
       incomplete: !dependencies || (dependenciesIncomplete && dependenciesCves === 0),
@@ -202,9 +240,18 @@ const cveName = (c) => `${c.package} ${c.version}${c.advisory ? `, ${c.advisory}
 // test-only CVE; INCOMPLETE when a repository has no dependencies lane block or its one failed with no advisory and nothing above
 // applies; else PASS. Low findings and low CVEs never count.
 function judgeSecurity(hunted) {
-  const counts = { high: 0, medium: 0, low: 0, cves: 0, cvesRuntimeCritical: 0, cvesRuntimeModerate: 0, cvesTestOnlyCritical: 0, unverified: 0 };
+  const counts = { high: 0, medium: 0, low: 0, cves: 0, cvesRuntimeCritical: 0, cvesRuntimeModerate: 0, cvesTestOnlyCritical: 0, unverified: 0,
+    researchRuntimeCritical: 0, researchRuntimeModerate: 0, researchTestOnlyCritical: 0 };
   const findings = hunted.flatMap((r) => r.findings);
   const cves = hunted.flatMap((r) => r.cves);
+  const researched = hunted.flatMap((r) => (r.research ? r.research.advisories : [])).filter((a) => a.counted);
+  for (const a of researched) {
+    if (a.runtime && severe(a)) counts.researchRuntimeCritical += 1;
+    else if (a.runtime && a.severity === 'moderate') counts.researchRuntimeModerate += 1;
+    else if (!a.runtime && severe(a)) counts.researchTestOnlyCritical += 1;
+  }
+  const advisoriesFromResearch = (n) => `${n === 1 ? 'advisory' : 'advisories'} from research`;
+  const advisoryName = (a) => `${a.subject} ${a.version}${a.advisory ? `, ${a.advisory}` : ''}`;
   for (const f of findings) {
     counts[f.severity.toLowerCase()] += 1;
     if (f.verification === 'unverified') counts.unverified += 1;
@@ -218,15 +265,19 @@ function judgeSecurity(hunted) {
   const incomplete = hunted.filter((r) => r.incomplete).map((r) => r.repo);
   const parts = [];
   let verdict;
-  if (counts.high > 0 || counts.cvesRuntimeCritical > 0) {
+  if (counts.high > 0 || counts.cvesRuntimeCritical > 0 || counts.researchRuntimeCritical > 0) {
     verdict = 'FAIL';
     if (counts.high > 0) parts.push(`${plural(counts.high, 'High security finding')} (first: ${findings.find((f) => f.severity === 'High').title})`);
     if (counts.cvesRuntimeCritical > 0) parts.push(`${plural(counts.cvesRuntimeCritical, 'critical or high CVE')} in a runtime dependency (first: ${cveName(cves.find((c) => c.runtime && severe(c)))})`);
-  } else if (counts.medium > 0 || counts.cvesRuntimeModerate > 0 || counts.cvesTestOnlyCritical > 0) {
+    if (counts.researchRuntimeCritical > 0) parts.push(`${counts.researchRuntimeCritical} critical or high ${advisoriesFromResearch(counts.researchRuntimeCritical)} in a runtime (first: ${advisoryName(researched.find((a) => a.runtime && severe(a)))})`);
+  } else if (counts.medium > 0 || counts.cvesRuntimeModerate > 0 || counts.cvesTestOnlyCritical > 0
+    || counts.researchRuntimeModerate > 0 || counts.researchTestOnlyCritical > 0) {
     verdict = 'PASS-WITH-ISSUES';
     if (counts.medium > 0) parts.push(plural(counts.medium, 'Medium security finding'));
     if (counts.cvesRuntimeModerate > 0) parts.push(`${plural(counts.cvesRuntimeModerate, 'moderate CVE')} in a runtime dependency`);
     if (counts.cvesTestOnlyCritical > 0) parts.push(`${plural(counts.cvesTestOnlyCritical, 'critical or high CVE')} in a test-only dependency`);
+    if (counts.researchRuntimeModerate > 0) parts.push(`${counts.researchRuntimeModerate} moderate ${advisoriesFromResearch(counts.researchRuntimeModerate)} in a runtime`);
+    if (counts.researchTestOnlyCritical > 0) parts.push(`${counts.researchTestOnlyCritical} critical or high ${advisoriesFromResearch(counts.researchTestOnlyCritical)} in a test-only dependency`);
   } else if (incomplete.length > 0) {
     verdict = 'INCOMPLETE';
     parts.push(`the dependencies lane did not run or did not complete in ${incomplete.join(', ')}`);
@@ -286,6 +337,27 @@ export function decide(repos, qa, security = null, { qaConfigured = true } = {})
 
 const cell = (s) => String(s || '-').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
 
+// The `#### Advisories from research` block of one repository.
+function researchSection(research) {
+  const out = ['#### Advisories from research', ''];
+  if (!research) return [...out, 'Current sources not checked: the hunt recorded no research.', ''];
+  if (research.status === 'not-checked') out.push(`Current sources not checked: ${(research.reason || 'no reason recorded').replace(/\.$/, '')}.`, '');
+  else out.push(`Research tools: ${research.tools.length ? research.tools.join(', ') : 'none named'}.`, '');
+  if (research.advisories.length) {
+    out.push('| Subject | Version | Advisory | Severity | Affected | Fixed in | Runtime | Status | Verification | Source |', '|---|---|---|---|---|---|---|---|---|---|');
+    for (const a of research.advisories) {
+      const status = a.status === 'does-not-apply' ? 'does not apply' : a.status;
+      const verification = (a.verification === 'not-verified' ? 'not verified' : a.verification) + (a.alsoReported ? `; also reported by ${a.alsoReported}` : '');
+      const source = a.source ? `${a.source}${a.sourceDate ? ` (${a.sourceDate})` : ''}` : '';
+      out.push(`| ${cell(a.subject)} | ${cell(a.version)} | ${cell(a.advisory)} | ${a.severity} | ${cell(a.affectedRange)} | ${cell(a.fixedIn)} | ${a.runtime ? 'runtime' : 'test only'} | ${status} | ${cell(verification)} | ${cell(source)} |`);
+    }
+    out.push('');
+  } else if (research.status === 'checked') out.push('No advisory found.', '');
+  for (const n of research.notResearched) out.push(`Not researched: ${n.subject} (${n.reason})`);
+  if (research.notResearched.length) out.push('');
+  return out;
+}
+
 function huntFindingBlock(n, f) {
   const where = f.file ? ` \`${f.file}${f.line ? `:${f.line}` : ''}\`` : '';
   const lines = [
@@ -325,6 +397,7 @@ function huntSection(id, hunted, sec, securityReport) {
       for (const c of repo.cves) out.push(`| ${cell(c.package)} | ${cell(c.version)} | ${cell(c.advisory)} | ${c.severity} | ${cell(c.fixedIn)} | ${c.runtime ? 'runtime' : 'test only'} |`);
       out.push('');
     }
+    out.push(...researchSection(repo.research));
     for (const severity of HUNT_SEVERITIES) {
       out.push(`#### ${severity}`, '');
       const list = repo.findings.filter((f) => f.severity === severity);

@@ -495,3 +495,87 @@ test('the CLI refuses bad input with the documented exit codes', () => {
     assert.ok(!existsSync(join(root, 'reviews', '501', 'TASK-REVIEW.md')), 'nothing written on refusal');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+// GH-59: advisories from research (repos[].research), the hunt's STEP 0b.
+const research = (advisories, extra = {}) => ({ tools: ['a documentation server'], status: 'checked', reason: '', notResearched: [], advisories, ...extra });
+const adv = (severity, runtime, status, extra = {}) => ({
+  subject: 'node', version: '20.0.0', versionSource: 'package.json engines', advisory: 'CVE-2026-0001', severity,
+  affectedRange: '<20.18.1', fixedIn: '20.18.1', runtime, status, reason: '', source: 'https://nodejs.org/en/blog/vulnerability/x',
+  sourceDate: '2026-10-20', verification: 'confirmed', verificationReason: '', ...extra,
+});
+// A repository whose dependencies lane ran clean, with a research block.
+const withResearch = (block, repo = 'api', hunts = []) => ({ repo, hunts: [hunt(repo, 'dependencies', { tools: [npmAudit] }), ...hunts], verifications: [], research: block });
+const runResearch = (...repos) => runSec({ repos });
+
+test('a confirmed applies critical runtime advisory from research fails the review', () => {
+  const r = runResearch(withResearch(research([adv('critical', true, 'applies')])));
+  assert.equal(r.verdict, 'FAIL');
+  assert.match(r.markdown, /^Verdict: FAIL — .*1 critical or high advisory from research in a runtime \(first: node 20\.0\.0, CVE-2026-0001\)/m);
+  assert.match(r.markdown, /#### Advisories from research/);
+  assert.match(r.markdown, /\| node \| 20\.0\.0 \| CVE-2026-0001 \| critical \| <20\.18\.1 \| 20\.18\.1 \| runtime \| applies \| confirmed \|/);
+});
+
+test('an applies moderate runtime advisory gives PASS-WITH-ISSUES', () => {
+  assert.equal(runResearch(withResearch(research([adv('moderate', true, 'applies')]))).verdict, 'PASS-WITH-ISSUES');
+});
+
+test('an applies high test-only advisory gives PASS-WITH-ISSUES', () => {
+  assert.equal(runResearch(withResearch(research([adv('high', false, 'applies')]))).verdict, 'PASS-WITH-ISSUES');
+});
+
+test('unverified and does-not-apply rows never change the verdict', () => {
+  const r = runResearch(withResearch(research([adv('critical', true, 'unverified', { reason: 'no version declared' }), adv('critical', true, 'does-not-apply', { advisory: 'CVE-2026-0002' })])));
+  assert.equal(r.verdict, 'PASS');
+  assert.match(r.markdown, /\| unverified \|/);
+  assert.match(r.markdown, /\| does not apply \|/);
+});
+
+test('an applies high row the verifier did not reach still counts and is marked not verified', () => {
+  const r = runResearch(withResearch(research([adv('high', true, 'applies', { verification: 'not-verified' })])));
+  assert.equal(r.verdict, 'FAIL');
+  assert.match(r.markdown, /\| applies \| not verified \|/);
+});
+
+test('GitHub\'s medium severity maps to moderate', () => {
+  const r = runResearch(withResearch(research([adv('medium', true, 'applies')])));
+  assert.equal(r.verdict, 'PASS-WITH-ISSUES');
+  assert.match(r.markdown, /\| moderate \|/);
+});
+
+test('a row whose advisory id is in the CVE table counts once and says also reported', () => {
+  const block = withResearch(research([adv('critical', true, 'applies', { subject: 'lodash', version: '4.17.15', advisory: 'ghsa-35jh-r3h4-6jhm' })]));
+  block.hunts[0].cves = [cve('moderate', true)];
+  const s = decideSecurity([block]);
+  assert.equal(s.counts.researchRuntimeCritical, 0);
+  assert.equal(s.verdict, 'PASS-WITH-ISSUES', 'the CVE table row decides, once');
+  assert.match(runResearch(block).markdown, /also reported by the audit tools/);
+});
+
+test('two repositories: an advisory applies in one only', () => {
+  const r = runResearch(
+    withResearch(research([adv('critical', true, 'applies')]), 'api'),
+    withResearch(research([adv('critical', true, 'does-not-apply', { version: '22.11.0' })]), 'web'),
+  );
+  assert.equal(r.verdict, 'FAIL');
+  assert.match(r.markdown, /### web[\s\S]*\| node \| 22\.11\.0 \| CVE-2026-0001 \| critical \|[^\n]*\| does not apply \|/);
+});
+
+test('a repository with no research key renders the not-checked line and changes nothing', () => {
+  const r = runResearch(withResearch(undefined));
+  assert.equal(r.verdict, 'PASS');
+  assert.match(r.markdown, /Current sources not checked: the hunt recorded no research/);
+});
+
+test('a research block with status not-checked renders its reason', () => {
+  const r = runResearch(withResearch(research([], { status: 'not-checked', reason: 'no research tool in this session', tools: [] })));
+  assert.match(r.markdown, /Current sources not checked: no research tool in this session/);
+});
+
+test('not researched subjects are listed with their reason', () => {
+  const r = runResearch(withResearch(research([], { notResearched: [{ subject: '@acme-internal/billing', reason: 'private' }] })));
+  assert.match(r.markdown, /Not researched: @acme-internal\/billing \(private\)/);
+});
+
+test('an unknown research status is refused', () => {
+  assert.throws(() => decideSecurity([withResearch(research([adv('critical', true, 'maybe')]))]), /unknown research status/);
+});
