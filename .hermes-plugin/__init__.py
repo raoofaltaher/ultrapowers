@@ -241,20 +241,32 @@ def _guardrail_cli(skills_dir):
 
 
 def _run_active(start_dir):
-    """The deny prefix of the run marker at or above start_dir (qa, then hunt, then autopilot), or None.
+    """The deny prefix of the run that may guard a call made from start_dir, or None.
 
-    A headless watcher stage carries ULTRAPOWERS_AUTOPILOT_INSIDE=1: without a marker the run is
-    then an autopilot stage, and the hook decides (outside any project it denies), as in the hook.
+    A run record (a *.json file in .ultrapowers/runs/) counts only up to the nearest project root,
+    the first folder holding .agents/ultrapowers.json; .ultrapowers/autopilot-active counts at any
+    height. This is only the fast path that decides whether the hook is spawned, and it may be
+    conservative (a record of another session passes it); the hook decides whose run it is. The
+    prefix of a record is read from its file name (qa-<id>-<hex>.json, hunt-<id>-<hex>.json): QA
+    unless every record is a hunt's, as the hook picks QA before hunt. A headless watcher stage
+    carries ULTRAPOWERS_AUTOPILOT_INSIDE=1: without a marker the run is then an autopilot stage, and
+    the hook decides (outside any project it denies), as in the hook.
     """
     current = os.path.realpath(start_dir)
+    past_project = False
     while True:
         base = os.path.join(current, ".ultrapowers")
-        if os.path.isfile(os.path.join(base, "qa-active")):
-            return "QA-GUARDRAIL"
-        if os.path.isfile(os.path.join(base, "hunt-active")):
-            return "HUNT-GUARDRAIL"
+        if not past_project:
+            try:
+                records = [n for n in os.listdir(os.path.join(base, "runs")) if n.endswith(".json")]
+            except OSError:
+                records = []
+            if records:
+                return "HUNT-GUARDRAIL" if all(n.startswith("hunt-") for n in records) else "QA-GUARDRAIL"
         if os.path.isfile(os.path.join(base, "autopilot-active")):
             return "AUTOPILOT-GUARDRAIL"
+        if os.path.isfile(os.path.join(current, ".agents", "ultrapowers.json")):
+            past_project = True
         parent = os.path.dirname(current)
         if parent == current:
             return "AUTOPILOT-GUARDRAIL" if os.environ.get("ULTRAPOWERS_AUTOPILOT_INSIDE") == "1" else None

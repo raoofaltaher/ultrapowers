@@ -153,7 +153,7 @@ export default function ultrapowersPiExtension(pi: ExtensionAPI) {
 
 	// The QA and autopilot envelopes. Pi runs no shell hooks, so the extension runs the
 	// ultrapowers guardrail (hooks/qa-guardrail) through the bridge before every tool call: inert
-	// without a run marker under the cwd, a blocked call with the hook's reason when it denies.
+	// without a run guarding the cwd (a run record or the autopilot marker), a blocked call with the hook's reason when it denies.
 	pi.on("tool_call", async (event, ctx) => {
 		const verdict = runGuardrail({ toolName: event.toolName, input: event.input, cwd: cwdOf(ctx) });
 		if (verdict.deny) return { block: true, reason: denyText(verdict) };

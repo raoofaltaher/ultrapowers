@@ -94,9 +94,11 @@ afterward.
    inside one CMD expands `%ERRORLEVEL%` before bash has run.
 4. If no bash is found, the dispatcher exits `0` silently — the plugin
    continues working, it just skips the hook. The one exception is `qa-guardrail`: it is the
-   brake of a QA run or an autopilot stage, so while `.ultrapowers\qa-active` or
-   `.ultrapowers\autopilot-active` exists at or above the working directory (or
-   `ULTRAPOWERS_AUTOPILOT_INSIDE=1` is set) it exits `2` with the deny line instead.
+   brake of a QA run, a vulnerability hunt or an autopilot stage, so while a run record
+   (`.ultrapowers\runs\*.json`, looked for up to the nearest folder holding
+   `.agents\ultrapowers.json`) or `.ultrapowers\autopilot-active` (at any height) exists at or above
+   the working directory (or `ULTRAPOWERS_AUTOPILOT_INSIDE=1` is set) it exits `2` with the deny line
+   instead. Without bash it cannot tell whose record it is, so any record denies.
 5. `exit /b` stops CMD before it reaches the Unix section.
 
 ### How it works on Unix (bash/sh)

@@ -6,10 +6,24 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BRIDGE = path.resolve(HERE, '..', '..', 'hooks', 'lib', 'guardrail-bridge.mjs');
 const { runGuardrail, guardrailEvent, markerRoot, markerPrefix } = await import(`file://${BRIDGE.replace(/\\/g, '/')}`);
+
+// The node entry of Kimi, Antigravity and Hermes, run in the event's cwd (the same as runCli below, which
+// is defined after the awaited import and so is not usable by the tests above it).
+const cliStatus = (event) => spawnSync(process.execPath, [path.resolve(HERE, '..', '..', 'hooks', 'lib', 'guardrail-cli.mjs')], { input: JSON.stringify(event), encoding: 'utf8', cwd: event.cwd }).status;
+
+// A run record, .ultrapowers/runs/<run>.json, bound to no session unless one is named (the harnesses
+// these entry points serve name none, so a record bound to a session never guards their calls).
+function runRecord(root, profile, id, { session = null, hex = '0a1b2c3d' } = {}) {
+  const run = `${profile}-${id}-${hex}`;
+  fs.mkdirSync(path.join(root, '.ultrapowers', 'runs'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.ultrapowers', 'runs', `${run}.json`), `${JSON.stringify({ run, profile, id, session, startedAt: new Date().toISOString() }, null, 2)}\n`);
+  return run;
+}
 
 function project({ marker = 'autopilot' } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrail-bridge-'));
@@ -18,8 +32,8 @@ function project({ marker = 'autopilot' } = {}) {
   fs.mkdirSync(path.join(root, 'repo-a', 'src'), { recursive: true });
   fs.writeFileSync(path.join(root, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'p', autopilot: { mode: 'gated' }, qa: { urls: {}, hosts: { allowed: [], forbidden: ['prod.example.com'] } } }));
   if (marker === 'autopilot') fs.writeFileSync(path.join(root, '.ultrapowers', 'autopilot-active'), JSON.stringify({ ticket: 'GH-16', branch: 'GH-16-x', scope: ['.'], stage: 'execute' }));
-  if (marker === 'qa') fs.writeFileSync(path.join(root, '.ultrapowers', 'qa-active'), 'GH-16\n');
-  if (marker === 'hunt') fs.writeFileSync(path.join(root, '.ultrapowers', 'hunt-active'), 'audit-2026-10-11\n');
+  if (marker === 'qa') runRecord(root, 'qa', 'GH-16');
+  if (marker === 'hunt') runRecord(root, 'hunt', 'audit-2026-10-11');
   return root;
 }
 
@@ -37,14 +51,50 @@ test('inside a vulnerability hunt a push is denied with the HUNT prefix, an audi
   assert.equal(src.prefix, 'HUNT-GUARDRAIL');
 });
 
-test('the marker order is QA, then hunt, then autopilot', () => {
+test('the order is a QA record, then a hunt record, then the autopilot marker', () => {
   const root = project({ marker: 'autopilot' });
   const at = path.join(root, 'repo-a');
   assert.equal(markerPrefix(at), 'AUTOPILOT-GUARDRAIL');
-  fs.writeFileSync(path.join(root, '.ultrapowers', 'hunt-active'), 'audit-2026-10-11\n');
+  runRecord(root, 'hunt', 'audit-2026-10-11');
   assert.equal(markerPrefix(at), 'HUNT-GUARDRAIL');
-  fs.writeFileSync(path.join(root, '.ultrapowers', 'qa-active'), 'GH-16\n');
+  runRecord(root, 'qa', 'GH-16');
   assert.equal(markerPrefix(at), 'QA-GUARDRAIL');
+});
+
+test('a run record in a parent project does not guard a nested project of its own', () => {
+  const root = project({ marker: 'qa' });
+  const nested = path.join(root, 'repo-a');
+  fs.mkdirSync(path.join(nested, '.agents'), { recursive: true });
+  fs.writeFileSync(path.join(nested, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'nested' }));
+  const deep = path.join(nested, 'src');
+  // the parent's record guards the parent and its plain subfolders, never a folder under a nearer project root
+  assert.equal(markerPrefix(root), 'QA-GUARDRAIL');
+  assert.equal(markerRoot(deep), null);
+  assert.equal(markerPrefix(nested), null);
+  // no hook runs for the nested project (a hook dir with no hook would fail closed if one were asked)
+  assert.deepEqual(runGuardrail({ toolName: 'bash', input: { command: 'git push origin x' }, cwd: deep, hookDir: path.join(root, 'no-hook-here') }), { deny: false });
+  assert.equal(cliStatus({ tool_name: 'Bash', tool_input: { command: 'git push origin x' }, cwd: deep }), 0);
+  // the nested project's own record guards it
+  runRecord(nested, 'hunt', 'audit-2026-10-11');
+  assert.equal(markerPrefix(deep), 'HUNT-GUARDRAIL');
+  // the autopilot marker of a parent still counts at any height
+  const other = project({ marker: 'autopilot' });
+  const otherNested = path.join(other, 'repo-a');
+  fs.mkdirSync(path.join(otherNested, '.agents'), { recursive: true });
+  fs.writeFileSync(path.join(otherNested, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'nested' }));
+  assert.equal(markerPrefix(otherNested), 'AUTOPILOT-GUARDRAIL');
+});
+
+test('a run record bound to a session guards no bridge call: these harnesses name no session', () => {
+  const root = project({ marker: 'none' });
+  runRecord(root, 'qa', 'GH-16', { session: 'S1' });
+  assert.equal(markerPrefix(root), null);
+  assert.deepEqual(runGuardrail({ toolName: 'bash', input: { command: 'git push origin x' }, cwd: root, hookDir: path.join(root, 'no-hook-here') }), { deny: false });
+  assert.equal(cliStatus({ tool_name: 'Bash', tool_input: { command: 'git push origin x' }, cwd: root }), 0);
+  // a record bound to no session beside it guards the call
+  runRecord(root, 'qa', 'GH-17', { hex: '1a2b3c4d' });
+  assert.equal(markerPrefix(root), 'QA-GUARDRAIL');
+  assert.equal(runGuardrail({ toolName: 'bash', input: { command: 'git push origin x' }, cwd: root }).prefix, 'QA-GUARDRAIL');
 });
 
 test('a hook deny line under the HUNT profile keeps its prefix and reason', () => {
@@ -109,8 +159,7 @@ test('a run marker with no usable hook fails closed', () => {
 });
 
 // ---- guardrail-cli: the node entry for Kimi, Antigravity and Hermes ----
-import { spawnSync } from 'node:child_process';
-const CLI = path.resolve(HERE, '..', '..', 'hooks', 'lib', 'guardrail-cli.mjs');
+const CLI =path.resolve(HERE, '..', '..', 'hooks', 'lib', 'guardrail-cli.mjs');
 const { eventFrom } = await import(`file://${CLI.replace(/\\/g, '/')}`);
 const runCli = (event, extra = []) => spawnSync(process.execPath, [CLI, ...extra], { input: JSON.stringify(event), encoding: 'utf8', cwd: event.cwd ?? undefined });
 
@@ -199,7 +248,7 @@ test('the bridge verdict and every entry point keep the profile prefix: QA for a
   const qaVerdict = runGuardrail({ toolName: 'bash', input: { command: 'git push origin qa' }, cwd: qa });
   assert.equal(qaVerdict.deny, true);
   assert.equal(qaVerdict.prefix, 'QA-GUARDRAIL');
-  assert.match(qaVerdict.reason, /\.ultrapowers\/qa-active/);
+  assert.match(qaVerdict.reason, /\.ultrapowers[\\/]runs[\\/]qa-GH-16-/);
   const stage = project({ marker: 'autopilot' });
   assert.equal(runGuardrail({ toolName: 'bash', input: { command: 'git push origin x' }, cwd: stage }).prefix, 'AUTOPILOT-GUARDRAIL');
   // the fail-closed verdict (hook missing) names the marker's profile too

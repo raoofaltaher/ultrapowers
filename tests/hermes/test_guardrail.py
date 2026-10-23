@@ -1,6 +1,7 @@
 """The Hermes plugin runs the ultrapowers guardrail before every tool call of an active run
 (pre_tool_call): a denied call is blocked with the hook's reason, an allowed one passes, and
-without a run marker nothing is spawned. Needs node and bash (Git Bash on Windows)."""
+without a run (a run record or the autopilot marker) nothing is spawned. Needs node and bash (Git Bash on Windows)."""
+import datetime
 import importlib
 import json
 import os
@@ -17,6 +18,18 @@ def _load_plugin():
     if "__init__" in sys.modules:
         del sys.modules["__init__"]
     return importlib.import_module("__init__")
+
+
+def _record(root, profile, ident, session=None):
+    """A run record, .ultrapowers/runs/<run>.json, bound to no session unless one is named (Hermes
+    names no session, so a record bound to one never guards its calls)."""
+    run = f"{profile}-{ident}-0a1b2c3d"
+    runs = root / ".ultrapowers" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    (runs / f"{run}.json").write_text(
+        json.dumps({"run": run, "profile": profile, "id": ident, "session": session, "startedAt": datetime.datetime.now(datetime.timezone.utc).isoformat()}),
+        encoding="utf-8",
+    )
 
 
 def _project(tmp_path, active=True):
@@ -115,9 +128,9 @@ def test_a_non_dict_args_reaches_the_hook_and_is_refused(hook, tmp_path, monkeyp
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is needed to run the guardrail")
-def test_a_hunt_marker_blocks_a_push_with_the_hunt_prefix_and_passes_an_audit(hook, tmp_path, monkeypatch):
+def test_a_hunt_record_blocks_a_push_with_the_hunt_prefix_and_passes_an_audit(hook, tmp_path, monkeypatch):
     root = _project(tmp_path, active=False)
-    (root / ".ultrapowers" / "hunt-active").write_text("audit-2026-10-11\n", encoding="utf-8")
+    _record(root, "hunt", "audit-2026-10-11")
     monkeypatch.chdir(root)
     verdict = hook("terminal", {"command": "git push origin x"}, "t13")
     assert verdict and verdict.get("action") == "block"
@@ -128,15 +141,18 @@ def test_a_hunt_marker_blocks_a_push_with_the_hunt_prefix_and_passes_an_audit(ho
 
 
 @pytest.mark.parametrize(
-    "marker,prefix",
-    [("qa-active", "QA-GUARDRAIL DENY: "), ("hunt-active", "HUNT-GUARDRAIL DENY: "), ("autopilot-active", "AUTOPILOT-GUARDRAIL DENY: ")],
+    "run,prefix",
+    [("qa", "QA-GUARDRAIL DENY: "), ("hunt", "HUNT-GUARDRAIL DENY: "), ("autopilot", "AUTOPILOT-GUARDRAIL DENY: ")],
 )
-def test_the_plugins_own_fail_closed_denies_carry_the_profile_prefix(tmp_path, monkeypatch, marker, prefix):
+def test_the_plugins_own_fail_closed_denies_carry_the_profile_prefix(tmp_path, monkeypatch, run, prefix):
     import subprocess
 
     plugin = _load_plugin()
     root = _project(tmp_path, active=False)
-    (root / ".ultrapowers" / marker).write_text("{}", encoding="utf-8")
+    if run == "autopilot":
+        (root / ".ultrapowers" / "autopilot-active").write_text("{}", encoding="utf-8")
+    else:
+        _record(root, run, "T-1")
     verdict = lambda: plugin._guardrail_verdict(str(root), "terminal", {"command": "git status"}, str(root))
 
     # The node binary or the hook is missing.
@@ -161,18 +177,56 @@ def test_the_plugins_own_fail_closed_denies_carry_the_profile_prefix(tmp_path, m
     assert "exit 1" in crashed["message"]
 
 
-def test_the_marker_order_is_qa_then_hunt_then_autopilot(tmp_path):
+def test_the_order_is_a_qa_record_then_a_hunt_record_then_the_autopilot_marker(tmp_path):
     plugin = _load_plugin()
     root = _project(tmp_path)
-    (root / ".ultrapowers" / "hunt-active").write_text("audit-2026-10-11\n", encoding="utf-8")
-    (root / ".ultrapowers" / "qa-active").write_text("{}", encoding="utf-8")
+    _record(root, "hunt", "audit-2026-10-11")
+    _record(root, "qa", "GH-16")
     assert plugin._run_active(str(root)) == "QA-GUARDRAIL"
-    (root / ".ultrapowers" / "qa-active").unlink()
+    (root / ".ultrapowers" / "runs" / "qa-GH-16-0a1b2c3d.json").unlink()
     assert plugin._run_active(str(root)) == "HUNT-GUARDRAIL"
-    (root / ".ultrapowers" / "hunt-active").unlink()
+    (root / ".ultrapowers" / "runs" / "hunt-audit-2026-10-11-0a1b2c3d.json").unlink()
     assert plugin._run_active(str(root)) == "AUTOPILOT-GUARDRAIL"
     (root / ".ultrapowers" / "autopilot-active").unlink()
     assert plugin._run_active(str(root)) is None
+
+
+def _nested(root):
+    nested = root / "repo-a"
+    (nested / ".agents").mkdir(parents=True)
+    (nested / ".agents" / "ultrapowers.json").write_text("{}", encoding="utf-8")
+    (nested / "src").mkdir()
+    return nested
+
+
+def test_a_record_in_a_parent_project_does_not_guard_a_nested_project(tmp_path):
+    plugin = _load_plugin()
+    root = _project(tmp_path, active=False)
+    _record(root, "qa", "GH-16")
+    nested = _nested(root)
+    assert plugin._run_active(str(root)) == "QA-GUARDRAIL"
+    assert plugin._run_active(str(nested / "src")) is None
+    # the nested project's own record guards it, and the parent's autopilot marker still counts above it
+    _record(nested, "hunt", "audit-2026-10-11")
+    assert plugin._run_active(str(nested / "src")) == "HUNT-GUARDRAIL"
+    (root / ".ultrapowers" / "autopilot-active").write_text("{}", encoding="utf-8")
+    (nested / ".ultrapowers" / "runs" / "hunt-audit-2026-10-11-0a1b2c3d.json").unlink()
+    assert plugin._run_active(str(nested / "src")) == "AUTOPILOT-GUARDRAIL"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is needed to run the guardrail")
+def test_a_nested_project_is_not_guarded_by_a_record_of_its_parent_and_a_session_record_guards_nothing(hook, tmp_path, monkeypatch):
+    root = _project(tmp_path, active=False)
+    _record(root, "qa", "GH-16")
+    nested = _nested(root)
+    monkeypatch.chdir(nested / "src")
+    assert hook("terminal", {"command": "git push origin x"}, "t16") is None
+    # a record bound to a session never guards Hermes, which names none: the fast path lets it
+    # through to the hook, and the hook finds no record that applies
+    (root / ".ultrapowers" / "runs" / "qa-GH-16-0a1b2c3d.json").unlink()
+    _record(root, "qa", "GH-17", session="S1")
+    monkeypatch.chdir(root)
+    assert hook("terminal", {"command": "git push origin x"}, "t17") is None
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is needed to run the guardrail")

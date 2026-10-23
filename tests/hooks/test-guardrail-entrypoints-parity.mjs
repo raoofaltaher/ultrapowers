@@ -1,10 +1,12 @@
 // The guardrail has one canonical entry point, the bash hook hooks/qa-guardrail, and several others
 // that must agree with it: the bridge (OpenCode, Pi, Kimi, Antigravity, the Gemini project hook),
 // the OpenCode plugin, the Hermes plugin, the Gemini launcher template and the Windows wrapper
-// run-hook.cmd. They agree on the run markers (.ultrapowers/<m>-active), the deny prefixes
-// (<P>-GUARDRAIL), the precedence when several markers exist in one directory, and on how each
-// harness registers the hook. Nothing else tests that agreement; this suite does, so a new
-// profile cannot land in one entry point only (AGENTS.md rule 9). Offline; node built-ins only.
+// run-hook.cmd. They agree on what marks a run (a run record, .ultrapowers/runs/<run>.json, counted
+// only up to the nearest project root; and the autopilot marker, .ultrapowers/autopilot-active, at any
+// height), the deny prefixes (<P>-GUARDRAIL), the precedence (a record before the autopilot marker; QA
+// before hunt among records), and on how each harness registers the hook. Nothing else tests that
+// agreement; this suite does, so a new profile cannot land in one entry point only (AGENTS.md rule 9).
+// Offline; node built-ins only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -26,7 +28,9 @@ const CMD = 'hooks/run-hook.cmd';
 // The profiles in the order of precedence, and the prefix of each.
 const MARKERS = ['qa', 'hunt', 'autopilot'];
 const PREFIXES = ['QA', 'HUNT', 'AUTOPILOT'];
-const PREFIX_OF = { qa: 'QA', hunt: 'HUNT', autopilot: 'AUTOPILOT' };
+// Where the run walk starts in each fast path that has one of its own.
+const WALK_START = { [OPENCODE]: 'const runRecordPrefix', [HERMES]: 'def _run_active', [GEMINI]: 'function runActive' };
+const PREFIX_OF ={ qa: 'QA', hunt: 'HUNT', autopilot: 'AUTOPILOT' };
 
 const sorted = (set) => [...set].sort();
 const matches = (text, re) => new Set([...text.matchAll(re)].map((m) => m[1]));
@@ -35,7 +39,7 @@ const matches = (text, re) => new Set([...text.matchAll(re)].map((m) => m[1]));
 // walks the markers and not the prose that lists them.
 function code(rel, { slashes = false, hashes = false } = {}) {
   return read(rel)
-    .replace(slashes ? /\/\*[\s\S]*?\*\//g : /$^/g, '')
+    .replace(slashes ? /\/\*[\s\S]*?\*\//g : hashes ? /"""[\s\S]*?"""/g : /$^/g, '')
     .split('\n')
     .filter((l) => {
       const t = l.trim();
@@ -61,9 +65,17 @@ function assertOrdered(text, label) {
 
 // --- 1. The canonical sets, from the bash hook ----------------------------------------------
 
-test('1. the bash hook defines exactly the markers qa, hunt, autopilot and the prefixes QA, HUNT, AUTOPILOT', () => {
+// The first position of each needle in `text`, which must hold all of them, in this order.
+function assertSequence(text, label, needles) {
+  const at = needles.map((n) => text.indexOf(n));
+  needles.forEach((n, i) => assert.notEqual(at[i], -1, `${label}: ${n} is not in the run walk`));
+  for (let i = 1; i < needles.length; i += 1) assert.ok(at[i - 1] < at[i], `${label}: ${needles[i - 1]} must come before ${needles[i]}`);
+}
+
+test('1. the bash hook defines the run records, the autopilot marker and the prefixes QA, HUNT, AUTOPILOT', () => {
   const hook = read(HOOK);
-  assert.deepEqual(sorted(matches(hook, /\.ultrapowers\/([a-z]+)-active/g)), sorted(MARKERS), 'markers of hooks/qa-guardrail');
+  assert.deepEqual(sorted(matches(hook, /\.ultrapowers\/([a-z]+)-active/g)), ['autopilot'], 'the markers of hooks/qa-guardrail');
+  assert.ok(hook.includes('.ultrapowers/runs'), 'hooks/qa-guardrail does not read .ultrapowers/runs');
   assert.deepEqual(sorted(matches(hook, /([A-Z]+)-GUARDRAIL DENY/g)), sorted(PREFIXES), 'prefixes of hooks/qa-guardrail');
   // The prefix the deny() function prints is chosen per profile: the default is QA, the others are assigned.
   const assigned = matches(hook, /GUARD_PREFIX="([A-Z]+)-GUARDRAIL"/g);
@@ -72,48 +84,50 @@ test('1. the bash hook defines exactly the markers qa, hunt, autopilot and the p
 
 // --- 2. Textual coverage of every entry point -------------------------------------------------
 
-test('2. the bridge, the OpenCode plugin, the Hermes plugin and the Gemini template name every marker; all but the bridge name every prefix', () => {
+test('2. the bridge, the OpenCode plugin, the Hermes plugin and the Gemini template read the run records and the autopilot marker; all but the bridge name every prefix', () => {
   for (const rel of [BRIDGE, OPENCODE, HERMES, GEMINI]) {
     const text = read(rel);
-    for (const m of MARKERS) assert.ok(text.includes(`${m}-active`), `${rel} does not name ${m}-active`);
+    assert.ok(text.includes('autopilot-active'), `${rel} does not name autopilot-active`);
+    assert.ok(/['"]runs['"]|\.ultrapowers\/runs/.test(text), `${rel} does not read the run records of .ultrapowers/runs`);
   }
-  // The prefixes are read from the code, not from a comment that lists them.
+  assert.ok(read(BRIDGE).includes('HUNT-GUARDRAIL'), 'the bridge does not name HUNT-GUARDRAIL for a hunt record');
+  // The prefixes are read from the code, not from a comment that lists them. A fast path only decides
+  // whether the hook runs, but the deny it makes itself (the hook or the bridge missing) names the
+  // profile too: a record's file name starts with its profile (qa-, hunt-).
   for (const [rel, opts] of [[OPENCODE, { slashes: true }], [HERMES, { hashes: true }], [GEMINI, { slashes: true }]]) {
     const text = code(rel, opts);
     for (const p of PREFIXES) assert.ok(text.includes(`${p}-GUARDRAIL`), `${rel} does not name ${p}-GUARDRAIL in its code`);
   }
 });
 
-test('2d. the OpenCode, Hermes and Gemini walks give each marker its own prefix, line by line', () => {
-  // A file that names every marker and every prefix could still return HUNT-GUARDRAIL for the QA
-  // marker; the pairing is pinned per line: the first prefix at or after the marker's code line,
-  // before the next marker's line, is that marker's.
+test('2d. the OpenCode, Hermes and Gemini walks look for run records only up to the nearest project root, and for the autopilot marker at any height', () => {
   for (const [rel, opts] of [[OPENCODE, { slashes: true }], [HERMES, { hashes: true }], [GEMINI, { slashes: true }]]) {
-    const lines = code(rel, opts).split('\n');
-    for (const m of MARKERS) {
-      const at = lines.findIndex((l) => new RegExp(`['"]${m}-active['"]`).test(l));
-      assert.notEqual(at, -1, `${rel}: no code line names '${m}-active'`);
-      let found = null;
-      for (let i = at; i < lines.length && i < at + 3; i += 1) {
-        if (i > at && /['"][a-z]+-active['"]/.test(lines[i])) break;
-        const p = /([A-Z]+)-GUARDRAIL/.exec(lines[i]);
-        if (p) { found = p[1]; break; }
-      }
-      assert.equal(found, PREFIX_OF[m], `${rel}: ${m}-active must give ${PREFIX_OF[m]}-GUARDRAIL (got ${found})`);
-    }
+    const full = code(rel, opts);
+    const text = full.slice(full.indexOf(WALK_START[rel]));
+    assert.ok(text.length < full.length && text.includes('.json'), `${rel}: no ${WALK_START[rel]} walk reading *.json records`);
+    // the records, then their prefix, then the marker, then its prefix: the order of the walk
+    assertSequence(text, rel, ['runs', 'QA-GUARDRAIL', 'autopilot-active', 'AUTOPILOT-GUARDRAIL']);
+    const lines = text.split('\n');
+    // the project-root stop: .agents/ultrapowers.json sets a flag that only the record check reads
+    const flag = lines.findIndex((l) => /past_?[Pp]roject\s*=\s*(true|True)/.test(l));
+    assert.notEqual(flag, -1, `${rel}: no line sets the past-project flag`);
+    assert.ok(/ultrapowers\.json/.test(lines[flag]) || /ultrapowers\.json/.test(lines[flag - 1] ?? ''), `${rel}: the past-project flag is not set by .agents/ultrapowers.json`);
+    assert.ok(lines.some((l) => /!\s*pastProject|pastProject\s*\?|not past_project/.test(l) && !l.includes('autopilot')), `${rel}: the record check is not guarded by the flag`);
+    const marker = lines.find((l) => l.includes('autopilot-active'));
+    assert.ok(!/pastProject|past_project/.test(marker), `${rel}: the autopilot marker must count at any height`);
   }
 });
 
-test('2b. run-hook.cmd tests each marker with an `if exist` line and carries each prefix in a DENY message', () => {
-  // The fail-closed walk of the Windows wrapper. The hunt marker has no label of its own (cmd.exe
-  // could not resolve a third label in this LF-only file): it sets GUARD_MSG and shares the QA
-  // label, so what is pinned is the marker test and the message, not a per-profile label.
+test('2b. run-hook.cmd tests the run records and the autopilot marker with `if exist` lines, stops at the project root, and carries the QA and AUTOPILOT prefixes in a DENY message', () => {
+  // The fail-closed walk of the Windows wrapper. Without bash it cannot ask which profile or session
+  // a record belongs to, so any record denies, under the QA label (a hunt shares it).
   const cmd = read(CMD);
   const lines = cmd.split('\n');
-  for (const m of MARKERS) {
-    assert.ok(lines.some((l) => /^if exist /.test(l) && l.includes(`\\.ultrapowers\\${m}-active`)), `run-hook.cmd has no \`if exist\` line for ${m}-active`);
-  }
-  for (const p of PREFIXES) {
+  const exists = lines.filter((l) => /^(if not defined GUARD_PAST )?if exist /.test(l));
+  assert.ok(exists.some((l) => l.includes('\\.ultrapowers\\runs\\*.json') && /^if not defined GUARD_PAST /.test(l)), 'run-hook.cmd has no `if exist` line for the run records, guarded by GUARD_PAST');
+  assert.ok(exists.some((l) => l.includes('\\.ultrapowers\\autopilot-active') && !l.includes('GUARD_PAST')), 'run-hook.cmd has no unguarded `if exist` line for autopilot-active');
+  assert.ok(exists.some((l) => l.includes('\\.agents\\ultrapowers.json') && l.includes('GUARD_PAST=')), 'run-hook.cmd does not set GUARD_PAST at the project root');
+  for (const p of ['QA', 'AUTOPILOT']) {
     assert.ok(lines.some((l) => l.includes(`${p}-GUARDRAIL DENY:`)), `run-hook.cmd has no ${p}-GUARDRAIL DENY: message`);
   }
   assert.ok(lines.some((l) => /^:guard_qa$/.test(l)) && lines.some((l) => /^:guard_autopilot$/.test(l)), 'run-hook.cmd lost the :guard_qa or :guard_autopilot label');
@@ -126,24 +140,30 @@ test('2c. the delegating entry points (guardrail-cli.mjs, the Pi extension) impo
   assert.match(pi, /^import \{[^}]*runGuardrail[^}]*\} from "\.\.\/\.\.\/hooks\/lib\/guardrail-bridge\.mjs";$/m, 'the Pi extension does not import runGuardrail from the bridge');
   for (const [rel, text] of [['hooks/lib/guardrail-cli.mjs', cli], ['.pi/extensions/ultrapowers.ts', pi]]) {
     for (const m of MARKERS) assert.ok(!text.includes(`${m}-active`), `${rel} carries its own marker ${m}-active; it must delegate to the bridge`);
+    assert.ok(!/['"]runs['"]/.test(text), `${rel} reads the run records itself; it must delegate to the bridge`);
   }
 });
 
-// --- 3. Order of the marker walk --------------------------------------------------------------
+// --- 3. Order of the run walk -----------------------------------------------------------------
 
-test('3. every marker walk tests qa-active, then hunt-active, then autopilot-active', () => {
+test('3. every run walk tests the run records (QA before hunt) and then the autopilot marker', () => {
   // The hook names the autopilot marker earlier, in the deny text, so its walk starts at find_root_r.
   const hook = code(HOOK, { hashes: true });
   const walk = hook.slice(hook.indexOf('find_root_r() {'));
   assert.ok(walk.length < hook.length, 'hooks/qa-guardrail has no find_root_r() walk');
-  assertOrdered(walk, HOOK);
-  assertOrdered(code(BRIDGE, { slashes: true }), BRIDGE);
-  assertOrdered(code(OPENCODE, { slashes: true }), OPENCODE);
-  assertOrdered(code(HERMES, { hashes: true }), HERMES);
-  assertOrdered(code(GEMINI, { slashes: true }), GEMINI);
+  assertSequence(walk, HOOK, ['.ultrapowers/runs', 'pick_run_r', '.ultrapowers/autopilot-active', '.agents/ultrapowers.json']);
+  // which record of a project guards a call: a corrupt one, then QA, then hunt (the hook asks run-records.mjs)
+  const pick = code('hooks/lib/run-records.mjs', { slashes: true });
+  assertSequence(pick.slice(pick.indexOf('export function pickRun')), 'run-records.mjs pickRun', ['r.corrupt', "r.profile === 'qa'", "r.profile === 'hunt'"]);
+  const bridge = code(BRIDGE, { slashes: true });
+  assertSequence(bridge.slice(bridge.indexOf('function runAt')), BRIDGE, ['applicableRuns', 'r.corrupt', "r.profile === 'qa'", 'autopilot-active', 'ultrapowers.json']);
+  const walkOf = (rel, opts) => { const t = code(rel, opts); return t.slice(t.indexOf(WALK_START[rel])); };
+  assertSequence(walkOf(OPENCODE, { slashes: true }), OPENCODE, ['QA-GUARDRAIL', 'autopilot-active', 'ultrapowers.json']);
+  assertSequence(walkOf(HERMES, { hashes: true }), HERMES, ['QA-GUARDRAIL', 'autopilot-active', 'ultrapowers.json']);
+  assertSequence(walkOf(GEMINI, { slashes: true }), GEMINI, ['QA-GUARDRAIL', 'autopilot-active', 'ultrapowers.json']);
   // run-hook.cmd: the `if exist` lines of its fail-closed walk.
-  const cmdWalk = read(CMD).split('\n').filter((l) => /^if exist /.test(l) && /-active"/.test(l)).join('\n');
-  assertOrdered(cmdWalk, CMD);
+  const cmdWalk = read(CMD).split('\n').filter((l) => /^(if not defined GUARD_PAST )?if exist /.test(l)).join('\n');
+  assertSequence(cmdWalk, CMD, ['.ultrapowers\\runs\\*.json', '.ultrapowers\\autopilot-active', '.agents\\ultrapowers.json']);
 });
 
 // --- 4. The deny line the bridge parses ---------------------------------------------------------
@@ -165,23 +185,31 @@ test('4. the DENY_RE of the bridge reads every prefix and its reason', () => {
 
 const { markerPrefix } = await import(pathToFileURL(path.join(ROOT, BRIDGE)).href);
 
-function projectWith(markers) {
+// A project holding a run record per profile named ('qa', 'hunt') and the autopilot marker when
+// 'autopilot' is named.
+function projectWith(profiles) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guardrail-parity-'));
-  fs.mkdirSync(path.join(dir, '.ultrapowers'), { recursive: true });
-  for (const m of markers) fs.writeFileSync(path.join(dir, '.ultrapowers', `${m}-active`), 'x\n');
+  fs.mkdirSync(path.join(dir, '.ultrapowers', 'runs'), { recursive: true });
+  fs.mkdirSync(path.join(dir, '.agents'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.agents', 'ultrapowers.json'), '{}\n');
+  for (const m of profiles) {
+    if (m === 'autopilot') { fs.writeFileSync(path.join(dir, '.ultrapowers', 'autopilot-active'), 'x\n'); continue; }
+    const run = `${m}-T-1-0a1b2c3d`;
+    fs.writeFileSync(path.join(dir, '.ultrapowers', 'runs', `${run}.json`), JSON.stringify({ run, profile: m, id: 'T-1', session: null, startedAt: new Date().toISOString() }));
+  }
   fs.mkdirSync(path.join(dir, 'sub', 'deeper'), { recursive: true });
   return dir;
 }
 
-test('5. markerPrefix returns the prefix of the marker, and the first of qa, hunt, autopilot when several exist', () => {
+test('5. markerPrefix returns the prefix of the run, and the first of qa, hunt, autopilot when several exist', () => {
   const made = [];
   try {
-    const at = (markers) => {
-      const dir = projectWith(markers);
+    const at = (profiles) => {
+      const dir = projectWith(profiles);
       made.push(dir);
       return path.join(dir, 'sub', 'deeper');
     };
-    for (const m of MARKERS) assert.equal(markerPrefix(at([m])), `${PREFIX_OF[m]}-GUARDRAIL`, `a lone ${m} marker`);
+    for (const m of MARKERS) assert.equal(markerPrefix(at([m])), `${PREFIX_OF[m]}-GUARDRAIL`, `a lone ${m} run`);
     assert.equal(markerPrefix(at(['qa', 'hunt'])), 'QA-GUARDRAIL');
     assert.equal(markerPrefix(at(['hunt', 'autopilot'])), 'HUNT-GUARDRAIL');
     assert.equal(markerPrefix(at(['qa', 'hunt', 'autopilot'])), 'QA-GUARDRAIL');

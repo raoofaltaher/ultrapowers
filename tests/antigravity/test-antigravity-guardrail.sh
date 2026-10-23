@@ -63,15 +63,42 @@ assert(out.decision === 'deny' && /outside the project root/.test(out.reason), `
 out = hook(runCommand('git status', path.join(stage, '.agents'), [stage]));
 assert(out.decision === 'allow', `Cwd inside the project: the hook decides (${JSON.stringify(out)})`);
 
-// A vulnerability hunt (.ultrapowers/hunt-active): the HUNT profile denies a push, allows an audit and refuses a source write.
+// A run record, .ultrapowers/runs/<run>.json, bound to no session unless one is named (Antigravity
+// names no session, so a record bound to one never guards its calls).
+function record(root, profile, id, session = null) {
+  const run = `${profile}-${id}-0a1b2c3d`;
+  fs.mkdirSync(path.join(root, '.ultrapowers', 'runs'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.ultrapowers', 'runs', `${run}.json`), JSON.stringify({ run, profile, id, session, startedAt: new Date().toISOString() }));
+}
+
+// A vulnerability hunt (a hunt record): the HUNT profile denies a push, allows an audit and refuses a source write.
 const hunt = project();
-fs.writeFileSync(path.join(hunt, '.ultrapowers', 'hunt-active'), 'audit-2026-10-11\n');
+record(hunt, 'hunt', 'audit-2026-10-11');
 out = hook(runCommand('git push origin x', hunt, [hunt]));
 assert(out.decision === 'deny' && /^HUNT-GUARDRAIL DENY: /.test(out.reason), `a push during a hunt: denied with the HUNT prefix (${JSON.stringify(out)})`);
 out = hook(runCommand('npm audit --package-lock-only --json', hunt, [hunt]));
 assert(out.decision === 'allow', `an audit during a hunt: allowed (${JSON.stringify(out)})`);
 out = hook({ toolCall: { name: 'write_to_file', args: { TargetFile: path.join(hunt, 'repo-a', 'src', 'x.ts'), CodeContent: 'x' } }, workspacePaths: [hunt] });
 assert(out.decision === 'deny' && /^HUNT-GUARDRAIL DENY: /.test(out.reason), `a source write during a hunt: denied (${JSON.stringify(out)})`);
+
+// A record in a parent project does not guard a nested project (its own .agents/ultrapowers.json); the
+// nested project's own record does. A record bound to a session guards no Antigravity call.
+const parent = project();
+record(parent, 'qa', 'GH-16');
+const nested = path.join(parent, 'repo-a');
+fs.mkdirSync(path.join(nested, '.agents'), { recursive: true });
+fs.writeFileSync(path.join(nested, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'nested' }));
+out = hook(runCommand('git push origin x', parent, [parent]));
+assert(out.decision === 'deny' && /^QA-GUARDRAIL DENY: /.test(out.reason), `a push in the project that holds the record: denied (${JSON.stringify(out)})`);
+out = hook(runCommand('git push origin x', nested, [nested]), { cwd: nested });
+assert(out.decision === 'allow', `a nested project is not guarded by its parent's record (${JSON.stringify(out)})`);
+record(nested, 'hunt', 'audit-2026-10-11');
+out = hook(runCommand('git push origin x', nested, [nested]), { cwd: nested });
+assert(out.decision === 'deny' && /^HUNT-GUARDRAIL DENY: /.test(out.reason), `the nested project's own record guards it (${JSON.stringify(out)})`);
+const bound = project();
+record(bound, 'qa', 'GH-16', 'S1');
+out = hook(runCommand('git push origin x', bound, [bound]), { cwd: bound });
+assert(out.decision === 'allow', `a record bound to a session guards no Antigravity call (${JSON.stringify(out)})`);
 
 console.log('test-antigravity-guardrail: OK');
 JS

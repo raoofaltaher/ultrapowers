@@ -23,7 +23,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // The ultrapowers guardrail (hooks/qa-guardrail) before every tool call. OpenCode has no shell
 // PreToolUse hook, so the plugin runs the same hook through the bridge in hooks/lib: inert
-// without a run marker (.ultrapowers/qa-active, hunt-active or autopilot-active), a thrown error with the
+// without a run (a record in .ultrapowers/runs/, or .ultrapowers/autopilot-active), a thrown error with the
 // hook's reason when it denies. The bridge is loaded on first use: a copy of this file that
 // travels without hooks/lib still serves the bootstrap, and fails closed only during a run.
 const BRIDGE = path.resolve(__dirname, '../../hooks/lib/guardrail-bridge.mjs');
@@ -32,14 +32,30 @@ const loadBridge = () => {
   if (!bridgePromise) bridgePromise = import(pathToFileURL(BRIDGE).href).then((m) => m, () => null);
   return bridgePromise;
 };
-// The deny prefix of the run marker at or above startDir (qa, then hunt, then autopilot), or null. With
-// ULTRAPOWERS_AUTOPILOT_INSIDE=1 (a headless stage) the run is active without the marker too.
+// The deny prefix of the run that may guard a call made from startDir, or null (used only when the
+// bridge is missing): a run record (a *.json file in .ultrapowers/runs/) counts up to the nearest
+// project root, the first folder holding .agents/ultrapowers.json (whose session the record is bound to
+// is the hook's to judge); .ultrapowers/autopilot-active counts at any height. A record's prefix is read
+// from its file name (qa-<id>-<hex>.json, hunt-<id>-<hex>.json): QA unless every record is a hunt's.
+// With ULTRAPOWERS_AUTOPILOT_INSIDE=1 (a headless stage) the run is active without the marker too.
+const runRecordPrefix = (dir) => {
+  let names = [];
+  try {
+    names = fs.readdirSync(path.join(dir, '.ultrapowers', 'runs')).filter((n) => n.endsWith('.json'));
+  } catch {
+    return null;
+  }
+  if (!names.length) return null;
+  return names.every((n) => n.startsWith('hunt-')) ? 'HUNT-GUARDRAIL' : 'QA-GUARDRAIL';
+};
 const runPrefix = (startDir) => {
   let dir = path.resolve(startDir || process.cwd());
+  let pastProject = false;
   for (;;) {
-    if (fs.existsSync(path.join(dir, '.ultrapowers', 'qa-active'))) return 'QA-GUARDRAIL';
-    if (fs.existsSync(path.join(dir, '.ultrapowers', 'hunt-active'))) return 'HUNT-GUARDRAIL';
+    const record = pastProject ? null : runRecordPrefix(dir);
+    if (record) return record;
     if (fs.existsSync(path.join(dir, '.ultrapowers', 'autopilot-active'))) return 'AUTOPILOT-GUARDRAIL';
+    if (fs.existsSync(path.join(dir, '.agents', 'ultrapowers.json'))) pastProject = true;
     const parent = path.dirname(dir);
     if (parent === dir) return process.env.ULTRAPOWERS_AUTOPILOT_INSIDE === '1' ? 'AUTOPILOT-GUARDRAIL' : null;
     dir = parent;

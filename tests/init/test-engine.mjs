@@ -21,6 +21,13 @@ function tmpRepo(name = 'proj') {
   return root;
 }
 
+// A run record, .ultrapowers/runs/<run>.json, bound to no session (the harnesses without a session id).
+function writeRunRecord(root, profile, id) {
+  const run = `${profile}-${id}-0a1b2c3d`;
+  fs.mkdirSync(path.join(root, '.ultrapowers', 'runs'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.ultrapowers', 'runs', `${run}.json`), JSON.stringify({ run, profile, id, session: null, startedAt: new Date().toISOString() }));
+}
+
 function run(args, { cwd, env = {}, expectExit = 0 } = {}) {
   let stdout;
   let status = 0;
@@ -651,16 +658,31 @@ test('the Gemini project hook names the run profile and the marker when the exte
     fs.writeFileSync(path.join(root, '.ultrapowers', marker), '');
     return hookRun(root);
   };
-  const qa = withMarker('qa-active');
+  const withRecord = (profile) => {
+    const root = tmpRepo();
+    writeRunRecord(root, profile, 'T-1');
+    return hookRun(root);
+  };
+  const qa = withRecord('qa');
   assert.equal(qa.status, 2);
-  assert.match(qa.stderr, /^QA-GUARDRAIL DENY: .*\.ultrapowers[\\/]qa-active/);
-  const hunt = withMarker('hunt-active');
+  assert.match(qa.stderr, /^QA-GUARDRAIL DENY: .*\.ultrapowers[\\/]runs[\\/]qa-T-1-/);
+  const hunt = withRecord('hunt');
   assert.equal(hunt.status, 2);
-  assert.match(hunt.stderr, /^HUNT-GUARDRAIL DENY: .*\.ultrapowers[\\/]hunt-active/);
+  assert.match(hunt.stderr, /^HUNT-GUARDRAIL DENY: .*\.ultrapowers[\\/]runs[\\/]hunt-T-1-/);
   const auto = withMarker('autopilot-active');
   assert.equal(auto.status, 2);
   assert.match(auto.stderr, /^AUTOPILOT-GUARDRAIL DENY: .*\.ultrapowers[\\/]autopilot-active/);
   assert.equal(hookRun(tmpRepo()).status, 0);
+  // a record in a parent project does not guard a nested project of its own; the autopilot marker does
+  const parent = tmpRepo();
+  writeRunRecord(parent, 'qa', 'T-1');
+  const nested = path.join(parent, 'repo-a');
+  fs.mkdirSync(path.join(nested, '.agents'), { recursive: true });
+  fs.writeFileSync(path.join(nested, '.agents', 'ultrapowers.json'), '{}');
+  assert.equal(hookRun(parent).status, 2);
+  assert.equal(hookRun(nested).status, 0, 'a record of the parent project does not reach a nested project');
+  fs.writeFileSync(path.join(parent, '.ultrapowers', 'autopilot-active'), '');
+  assert.equal(hookRun(nested).status, 2, 'the autopilot marker counts at any height');
 });
 
 // ---- the Gemini guardrail launcher (templates/.gemini/hooks/ultrapowers-guardrail.mjs.tmpl) ----
@@ -698,10 +720,9 @@ test('Gemini launcher: ULTRAPOWERS_AUTOPILOT_INSIDE=1 keeps the envelope without
   assert.equal(geminiLaunch(push, {}).status, 0, 'the extension missing outside a run: inert');
 });
 
-test('Gemini launcher: a hunt marker is judged by the hook with the HUNT prefix', () => {
+test('Gemini launcher: a hunt record is judged by the hook with the HUNT prefix', () => {
   const root = geminiProject();
-  fs.mkdirSync(path.join(root, '.ultrapowers'), { recursive: true });
-  fs.writeFileSync(path.join(root, '.ultrapowers', 'hunt-active'), 'audit-2026-10-11\n');
+  writeRunRecord(root, 'hunt', 'audit-2026-10-11');
   const call = (command) => ({ hook_event_name: 'BeforeTool', tool_name: 'run_shell_command', tool_input: { command }, cwd: root });
   const denied = geminiLaunch(call('git push origin x'), { pluginRoot: repoRoot });
   assert.equal(denied.status, 2, denied.stderr);

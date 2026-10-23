@@ -2,7 +2,7 @@
 // Written by ultrapowers init. Gemini CLI runs this as the project's BeforeTool hook
 // (.gemini/settings.json): it hands the tool event to the ultrapowers guardrail of the installed
 // extension, so a QA run or an autopilot stage has the same envelope here as on the other
-// harnesses. Inert without a run marker. Set ULTRAPOWERS_PLUGIN_ROOT when the extension lives
+// harnesses. Inert without a run (a record in .ultrapowers/runs/ or .ultrapowers/autopilot-active). Set ULTRAPOWERS_PLUGIN_ROOT when the extension lives
 // somewhere other than ~/.gemini/extensions/ultrapowers.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -19,18 +19,29 @@ try {
   input = '';
 }
 
-// The run marker at or above start (qa, then hunt, then autopilot): its deny prefix and path, or null.
-// With ULTRAPOWERS_AUTOPILOT_INSIDE=1 (a headless stage) and no marker, the run is an autopilot
-// stage all the same (marker null), as in the hook.
+// The run that may guard a call made from start: its deny prefix and path, or null. A run record (a
+// *.json file in .ultrapowers/runs/) counts up to the nearest project root, the first folder holding
+// .agents/ultrapowers.json (the guardrail judges whose run it is); .ultrapowers/autopilot-active counts
+// at any height. A record's prefix is read from its file name (qa-<id>-<hex>.json, hunt-<id>-<hex>.json):
+// QA unless every record is a hunt's. With ULTRAPOWERS_AUTOPILOT_INSIDE=1 (a headless stage) and no
+// marker, the run is an autopilot stage all the same (marker null), as in the hook.
 function runActive(start) {
   let dir = path.resolve(start || process.cwd());
+  let pastProject = false;
   for (;;) {
-    const qa = path.join(dir, '.ultrapowers', 'qa-active');
-    if (fs.existsSync(qa)) return { prefix: 'QA-GUARDRAIL', marker: qa };
-    const hunt = path.join(dir, '.ultrapowers', 'hunt-active');
-    if (fs.existsSync(hunt)) return { prefix: 'HUNT-GUARDRAIL', marker: hunt };
+    if (!pastProject) {
+      const runs = path.join(dir, '.ultrapowers', 'runs');
+      let records = [];
+      try {
+        records = fs.readdirSync(runs).filter((n) => n.endsWith('.json'));
+      } catch {
+        records = [];
+      }
+      if (records.length) return { prefix: records.every((n) => n.startsWith('hunt-')) ? 'HUNT-GUARDRAIL' : 'QA-GUARDRAIL', marker: path.join(runs, records[0]) };
+    }
     const autopilot = path.join(dir, '.ultrapowers', 'autopilot-active');
     if (fs.existsSync(autopilot)) return { prefix: 'AUTOPILOT-GUARDRAIL', marker: autopilot };
+    if (fs.existsSync(path.join(dir, '.agents', 'ultrapowers.json'))) pastProject = true;
     const parent = path.dirname(dir);
     if (parent === dir) return process.env.ULTRAPOWERS_AUTOPILOT_INSIDE === '1' ? { prefix: 'AUTOPILOT-GUARDRAIL', marker: null } : null;
     dir = parent;

@@ -226,7 +226,42 @@ test('the extension runs the ultrapowers guardrail before a tool call while a ru
 
   const idle = mkdtempSync(join(tmpdir(), 'pi-idle-'));
   const inert = await toolCall({ type: 'tool_call', toolCallId: '4', toolName: 'bash', input: { command: 'git push origin main' } }, { cwd: idle });
-  assert.equal(inert, undefined, 'no run marker: nothing is checked');
+  assert.equal(inert, undefined, 'no run: nothing is checked');
+});
+
+// A run record, .ultrapowers/runs/<run>.json, bound to no session unless one is named (Pi names no
+// session, so a record bound to one never guards its calls).
+function writeRecord(root, profile, id, session = null) {
+  const run = `${profile}-${id}-0a1b2c3d`;
+  mkdirSync(join(root, '.ultrapowers', 'runs'), { recursive: true });
+  writeFileSync(join(root, '.ultrapowers', 'runs', `${run}.json`), JSON.stringify({ run, profile, id, session, startedAt: new Date().toISOString() }));
+}
+
+test('a run record in a parent project does not guard a nested project, and a record bound to a session guards no Pi call', async () => {
+  const { handlers } = await loadExtension();
+  const toolCall = firstHandler(handlers, 'tool_call');
+  const root = mkdtempSync(join(tmpdir(), 'pi-nested-'));
+  mkdirSync(join(root, '.agents'), { recursive: true });
+  writeFileSync(join(root, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'p', autopilot: { mode: 'gated' } }));
+  writeRecord(root, 'qa', 'GH-16');
+  const nested = join(root, 'repo-a');
+  mkdirSync(join(nested, '.agents'), { recursive: true });
+  writeFileSync(join(nested, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'nested' }));
+  const push = { type: 'tool_call', toolCallId: 'n1', toolName: 'bash', input: { command: 'git push origin x' } };
+  const own = await toolCall(push, { cwd: root });
+  assert.equal(own?.block, true, 'the record guards its own project');
+  assert.match(own.reason, /^QA-GUARDRAIL DENY: /);
+  assert.equal(await toolCall({ ...push, toolCallId: 'n2' }, { cwd: nested }), undefined, 'the nested project has its own root: the parent record does not reach it');
+  writeRecord(nested, 'hunt', 'audit-2026-10-11');
+  const nestedOwn = await toolCall({ ...push, toolCallId: 'n3' }, { cwd: nested });
+  assert.equal(nestedOwn?.block, true);
+  assert.match(nestedOwn.reason, /^HUNT-GUARDRAIL DENY: /);
+
+  const bound = mkdtempSync(join(tmpdir(), 'pi-session-'));
+  mkdirSync(join(bound, '.agents'), { recursive: true });
+  writeFileSync(join(bound, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'p' }));
+  writeRecord(bound, 'qa', 'GH-16', 'S1');
+  assert.equal(await toolCall({ ...push, toolCallId: 'n4' }, { cwd: bound }), undefined, 'a record bound to a session guards no call of a harness that names none');
 });
 
 test('the extension runs the guardrail of a vulnerability hunt with the HUNT prefix', async () => {
@@ -234,9 +269,8 @@ test('the extension runs the guardrail of a vulnerability hunt with the HUNT pre
   const toolCall = firstHandler(handlers, 'tool_call');
   const root = mkdtempSync(join(tmpdir(), 'pi-hunt-'));
   mkdirSync(join(root, '.agents'), { recursive: true });
-  mkdirSync(join(root, '.ultrapowers'), { recursive: true });
   writeFileSync(join(root, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'p', autopilot: { mode: 'gated' } }));
-  writeFileSync(join(root, '.ultrapowers', 'hunt-active'), 'audit-2026-10-11\n');
+  writeRecord(root, 'hunt', 'audit-2026-10-11');
 
   const denied = await toolCall({ type: 'tool_call', toolCallId: 'h1', toolName: 'bash', input: { command: 'git push origin x' } }, { cwd: root });
   assert.equal(denied?.block, true);

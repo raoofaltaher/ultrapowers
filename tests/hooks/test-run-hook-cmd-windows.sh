@@ -221,12 +221,24 @@ fi
 # --- no usable bash: the guardrail fails closed while a run is active (issue 12) ---
 # Every other hook keeps exiting 0 (above); qa-guardrail is the brake of a QA run, a hunt or an autopilot
 # stage, and a brake that silently vanishes is worse than a refused call.
+# A run is a record, <project root>/.ultrapowers/runs/<run>.json (bound to no session here).
+write_record() {
+    # $1 project dir, $2 profile (qa|hunt), $3 ticket or audit id
+    mkdir -p "$1/.agents" "$1/.ultrapowers/runs"
+    [[ -e "$1/.agents/ultrapowers.json" ]] || printf '{}\n' > "$1/.agents/ultrapowers.json"
+    printf '{ "run": "%s-%s-0a1b2c3d", "profile": "%s", "id": "%s", "session": null, "startedAt": "%s" }\n' \
+        "$2" "$3" "$2" "$3" "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" > "$1/.ultrapowers/runs/$2-$3-0a1b2c3d.json"
+}
 qa_proj="$TEST_ROOT/qa-project"
-mkdir -p "$qa_proj/.ultrapowers" "$qa_proj/sub/deeper"
-printf '1234' > "$qa_proj/.ultrapowers/qa-active"
+mkdir -p "$qa_proj/sub/deeper"
+write_record "$qa_proj" qa GH-16
 hunt_proj="$TEST_ROOT/hunt-project"
-mkdir -p "$hunt_proj/.ultrapowers" "$hunt_proj/sub"
-printf 'audit-2026-10-11' > "$hunt_proj/.ultrapowers/hunt-active"
+mkdir -p "$hunt_proj/sub"
+write_record "$hunt_proj" hunt audit-2026-10-11
+# A project of its own inside a project that holds a record: the record does not reach it.
+nested_proj="$qa_proj/nested-project"
+mkdir -p "$nested_proj/.agents" "$nested_proj/sub"
+printf '{}\n' > "$nested_proj/.agents/ultrapowers.json"
 ap_proj="$TEST_ROOT/ap-project"
 mkdir -p "$ap_proj/.ultrapowers" "$ap_proj/sub"
 printf '{"ticket":"GH-16"}' > "$ap_proj/.ultrapowers/autopilot-active"
@@ -244,16 +256,30 @@ printf 'echo probe-ran
 ' > "$sandbox/hooks/qa-guardrail"
 run_nobash "$qa_proj/sub/deeper" qa-guardrail
 if [[ "$RC" -eq 2 && "$OUT" == *"QA-GUARDRAIL DENY: no bash found"* ]]; then
-    pass "no bash and a QA marker above the cwd: qa-guardrail exits 2 with the QA deny"
+    pass "no bash and a QA run record above the cwd: qa-guardrail exits 2 with the QA deny"
 else
-    fail "no bash and a QA marker above the cwd: qa-guardrail exits 2 with the QA deny (rc=$RC, out=$OUT)"
+    fail "no bash and a QA run record above the cwd: qa-guardrail exits 2 with the QA deny (rc=$RC, out=$OUT)"
 fi
 run_nobash "$hunt_proj/sub" qa-guardrail
-if [[ "$RC" -eq 2 && "$OUT" == *"HUNT-GUARDRAIL DENY: no bash found"* ]]; then
-    pass "no bash and a hunt marker: qa-guardrail exits 2 with the hunt deny"
+if [[ "$RC" -eq 2 && "$OUT" == *"QA-GUARDRAIL DENY: no bash found"* && "$OUT" == *"vulnerability hunt"* ]]; then
+    pass "no bash and a hunt run record: qa-guardrail exits 2 with the shared QA label (the wrapper cannot ask the hook which profile)"
 else
-    fail "no bash and a hunt marker: qa-guardrail exits 2 with the hunt deny (rc=$RC, out=$OUT)"
+    fail "no bash and a hunt run record: qa-guardrail exits 2 with the shared QA label (rc=$RC, out=$OUT)"
 fi
+run_nobash "$nested_proj/sub" qa-guardrail
+if [[ "$RC" -eq 0 && -z "$OUT" ]]; then
+    pass "no bash and a run record in a parent project: a nested project of its own is not guarded"
+else
+    fail "no bash and a run record in a parent project: a nested project of its own is not guarded (rc=$RC, out=$OUT)"
+fi
+printf '{"ticket":"GH-16"}' > "$qa_proj/.ultrapowers/autopilot-active"
+run_nobash "$nested_proj/sub" qa-guardrail
+if [[ "$RC" -eq 2 && "$OUT" == *"AUTOPILOT-GUARDRAIL DENY: no bash found"* ]]; then
+    pass "no bash and the autopilot marker of a parent project: a nested project is guarded (the marker counts at any height)"
+else
+    fail "no bash and the autopilot marker of a parent project: a nested project is guarded (rc=$RC, out=$OUT)"
+fi
+rm -f "$qa_proj/.ultrapowers/autopilot-active"
 run_nobash "$ap_proj/sub" qa-guardrail
 if [[ "$RC" -eq 2 && "$OUT" == *"AUTOPILOT-GUARDRAIL DENY: no bash found"* ]]; then
     pass "no bash and an autopilot marker: qa-guardrail exits 2 with the autopilot deny"
@@ -268,15 +294,15 @@ else
 fi
 run_nobash "$idle_proj/sub" qa-guardrail
 if [[ "$RC" -eq 0 && -z "$OUT" ]]; then
-    pass "no bash and no run marker: qa-guardrail still exits 0 with no output"
+    pass "no bash and no run: qa-guardrail still exits 0 with no output"
 else
-    fail "no bash and no run marker: qa-guardrail still exits 0 with no output (rc=$RC, out=$OUT)"
+    fail "no bash and no run: qa-guardrail still exits 0 with no output (rc=$RC, out=$OUT)"
 fi
 run_nobash "$qa_proj" probe-ok
 if [[ "$RC" -eq 0 && -z "$OUT" ]]; then
-    pass "no bash and a QA marker: every other hook still exits 0 with no output"
+    pass "no bash and a QA run record: every other hook still exits 0 with no output"
 else
-    fail "no bash and a QA marker: every other hook still exits 0 with no output (rc=$RC, out=$OUT)"
+    fail "no bash and a QA run record: every other hook still exits 0 with no output (rc=$RC, out=$OUT)"
 fi
 
 if [[ "$FAILURES" -gt 0 ]]; then

@@ -1,6 +1,6 @@
 // The OpenCode plugin runs the ultrapowers guardrail before every tool call while a run is
 // active (tool.execute.before): a denied call throws with the hook's reason, an allowed one
-// returns, and without a run marker nothing is spawned.
+// returns, and without a run (a run record or the autopilot marker) nothing is spawned.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -55,10 +55,18 @@ await assert.rejects(
   'the workdir is a marker candidate too',
 );
 
-// A vulnerability hunt (.ultrapowers/hunt-active): a push is refused with the HUNT prefix, an audit
-// passes, a source write is refused.
+// A run record (.ultrapowers/runs/<run>.json), bound to no session unless one is named: OpenCode
+// names no session, so a record bound to one never guards its calls.
+function record(root, profile, id, session = null) {
+  const run = `${profile}-${id}-0a1b2c3d`;
+  fs.mkdirSync(path.join(root, '.ultrapowers', 'runs'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.ultrapowers', 'runs', `${run}.json`), JSON.stringify({ run, profile, id, session, startedAt: new Date().toISOString() }));
+}
+
+// A vulnerability hunt (a hunt record): a push is refused with the HUNT prefix, an audit passes, a
+// source write is refused.
 const hunt = project(false);
-fs.writeFileSync(path.join(hunt, '.ultrapowers', 'hunt-active'), 'audit-2026-10-11\n');
+record(hunt, 'hunt', 'audit-2026-10-11');
 const huntHooks = await mod.UltrapowersPlugin({ client: null, directory: hunt });
 await assert.rejects(
   huntHooks['tool.execute.before']({ tool: 'bash', sessionID: 's3', callID: 'h1' }, { args: { command: 'git push origin x' } }),
@@ -71,6 +79,34 @@ await assert.rejects(
   /HUNT-GUARDRAIL DENY: /,
   'a source write during a hunt is refused',
 );
+
+// A record in a parent project does not guard a nested project (a folder with its own
+// .agents/ultrapowers.json); the nested project's own record does.
+const parent = project(false);
+record(parent, 'qa', 'GH-16');
+const nested = path.join(parent, 'repo-a');
+fs.mkdirSync(path.join(nested, '.agents'), { recursive: true });
+fs.writeFileSync(path.join(nested, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'nested' }));
+const parentHooks = await mod.UltrapowersPlugin({ client: null, directory: parent });
+await assert.rejects(
+  parentHooks['tool.execute.before']({ tool: 'bash', sessionID: 's6', callID: 'n1' }, { args: { command: 'git push origin x' } }),
+  /^Error: QA-GUARDRAIL DENY: /,
+  'the record guards its own project',
+);
+const nestedHooks = await mod.UltrapowersPlugin({ client: null, directory: nested });
+await nestedHooks['tool.execute.before']({ tool: 'bash', sessionID: 's6', callID: 'n2' }, { args: { command: 'git push origin x' } });
+record(nested, 'hunt', 'audit-2026-10-11');
+await assert.rejects(
+  nestedHooks['tool.execute.before']({ tool: 'bash', sessionID: 's6', callID: 'n3' }, { args: { command: 'git push origin x' } }),
+  /^Error: HUNT-GUARDRAIL DENY: /,
+  'the nested project\'s own record guards it',
+);
+
+// A record bound to a session guards no OpenCode call: the plugin names no session.
+const bound = project(false);
+record(bound, 'qa', 'GH-16', 'S1');
+const boundHooks = await mod.UltrapowersPlugin({ client: null, directory: bound });
+await boundHooks['tool.execute.before']({ tool: 'bash', sessionID: 's7', callID: 'b1' }, { args: { command: 'git push origin x' } });
 
 // A headless stage (ULTRAPOWERS_AUTOPILOT_INSIDE=1) is guarded even when the marker is gone.
 process.env.ULTRAPOWERS_AUTOPILOT_INSIDE = '1';

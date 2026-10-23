@@ -49,15 +49,18 @@ REM exit code.
 "%BASH_EXE%" "%HOOK_DIR%%~1" %2 %3 %4 %5 %6 %7 %8 %9
 exit /b %ERRORLEVEL%
 
-REM Fail closed for the guardrail: walk up from the working directory looking for a run marker
-REM (the QA marker first, then the hunt marker, as in the hook), then the watcher stage's environment
-REM flag. The hunt shares the QA label: no label of its own to find, only its message.
+REM Fail closed for the guardrail: walk up from the working directory looking for a run record
+REM (.ultrapowers\runs\*.json, counted only up to the nearest project root, the first folder holding
+REM .agents\ultrapowers.json) and for the autopilot marker (at any height), then the watcher stage's
+REM environment flag. Without bash the hook cannot be asked which profile or session a record
+REM belongs to, so any record denies, under the QA label (a hunt shares it).
 :guard_closed
 set "GUARD_DIR=%CD%"
+set "GUARD_PAST="
 :guard_walk
-if exist "%GUARD_DIR%\.ultrapowers\qa-active" goto :guard_qa
-if exist "%GUARD_DIR%\.ultrapowers\hunt-active" set "GUARD_MSG=HUNT-GUARDRAIL DENY: no bash found; a tool call during a vulnerability hunt" & goto :guard_qa
+if not defined GUARD_PAST if exist "%GUARD_DIR%\.ultrapowers\runs\*.json" goto :guard_qa
 if exist "%GUARD_DIR%\.ultrapowers\autopilot-active" goto :guard_autopilot
+if exist "%GUARD_DIR%\.agents\ultrapowers.json" set "GUARD_PAST=1"
 set "GUARD_PARENT="
 for %%P in ("%GUARD_DIR%\..") do set "GUARD_PARENT=%%~fP"
 if not defined GUARD_PARENT goto :guard_none
@@ -68,8 +71,7 @@ goto :guard_walk
 if "%ULTRAPOWERS_AUTOPILOT_INSIDE%"=="1" goto :guard_autopilot
 exit /b 0
 :guard_qa
-if not defined GUARD_MSG set "GUARD_MSG=QA-GUARDRAIL DENY: no bash found; a tool call during a QA run"
-echo %GUARD_MSG% is refused without the guardrail 1>&2
+echo QA-GUARDRAIL DENY: no bash found; a tool call during a QA run or a vulnerability hunt is refused without the guardrail 1>&2
 exit /b 2
 :guard_autopilot
 echo AUTOPILOT-GUARDRAIL DENY: no bash found; a tool call during an autopilot stage is refused without the guardrail 1>&2
