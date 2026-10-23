@@ -576,8 +576,10 @@ test('not researched subjects are listed with their reason', () => {
   assert.match(r.markdown, /Not researched: @acme-internal\/billing \(private\)/);
 });
 
-test('an unknown research status is refused', () => {
-  assert.throws(() => decideSecurity([withResearch(research([adv('critical', true, 'maybe')]))]), /unknown research status/);
+test('an unknown research status never stops the review: the row is unverified and does not count', () => {
+  const s = decideSecurity([withResearch(research([adv('critical', true, 'maybe')]))]);
+  assert.equal(s.verdict, 'PASS');
+  assert.equal(s.counts.researchRuntimeCritical, 0);
 });
 
 // GH-59 review: research rows must never crash the review, and a downgraded row never counts.
@@ -605,4 +607,17 @@ test('the spaced status spelling "does not apply" is accepted', () => {
 
 test('a row the verifier downgraded changes nothing, even when its status still says applies', () => {
   assert.equal(runResearch(withResearch(research([adv('critical', true, 'applies', { verification: 'downgraded' })]))).verdict, 'PASS');
+});
+
+// GH-59 task-review findings 4 and 5: no research row stops the review; the summary counts research.
+test('an unknown research status becomes unverified with a reason, and an unknown verification becomes not verified', () => {
+  const r = runResearch(withResearch(research([adv('critical', true, 'not applicable', { verification: 'verified' })])));
+  assert.equal(r.verdict, 'PASS');
+  assert.match(r.markdown, /\| unverified \| not verified \|/);
+  assert.match(r.markdown, /status "not applicable" is not one of applies, does-not-apply, unverified/);
+});
+
+test('the Summary security counts name the advisories from research that apply', () => {
+  const r = runResearch(withResearch(research([adv('critical', true, 'applies')])));
+  assert.match(r.markdown, /security: FAIL \([^)]*1 critical or high advisory from research in a runtime/);
 });

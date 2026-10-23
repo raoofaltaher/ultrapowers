@@ -124,12 +124,20 @@ function normalizeResearch(raw, cves) {
   const inTable = new Set(cves.map((c) => key(c.advisory)).filter(Boolean));
   const advisories = (Array.isArray(raw.advisories) ? raw.advisories : []).map((a) => {
     const subject = String(a?.subject ?? '(unnamed)');
+    // A word the scale does not know never stops the review: the row shows as unverified (or not
+    // verified) with the reason, and never counts.
     let status = key(a?.status).replace(/\s+/g, '-');
-    if (!RESEARCH_STATUSES.includes(status)) throw new Error(`advisory from research for ${JSON.stringify(subject)} has an unknown research status ${JSON.stringify(a?.status)} (one of ${RESEARCH_STATUSES.join(', ')})`);
-    const verification = key(a?.verification).replace(/\s+/g, '-') || 'not-verified';
-    if (!RESEARCH_VERIFICATIONS.includes(verification)) throw new Error(`advisory from research for ${JSON.stringify(subject)} has an unknown verification ${JSON.stringify(a?.verification)} (one of ${RESEARCH_VERIFICATIONS.join(', ')})`);
-    const severity = RESEARCH_SEVERITY[key(a?.severity)] ?? 'unknown';
     let reason = String(a?.reason ?? '');
+    if (!RESEARCH_STATUSES.includes(status)) {
+      reason = `${reason ? `${reason}; ` : ''}status ${JSON.stringify(String(a?.status ?? ''))} is not one of ${RESEARCH_STATUSES.join(', ')}`;
+      status = 'unverified';
+    }
+    let verification = key(a?.verification).replace(/\s+/g, '-') || 'not-verified';
+    if (!RESEARCH_VERIFICATIONS.includes(verification)) {
+      reason = `${reason ? `${reason}; ` : ''}verification ${JSON.stringify(String(a?.verification ?? ''))} is not one of ${RESEARCH_VERIFICATIONS.join(', ')}`;
+      verification = 'not-verified';
+    }
+    const severity = RESEARCH_SEVERITY[key(a?.severity)] ?? 'unknown';
     if (severity === 'unknown' && status === 'applies') {
       status = 'unverified';
       reason = `${reason ? `${reason}; ` : ''}severity ${JSON.stringify(String(a?.severity ?? ''))} is not on the scale`;
@@ -362,6 +370,11 @@ function researchSection(research) {
       out.push(`| ${cell(a.subject)} | ${cell(a.version)} | ${cell(a.advisory)} | ${a.severity} | ${cell(a.affectedRange)} | ${cell(a.fixedIn)} | ${a.runtime ? 'runtime' : 'test only'} | ${status} | ${cell(verification)} | ${cell(source)} |`);
     }
     out.push('');
+    // Why a row does not count, in a line of its own: the table has no room for a reason.
+    for (const a of research.advisories) {
+      if (a.status === 'unverified' && a.reason) out.push(`Unverified: ${a.subject} ${a.version}${a.advisory ? `, ${a.advisory}` : ''}: ${a.reason}`);
+    }
+    if (research.advisories.some((a) => a.status === 'unverified' && a.reason)) out.push('');
   } else if (research.status === 'checked') out.push('No advisory found.', '');
   for (const n of research.notResearched) out.push(`Not researched: ${n.subject} (${n.reason})`);
   if (research.notResearched.length) out.push('');
@@ -432,7 +445,11 @@ function huntSection(id, hunted, sec, securityReport) {
 function securitySummary(sec) {
   if (!sec) return 'security: no vulnerability hunt';
   const c = sec.counts;
-  return `security: ${sec.verdict} (${c.high} High, ${c.medium} Medium and ${c.low} Low findings; ${plural(c.cves, 'CVE')}, ${c.cvesRuntimeCritical} critical or high in a runtime dependency)`;
+  const research = c.researchRuntimeCritical + c.researchRuntimeModerate + c.researchTestOnlyCritical;
+  const researchPart = research > 0
+    ? `; ${research} ${research === 1 ? 'advisory' : 'advisories'} from research that ${research === 1 ? 'applies' : 'apply'}, ${c.researchRuntimeCritical} critical or high advisory from research in a runtime`
+    : '';
+  return `security: ${sec.verdict} (${c.high} High, ${c.medium} Medium and ${c.low} Low findings; ${plural(c.cves, 'CVE')}, ${c.cvesRuntimeCritical} critical or high in a runtime dependency${researchPart})`;
 }
 
 function findingBlock(n, f) {
