@@ -22,7 +22,8 @@ PRODUCTS='WebFetch|WebSearch|web_fetch|web_search|google_web_search|Firecrawl|fi
 BRAIN="skills/brainstorming/SKILL.md"
 TASK="skills/brainstorm-task/SKILL.md"
 PLANS="skills/writing-plans/SKILL.md"
-NO_PRODUCT_FILES=("$SOURCES" "$BRAIN" "$TASK" "$PLANS")
+HUNT_FILES=("agents/vulnerability-hunter.md" "skills/vulnerability-hunt/SKILL.md" "skills/vulnerability-hunt/prompts/research.md" "skills/vulnerability-hunt/prompts/verifier.md" "skills/vulnerability-hunt/templates/SECURITY-REPORT.md")
+NO_PRODUCT_FILES=("$SOURCES" "$BRAIN" "$TASK" "$PLANS" "${HUNT_FILES[@]}")
 
 echo "=== Test: current-source research ==="
 
