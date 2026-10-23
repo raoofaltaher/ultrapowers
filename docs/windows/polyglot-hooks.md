@@ -156,7 +156,7 @@ escape_for_json() {
 
 ### "bash is not recognized"
 
-CMD couldn't find bash in any of the four locations the dispatcher tries. The dispatcher exits silently (0) rather than erroring, so the hook is skipped (the guardrail instead exits 2 while a run marker exists). Install Git for Windows (system-wide or per-user) or ensure a non-WSL `bash` is on `PATH`.
+CMD couldn't find bash in any of the four locations the dispatcher tries. The dispatcher exits silently (0) rather than erroring, so the hook is skipped (the guardrail instead exits 2 while a run record or the autopilot marker exists). Install Git for Windows (system-wide or per-user) or ensure a non-WSL `bash` is on `PATH`.
 
 ### Hook runs on Unix but does nothing on Windows
 

@@ -319,11 +319,14 @@ async function collaboratorMessages(root, marker, resolution, messages) {
 
 // Every HTML comment, closed or not (an unclosed one runs to the end of the text), with the number
 // removed. Browsers end a comment at "-->" or "--!>"; the pass repeats so that removing one cannot
-// join the pieces around it into another.
+// join the pieces around it into another. Each pass costs the length of the text and a crafted body
+// needs one pass per layer, so the passes are capped: a text that has not settled by then is withheld
+// whole and counted as one.
+const MAX_STRIP_PASSES = 50;
 export function stripHtmlComments(text) {
   let out = String(text ?? '');
   let count = 0;
-  for (;;) {
+  for (let pass = 0; pass <= MAX_STRIP_PASSES; pass += 1) {
     const next = out.replace(/<!--[\s\S]*?(?:--!?>|$)/g, () => {
       count += 1;
       return '';
@@ -331,6 +334,7 @@ export function stripHtmlComments(text) {
     if (next === out) return { text: out, count };
     out = next;
   }
+  return { text: '(body withheld: unbalanced HTML comments)', count: 1 };
 }
 
 // In the autopilot form the person who added the ready label sees the rendered ticket, where an HTML
@@ -343,8 +347,10 @@ function commentStripper(ctx) {
   return (text) => stripHtmlComments(text);
 }
 
-function hideComments(ctx, ticket, messages, bodyCount = 0) {
-  const strip = commentStripper(ctx);
+// stripped: the caller removed the comments from the HTML before it became text (Odoo), so the text is
+// not stripped again; a comment the approver can read as text is not a hidden one.
+function hideComments(ctx, ticket, messages, bodyCount = 0, stripped = false) {
+  const strip = stripped && commentStripper(ctx) ? (text) => ({ text, count: 0 }) : commentStripper(ctx);
   if (!strip) return messages;
   let removed = bodyCount;
   const body = strip(ticket.body);
@@ -455,7 +461,7 @@ async function fetchOdoo(resolution, ctx) {
       via: 'rpc',
       attachments: files.map((f) => ({ id: f.id, name: f.name, mimetype: f.mimetype ?? null, size: f.file_size ?? null, url: addressOf(f) })),
     };
-    return withReads(ticket, hideComments(ctx, ticket, await filterMessages(ctx, resolution, messages), description.count));
+    return withReads(ticket, hideComments(ctx, ticket, await filterMessages(ctx, resolution, messages), description.count, true));
   } catch (err) {
     throw fetchErrorFrom(err);
   }

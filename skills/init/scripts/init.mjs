@@ -1509,7 +1509,7 @@ export async function runTickets(opts) {
       host: source.provider === 'github' ? 'github.com' : (source.host ?? 'gitlab.com'),
       transport: effectiveTransport(tickets, source),
       login: source.login ?? null,
-    });
+    }, opts.root);
   }
   const clones = detectRepos(opts.root);
   report.proposedProjects = Object.fromEntries((tickets?.sources ?? [])

@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { linkFetchable } from '../../skills/new-task/scripts/fetch-ticket.mjs';
+import { linkFetchable, stripHtmlComments } from '../../skills/new-task/scripts/fetch-ticket.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.resolve(HERE, '../../skills/new-task/scripts/fetch-ticket.mjs');
@@ -750,6 +750,30 @@ test('autopilot form: an Odoo description comment does not survive the conversio
   const manual = run(odooProject(url), ['fetch', 'ODOO-34-13627'], { ODOO_API_KEY: 'k1' });
   assert.equal(manual.code, 0, manual.stdout + manual.stderr);
   assert.doesNotMatch(manual.json.body, NOTE);
+});
+
+test('autopilot form: an Odoo description that shows a comment as text keeps it and counts nothing', async () => {
+  const { url } = await startOdoo({ setup: { taskDescription: '<p>before &lt;!-- visible --&gt; after</p>' } });
+  const root = odooProject(url);
+  markAutopilot(root);
+  const auto = run(root, ['fetch', 'ODOO-34-13627'], { ODOO_API_KEY: 'k1' });
+  assert.equal(auto.code, 0, auto.stdout + auto.stderr);
+  assert.match(auto.json.body, /before <!-- visible --> after/);
+  assert.doesNotMatch(auto.json.body, /hidden HTML comment/, 'a comment the approver can read is not hidden');
+});
+
+test('stripHtmlComments: layers of comments that rebuild one another are capped, not walked one by one', () => {
+  const layered = (n) => '<!'.repeat(n) + '<!-- x -->' + '-- y -->'.repeat(n);
+  const small = stripHtmlComments(layered(60));
+  assert.ok(small.text === '(body withheld: unbalanced HTML comments)' ? small.count === 1 : !small.text.includes('<!--'), small.text);
+  // A 65 KB body of 6,000 layers needs 6,000 passes without the cap.
+  const big = layered(6000);
+  assert.ok(big.length > 60000);
+  const started = Date.now();
+  const out = stripHtmlComments(big);
+  assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms`);
+  assert.deepEqual(out, { text: '(body withheld: unbalanced HTML comments)', count: 1 });
+  assert.deepEqual(stripHtmlComments('a <!-- b --> c'), { text: 'a  c', count: 1 });
 });
 
 // M10: gh and glab are started by an absolute path from a PATH entry outside the project, never by name.

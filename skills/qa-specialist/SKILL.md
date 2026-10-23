@@ -102,7 +102,7 @@ node "<plugin root>/hooks/lib/run-records.mjs" start --root "<ROOT>" --profile q
 It prints the record as JSON: keep its `run` (`<RUN>` below). Exit 2 with `run-active` means a QA
 run of this ticket started since the preflight: stop, as in Step 3. From here the guardrail
 checks every tool call of this run (the record binds to this session where the harness names it,
-otherwise to the project folder) on a harness that runs it; Step 4's probe records whether it is
+otherwise to the project folder) on a harness that runs it; the contract's STEP 4 probe records whether it is
 active, and the report says so. Every path ends in Step 7.
 
 ## Step 5: The contract
@@ -139,7 +139,8 @@ test -f "<ROOT>/reviews/<ID>/QA-REPORT.md" && echo report-present; test -e "<ROO
   under `<ROOT>/.ultrapowers/` where they exist, then end the run, the last step after the report:
   `node "<plugin root>/hooks/lib/run-records.mjs" end --root "<ROOT>" --run "<RUN>"`. It removes
   the record once the report holds a `Verdict:` line (an `INCOMPLETE` or `PRECONDITION-FAILED`
-  report has one). Never remove the record any other way: the guardrail refuses it.
+  report has one). If `end` reports `no-verdict`, the report lacks its `Verdict:` line: add it,
+  then run `end` again. Never remove the record any other way: the guardrail refuses it.
 - The last line of your output is exactly `Verdict: <value> — reviews/<ID>/QA-REPORT.md`, with
   the value from the report's `Verdict:` line.
 

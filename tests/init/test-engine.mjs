@@ -758,3 +758,27 @@ test('Gemini launcher: a run_shell_command dir_path outside the project root is 
   const allowed = geminiLaunch(call('.agents', 'git status'), { pluginRoot: repoRoot });
   assert.equal(allowed.status, 0, allowed.stderr);
 });
+
+// runTickets forwards --root to the transport check, so a gh planted in the project is not started
+// even when the engine runs from another working directory (the planted copy of node answers
+// "signed in" and records that it ran).
+test('tickets does not start a gh planted under --root when the engine runs elsewhere', () => {
+  const root = tmpRepo();
+  run(['scaffold', '--root', root, '--name', 'Demo', '--date', '2026-09-30', '--platform', 'linux'], { env: { CONTEXT7_API_KEY: '' } });
+  const side = fs.mkdtempSync(path.join(os.tmpdir(), 'ultrapowers-tickets-plant-'));
+  const marker = path.join(side, 'ran.txt').replace(/\\/g, '/');
+  const hook = path.join(side, 'plant-hook.cjs').replace(/\\/g, '/');
+  fs.writeFileSync(hook, "const p=require('path');if(/^gh(\\.exe)?$/i.test(p.basename(process.execPath))){require('fs').appendFileSync(process.env.PLANT_MARKER,'ran\\n');process.exit(0);}\n");
+  fs.copyFileSync(process.execPath, path.join(root, process.platform === 'win32' ? 'gh.exe' : 'gh'));
+  const sources = path.join(side, 'sources.json');
+  fs.writeFileSync(sources, JSON.stringify({ transport: 'auto', sources: [{ prefix: 'GH', provider: 'github', owner: 'acme' }] }));
+  const pathKey = Object.keys(process.env).find((k) => k.toLowerCase() === 'path') ?? 'PATH';
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ultrapowers-tickets-cwd-'));
+  const report = run(['tickets', '--root', root, '--sources', sources, '--dry-run'], {
+    cwd,
+    env: { ULTRAPOWERS_GH: '', ULTRAPOWERS_GLAB: '', PLANT_MARKER: marker, NODE_OPTIONS: `--require ${hook}`, [pathKey]: [root, process.env[pathKey]].join(path.delimiter) },
+  });
+  assert.equal(fs.existsSync(marker), false, 'the planted gh was started');
+  assert.ok(['cli', 'mcp'].includes(report.transportOnThisMachine.GH), 'a real gh outside the project may answer, the planted one never does');
+  for (const dir of [root, side, cwd]) fs.rmSync(dir, { recursive: true, force: true });
+});

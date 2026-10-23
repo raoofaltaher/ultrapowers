@@ -11,7 +11,7 @@ The fixes for the 2026-10-23 vulnerability hunt of this repository (`reviews/aud
 - Autopilot refuses a ticket whose body was edited after the ready label went on, removes the label and asks a maintainer to re-apply it. On Odoo with tracked tags, any task write after the ready tag counts as an edit.
 - A ticket's `.agents/ultrapowers.json` and repository git config are snapshotted at `begin`; a later change blocks the ticket until `begin` runs again with no stage open.
 - An Odoo `url` or `mcpUrl` must use https, except for a loopback host.
-- Scaffolded `.claude/settings.json` no longer pre-approves `git blame`, and pre-approves the build and test commands of the toolchains found at the project root only. The `.gitignore` block ignores `.env`, `.env.*` (not `.env.example`) and `.dev.vars` files.
+- Scaffolded `.claude/settings.json` no longer pre-approves `git blame`, and pre-approves the build and test commands of the toolchains found at the project root only. The `.gitignore` block ignores `.env`, `.env.*` (not `.env.example`, `.env.sample`, `.env.template` or `.env.dist`) and `.dev.vars` files.
 - **At release time:** `templates/CHANGES.json` records the changed targets at 2.2.0. Set those entries, and the list in `tests/init/test-templates-clean.sh`, to the release version, or projects already at 2.2.0 are not offered the upgrade.
 
 **Guardrail**
@@ -24,6 +24,8 @@ The fixes for the 2026-10-23 vulnerability hunt of this repository (`reviews/aud
 - A role variable never stands for a tracker credential, and the hunt reads no role variable.
 - An MCP call whose server or tool name cannot be read is refused; Antigravity's `call_mcp_tool` keeps its server and tool name.
 - The hunt runs `date` (printing forms), `npm audit --omit`/`--include`, and `npm ls` with `--package-lock-only`, `--prefix` inside the project and package names.
+
+**Every harness.** The run-record change lands on every entry point: the bash hook `hooks/qa-guardrail` (Claude Code, Cursor, Copilot CLI, Droid, Qwen Code, Devin, Codex) reads `.ultrapowers/runs/` and the autopilot marker; `hooks/run-hook.cmd` (Windows without bash) has its fail-closed path read `.ultrapowers/runs/*.json`; `hooks/lib/guardrail-bridge.mjs` serves OpenCode and Pi; `hooks/lib/guardrail-cli.mjs` serves Kimi, Antigravity, Hermes and the Gemini project hook, and Antigravity's `call_mcp_tool` keeps its server and tool name; the Hermes plugin and the OpenCode plugin changed their own fast paths; and the Gemini hook template changed, recorded in `templates/CHANGES.json` for upgrade mode. The tool references under `skills/using-ultrapowers/references/` never named the markers and did not change; the Kimi, Hermes and Muse manifests did not change.
 
 **Autopilot**
 

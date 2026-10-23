@@ -109,7 +109,8 @@ if [[ -f "$ENTRY" ]]; then
     fi
   done
   for needle in '## Checklist' 'qa-preflight.mjs' 'run-records.mjs" start' 'run-records.mjs end' '.ultrapowers/runs/' 'agents/qa-specialist.md' \
-    'run-state.json' 'PRECONDITION-FAILED' 'inline' 'Verdict: <value> — reviews/<ID>/QA-REPORT.md'; do
+    'run-state.json' 'PRECONDITION-FAILED' 'inline' 'Verdict: <value> — reviews/<ID>/QA-REPORT.md' \
+    '`no-verdict`' "the contract's STEP 4 probe"; do
     if printf '%s\n' "$entry_body" | grep -Fq -- "$needle"; then pass "qa-specialist: body mentions $needle"; else fail "qa-specialist: body mentions $needle"; fi
   done
   for field in missing preconditions warnings runs activeRun runState changeSet onTicketBranch errors; do

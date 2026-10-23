@@ -242,6 +242,9 @@ test('the managed .gitignore block ignores env and dev.vars files and keeps .env
     ['.env', '.env.local', '.env.production', '.env.development', '.env.secrets', '.dev.vars', '.dev.vars.local', 'web/.env', 'web/.dev.vars'],
   );
   assert.deepEqual(ignoredOrNone(root, '.env.example', 'web/.env.example'), [], '.env.example is not ignored');
+  for (const line of ['!.env.sample', '!.env.template', '!.env.dist']) assert.ok(lines.includes(line), `block has ${line}`);
+  assert.deepEqual(ignoredOrNone(root, '.env.sample', '.env.template', '.env.dist', 'web/.env.sample'), [], 'the committed example names are not ignored');
+  assert.deepEqual(ignoredOrNone(root, '.env.local'), ['.env.local'], '.env.local stays ignored');
 });
 
 test('an existing .gitignore keeps its lines and gains the block, and the negation still works', () => {
