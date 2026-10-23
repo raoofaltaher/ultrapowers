@@ -108,12 +108,15 @@ export function startRun(root, { profile, id, session = sessionFromEnv(), now = 
 
 // Ends a run: only once its report holds a line starting `Verdict:`. The end is logged in
 // reviews/<id>/run-log.txt, so an early end is visible next to the report.
-export function endRun(root, run, { now = Date.now() } = {}) {
+// A session ends only its own runs: a run bound to another session is refused (a caller that names no
+// session, a terminal outside the harness, may end any).
+export function endRun(root, run, { now = Date.now(), session = sessionFromEnv() } = {}) {
   if (typeof run !== 'string' || !RUN_FILE_RE.test(`${run}.json`)) throw new RunError('bad-args', `run ${JSON.stringify(run)} is not a run id`);
   const file = path.join(runsDir(root), `${run}.json`);
   const rec = readRuns(root, now).find((r) => r.file === file);
   if (!rec) throw new RunError('no-run', `no run ${run} in ${path.relative(root, runsDir(root)).replace(/\\/g, '/')}`);
   if (rec.corrupt) throw new RunError('corrupt', `the record of run ${run} cannot be read; your human partner removes it`);
+  if (rec.session && session && rec.session !== session) throw new RunError('other-session', `run ${run} belongs to another session; a session ends only its own runs`);
   const report = path.join(root, 'reviews', rec.id, REPORTS[rec.profile]);
   let text = '';
   try { text = fs.readFileSync(report, 'utf8'); } catch { text = ''; }

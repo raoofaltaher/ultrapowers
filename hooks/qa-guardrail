@@ -552,7 +552,7 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
 ' "$root_node" "$hook_dir_node" "$root_start_node" "$RUN_ID" "$RUN_STARTED")
 case "$parse_status" in
   noresolver:*) deny "the path resolver hooks/lib/guard-paths.mjs cannot be loaded (${parse_status#noresolver:}); every call is refused during $run_kind" ;;
-  badconfig:*) deny "the project config .agents/ultrapowers.json cannot be read (${parse_status#badconfig:}); every call is refused while a run marker exists under .ultrapowers/" ;;
+  badconfig:*) deny "the project config .agents/ultrapowers.json cannot be read (${parse_status#badconfig:}); every call is refused while a run is active" ;;
   shapeless) deny "the tool event has no readable tool name or input; an uninspectable call is refused during $run_kind" ;;
   badmarker) deny "the run marker holds a ticket or audit id with a parent segment or a path separator; every call is refused while it does" ;;
   twotargets:*) deny "the call names two different targets (${parse_status#twotargets:}); one call writes one file" ;;

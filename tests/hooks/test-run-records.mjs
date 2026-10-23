@@ -70,12 +70,21 @@ test('a corrupt record guards every call: it cannot say whose it is', () => {
 test('a run ends itself only once its report holds a Verdict line, and the end is logged', () => {
   const root = project();
   const r = startRun(root, { profile: 'hunt', id: 'audit-2026-10-23', session: 's1' });
-  assert.throws(() => endRun(root, r.run), { code: 'no-verdict' });
+  const own = { session: 's1' };
+  assert.throws(() => endRun(root, r.run, own), { code: 'no-verdict' });
   report(root, 'audit-2026-10-23', 'SECURITY-REPORT.md', '# Security report\nVerdict: PASS\n');
-  assert.deepEqual(endRun(root, r.run), { ended: r.run, id: 'audit-2026-10-23', profile: 'hunt' });
+  assert.deepEqual(endRun(root, r.run, own), { ended: r.run, id: 'audit-2026-10-23', profile: 'hunt' });
   assert.equal(readRuns(root).length, 0);
   assert.match(fs.readFileSync(path.join(root, 'reviews', 'audit-2026-10-23', 'run-log.txt'), 'utf8'), /ended hunt-audit-2026-10-23-/);
-  assert.throws(() => endRun(root, r.run), { code: 'no-run' });
+  assert.throws(() => endRun(root, r.run, own), { code: 'no-run' });
+});
+
+test('a session ends only its own runs; a caller with no session may end any', () => {
+  const root = project();
+  const r = startRun(root, { profile: 'qa', id: 'GH-7', session: 's1' });
+  report(root, 'GH-7', 'QA-REPORT.md', 'Verdict: PASS\n');
+  assert.throws(() => endRun(root, r.run, { session: 's2' }), { code: 'other-session' });
+  assert.equal(endRun(root, r.run, { session: null }).ended, r.run);
 });
 
 test('ids and run names that would leave reviews/ are refused', () => {
