@@ -1,5 +1,49 @@
 # Ultrapowers Release Notes
 
+## Unreleased
+
+The fixes for the 2026-10-23 vulnerability hunt of this repository (`reviews/audit-2026-10-23/`, not committed) and for the findings of a hunt of a project `init` scaffolded that trace back to the plugin. They join the next release; no version was bumped.
+
+**Heads up:**
+
+- A QA run or a hunt no longer removes its own run marker: the guardrail refuses it, whatever the spelling. The run ends by asking you to run `! rm "<ROOT>/.ultrapowers/qa-active"` (or `hunt-active`), and the session stays read-only until you do.
+- An autopilot stage reaches only the hosts in `qa.hosts.allowed` with `curl` and `wget`, an empty list included, and only the MCP servers of the ticket's snapshot of `.mcp.json`; remote MCP servers stay out of that snapshot. A stage's environment is an allow-list: `ODOO_API_KEY` and the keys of `.agents/mcp-secrets.env` reach it only when a server of its snapshot names them, or when `autopilot.stageEnv` lists them.
+- Autopilot refuses a ticket whose body was edited after the ready label went on, removes the label and asks a maintainer to re-apply it. On Odoo with tracked tags, any task write after the ready tag counts as an edit.
+- A ticket's `.agents/ultrapowers.json` and repository git config are snapshotted at `begin`; a later change blocks the ticket until `begin` runs again with no stage open.
+- An Odoo `url` or `mcpUrl` must use https, except for a loopback host.
+- Scaffolded `.claude/settings.json` no longer pre-approves `git blame`, and pre-approves the build and test commands of the toolchains found at the project root only. The `.gitignore` block ignores `.env`, `.env.*` (not `.env.example`) and `.dev.vars` files.
+- **At release time:** `templates/CHANGES.json` records the changed targets at 2.2.0. Set those entries, and the list in `tests/init/test-templates-clean.sh`, to the release version, or projects already at 2.2.0 are not offered the upgrade.
+
+**Guardrail**
+
+- An interpreter or shell given `/dev/stdin`, `/dev/fd/N` or `/proc/*/fd/N` as its script is refused (with a heredoc it ran code no rule read, the hunt included); the hunt runs a script outside the project only when it is a regular file.
+- `find -delete`, a recursive or forced `rm`, `rmdir`, `shred`, `dd` and `mkfs` are judged on the words the shell runs, so quoting the program no longer skips the rule.
+- Key paths are tested in canonical form (`//`, `/./`, symlinks, 8.3 names), and every `/proc/.../environ` file is refused.
+- `${NAME:-x}` and the other `${NAME<op>}` forms count as reads of `NAME`; `${!NAME}`, `declare -p NAME`, a name reference to a credential, `awk ENVIRON` and `jq`/`yq` environment reads are refused. `${NAME:+set}` and `${#NAME}` stay the presence checks.
+- In an autopilot stage, `git rm` and `git mv` operands, `--output`, the paths of `git checkout <tree> <path>` and the folder of `git worktree add` are held to the protected paths; HTTP clients other than `curl` and `wget` are refused.
+- A role variable never stands for a tracker credential, and the hunt reads no role variable.
+- An MCP call whose server or tool name cannot be read is refused; Antigravity's `call_mcp_tool` keeps its server and tool name.
+- The hunt runs `date` (printing forms), `npm audit --omit`/`--include`, and `npm ls` with `--package-lock-only`, `--prefix` inside the project and package names.
+
+**Autopilot**
+
+- An approval belongs to the latest packet the engine posted on the tracker, not to `tasks/<ID>/autopilot.json`; a pull request URL is always the one the forge returns for the ticket's own branch.
+- The engine's git config pins add `core.askPass`; a configured branch name that git would read as an option is refused.
+
+**Everywhere a tool is started**
+
+- `hooks/lib/resolve-tool.mjs` starts git, gh, glab, bash, cygpath and the harness CLIs from absolute PATH entries outside the project, never by bare name: on Windows a bare name resolves in the working directory first.
+
+**Scaffold and the rest**
+
+- The Cursor CLI config and Qwen's permissions carry the Claude template's full secret-read denies, `.env.secrets` and `.dev.vars` among them. Codex, Gemini CLI, Factory, Kimi and Copilot have no deny-list surface in the scaffold.
+- The gitleaks Docker fallback is pinned by tag and digest and runs with no network; the scaffolded Playwright MCP server runs `--isolated`.
+- Hidden HTML comments in a ticket never reach an autopilot stage.
+- The brainstorm server's session directory under `/tmp` comes from `mktemp`, mode 700.
+- Antigravity runs a plugin hook from the plugin's folder (measured on agy 1.3.3), so issue #53's relative hook path is safe there; Kimi Code documents the same.
+
+**Known residuals, out of scope by decision:** a script a stage writes and runs still reads the keys its MCP servers need, and can still rewrite engine files a call cannot; only an OS sandbox or a signed, engine-owned store removes that.
+
 ## v2.2.0 (2026-10-13)
 
 Every spec now comes from one template and carries a decision record: the approaches considered, why one won, where it breaks and what sits at its edges, with a source on every claim line. A checker refuses a spec that misses any of it, at the self-review, at the ticket commit, at the end of the autopilot spec and changes stages, and in the scaffolded pre-commit hook. The brainstorming skill presents its approaches in the same shape before the design, sorts every template question it never covered instead of filling it, and writes the design from the template. Design: `docs/ultrapowers/specs/2026-10-12-spec-template-and-decision-record-design.md`, itself the first spec in the new shape. The same release closes the gap in the ticket route: the execution skills hand off to `task-review` before the finish, and the finishing skill verifies that gate at the door. Design: `docs/ultrapowers/specs/2026-10-13-ticket-route-and-review-gate-design.md`.
