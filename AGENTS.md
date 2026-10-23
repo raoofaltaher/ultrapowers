@@ -78,6 +78,7 @@ bash tests/autopilot/run-tests.sh
 bash tests/autopilot/test-adapters.sh             # skips a harness CLI that is not installed
 bash tests/qa-gatekeeper/run-tests.sh             # includes the QA, autopilot and hunt guardrail profile suites
 bash tests/skills/test-skill-bodies.sh
+bash tests/skills/test-current-sources.sh
 node --test tests/brainstorming/check-doc.test.mjs
 bash tests/brainstorming/test-precommit-spec-check.sh
 node --test tests/pi/test-pi-extension.mjs
