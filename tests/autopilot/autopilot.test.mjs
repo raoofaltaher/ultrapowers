@@ -765,6 +765,9 @@ test('a failed pull request comment blocks pr and a resumed pr posts only the mi
     ...approvedBy('alice'),
     'pr create -R o/r --head GH-16-fix-it-now-please --base main': { stdout: 'https://github.com/o/r/pull/9\n' },
     'pr create -R o/backend --head GH-16-fix-it-now-please --base main': { stdout: 'https://github.com/o/backend/pull/3\n' },
+    // A resumed stage asks the forge for the open pull requests of the ticket branch, never the state file.
+    'pr list -R o/r --head GH-16-fix-it-now-please --state open --json url --limit 1': { stdout: [{ url: 'https://github.com/o/r/pull/9' }] },
+    'pr list -R o/backend --head GH-16-fix-it-now-please --state open --json url --limit 1': { stdout: [{ url: 'https://github.com/o/backend/pull/3' }] },
     ...PR_COMMENTS,
   });
   const second = run(ws, ['pr', 'GH-16']);

@@ -35,7 +35,22 @@ if (key === undefined) {
   process.exit(64);
 }
 const answer = map[key];
+// The comments the engine posts through `issue comment` are kept and listed again by the comments
+// endpoint, as its own account's (STUB_ME, default engine-bot), all stamped with the time the
+// comment-time answer gives: the engine finds its latest packet on the tracker, not in its state.
+const POSTED = dir ? path.join(dir, 'posted.json') : null;
+const POSTED_AT = '2026-10-04T09:00:00Z';
+if (POSTED && args[0] === 'issue' && args[1] === 'comment' && args[2] && stdin) {
+  const posted = fs.existsSync(POSTED) ? JSON.parse(fs.readFileSync(POSTED, 'utf8')) : [];
+  posted.push({ id: 9000 + posted.length, issue: String(args[2]), user: { login: process.env.STUB_ME ?? 'engine-bot' }, created_at: POSTED_AT, html_url: `https://github.com/o/r/issues/${args[2]}#issuecomment-${9000 + posted.length}`, body: stdin });
+  fs.writeFileSync(POSTED, JSON.stringify(posted));
+}
+const listed = /^repos\/[^/]+\/[^/]+\/issues\/(\d+)\/comments/.exec(args[0] === 'api' ? args[1] ?? '' : '');
 if (answer.stderr) process.stderr.write(answer.stderr);
-if (answer.file) process.stdout.write(fs.readFileSync(path.join(dir, answer.file), 'utf8'));
+if (listed && POSTED && fs.existsSync(POSTED) && answer.stdout !== undefined && !answer.file) {
+  const pages = typeof answer.stdout === 'string' ? JSON.parse(answer.stdout) : answer.stdout;
+  const own = JSON.parse(fs.readFileSync(POSTED, 'utf8')).filter((c) => c.issue === listed[1]).map(({ issue, ...c }) => c);
+  process.stdout.write(JSON.stringify([...pages, own]));
+} else if (answer.file) process.stdout.write(fs.readFileSync(path.join(dir, answer.file), 'utf8'));
 else if (answer.stdout !== undefined) process.stdout.write(typeof answer.stdout === 'string' ? answer.stdout : JSON.stringify(answer.stdout));
 process.exit(Number(answer.exit ?? 0));

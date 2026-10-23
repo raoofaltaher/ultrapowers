@@ -335,6 +335,110 @@ function previewScope(ctx, state) {
   return { specRepos, planRepos, frozen: freezeScope(state, { specRepos, planRepos, knownRepos: knownRepos(ctx) }) };
 }
 
+// ---- The ready label binds the ticket body (audit M9) ----
+//
+// A maintainer who adds the ready label approves the ticket as it reads at that moment; the author
+// can edit the body afterwards. At pickup the engine compares the body's last edit with the label's
+// time (GitHub lastEditedAt, GitLab "changed the description" notes; Odoo has no edit time, so its
+// task write_date is compared at pickup when the tag's time is known, and the description's hash
+// after). What it saw is recorded in .ultrapowers/autopilot/<ID>.brief.json, which only the engine
+// writes. Before the agent stages that read the ticket, the body is compared again: a change blocks
+// the ticket, takes the ready label off, and asks a maintainer to re-apply it after reading it.
+
+// The stages an edit blocks: those that read the ticket text; on Odoo, which has only a hash to
+// compare and no edit time, every agent stage.
+const BODY_STAGES = ['scaffold', 'spec', 'plan'];
+const BODY_STAGES_HASH = ['scaffold', 'spec', 'plan', 'changes', 'execute', 'qa'];
+
+function briefPath(root, id) {
+  return path.join(engineDir(root), `${id}.brief.json`);
+}
+
+function bodyChangedMessage(labelAt, edited) {
+  return `The ticket body changed after the ready label was added (label at ${labelAt}, last edit at ${edited}). A maintainer re-applies the label after reading the new text; autopilot then starts from it.`;
+}
+
+// The latest event of `label` when it is an add by a member with write access (and, when the list
+// is set, an approver); null otherwise. Same rule as labelAddedByPermitted, which only says yes or no.
+async function permittedLabelEvent(tracker, number, label, settings) {
+  const events = await tracker.labelEvents(number);
+  const last = events.filter((e) => e.label === label).sort((a, b) => String(a.at).localeCompare(String(b.at))).at(-1);
+  if (!last || last.action !== 'labeled' || !last.actor) return null;
+  if (!['write', 'maintain', 'admin'].includes(await tracker.permission(last.actor))) return null;
+  const approvers = settings.approvers ?? [];
+  return approvers.length === 0 || approvers.includes(last.actor) ? last : null;
+}
+
+// { ok, labelAt, edited }: the body has not been edited after the ready label went on. Without a
+// permitted ready label there is nothing to bind to: ok, with no label time.
+async function bodyBoundToLabel(tracker, number, settings, event = null) {
+  const ev = event ?? await permittedLabelEvent(tracker, number, settings.events.ready, settings);
+  if (!ev) return { ok: true, labelAt: null, edited: null };
+  const edited = await tracker.bodyEditedAt(number);
+  return { ok: !edited || Date.parse(edited) <= Date.parse(ev.at), labelAt: ev.at, edited };
+}
+
+// Pickup: compares and, when the body is bound to the label, records what the engine saw.
+// { ok: true } also when no permitted ready label is on the ticket (a session that started it by hand).
+async function pickupBody(root, id, tracker, number, settings) {
+  const ev = await permittedLabelEvent(tracker, number, settings.events.ready, settings);
+  if (!ev) return { ok: true };
+  let bodyHash = null;
+  if (tracker.hasBodyEditTime) {
+    const bound = await bodyBoundToLabel(tracker, number, settings, ev);
+    if (!bound.ok) return { ok: false, message: bodyChangedMessage(ev.at, bound.edited) };
+  } else {
+    const snap = await tracker.bodySnapshot(number);
+    if ((await tracker.tagsTracked()) && Date.parse(snap.writeDate) > Date.parse(ev.at)) {
+      return { ok: false, message: bodyChangedMessage(ev.at, snap.writeDate) };
+    }
+    bodyHash = hashLine(snap.description);
+  }
+  fs.mkdirSync(engineDir(root), { recursive: true });
+  fs.writeFileSync(briefPath(root, id), `${JSON.stringify({ labelAt: ev.at, pickedAt: new Date().toISOString(), bodyHash }, null, 2)}\n`);
+  return { ok: true };
+}
+
+// The watcher's pickup of a ticket whose body was edited after its label: the ready label goes, so a
+// maintainer's new application is a new event, and the ticket says why.
+async function rejectPickup(tracker, number, settings, message) {
+  await tracker.comment(number, message);
+  await tracker.removeLabel(number, settings.events.ready);
+}
+
+// Before an agent stage: the body is what the label approved. A ticket picked up by hand, with no
+// ready label, has no record and no binding.
+async function guardBody(ctx, opts, stage) {
+  if (ctx.settings.mode === 'off') return;
+  const brief = readSnapshot(briefPath(ctx.root, opts.id), 'brief');
+  if (!brief) return;
+  const { tracker, settings } = ctx;
+  const number = ctx.source.number;
+  // A ready label applied again after the engine's record is a new pickup, read from the body as it is.
+  const again = await permittedLabelEvent(tracker, number, settings.events.ready, settings);
+  if (again && Date.parse(again.at) > Date.parse(brief.pickedAt)) {
+    const picked = await pickupBody(ctx.root, opts.id, tracker, number, settings);
+    if (picked.ok) return;
+    await rejectBody(ctx, opts, stage, picked.message);
+  }
+  let message = null;
+  if (tracker.hasBodyEditTime) {
+    if (!BODY_STAGES.includes(stage)) return;
+    const edited = await tracker.bodyEditedAt(number);
+    if (edited && Date.parse(edited) > Date.parse(brief.labelAt)) message = bodyChangedMessage(brief.labelAt, edited);
+  } else if (brief.bodyHash && BODY_STAGES_HASH.includes(stage)) {
+    const snap = await tracker.bodySnapshot(number);
+    if (hashLine(snap.description) !== brief.bodyHash) message = bodyChangedMessage(brief.labelAt, snap.writeDate || 'unknown');
+  }
+  if (message) await rejectBody(ctx, opts, stage, message);
+}
+
+async function rejectBody(ctx, opts, stage, message) {
+  await ctx.tracker.removeLabel(ctx.source.number, ctx.settings.events.ready).catch(() => {});
+  await blockStage(ctx, opts.id, opts.door, stage, message);
+  throw new AutopilotError('body-edited', message);
+}
+
 // Ends an engine stage as blocked: the state, the log, the commit, the label, the comment, and the
 // lock and marker released, so a failed packet or pull request never strands the ticket or the watcher.
 async function blockStage(ctx, id, door, stage, message, { label = true, commit = true } = {}) {
@@ -357,10 +461,48 @@ async function blockStage(ctx, id, door, stage, message, { label = true, commit 
 // A recorded approval is checked again before execute and before the pull request: the event
 // is still on the tracker's timeline with its actor, and it belongs to the packet that was approved.
 // A full-mode approval has no event; it belongs to its packet all the same.
+//
+// The state file is not the evidence: a stage can rewrite tasks/<ID>/autopilot.json, but it cannot
+// post a comment as the engine. So the packet the state names must be the latest one the engine
+// itself posted on the tracker (same Packet id), whatever the attribution, and an event approval
+// must come after that packet.
+const PACKET_ID_LINE = /Packet id\s+([0-9a-f]{12})\b/;
+
+// The latest comment the engine's own account posted that carries a Packet id line: { id, at, url },
+// or null. Ties on the tracker's clock go to the later comment in the list.
+async function latestEnginePacket(ctx) {
+  const me = await ctx.tracker.me();
+  if (!me) return null;
+  const comments = await ctx.tracker.comments(ctx.source.number, null);
+  let best = null;
+  for (const c of comments) {
+    if (c.author !== me) continue;
+    const m = PACKET_ID_LINE.exec(String(c.body ?? '').replace(/<[^>]+>/g, ''));
+    if (!m) continue;
+    const at = Date.parse(String(c.at ?? ''));
+    if (!Number.isFinite(at)) continue;
+    if (!best || at >= best.time) best = { id: m[1], at: c.at, time: at, url: c.url ?? '' };
+  }
+  return best ? { id: best.id, at: best.at, url: best.url } : null;
+}
+
+// The Packet id of the packet a state names, as postPacket rendered it (a repository without a
+// tip is not part of the id).
+function statePacketId(packet) {
+  const tips = Object.fromEntries(Object.entries(packet?.tips ?? {}).filter(([, sha]) => sha));
+  return packetId(packet?.docsTip, tips);
+}
+
 async function recheckApproval(ctx, state, mode = null) {
   const a = state.approval;
   if (!a || !state.packet || a.docsTip !== state.packet.docsTip) {
     throw new AutopilotError('approval-unverified', `${state.ticket}: the recorded approval does not belong to the current packet`);
+  }
+  const live = await latestEnginePacket(ctx);
+  const computed = statePacketId(state.packet);
+  if (!live) throw new AutopilotError('approval-unverified', `${state.ticket}: the tracker holds no packet the engine posted; the state file's packet cannot be trusted`);
+  if (live.id !== computed) {
+    throw new AutopilotError('approval-unverified', `${state.ticket}: the latest packet the engine posted on the tracker is ${live.id}; the state file names ${computed}`);
   }
   if (a.mode === 'full') {
     if (mode !== 'full') throw new AutopilotError('approval-unverified', `${state.ticket}: the recorded approval is a full-mode one and the ticket's mode is ${mode ?? 'unknown'}`);
@@ -374,11 +516,17 @@ async function recheckApproval(ctx, state, mode = null) {
     if (!chain.ok) throw new AutopilotError('approval-unverified', `${state.ticket}: the stage log chain is broken at line ${chain.at}; the recorded approval cannot be trusted`);
     const line = readLog(ctx.root, state.ticket).find((l) => l.event === 'approved' && l.actor === a.actor && l.sha === a.docsTip && l.attribution === 'last-writer');
     if (!line) throw new AutopilotError('approval-unverified', `${state.ticket}: the stage log holds no approved line by ${a.actor} for ${a.docsTip}`);
+    // The chain is unkeyed and a stage can rewrite it; the packet check above is the tracker's word.
     return;
   }
   const events = await ctx.tracker.labelEvents(ctx.source.number);
-  const found = events.some((e) => String(e.id) === String(a.eventId) && e.actor === a.actor && e.action === 'labeled' && e.label === ctx.settings.events.approve);
-  if (!found) throw new AutopilotError('approval-unverified', `${state.ticket}: the approval event ${a.eventId} by ${a.actor} is not on the tracker's timeline`);
+  const event = events.find((e) => String(e.id) === String(a.eventId) && e.actor === a.actor && e.action === 'labeled' && e.label === ctx.settings.events.approve);
+  if (!event) throw new AutopilotError('approval-unverified', `${state.ticket}: the approval event ${a.eventId} by ${a.actor} is not on the tracker's timeline`);
+  // An approve label added before the latest packet never counts (the packet step clears it).
+  const eventAt = Date.parse(String(event.at ?? ''));
+  if (!Number.isFinite(eventAt) || eventAt <= Date.parse(live.at)) {
+    throw new AutopilotError('approval-unverified', `${state.ticket}: the approval event ${a.eventId} at ${event.at} is not after the latest packet the engine posted (${live.at})`);
+  }
 }
 
 // The tracker writes around a stage. In the session door `begin` and `end` make them; in the
@@ -803,6 +951,19 @@ async function runPr(opts) {
   }
 }
 
+// The open pull request of `branch` as the forge reports it, or null when none is open (or no URL
+// was stored: a new ticket asks nothing). A stored URL the forge does not return for this branch
+// is replaced by the forge's, and the log says so with both.
+async function verifiedPr(ctx, opts, state, tracker, repoName, branch, stored) {
+  if (!stored) return null;
+  const found = await tracker.findOpenPr(branch);
+  if (found && found !== stored) {
+    appendLog(ctx.root, opts.id, { stage: 'pr', event: 'pr-url-corrected', actor: 'engine', trigger: opts.door, repo: repoName, url: found, stored });
+    state.logHead = readState(ctx.root, opts.id).logHead;
+  }
+  return found;
+}
+
 async function openPullRequests(ctx, opts, state, { resuming, qaOn }) {
   // Spec §6: without a qa block the QA stage is skipped with a log line (and a note in the PR body).
   if (!state.qa && !qaOn && !readLog(ctx.root, opts.id).some((l) => l.stage === 'qa' && l.event === 'skipped')) {
@@ -831,26 +992,33 @@ async function openPullRequests(ctx, opts, state, { resuming, qaOn }) {
   const title = `${opts.id}: ${state.title || 'autopilot'}`;
   // Code repositories first, so the documents PR can list them. A repository that already has its
   // pull request (a resumed stage) is listed, not opened twice.
+  // A stored pull request URL is a claim in a file a stage can write, never a target: the forge is
+  // asked for the open pull request of the repository's own ticket branch, and only what it returns
+  // is listed and commented on (verifiedPr).
   for (const r of state.repos ?? []) {
     if (!state.scope.frozen.includes(r.name) || r.name === '.') continue;
-    if (r.prUrl) {
-      prs[r.name] = r.prUrl;
+    const dir = ctx.dirs.repos[r.name];
+    const tracker = trackerFor(forgeOf(ctx, r.name, dir), process.env);
+    const known = await verifiedPr(ctx, opts, state, tracker, r.name, r.branch, r.prUrl);
+    if (known) {
+      r.prUrl = known;
+      prs[r.name] = known;
       continue;
     }
-    const dir = ctx.dirs.repos[r.name];
     const workDir = r.worktree && fs.existsSync(r.worktree) ? r.worktree : dir;
     push(workDir, r.branch, { state, repoName: r.name, ticket: opts.id });
     r.tip = tip(workDir, r.branch);
-    const tracker = trackerFor(forgeOf(ctx, r.name, dir), process.env);
     r.prUrl = await tracker.createPr({ head: r.branch, base: r.base, title, body: cite(`the ${r.name} repository`) });
     r.status = 'pr';
     prs[r.name] = r.prUrl;
     writeState(ctx.root, opts.id, state);
   }
   push(ctx.dirs.docs, state.docs.branch, { state, repoName: 'docs', ticket: opts.id });
+  const docsTracker = trackerFor(forgeOf(ctx, 'docs', ctx.dirs.docs), process.env);
+  state.pr.docs = await verifiedPr(ctx, opts, state, docsTracker, 'docs', state.docs.branch, state.pr.docs);
   if (!state.pr.docs) {
     const docsBody = `${cite('the documents repository')}\n${Object.entries(prs).map(([n, u]) => `- ${n}: ${u}`).join('\n')}`;
-    state.pr.docs = await trackerFor(forgeOf(ctx, 'docs', ctx.dirs.docs), process.env).createPr({ head: state.docs.branch, base: state.docs.base, title, body: docsBody });
+    state.pr.docs = await docsTracker.createPr({ head: state.docs.branch, base: state.docs.base, title, body: docsBody });
   }
   prs.docs = state.pr.docs;
   writeState(ctx.root, opts.id, state);
@@ -1012,6 +1180,12 @@ async function runBegin(opts) {
       releaseLock(ctx.root, opts.id);
       throw new AutopilotError('no-state', `${opts.id} has no autopilot state; the first stage is scaffold`);
     }
+    // A session that starts a ticket the ready label approved compares the body with the label
+    // before the engine writes anything to the ticket. (The watcher did, at pickup, before this.)
+    if (!ctx.inside) {
+      const picked = await pickupBody(ctx.root, opts.id, ctx.tracker, ctx.source.number, ctx.settings);
+      if (!picked.ok) await rejectBody(ctx, opts, opts.stage, picked.message);
+    }
     // The first stage of a ticket fixes the MCP server list every later stage loads. A stage's own
     // `begin` (inside) never takes it: the engine did, before the stage started (run, below).
     // The config the ticket runs under and the repositories' git config are recorded with it.
@@ -1033,6 +1207,8 @@ async function runBegin(opts) {
     fs.writeFileSync(lockFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(lockFile, 'utf8')), pending }));
     state = pending;
   } else {
+    // The watcher compares the body before it spawns a stage; a session does here.
+    if (!ctx.inside) await guardBody(ctx, opts, opts.stage);
     if (state.stage === opts.stage && ['running', 'blocked'].includes(state.stageStatus)) state.attempt = (state.attempt ?? 1) + 1;
     else state.attempt = 1;
     state.stage = opts.stage;
@@ -1406,6 +1582,8 @@ async function runStages(ctx, base, opts, stages, seen) {
       }
     } else {
       const started = Date.now();
+      // The body is compared before anything is written to the ticket or a stage reads it.
+      await guardBody(ctx, base, stage);
       // The watcher makes the tracker writes around the stage: the stage may hold a read-only credential.
       await markRunning(ctx);
       if (stage === 'changes') await takeChangesLabel(ctx, opts.id, 'watch');
@@ -1501,6 +1679,15 @@ async function watchCycle(root, marker, settings, opts, previousSleepMs) {
           if (label === settings.events.ready && !readState(root, id) && !(await labelAddedByPermitted(tracker, item.number, label, settings))) {
             events.push({ event: 'skip', ticket: id, reason: 'ready-label-not-from-a-member-with-write-access' });
             continue;
+          }
+          // The label approves the body as it was when it went on: an edit after it is not picked up.
+          if (label === settings.events.ready) {
+            const picked = await pickupBody(root, id, tracker, item.number, settings);
+            if (!picked.ok) {
+              await rejectPickup(tracker, item.number, settings, picked.message);
+              events.push({ event: 'skip', ticket: id, reason: 'body-edited-after-ready-label' });
+              continue;
+            }
           }
           if (!queue.some((q) => q.id === id)) queue.push({ id, number: item.number, tracker });
         }

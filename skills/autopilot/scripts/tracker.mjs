@@ -184,6 +184,18 @@ class GitHubTracker {
     return parseJson(out.stdout, 'gh pr list')[0]?.url ?? null;
   }
 
+  // The time the issue body was last edited, ISO, or null when it never was. The engine's own read,
+  // outside every stage (GraphQL: the REST issue has no such field).
+  get hasBodyEditTime() { return true; }
+
+  async bodyEditedAt(number) {
+    const [owner, repo] = String(this.path).split('/');
+    const query = 'query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){lastEditedAt}}}';
+    const out = await run(this.r, this.env, ['api', 'graphql', '-f', `query=${query}`, '-F', `o=${owner}`, '-F', `r=${repo}`, '-F', `n=${Number(number)}`]);
+    const at = parseJson(out.stdout, 'gh api graphql').data?.repository?.issue?.lastEditedAt;
+    return typeof at === 'string' && at ? at : null;
+  }
+
   // GitHub has no API that attaches a file to a comment; images are linked from the repository.
   async upload() {
     throw new AutopilotError('no-upload', 'GitHub has no upload API for comment images; the review links the file on its branch');
@@ -316,6 +328,19 @@ class GitLabTracker {
     const out = await run(this.r, this.env, ['mr', 'list', '-R', this.path, '--source-branch', branch, '-F', 'json']);
     const open = parseJson(out.stdout, 'glab mr list').filter((m) => !m.state || m.state === 'opened');
     return open[0]?.web_url ?? null;
+  }
+
+  // The time the issue description was last changed: GitLab keeps no such field on the issue, so
+  // the latest system note that says "changed the description"; null when there is none.
+  get hasBodyEditTime() { return true; }
+
+  async bodyEditedAt(number) {
+    const items = await this.pages(`projects/${this.enc}/issues/${number}/notes?sort=asc&order_by=created_at`);
+    const times = items
+      .filter((n) => n.system && /^changed the description/i.test(String(n.body ?? '')) && typeof n.created_at === 'string')
+      .map((n) => n.created_at)
+      .sort();
+    return times.at(-1) ?? null;
   }
 
   // A file uploaded to the project (POST /projects/:id/uploads). The answer's `url` is the
@@ -574,6 +599,20 @@ class OdooTracker {
 
   async ensureLabel(name, color) {
     await this.tagId(name, { create: true, color: odooColorIndex(color) });
+  }
+
+  // Odoo keeps no time for a body edit, only the task's write_date (any write moves it): the engine
+  // compares write_date with the ready tag's time at pickup, and the hash of the description after.
+  get hasBodyEditTime() { return false; }
+
+  async bodyEditedAt() {
+    return null;
+  }
+
+  async bodySnapshot(number) {
+    const [task] = await this.call('project.task', 'read', [[Number(number)]], { fields: ['description', 'write_date'] });
+    if (!task) throw new AutopilotError('tracker-failed', `Odoo task ${number} was not found`);
+    return { writeDate: odooIso(task.write_date), description: typeof task.description === 'string' ? task.description : '' };
   }
 
   async createPr() {

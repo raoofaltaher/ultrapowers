@@ -269,6 +269,13 @@ export async function startOdooFake(s = seed()) {
       res.end('{"ok":true}');
       return;
     }
+    if (url.pathname === '/__fake/setDescription') {
+      const task = s.tasks.find((t) => t.id === body.taskId);
+      if (task) task.description = body.description;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+      return;
+    }
     if (url.pathname === '/web/database/list') {
       if (s.listDisabled) { res.writeHead(403); res.end('{"error":"disabled"}'); return; }
       return answer({ result: s.databases });

@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import * as lib from '../../skills/autopilot/scripts/autopilot-lib.mjs';
@@ -580,4 +580,371 @@ test('the harness override keeps working: a .mjs override runs under node', () =
   const r = run(ws, ['run', 'GH-16', '--once'], { ULTRAPOWERS_CLAUDE: HARNESS_STUB, STUB_LOG: path.join(ws.stubDir, 'calls.log'), ULTRAPOWERS_STAGE_GH_TOKEN: '', ULTRAPOWERS_STAGE_GITLAB_TOKEN: '' });
   assert.ok(r.json?.stages?.length > 0, r.stdout + r.stderr);
   assert.equal(r.json.stages[0].exitCode, 0, JSON.stringify(r.json.stages));
+});
+
+// ---------------------------------------------------------------------------------------------
+// M7: the approval is bound to the engine's own packet on the tracker, not to autopilot.json
+// ---------------------------------------------------------------------------------------------
+
+const MINIMAL_SPEC = fs.readFileSync(path.join(REPO, 'tests', 'brainstorming', 'fixtures', 'minimal-valid.md'), 'utf8').replace(/\r\n/g, '\n');
+const LEDGER_ROWS = '| 1 | Which cache? | none | low | not asked |\n| 2 | Which auth? | OIDC | high | the app uses it |\n';
+const SPEC = (scope) => MINIMAL_SPEC
+  .replace(/^(## Repositories in scope\n)(?:- .*\n)+/m, (_, heading) => `${heading}${scope.map((s) => `- ${s}`).join('\n')}\n`)
+  .replace(/^\|---\|---\|---\|---\|---\|\n/m, (separator) => `${separator}${LEDGER_ROWS}`);
+const PLAN = (scope) => `# Plan\n\n## Repositories in scope\n\n${scope.map((s) => `- ${s}`).join('\n')}\n\n### Task 1\n`;
+
+function throughPlan(ws, { scope = ['.'], id = 'GH-16', env = {} } = {}) {
+  assert.equal(run(ws, ['begin', id, 'scaffold'], env).code, 0);
+  fs.mkdirSync(path.join(ws.root, 'tasks', id), { recursive: true });
+  fs.writeFileSync(path.join(ws.root, 'tasks', id, `${id}.md`), `# ${id} - Fix it now please\n`);
+  run(ws, ['end', id, 'scaffold', '--result', JSON.stringify({ ok: true })], env);
+  run(ws, ['begin', id, 'spec'], env);
+  fs.mkdirSync(path.join(ws.root, 'specs', id), { recursive: true });
+  fs.writeFileSync(path.join(ws.root, 'specs', id, 'Spec.md'), SPEC(scope));
+  git(ws.root, 'add', '-A');
+  git(ws.root, 'commit', '-q', '-m', `spec(${id}): spec`);
+  assert.equal(run(ws, ['end', id, 'spec', '--result', JSON.stringify({ ok: true })], env).json?.status, 'finished');
+  run(ws, ['begin', id, 'plan'], env);
+  fs.mkdirSync(path.join(ws.root, 'plans', id), { recursive: true });
+  fs.writeFileSync(path.join(ws.root, 'plans', id, 'Plan.md'), PLAN(scope));
+  git(ws.root, 'add', '-A');
+  git(ws.root, 'commit', '-q', '-m', `plan(${id}): plan`);
+  run(ws, ['end', id, 'plan', '--result', JSON.stringify({ ok: true })], env);
+}
+
+const APPROVE_AT = '2999-01-01T00:00:00Z';
+const approvalTimeline = (login, at = APPROVE_AT) => ({ 'api repos/o/r/issues/16/timeline': { stdout: [[{ id: 'e1', event: 'labeled', label: { name: 'up:approve' }, actor: { login }, created_at: at }]] } });
+const approvedBy = (login) => ({
+  ...approvalTimeline(login),
+  [`api repos/o/r/collaborators/${login}/permission`]: { stdout: { permission: 'write' } },
+  'issue edit 16 -R o/r --remove-label up:approve': { stdout: '' },
+});
+const writeStateFile = (ws, s, id = 'GH-16') => fs.writeFileSync(path.join(ws.root, 'tasks', id, 'autopilot.json'), `${JSON.stringify(s, null, 2)}\n`);
+const callRecords = (ws) => fs.readFileSync(path.join(ws.stubDir, 'calls.log'), 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+const PR_URL = 'https://github.com/o/r/pull/9';
+const PR_LIST = (urls) => ({ 'pr list -R o/r --head GH-16-fix-it-now-please --state open --json url --limit 1': { stdout: urls.map((url) => ({ url })) } });
+const PR_CREATE = { 'pr create -R o/r --head GH-16-fix-it-now-please --base main': { stdout: `${PR_URL}\n` } };
+const PR_COMMENTS = {
+  [`pr comment ${PR_URL} --body-file -`]: { stdout: `${PR_URL}#issuecomment-21\n` },
+  'pr comment https://github.com/evil/repo/pull/1 --body-file -': { stdout: 'https://github.com/evil/repo/pull/1#issuecomment-99\n' },
+};
+
+// Through the packet and the approval: the ticket stands at the gate, approved, ready for `begin execute`.
+function approvedAtGate(ws, env = {}) {
+  throughPlan(ws);
+  assert.equal(run(ws, ['packet', 'GH-16'], env).code, 0);
+  ws.setMap({ ...approvedBy('alice'), ...PR_CREATE });
+  const n = run(ws, ['next', 'GH-16']);
+  assert.equal(n.json?.reason, 'approved', n.stdout + n.stderr);
+}
+
+test('M7: a state file whose packet matches the latest engine packet passes', () => {
+  const ws = workspace();
+  approvedAtGate(ws);
+  const b = run(ws, ['begin', 'GH-16', 'execute']);
+  assert.equal(b.code, 0, b.stdout + b.stderr);
+});
+
+test('M7: a forged docsTip with a real approval event is refused, with both packet ids in the message', () => {
+  const ws = workspace();
+  approvedAtGate(ws);
+  const s = state(ws);
+  const forged = 'f'.repeat(40);
+  writeStateFile(ws, { ...s, packet: { ...s.packet, docsTip: forged }, approval: { ...s.approval, docsTip: forged } });
+  const b = run(ws, ['begin', 'GH-16', 'execute']);
+  assert.equal(b.code, 2, b.stdout);
+  assert.equal(b.json.error.code, 'approval-unverified');
+  assert.match(b.json.error.message, /latest packet the engine posted on the tracker is [0-9a-f]{12}; the state file names [0-9a-f]{12}/);
+  // pr refuses it too
+  const pr = run(ws, ['pr', 'GH-16']);
+  assert.equal(pr.json.error.code === 'approval-unverified' || pr.json.error.code === 'wrong-stage', true, pr.stdout);
+});
+
+test('M7: a full-mode approval is bound to the packet too', () => {
+  const ws = workspace({ autopilot: { mode: 'full', baseBranch: 'main' } });
+  throughPlan(ws);
+  assert.equal(run(ws, ['packet', 'GH-16']).code, 0);
+  assert.equal(run(ws, ['begin', 'GH-16', 'execute']).code, 0, 'the engine\'s own packet and approval pass');
+  run(ws, ['end', 'GH-16', 'execute', '--result', JSON.stringify({ ok: true })]);
+  const s = state(ws);
+  const forged = 'e'.repeat(40);
+  writeStateFile(ws, { ...s, packet: { ...s.packet, docsTip: forged }, approval: { ...s.approval, docsTip: forged } });
+  const pr = run(ws, ['pr', 'GH-16']);
+  assert.equal(pr.json.error.code, 'approval-unverified', pr.stdout);
+  assert.match(pr.json.error.message, /latest packet the engine posted/);
+});
+
+test('M7: a packet comment by another author with the right id does not count', () => {
+  const ws = workspace();
+  throughPlan(ws);
+  // The stub lists what was posted under STUB_ME; `api user` still says engine-bot.
+  assert.equal(run(ws, ['packet', 'GH-16'], { STUB_ME: 'mallory' }).code, 0);
+  ws.setMap({ ...approvedBy('alice'), ...PR_CREATE });
+  const n = run(ws, ['next', 'GH-16']);
+  assert.equal(n.json.reason, 'approved');
+  const b = run(ws, ['begin', 'GH-16', 'execute']);
+  assert.equal(b.json.error.code, 'approval-unverified', b.stdout);
+  assert.match(b.json.error.message, /holds no packet the engine posted/);
+});
+
+test('M7: an approval event older than the latest packet is refused', () => {
+  const ws = workspace();
+  approvedAtGate(ws);
+  // The timeline now shows the same event id, from before the packet (as a rewritten timeline would).
+  ws.setMap({ ...approvalTimeline('alice', '2000-01-01T00:00:00Z') });
+  const b = run(ws, ['begin', 'GH-16', 'execute']);
+  assert.equal(b.json.error.code, 'approval-unverified', b.stdout);
+  assert.match(b.json.error.message, /not after the latest packet/);
+});
+
+test('M7: a forged prUrl is replaced by the forge URL for the branch, and no comment goes to the forged one', () => {
+  const ws = workspace();
+  approvedAtGate(ws);
+  assert.equal(run(ws, ['begin', 'GH-16', 'execute']).code, 0);
+  fs.writeFileSync(path.join(ws.root, 'FEATURE.md'), 'done\n');
+  git(ws.root, 'add', '-A');
+  git(ws.root, 'commit', '-q', '-m', 'feat: the work');
+  run(ws, ['end', 'GH-16', 'execute', '--result', JSON.stringify({ ok: true })]);
+  const s = state(ws);
+  writeStateFile(ws, { ...s, pr: { ...s.pr, docs: 'https://github.com/evil/repo/pull/1' } });
+  ws.setMap({ ...approvedBy('alice'), ...PR_LIST([PR_URL]), ...PR_COMMENTS });
+  const r = run(ws, ['pr', 'GH-16']);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.equal(r.json.prs.docs, PR_URL);
+  assert.equal(state(ws).pr.docs, PR_URL);
+  const corrected = fs.readFileSync(path.join(ws.root, 'tasks', 'GH-16', 'stage-log.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).find((l) => l.event === 'pr-url-corrected');
+  assert.ok(corrected, 'the log says the URL was corrected');
+  assert.deepEqual([corrected.stored, corrected.url], ['https://github.com/evil/repo/pull/1', PR_URL]);
+  const targets = callRecords(ws).filter((c) => c.args[0] === 'pr' && c.args[1] === 'comment').map((c) => c.args[2]);
+  assert.ok(targets.length > 0 && targets.every((t) => t === PR_URL), `comments go to the forge's URL only: ${targets}`);
+  assert.ok(!callRecords(ws).some((c) => c.args.includes('https://github.com/evil/repo/pull/1')), 'nothing is sent to the forged URL');
+});
+
+test('M7: a stored URL the forge does not know is not trusted: the pull request is created as for a new one', () => {
+  const ws = workspace();
+  approvedAtGate(ws);
+  assert.equal(run(ws, ['begin', 'GH-16', 'execute']).code, 0);
+  fs.writeFileSync(path.join(ws.root, 'FEATURE.md'), 'done\n');
+  git(ws.root, 'add', '-A');
+  git(ws.root, 'commit', '-q', '-m', 'feat: the work');
+  run(ws, ['end', 'GH-16', 'execute', '--result', JSON.stringify({ ok: true })]);
+  const s = state(ws);
+  writeStateFile(ws, { ...s, pr: { ...s.pr, docs: 'https://github.com/evil/repo/pull/1' } });
+  ws.setMap({ ...approvedBy('alice'), ...PR_LIST([]), ...PR_CREATE, ...PR_COMMENTS });
+  const r = run(ws, ['pr', 'GH-16']);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.equal(r.json.prs.docs, PR_URL);
+  assert.equal(callRecords(ws).filter((c) => c.args[0] === 'pr' && c.args[1] === 'create').length, 1);
+});
+
+// ---------------------------------------------------------------------------------------------
+// M9: the ready label binds the ticket body as it was when the label went on
+// ---------------------------------------------------------------------------------------------
+
+const READY = { 'issue list -R o/r --label up:ready': { stdout: [{ number: 16, title: 'T16', updatedAt: '2026-10-04T00:00:00Z' }] }, 'issue list -R o/r --label up:approve': { stdout: [] }, 'issue list -R o/r --label up:changes': { stdout: [] } };
+const READY_LABELED_AT = '2026-10-04T08:00:00Z';
+const readyTicket = (extra = {}) => ({
+  ...READY,
+  'issue view 16 -R o/r --json labels': { stdout: { labels: [{ name: 'up:ready' }] } },
+  'issue edit 16 -R o/r --remove-label up:ready': { stdout: '' },
+  'api repos/o/r/issues/16/timeline': { stdout: [[{ id: 'ready-16', event: 'labeled', label: { name: 'up:ready' }, actor: { login: 'owner' }, created_at: READY_LABELED_AT }]] },
+  'api repos/o/r/collaborators/owner/permission': { stdout: { permission: 'admin' } },
+  ...extra,
+});
+const edited = (at) => ({ 'api graphql': { stdout: { data: { repository: { issue: { lastEditedAt: at } } } } } });
+const headless = (extra = {}) => ({ ULTRAPOWERS_CLAUDE: HARNESS_STUB, ULTRAPOWERS_AUTOPILOT_MAX_TURNS: '7', ULTRAPOWERS_STAGE_GH_TOKEN: '', ULTRAPOWERS_STAGE_GITLAB_TOKEN: '', ...extra });
+const briefFile = (ws, id = 'GH-16') => path.join(ws.root, '.ultrapowers', 'autopilot', `${id}.brief.json`);
+
+test('M9 GitHub: a body edited after the ready label is not picked up: comment, label removed, no stage', () => {
+  const ws = workspace({ map: readyTicket(edited('2026-10-04T08:30:00Z')) });
+  const r = run(ws, ['watch', '--once'], headless());
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.ok(r.json.events.some((e) => e.event === 'skip' && e.reason === 'body-edited-after-ready-label'), JSON.stringify(r.json.events));
+  assert.ok(!r.json.events.some((e) => e.event === 'ran'));
+  assert.ok(ws.calls().some((a) => a.includes('--remove-label') && a.includes('up:ready')), 'the ready label is removed');
+  const comments = callRecords(ws).filter((c) => c.args[0] === 'issue' && c.args[1] === 'comment').map((c) => c.stdin);
+  assert.equal(comments.length, 1);
+  assert.match(comments[0], /ticket body changed after the ready label was added \(label at 2026-10-04T08:00:00Z, last edit at 2026-10-04T08:30:00Z\)/);
+  assert.match(comments[0], /re-applies the label after reading the new text/);
+  assert.ok(!fs.existsSync(briefFile(ws)));
+});
+
+test('M9 GitHub: an edit before the label, or none, proceeds and is recorded', () => {
+  for (const at of ['2026-10-04T07:00:00Z', '2026-10-04T08:00:00Z', null]) {
+    const ws = workspace({ map: readyTicket(edited(at)) });
+    const r = run(ws, ['watch', '--once'], headless());
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.ok(r.json.events.some((e) => e.event === 'ran'), `${at}: ${JSON.stringify(r.json.events)}`);
+    assert.equal(JSON.parse(fs.readFileSync(briefFile(ws), 'utf8')).labelAt, READY_LABELED_AT);
+  }
+});
+
+// A ticket the session door picked up with the ready label on it: begin scaffold records the body.
+function sessionScaffold(ws) {
+  assert.equal(run(ws, ['begin', 'GH-16', 'scaffold']).code, 0);
+  assert.equal(JSON.parse(fs.readFileSync(briefFile(ws), 'utf8')).labelAt, READY_LABELED_AT);
+  fs.mkdirSync(path.join(ws.root, 'tasks', 'GH-16'), { recursive: true });
+  fs.writeFileSync(path.join(ws.root, 'tasks', 'GH-16', 'GH-16.md'), '# GH-16 - Fix it now please\n');
+  assert.equal(run(ws, ['end', 'GH-16', 'scaffold', '--result', JSON.stringify({ ok: true })]).code, 0);
+}
+
+test('M9 GitHub: an edit between pickup and the spec stage blocks the ticket and takes the ready label off', () => {
+  const ws = workspace({ map: readyTicket(edited(null)) });
+  sessionScaffold(ws);
+  ws.setMap(readyTicket(edited('2026-10-04T09:30:00Z')));
+  // The session door: begin spec compares the body.
+  const b = run(ws, ['begin', 'GH-16', 'spec']);
+  assert.equal(b.code, 2, b.stdout + b.stderr);
+  assert.equal(b.json.error.code, 'body-edited');
+  assert.match(b.json.error.message, /last edit at 2026-10-04T09:30:00Z/);
+  assert.equal(state(ws).stageStatus, 'blocked');
+  assert.ok(ws.calls().some((a) => a.includes('--add-label') && a.includes('up:blocked')));
+  assert.ok(ws.calls().some((a) => a.includes('--remove-label') && a.includes('up:ready')));
+  // The watcher compares before it spawns the stage.
+  const w = workspace({ map: readyTicket(edited(null)) });
+  sessionScaffold(w);
+  w.setMap(readyTicket(edited('2026-10-04T09:30:00Z')));
+  const r = run(w, ['run', 'GH-16', '--once'], headless());
+  assert.equal(r.code, 2, r.stdout + r.stderr);
+  assert.equal(r.json.error.code, 'body-edited');
+  assert.equal(callRecords(w).filter((c) => c.harness === 'stub').length, 0, 'no stage was spawned');
+});
+
+test('M9 GitHub: the ready label applied again after the edit is a new pickup', () => {
+  const ws = workspace({ map: readyTicket(edited(null)) });
+  sessionScaffold(ws);
+  const again = '2999-01-01T00:00:00Z';
+  ws.setMap(readyTicket({
+    ...edited('2026-10-04T09:30:00Z'),
+    'api repos/o/r/issues/16/timeline': { stdout: [[
+      { id: 'ready-16', event: 'labeled', label: { name: 'up:ready' }, actor: { login: 'owner' }, created_at: READY_LABELED_AT },
+      { id: 'ready-16b', event: 'labeled', label: { name: 'up:ready' }, actor: { login: 'owner' }, created_at: again },
+    ]] },
+  }));
+  const r = run(ws, ['run', 'GH-16', '--once'], headless());
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.equal(r.json.stages[0].stage, 'spec');
+  assert.equal(JSON.parse(fs.readFileSync(briefFile(ws), 'utf8')).labelAt, again);
+});
+
+
+test('M9 GitLab: a "changed the description" note after the label blocks pickup', () => {
+  const ws = workspace({ map: {} });
+  writeMarker(ws, (m) => { m.tickets.sources = [{ prefix: 'GL', provider: 'gitlab', namespace: 'acme', defaultProject: 'app', host: 'gitlab.example.com' }]; });
+  const enc = 'acme%2Fapp';
+  const labelAt = '2026-10-04T08:00:00Z';
+  const base = (noteAt) => ({
+    'issue list -R acme/app -l up:ready': { stdout: [{ iid: 7, title: 'T7', updated_at: '2026-10-04T00:00:00Z' }] },
+    'issue list -R acme/app -l up:approve': { stdout: [] },
+    'issue list -R acme/app -l up:changes': { stdout: [] },
+    [`api projects/${enc}/issues/7/resource_label_events`]: { stdout: [{ id: 1, action: 'add', label: { name: 'up:ready' }, user: { username: 'owner' }, created_at: labelAt }] },
+    'api users?username=owner': { stdout: [{ id: 5 }] },
+    [`api projects/${enc}/members/all/5`]: { stdout: { access_level: 50 } },
+    [`api projects/${enc}/issues/7/notes`]: { stdout: noteAt ? [{ id: 3, system: true, body: 'changed the description', created_at: noteAt, author: { username: 'author' } }, { id: 4, system: true, body: 'added ~up::ready label', created_at: labelAt, author: { username: 'owner' } }] : [{ id: 4, system: true, body: 'added label', created_at: labelAt, author: { username: 'owner' } }] },
+    'issue update 7 -R acme/app --unlabel up:ready': { stdout: '' },
+    'issue note 7 -R acme/app -m': { stdout: 'https://gitlab.example.com/acme/app/-/issues/7#note_1\n' },
+  });
+  ws.setMap(base('2026-10-04T08:30:00Z'));
+  const r = run(ws, ['watch', '--once'], headless());
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.ok(r.json.events.some((e) => e.event === 'skip' && e.reason === 'body-edited-after-ready-label'), JSON.stringify(r.json.events));
+  assert.ok(ws.calls().some((a) => a.join(' ').startsWith('issue update 7') && a.includes('--unlabel') && a.includes('up:ready')));
+  const note = ws.calls().find((a) => a[0] === 'issue' && a[1] === 'note');
+  assert.match(note.join(' '), /ticket body changed after the ready label was added/);
+  // A note from before the label does not block: pickup reaches the stage.
+  const ws2 = workspace({ map: {} });
+  writeMarker(ws2, (m) => { m.tickets.sources = [{ prefix: 'GL', provider: 'gitlab', namespace: 'acme', defaultProject: 'app', host: 'gitlab.example.com' }]; });
+  ws2.setMap({ ...base('2026-10-04T07:00:00Z') });
+  const r2 = run(ws2, ['watch', '--once'], headless());
+  assert.ok(!r2.json.events.some((e) => e.reason === 'body-edited-after-ready-label'), JSON.stringify(r2.json.events));
+  assert.ok(fs.existsSync(briefFile(ws2, 'GL-7')), 'pickup recorded the label');
+});
+
+// Odoo: no body edit time; the description's hash is recorded at pickup and compared before each stage.
+const ODOO_FAKE = path.join(HERE, 'fixtures', 'odoo-fake.mjs');
+const ODOO_ID = 'ODOO-13627';
+const odooChildren = [];
+test.after(() => { for (const c of odooChildren) c.kill(); });
+
+function startOdooProcess(spec) {
+  return new Promise((resolve, reject) => {
+    const seedFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'autopilot-odoo-seed-')), 'seed.json');
+    fs.writeFileSync(seedFile, JSON.stringify(spec));
+    const child = spawn(process.execPath, [ODOO_FAKE, 'serve', '--seed-file', seedFile], { stdio: ['ignore', 'pipe', 'pipe'] });
+    odooChildren.push(child);
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (d) => {
+      out += d;
+      const line = out.split('\n').find((l) => l.startsWith('{'));
+      if (line) resolve({ child, url: JSON.parse(line).url });
+    });
+    child.stderr.on('data', (d) => { err += d; });
+    child.on('exit', (code) => reject(new Error(`the fake Odoo exited with ${code}: ${err}`)));
+  });
+}
+
+async function odooWorkspace(seed) {
+  const { url } = await startOdooProcess(seed);
+  const ws = workspace({ odoo: url });
+  const post = async (route, body) => (await fetch(`${url}${route}`, { method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } })).json();
+  ws.odoo = {
+    state: async () => (await fetch(`${url}/__fake/state`)).json(),
+    setDescription: (taskId, description) => post('/__fake/setDescription', { taskId, description }),
+  };
+  return ws;
+}
+
+const ODOO_READY = { setup: { initialTags: { 13627: [1, 2] }, tagTasks: [{ taskId: 13627, name: 'Ultrapowers Ready', by: 'val', at: '2026-10-05 08:30:00' }] } };
+
+test('M9 Odoo: the description hash recorded at pickup blocks the spec stage when it changes', async () => {
+  const ws = await odooWorkspace(ODOO_READY);
+  assert.equal(run(ws, ['begin', ODOO_ID, 'scaffold']).code, 0);
+  const brief = JSON.parse(fs.readFileSync(briefFile(ws, ODOO_ID), 'utf8'));
+  assert.match(brief.bodyHash, /^[0-9a-f]{64}$/);
+  fs.mkdirSync(path.join(ws.root, 'tasks', ODOO_ID), { recursive: true });
+  fs.writeFileSync(path.join(ws.root, 'tasks', ODOO_ID, `${ODOO_ID}.md`), `# ${ODOO_ID} - Integration\n`);
+  assert.equal(run(ws, ['end', ODOO_ID, 'scaffold', '--result', JSON.stringify({ ok: true })]).code, 0);
+  // Unchanged: the spec stage begins.
+  assert.equal(run(ws, ['begin', ODOO_ID, 'spec']).code, 0);
+  run(ws, ['end', ODOO_ID, 'spec', '--result', JSON.stringify({ ok: false, message: 'redo' })]);
+  await ws.odoo.setDescription(13627, '<p>Upgrade the integration AND wire it to the payment gateway.</p>');
+  const blocked = run(ws, ['begin', ODOO_ID, 'spec']);
+  assert.equal(blocked.code, 2, blocked.stdout + blocked.stderr);
+  assert.equal(blocked.json.error.code, 'body-edited');
+  assert.match(blocked.json.error.message, /re-applies the label after reading the new text/);
+  assert.equal(state(ws, ODOO_ID).stageStatus, 'blocked');
+});
+
+test('M9 Odoo: a task written after the ready tag was added is not picked up when the tag time is known', async () => {
+  const ws = await odooWorkspace({ setup: { initialTags: { 13627: [1, 2] }, tagTasks: [
+    { taskId: 13627, name: 'Ultrapowers Ready', by: 'val', at: '2026-10-05 08:30:00' },
+    { taskId: 13627, name: 'Backend', by: 'val', at: '2026-10-05 08:45:00' },
+  ] } });
+  const r = run(ws, ['begin', ODOO_ID, 'scaffold']);
+  assert.equal(r.code, 2, r.stdout + r.stderr);
+  assert.equal(r.json.error.code, 'body-edited');
+  assert.ok(!fs.existsSync(briefFile(ws, ODOO_ID)));
+});
+
+test('M9: bodyEditedAt reads lastEditedAt (GitHub) and the latest "changed the description" note (GitLab); Odoo has none', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'autopilot-bodytime-'));
+  fs.writeFileSync(path.join(dir, 'map.json'), JSON.stringify({
+    'api graphql': { stdout: { data: { repository: { issue: { lastEditedAt: '2026-10-04T08:30:00Z' } } } } },
+    'api projects/acme%2Fapp/issues/7/notes': { stdout: [
+      { id: 1, system: true, body: 'changed the description', created_at: '2026-10-04T08:10:00Z' },
+      { id: 2, system: false, body: 'changed the description', created_at: '2026-10-04T09:00:00Z' },
+      { id: 3, system: true, body: 'changed the description', created_at: '2026-10-04T08:40:00Z' },
+      { id: 4, system: true, body: 'added a label', created_at: '2026-10-04T09:30:00Z' },
+    ] },
+  }));
+  const env = { ...process.env, ULTRAPOWERS_GH: path.join(HERE, 'fixtures', 'tracker-stub.mjs'), ULTRAPOWERS_GLAB: path.join(HERE, 'fixtures', 'tracker-stub.mjs'), STUB_DIR: dir };
+  const github = trackerFor({ provider: 'github', host: 'github.com', path: 'o/r' }, env);
+  assert.equal(github.hasBodyEditTime, true);
+  assert.equal(await github.bodyEditedAt(16), '2026-10-04T08:30:00Z');
+  const gitlab = trackerFor({ provider: 'gitlab', host: 'gitlab.example.com', path: 'acme/app' }, env);
+  assert.equal(await gitlab.bodyEditedAt(7), '2026-10-04T08:40:00Z', 'a user note and other system notes do not count');
+  const odoo = trackerFor({ provider: 'odoo', url: 'http://127.0.0.1:1', path: '34', login: 'bot' }, process.env);
+  assert.equal(odoo.hasBodyEditTime, false);
+  assert.equal(await odoo.bodyEditedAt(1), null);
 });

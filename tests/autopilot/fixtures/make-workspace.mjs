@@ -41,6 +41,8 @@ export const BASE_MAP = {
   'api repos/o/r/issues/comments/9': { stdout: { id: 9, created_at: '2026-10-04T09:00:00Z' } },
   'api repos/o/r/issues/16/timeline': { stdout: [[]] },
   'api repos/o/r/issues/16/comments': { stdout: [[]] },
+  // The body was never edited (M9): the engine's own GraphQL read of lastEditedAt.
+  'api graphql': { stdout: { data: { repository: { issue: { lastEditedAt: null } } } } },
   // The QA report lands on every pull request after they open (spec 2026-10-05 §8).
   'pr comment https://github.com/o/r/pull/9 --body-file -': { stdout: 'https://github.com/o/r/pull/9#issuecomment-21\n' },
   'pr comment https://github.com/o/backend/pull/3 --body-file -': { stdout: 'https://github.com/o/backend/pull/3#issuecomment-22\n' },
