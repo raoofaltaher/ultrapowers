@@ -172,8 +172,9 @@ Exactly one line starts with `Verdict:`.
 
 **STEP 9 — Close.** Close the browser. Delete the lane scratch files when present (`rm
 <ROOT>/.ultrapowers/qa-token.json`, `rm <ROOT>/.ultrapowers/qa-cookies-*.txt`, `rm
-<ROOT>/.ultrapowers/qa-trace-*.json`, `rm <ROOT>/.ultrapowers/qa-api-*.txt`). Remove the run
-marker: `rm <ROOT>/.ultrapowers/qa-active`.
+<ROOT>/.ultrapowers/qa-trace-*.json`, `rm <ROOT>/.ultrapowers/qa-api-*.txt`). Leave the run marker
+in place: the guardrail refuses its removal by any call of the run. Ask your human partner to end
+the run with `! rm "<ROOT>/.ultrapowers/qa-active"`.
 Print exactly one final line: `Verdict: <value> — reviews/<ID>/QA-REPORT.md`. Stop.
 
 ## Triage classes
@@ -246,7 +247,8 @@ Maintain `<ROOT>/reviews/<ID>/run-state.json` with the schema the entry skill sh
       one `Verdict:` line.
 - [ ] Every finding has evidence saved under `reviews/<ID>/artifacts/` and embedded or linked in
       the report.
-- [ ] Browser closed; run marker removed; the final verdict line printed.
+- [ ] Browser closed; your human partner asked to remove the run marker; the final verdict line printed.
 
 Any box unchecked → you are not done. If genuinely blocked, still write the report `INCOMPLETE`
-with the exact blocker, remove the marker, and print the verdict line. Never end silently.
+with the exact blocker, ask your human partner to remove the marker, and print the verdict line.
+Never end silently.

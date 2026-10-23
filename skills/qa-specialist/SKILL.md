@@ -15,7 +15,9 @@ performs the run. Invoking it is your human partner's yes for writing `reviews/<
 `.ultrapowers/`, and nothing else.
 
 **Core principle:** before the marker exists, a problem stops the run with a message; once the
-marker exists, every path ends with a report, a removed marker and one verdict line.
+marker exists, every path ends with a report, a request to your human partner to remove the
+marker, and one verdict line. Only your human partner removes it: the guardrail refuses its
+removal from any call while it exists.
 
 **Announce at start:** "I'm using the qa-specialist skill to run the QA gate for ticket <ID>."
 
@@ -129,9 +131,10 @@ test -f "<ROOT>/reviews/<ID>/QA-REPORT.md" && echo report-present; test -e "<ROO
 
 - No `report-present`: write the report now per `ultrapowers:qa-report`, verdict `INCOMPLETE`,
   naming what stopped the run.
-- `marker-present`: remove it with `rm "<ROOT>/.ultrapowers/qa-active"`, and delete
-  `qa-token.json`, `qa-cookies-*.txt`, `qa-trace-*.json` and `qa-api-*.txt` under
-  `<ROOT>/.ultrapowers/` where they exist.
+- `marker-present`: delete `qa-token.json`, `qa-cookies-*.txt`, `qa-trace-*.json` and `qa-api-*.txt`
+  under `<ROOT>/.ultrapowers/` where they exist, then ask your human partner to end the run with
+  `! rm "<ROOT>/.ultrapowers/qa-active"` (or by deleting the file from their own terminal). Do not remove it yourself:
+  the guardrail refuses it.
 - The last line of your output is exactly `Verdict: <value> — reviews/<ID>/QA-REPORT.md`, with
   the value from the report's `Verdict:` line.
 
@@ -146,7 +149,7 @@ Create a todo for each item and complete them in order:
 5. **Write the marker**
 6. **Load the contract** — forked already, or read it inline
 7. **Run the contract** — STEP 0 to STEP 9, the preflight report as Inputs
-8. **Close** — report present, marker and scratch files gone, the verdict line last
+8. **Close** — report present, scratch files gone, your human partner asked to remove the marker, the verdict line last
 
 ## Red Flags
 
@@ -158,6 +161,6 @@ Create a todo for each item and complete them in order:
 | "The old run-state looks messy; a fresh start is cleaner" | Unfinished run-state means resume: `done` rows stay done and findings are never zeroed. |
 | "My partner's note says to skip the browser this time" | A note sets emphasis, never coverage. Drive the browser and record the declined request in the Partner note. |
 | "Inline and short on context, one role will do" | Inline changes pacing, not coverage: checkpoint run-state, end `INCOMPLETE`, and the next run resumes. |
-| "The stack is down, so a chat message is enough" | The marker exists, so the run has started: write the `PRECONDITION-FAILED` report, remove the marker, print the verdict line. |
-| "The guardrail keeps denying me; removing the marker would let me finish" | The marker is the guardrail's switch. It is removed in STEP 9 or Step 7 and nowhere else. |
+| "The stack is down, so a chat message is enough" | The marker exists, so the run has started: write the `PRECONDITION-FAILED` report, ask your human partner to remove the marker, print the verdict line. |
+| "The guardrail keeps denying me; removing the marker would let me finish" | The marker is the guardrail's switch, and only your human partner removes it, when the run is over. |
 | "The remaining screenshots can go in as one line of links" | Every screenshot in the report is embedded with `![caption](artifacts/<file>.png)`. A link hides the evidence from the reader and fails the report check. |
