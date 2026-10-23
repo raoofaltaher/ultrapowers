@@ -120,7 +120,13 @@ if [[ -n "$PROJECT_DIR" ]]; then
   export BRAINSTORM_PORT_FILE="${PROJECT_DIR}/.ultrapowers/brainstorm/.last-port"
   export BRAINSTORM_TOKEN_FILE="${PROJECT_DIR}/.ultrapowers/brainstorm/.last-token"
 else
-  SESSION_DIR="/tmp/brainstorm-${SESSION_ID}"
+  # mktemp creates the directory atomically, so another local user cannot pre-create
+  # or read it. Keep the /tmp prefix: stop-server.sh only deletes /tmp/* sessions.
+  SESSION_DIR="$(mktemp -d /tmp/brainstorm-XXXXXXXX)" || {
+    echo '{"error": "Could not create session directory under /tmp"}'
+    exit 1
+  }
+  chmod 700 "$SESSION_DIR"
 fi
 
 STATE_DIR="${SESSION_DIR}/state"
