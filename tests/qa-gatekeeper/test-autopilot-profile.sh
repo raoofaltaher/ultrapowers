@@ -56,6 +56,9 @@ ELSEWHERE="${ELSEWHERE:-$TEST_ROOT/elsewhere}"
 mkdir -p "$DECOY/.agents" "$DECOY/.ultrapowers" "$ELSEWHERE"
 printf '%s' '{"name":"decoy","pluginVersion":"1.0.0","qa":{"hosts":{"allowed":[],"forbidden":[]}}}' > "$DECOY/.agents/ultrapowers.json"
 printf '%s' '{"ticket":"GH-99","branch":"GH-99-x","scope":["."]}' > "$DECOY/.ultrapowers/autopilot-active"
+# The decoy's ticket snapshot lists the server its URL case calls, so that case meets the host rule it is about.
+mkdir -p "$DECOY/.ultrapowers/autopilot"
+printf '%s' '{"mcpServers":{"Firecrawl":{}}}' > "$DECOY/.ultrapowers/autopilot/mcp.json"
 QA_MARKER="$ROOT/.ultrapowers/qa-active"
 printf '%s' '{"ticket":"GH-16","branch":"GH-16-x","scope":["repo-a"]}' > "$MARKER"
 # The ticket's MCP snapshot (taken at begin): an autopilot stage reaches only these servers. It lists every
