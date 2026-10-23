@@ -550,5 +550,14 @@
   {"name":"deny_write_vscode_mcp","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.vscode/mcp.json","content":"{}"}}},
   {"name":"deny_write_cursor_rules","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.cursor/rules/x.mdc","content":"x"}}},
   {"name":"deny_write_tool_dotgit_file","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/repo-a/.git","content":"gitdir: /tmp/x"}}},
-  {"name":"deny_edit_tool_root_dotgit","reason":"protected path","event":{"tool_name":"Edit","tool_input":{"file_path":"{{ROOT}}/.git","old_string":"a","new_string":"b"}}}
+  {"name":"deny_edit_tool_root_dotgit","reason":"protected path","event":{"tool_name":"Edit","tool_input":{"file_path":"{{ROOT}}/.git","old_string":"a","new_string":"b"}}},
+  {"name":"allow_research_fetch_unlisted_host_spec","stage":"spec","event":{"tool_name":"WebFetch","tool_input":{"url":"https://docs.example.org/guide","prompt":"x"}}},
+  {"name":"allow_research_fetch_unlisted_host_plan","stage":"plan","event":{"tool_name":"WebFetch","tool_input":{"url":"https://docs.example.org/guide","prompt":"x"}}},
+  {"name":"allow_research_fetch_unlisted_host_changes","stage":"changes","event":{"tool_name":"WebFetch","tool_input":{"url":"https://docs.example.org/guide","prompt":"x"}}},
+  {"name":"allow_research_scrape_unlisted_host_spec","stage":"spec","event":{"tool_name":"mcp__scraper__scrape","tool_input":{"url":"https://docs.example.org/api"}}},
+  {"name":"deny_fetch_unlisted_host_execute","stage":"execute","reason":"not in qa.hosts.allowed","event":{"tool_name":"WebFetch","tool_input":{"url":"https://docs.example.org/guide","prompt":"x"}}},
+  {"name":"deny_fetch_unlisted_host_qa","stage":"qa","reason":"not in qa.hosts.allowed","event":{"tool_name":"WebFetch","tool_input":{"url":"https://docs.example.org/guide","prompt":"x"}}},
+  {"name":"deny_research_fetch_forbidden_host_spec","stage":"spec","reason":"qa.hosts.forbidden","event":{"tool_name":"WebFetch","tool_input":{"url":"https://prod.example.com/x","prompt":"x"}}},
+  {"name":"deny_fetch_unlisted_host_no_stage","reason":"not in qa.hosts.allowed","event":{"tool_name":"WebFetch","tool_input":{"url":"https://docs.example.org/guide","prompt":"x"}}},
+  {"name":"deny_fetch_unlisted_host_unknown_stage","stage":"review","reason":"not in qa.hosts.allowed","event":{"tool_name":"WebFetch","tool_input":{"url":"https://docs.example.org/guide","prompt":"x"}}}
 ]

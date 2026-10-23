@@ -78,7 +78,8 @@ CASES_NODE="$CASES"
 if command -v cygpath >/dev/null 2>&1; then CASES_NODE="$(cygpath -m "$CASES" 2>/dev/null || printf '%s' "$CASES")"; fi
 
 # One case per line: name<TAB>reason<TAB>dir<TAB>env<TAB>event JSON ("-" for a missing reason, dir or
-# env; env is NAME=value pairs joined by \x1f), with the placeholders substituted.
+# env; env is NAME=value pairs joined by \x1f), then the case's autopilot stage ("-" for none) before the
+# event, with the placeholders substituted.
 case_lines() {
   DECOY_DIR="$DECOY" ELSEWHERE_DIR="$ELSEWHERE" node -e '
 const fs = require("node:fs");
@@ -89,7 +90,7 @@ for (const c of JSON.parse(fs.readFileSync(file, "utf8"))) {
     .split("{{WINSHORT_SETTINGS}}").join(shortSettings).split("{{WINSHORT_MARKER}}").join(shortMarker).split("{{WINSHORT}}").join(short);
   const fill = (t) => t.split("{{DECOY}}").join(process.env.DECOY_DIR).split("{{ELSEWHERE}}").join(process.env.ELSEWHERE_DIR).split("{{ROOT}}").join(root);
   const env = Object.entries(c.env || {}).map(([k, v]) => `${k}=${fill(String(v))}`).join("\x1f") || "-";
-  process.stdout.write(`${c.name}\t${c.reason || "-"}\t${c.dir ? fill(c.dir) : "-"}\t${env}\t${text}\n`);
+  process.stdout.write(`${c.name}\t${c.reason || "-"}\t${c.dir ? fill(c.dir) : "-"}\t${env}\t${c.stage || "-"}\t${text}\n`);
 }' "$CASES_NODE" "$ROOT" "$ELSEWHERE" "$WINSHORT" "$WINSHORT_SETTINGS" "$WINSHORT_MARKER"
 }
 
@@ -105,12 +106,15 @@ run_hook() {
 
 echo "autopilot profile: marker present"
 count=0
-while IFS=$'\t' read -r name reason cdir cenv event; do
+while IFS=$'\t' read -r name reason cdir cenv cstage event; do
   [ -n "$name" ] || continue
   count=$((count + 1))
   RUN_ENV=(); [[ "$cenv" != "-" ]] && IFS=$'\x1f' read -r -a RUN_ENV <<< "$cenv"
   run_dir="$ROOT"; [[ "$cdir" != "-" ]] && run_dir="$cdir"
+  # A case with a stage runs under a marker that names it (the autopilot research stages, GH-59).
+  if [[ "$cstage" != "-" ]]; then printf '{"ticket":"GH-16","branch":"GH-16-x","scope":["repo-a"],"stage":"%s"}' "$cstage" > "$MARKER"; fi
   result="$(run_hook "$event" "$run_dir")"
+  if [[ "$cstage" != "-" ]]; then printf '%s' '{"ticket":"GH-16","branch":"GH-16-x","scope":["repo-a"]}' > "$MARKER"; fi
   RUN_ENV=()
   code="${result%%|*}"
   rest="${result#*|}"
@@ -184,7 +188,7 @@ rm -f "$QA_MARKER"
 echo "autopilot profile: no marker, everything passes silently"
 rm -f "$MARKER"
 silent=0
-while IFS=$'\t' read -r name reason cdir cenv event; do
+while IFS=$'\t' read -r name reason cdir cenv cstage event; do
   [ -n "$name" ] || continue
   result="$(run_hook "$event" "$ROOT")"
   code="${result%%|*}"

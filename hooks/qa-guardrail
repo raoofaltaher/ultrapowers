@@ -805,11 +805,19 @@ fi
 # `url`, `uri`, `link` or a `urls` array: forbidden hosts never; allowed hosts only when a list is set.
 # An autopilot stage has no open egress: a host that no list names is refused (the hook cannot read the
 # ticket's own links, so a host to use is listed in qa.hosts.allowed; the ticket tracker's host stands for them
-# while the list is empty).
+# while the list is empty). One exception: the autopilot spec, plan and changes stages research current sources
+# (GH-59), so there a URL tool may read any host that qa.hosts.forbidden does not list. Any other stage, and a
+# marker with no stage, keeps the listed-hosts rule.
+research_stage=0
+if [ "$PROFILE" = "autopilot" ]; then
+  case "$marker_stage" in spec|plan|changes) research_stage=1 ;; esac
+fi
 for u in $url; do
   host_of_r "$u"; h="$REPLY"
   on_list "$forbidden" "$h" && deny "host '$h' is on qa.hosts.forbidden"
-  if [ -n "$allowed" ]; then
+  if [ "$research_stage" -eq 1 ]; then
+    :
+  elif [ -n "$allowed" ]; then
     on_list "$allowed" "$h" || deny "host '$h' is not in qa.hosts.allowed"
   elif [ "$PROFILE" = "autopilot" ]; then
     on_list "$tracker_hosts" "$h" || deny "host '$h' is not in qa.hosts.allowed or qa.urls; an autopilot stage reaches only listed hosts (the hook cannot read the ticket's own links, so list the host to use it)"
