@@ -786,6 +786,19 @@ if [ "$PROFILE" = "hunt" ]; then
       *) deny "the hunt's network is its audit tools and gh api; $tool carrying a URL is refused" ;;
     esac
   fi
+  # A tool the hunt does not use is refused by default, whatever its name: research tools (search,
+  # documentation, scrape) have no fixed names, and a query can carry data out. The hunt's own tools
+  # pass: the shell tools (the shell rules below judge the command), the file readers, subagent
+  # dispatch, task tracking, skills, asking the user and loading a tool's schema, and tracker and
+  # mail reads (the tracker rule above has refused their writes). Research belongs to STEP 0b of the
+  # hunt contract, before the marker exists. Names are matched lowercased, without `_ :.-/`.
+  hunt_shell_re='^(bash|shell|runshellcommand|terminal|runterminalcmd|runcommand|execute|exec|execcommand|executecommand|powershell)$'
+  hunt_tools_re='^(read|readfile|readmanyfiles|notebookread|viewfile|viewimage|grep|glob|ls|list|lsp|find|listdirectory|listdir|grepsearch|searchfilecontent|findbyname|codebasesearch|filesearch|search|searchfiles|agent|task|invokesubagent|invokeagent|delegatetask|subagentspawn|subagent|spawnagent|todowrite|todoread|writetodos|todo|updateplan|settodolist|taskcreate|taskupdate|tasklist|taskget|taskoutput|taskstop|bashoutput|killshell|skill|activateskill|skillview|askuserquestion|requestuserinput|askuser|question|toolsearch|think)$'
+  tracker_read=0
+  if [[ "$tool_norm" =~ $tracker_re ]] || { [ "$tool_server_less" -eq 1 ] && [[ "$tool_norm" =~ $object_re ]]; }; then tracker_read=1; fi
+  if ! [[ "$tool_flat" =~ $hunt_shell_re ]] && ! [[ "$tool_flat" =~ $hunt_tools_re ]] && [ "$tracker_read" -eq 0 ]; then
+    deny "the hunt's network is its audit tools and gh api; $tool is not a tool the hunt uses (research belongs to STEP 0b, before the marker)"
+  fi
 fi
 
 # --- Any tool that carries a url (navigation, fetch, scrape, crawl, whatever its name), under
