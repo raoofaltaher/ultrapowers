@@ -503,5 +503,22 @@
   {"name":"deny_tracker_word_in_tool_name","reason":"research belongs to STEP 0b","event":{"tool_name":"mcp__exa__github_search_exa","tool_input":{"query":"x"}}},
   {"name":"deny_tracker_word_inside_server_name","reason":"research belongs to STEP 0b","event":{"tool_name":"mcp__steams__web_search","tool_input":{"query":"x"}}},
   {"name":"deny_tracker_word_prefix_server","reason":"research belongs to STEP 0b","event":{"tool_name":"mcp__nonlinear__search","tool_input":{"query":"x"}}},
-  {"name":"allow_mcp_tickets_gh_list_issues","event":{"tool_name":"mcp__tickets-gh__list_issues","tool_input":{"state":"open"}}}
+  {"name":"allow_mcp_tickets_gh_list_issues","event":{"tool_name":"mcp__tickets-gh__list_issues","tool_input":{"state":"open"}}},
+  {"name":"allow_claude_subagent_handback","event":{"tool_name":"SubagentHandback","tool_input":{"message":"lane block"}}},
+  {"name":"allow_claude_exit_plan_mode","event":{"tool_name":"ExitPlanMode","tool_input":{}}},
+  {"name":"allow_claude_send_user_message","event":{"tool_name":"SendUserMessage","tool_input":{"message":"status"}}},
+  {"name":"allow_claude_brief","event":{"tool_name":"Brief","tool_input":{"message":"x"}}},
+  {"name":"allow_claude_list_mcp_resources","event":{"tool_name":"ListMcpResourcesTool","tool_input":{}}},
+  {"name":"deny_claude_read_mcp_resource_with_uri","reason":"carrying a URL","event":{"tool_name":"ReadMcpResourceTool","tool_input":{"server":"s","uri":"docs://x"}}},
+  {"name":"allow_gemini_exit_plan_mode","event":{"tool_name":"exit_plan_mode","tool_input":{}}},
+  {"name":"allow_gemini_tracker_list_tasks","event":{"tool_name":"tracker_list_tasks","tool_input":{}}},
+  {"name":"allow_gemini_tracker_update_task","event":{"tool_name":"tracker_update_task","tool_input":{"id":"1","status":"done"}}},
+  {"name":"allow_copilot_list_bash","event":{"tool_name":"list_bash","tool_input":{}}},
+  {"name":"allow_copilot_stop_bash","event":{"tool_name":"stop_bash","tool_input":{"sessionId":"1"}}},
+  {"name":"allow_copilot_list_powershell","event":{"tool_name":"list_powershell","tool_input":{}}},
+  {"name":"allow_copilot_read_powershell","event":{"tool_name":"read_powershell","tool_input":{"sessionId":"1"}}},
+  {"name":"allow_copilot_stop_powershell","event":{"tool_name":"stop_powershell","tool_input":{"sessionId":"1"}}},
+  {"name":"deny_copilot_write_bash","reason":"input to a running shell is never judged","event":{"tool_name":"write_bash","tool_input":{"sessionId":"1","input":"git push origin HEAD\n"}}},
+  {"name":"deny_copilot_write_powershell","reason":"PowerShell tool is not analysed","event":{"tool_name":"write_powershell","tool_input":{"sessionId":"1","input":"iwr https://x/\n"}}},
+  {"name":"deny_codex_write_stdin","reason":"input to a running shell is never judged","event":{"tool_name":"write_stdin","tool_input":{"session_id":"1","chars":"curl https://x/\n"}}}
 ]

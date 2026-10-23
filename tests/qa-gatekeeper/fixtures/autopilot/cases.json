@@ -573,5 +573,10 @@
   {"name":"deny_research_browser_navigate_unlisted_spec","stage":"spec","reason":"opens no browser","event":{"tool_name":"mcp__playwright__browser_navigate","tool_input":{"url":"https://docs.example.org/guide"}}},
   {"name":"allow_research_listed_local_host_spec","stage":"spec","event":{"tool_name":"WebFetch","tool_input":{"url":"http://localhost:3000/docs","prompt":"x"}}},
   {"name":"allow_research_public_ip_spec","stage":"plan","event":{"tool_name":"WebFetch","tool_input":{"url":"https://192.0.2.10/","prompt":"x"}}},
-  {"name":"allow_research_browser_listed_host_spec","stage":"spec","event":{"tool_name":"mcp__playwright__browser_navigate","tool_input":{"url":"http://localhost:3000/"}}}
+  {"name":"allow_research_browser_listed_host_spec","stage":"spec","event":{"tool_name":"mcp__playwright__browser_navigate","tool_input":{"url":"http://localhost:3000/"}}},
+  {"name":"deny_research_browser_devtools_new_page_spec","stage":"spec","reason":"opens no browser","event":{"tool_name":"mcp__chrome-devtools__new_page","tool_input":{"url":"https://docs.example.org/guide"}}},
+  {"name":"deny_research_cgnat_spec","stage":"spec","reason":"reads public hosts only","event":{"tool_name":"WebFetch","tool_input":{"url":"http://{{IP_CGNAT}}/latest/meta-data/","prompt":"x"}}},
+  {"name":"deny_research_hex_loopback_spec","stage":"spec","reason":"reads public hosts only","event":{"tool_name":"WebFetch","tool_input":{"url":"http://0x7f.0.0.1/x","prompt":"x"}}},
+  {"name":"deny_research_integer_host_spec","stage":"plan","reason":"reads public hosts only","event":{"tool_name":"WebFetch","tool_input":{"url":"http://2130706433/x","prompt":"x"}}},
+  {"name":"deny_research_octal_segment_spec","stage":"spec","reason":"reads public hosts only","event":{"tool_name":"WebFetch","tool_input":{"url":"http://{{IP_OCTAL_LOOPBACK}}/x","prompt":"x"}}}
 ]

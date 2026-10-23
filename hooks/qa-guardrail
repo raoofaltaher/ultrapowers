@@ -555,7 +555,10 @@ tool_lc="$(lower "$tool")"
 # The PowerShell tool (Claude Code's `PowerShell`, Copilot CLI's `powershell`) runs its command in
 # PowerShell, and every shell rule below reads POSIX shell: `sc`, `ri`, `iex` and .NET calls would
 # pass, the run's own marker among them. The Bash tool is the shell of a run.
+# The session-control forms (list, read, stop) carry no command and pass; the write form types into a
+# running shell and is refused with the rest.
 case "$tool_lc" in
+  list_powershell|read_powershell|stop_powershell) ;;
   *powershell*) deny "the PowerShell tool is not analysed during $run_kind; use the Bash tool" ;;
 esac
 
@@ -663,7 +666,15 @@ if [ "$PROFILE" = "hunt" ]; then
   fi
   hunt_write_re='^(write|edit|multiedit|notebookedit|create|applypatch|writefile|replace|editfile|writetofile|replacefilecontent|multireplacefilecontent|strreplacefile|patch|newfile)$'
   hunt_shell_re='^(bash|shell|runshellcommand|terminal|runterminalcmd|runcommand|execute|exec|execcommand|executecommand|powershell|monitor)$'
-  hunt_tools_re='^(read|readfile|readmanyfiles|notebookread|view|viewfile|viewfileoutline|viewimage|grep|glob|ls|list|lsp|find|listdirectory|listdir|grepsearch|searchfilecontent|findbyname|codebasesearch|filesearch|search|searchfiles|agent|task|invokesubagent|invokeagent|delegatetask|subagentspawn|subagent|spawnagent|waitagent|listagents|followuptask|closeagent|completetask|sendmessage|managetask|commandstatus|readbash|todowrite|todoread|todolist|writetodos|todo|updatetodo|updateplan|settodolist|taskcreate|taskupdate|tasklist|taskget|taskoutput|taskstop|bashoutput|killshell|skill|skills|skillslist|activateskill|skillview|askuserquestion|requestuserinput|askuser|clarify|question|toolsearch|think)$'
+  # The report and lifecycle tools are in the list on purpose: a subagent returns its lane block
+  # through its harness's hand-back tool, and a long audit command is polled and stopped through
+  # the read, list and stop forms of the shell session tools. The write forms (write_bash,
+  # write_powershell, write_stdin) type into a running shell, and the shell rules below never see
+  # that text, so they stay refused with their own reason.
+  hunt_tools_re='^(read|readfile|readmanyfiles|notebookread|view|viewfile|viewfileoutline|viewimage|grep|glob|ls|list|lsp|find|listdirectory|listdir|grepsearch|searchfilecontent|findbyname|codebasesearch|filesearch|search|searchfiles|agent|task|invokesubagent|invokeagent|delegatetask|subagentspawn|subagent|spawnagent|waitagent|listagents|followuptask|closeagent|completetask|subagenthandback|sendmessage|sendusermessage|brief|exitplanmode|enterplanmode|listmcpresourcestool|listmcpresources|managetask|commandstatus|readbash|listbash|stopbash|readpowershell|listpowershell|stoppowershell|todowrite|todoread|todolist|writetodos|todo|updatetodo|updateplan|settodolist|taskcreate|taskupdate|tasklist|taskget|taskoutput|taskstop|bashoutput|killshell|trackeradddependency|trackercreatetask|trackergettask|trackerlisttasks|trackerupdatetask|trackervisualize|skill|skills|skillslist|activateskill|skillview|askuserquestion|requestuserinput|askuser|clarify|question|toolsearch|think)$'
+  case "$tool_flat" in
+    writebash|writepowershell|writestdin) deny "the hunt's network is its audit tools and gh api; $tool types into a running shell, and input to a running shell is never judged by the shell rules" ;;
+  esac
   hunt_tracker_re='(^|_)(github|gitlab|glab|jira|linear|odoo|bitbucket|azure_?devops|outlook|microsoft_365|gmail|slack|teams)(_|$)|^tickets_'
   tracker_name="$tool_norm"
   case "$tool_lc" in
@@ -823,16 +834,26 @@ on_list() {
 research_stage=0; research_browser=0
 if [ "$PROFILE" = "autopilot" ]; then
   case "$marker_stage" in spec|plan|changes) research_stage=1 ;; esac
-  case "$tool_lc" in *browser*|*navigate*|*playwright*|*puppeteer*) [ "$research_stage" -eq 1 ] && research_browser=1; research_stage=0 ;; esac
+  # A browser tool is told by its name (the harnesses and MCP servers spell them differently): the
+  # browser words, the engine names and the automation servers. A browser tool whose name holds
+  # none of these gets the fetch rule; that limit is documented in the README.
+  case "$tool_lc" in *browser*|*navigate*|*playwright*|*puppeteer*|*chrome*|*chromium*|*firefox*|*webkit*|*devtools*|*selenium*|*stagehand*|*browserbase*|*computer_use*|*computeruse*) [ "$research_stage" -eq 1 ] && research_browser=1; research_stage=0 ;; esac
 fi
 # 0 when the host in $1 is not a public one: loopback, link-local, private, unspecified, single-label, or a
 # reserved local suffix. Builtins only.
 non_public_host() {
   local h="${1#[}"; h="${h%]}"
+  # An address in any form but plain dotted-decimal (a bare integer, a hex or octal segment) is
+  # how a loopback or private address hides from a pattern; it is never a public host here.
+  case "$h" in
+    *0x*|*0X*) return 0 ;;
+  esac
+  if [[ "$h" =~ ^[0-9]+$ ]] || [[ "$h" =~ ^[0-9.]+$ && ( "$h" =~ (^|\.)0[0-9] ) ]]; then return 0; fi
   case "$h" in
     localhost|*.localhost|*.local|*.internal|*.lan|*.home.arpa) return 0 ;;
     127.*|0.0.0.0|0|10.*|192.168.*|169.254.*) return 0 ;;
     172.1[6-9].*|172.2[0-9].*|172.3[01].*) return 0 ;;
+    100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*) return 0 ;;
     ::1|::|fe80:*|fc*:*|fd*:*|::ffff:*) return 0 ;;
     *.*|*:*) return 1 ;;
     *) return 0 ;;

@@ -86,7 +86,7 @@ const fs = require("node:fs");
 const [file, root, elsewhere, short, shortSettings, shortMarker] = process.argv.slice(1);
 // Non-public addresses for the research-stage cases, built from their octets: the leak scan allows no
 // literal address outside loopback and TEST-NET-1 in these files.
-const ips = { IP_LINK_LOCAL: [169, 254, 169, 254], IP_PRIVATE_A: [10, 0, 0, 5], IP_PRIVATE_B: [172, 20, 1, 1], IP_PRIVATE_C: [192, 168, 1, 10], IP_LOOPBACK_OTHER: [127, 0, 0, 2] };
+const ips = { IP_LINK_LOCAL: [169, 254, 169, 254], IP_PRIVATE_A: [10, 0, 0, 5], IP_PRIVATE_B: [172, 20, 1, 1], IP_PRIVATE_C: [192, 168, 1, 10], IP_LOOPBACK_OTHER: [127, 0, 0, 2], IP_CGNAT: [100, 100, 100, 200], IP_OCTAL_LOOPBACK: ["0177", 0, 0, 1] };
 const withIps = (t) => Object.entries(ips).reduce((s, [k, o]) => s.split(`{{${k}}}`).join(o.join(".")), t);
 for (const c of JSON.parse(fs.readFileSync(file, "utf8"))) {
   if (c.name.endsWith("_winshort") && !short) continue;
