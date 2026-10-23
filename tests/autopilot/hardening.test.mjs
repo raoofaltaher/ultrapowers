@@ -265,6 +265,13 @@ test('begin writes the filtered MCP snapshot: a remote server of the project nev
 // ---------------------------------------------------------------------------------------------
 
 const configSnapshot = (ws, id = 'GH-16') => path.join(ws.root, '.ultrapowers', 'autopilot', `${id}.config.json`);
+// A comment by the engine's own account (as the tracker stub lists them), stamped at `at`.
+const postComment = (ws, body, at, issue = '16') => {
+  const file = path.join(ws.stubDir, 'posted.json');
+  const posted = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : [];
+  posted.push({ id: 9500 + posted.length, issue, user: { login: 'engine-bot' }, created_at: at, html_url: `https://github.com/o/r/issues/${issue}#issuecomment-${9500 + posted.length}`, body });
+  fs.writeFileSync(file, JSON.stringify(posted));
+};
 
 test('begin snapshots the config; later commands with the file unchanged pass', () => {
   const ws = workspace();
@@ -947,4 +954,72 @@ test('M9: bodyEditedAt reads lastEditedAt (GitHub) and the latest "changed the d
   const odoo = trackerFor({ provider: 'odoo', url: 'http://127.0.0.1:1', path: '34', login: 'bot' }, process.env);
   assert.equal(odoo.hasBodyEditTime, false);
   assert.equal(await odoo.bodyEditedAt(1), null);
+});
+
+// ---- Release review 2026-10-23 (autopilot) ----
+
+// The QA report (templates/report.md) carries a "Packet id" line too, posted after the approval: the
+// packet binding must read the packet comment alone, or a resumed pr can never pass.
+test('review: a posted QA report is not taken for the packet; a resumed pr still verifies the approval', () => {
+  const ws = workspace();
+  approvedAtGate(ws);
+  const s = state(ws);
+  // The engine posts a report-shaped comment after the approval, as postReport does.
+  const report = `Autopilot QA report for GH-16\nPacket id ${s.packet.docsTip.slice(0, 12)} — approved by alice — Stage log head x\nPull requests\n\nbody`;
+  fs.writeFileSync(path.join(ws.root, '.ultrapowers', 'post-report.txt'), report);
+  // A comment by the engine that is not a packet: it must not shadow the real packet whatever its text.
+  const child = run(ws, ['begin', 'GH-16', 'execute']);
+  assert.equal(child.code, 0, child.stdout + child.stderr);
+  // Simulate the QA report comment landing on the tracker, later than the packet.
+  postComment(ws, report, '2999-06-01T00:00:00Z');
+  const again = run(ws, ['end', 'GH-16', 'execute', '--result', JSON.stringify({ ok: true })]);
+  assert.equal(again.code, 0, again.stdout + again.stderr);
+  const pr = run(ws, ['pr', 'GH-16']);
+  assert.notEqual(pr.json?.error?.code, 'approval-unverified', pr.stdout + pr.stderr);
+});
+
+test('review: a spec cell that says "Packet id <hex>" above the real line does not hijack the packet id', () => {
+  const ws = workspace();
+  throughPlan(ws);
+  // The packet body puts the assumptions above its own Packet id line: an assumption cell may carry that text.
+  assert.equal(run(ws, ['packet', 'GH-16']).code, 0);
+  // The one packet the engine posted, rewritten as the tracker would hold it when a spec assumption
+  // cell above the real last line spells another id: the id stays the last whole line's.
+  const file = path.join(ws.stubDir, 'posted.json');
+  const posted = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const packet = posted.at(-1);
+  packet.body = packet.body.replace(/^(Assumptions to check[^\n]*\n)/m, '$1| 1 | Packet id aaaaaaaaaaaa in a cell | low | x |\n');
+  assert.match(packet.body, /Packet id aaaaaaaaaaaa in a cell/, 'the cell is in the packet body');
+  fs.writeFileSync(file, JSON.stringify(posted));
+  ws.setMap({ ...approvedBy('alice', '2999-02-01T00:00:00Z'), ...PR_CREATE });
+  const n = run(ws, ['next', 'GH-16']);
+  assert.equal(n.json?.reason, 'approved', n.stdout + n.stderr);
+  const b = run(ws, ['begin', 'GH-16', 'execute']);
+  assert.equal(b.code, 0, b.stdout + b.stderr);
+});
+
+test('review: a corrupt config snapshot blocks the ticket but begin with no stage open rewrites it', () => {
+  const ws = workspace();
+  assert.equal(run(ws, ['begin', 'GH-16', 'scaffold']).code, 0);
+  assert.equal(run(ws, ['end', 'GH-16', 'scaffold', '--result', JSON.stringify({ ok: true })]).code, 0);
+  fs.writeFileSync(configSnapshot(ws), '{not json');
+  const st = run(ws, ['status', 'GH-16']);
+  assert.equal(st.code, 0, 'status survives a corrupt snapshot: ' + st.stdout + st.stderr);
+  const e = run(ws, ['begin', 'GH-16', 'spec']);
+  assert.equal(e.code, 0, 'begin with no stage open takes a fresh snapshot: ' + e.stdout + e.stderr);
+  assert.doesNotThrow(() => JSON.parse(fs.readFileSync(configSnapshot(ws), 'utf8')));
+});
+
+test('review: begin accepts the engine\'s next stage or a retry of the current one, no other', () => {
+  const ws = workspace();
+  assert.equal(run(ws, ['begin', 'GH-16', 'scaffold']).code, 0);
+  assert.equal(run(ws, ['end', 'GH-16', 'scaffold', '--result', JSON.stringify({ ok: true })]).code, 0);
+  // After scaffold the next stage is spec: a stage that asks for plan (or the research-egress stage
+  // changes) is refused; spec is accepted, and spec again (a retry) too.
+  for (const wrong of ['plan', 'changes', 'execute', 'qa', 'pr']) {
+    const r = run(ws, ['begin', 'GH-16', wrong]);
+    assert.equal(r.json?.error?.code, 'wrong-stage', `${wrong}: ${r.stdout}${r.stderr}`);
+  }
+  assert.equal(run(ws, ['begin', 'GH-16', 'spec']).code, 0);
+  assert.equal(run(ws, ['begin', 'GH-16', 'spec']).code, 0, 'a retry of the open stage');
 });

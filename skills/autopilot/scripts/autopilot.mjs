@@ -103,13 +103,17 @@ function gitConfigSnapshotPath(root, id) {
   return path.join(engineDir(root), `${id}.gitconfig.json`);
 }
 
-function readSnapshot(file, what) {
+// A snapshot that cannot be read is reported as CORRUPT (a change to accept by running begin with no
+// stage open, like a changed key), never thrown: status must still answer, and begin must be able to
+// take a fresh one.
+const CORRUPT = Symbol('corrupt-snapshot');
+function readSnapshot(file) {
   if (!fs.existsSync(file)) return null;
   try {
     const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
   } catch { /* falls through */ }
-  throw new AutopilotError('snapshot-corrupt', `.ultrapowers/autopilot/${path.basename(file)} (the ${what} snapshot) is not readable; check what changed it, then run begin again with no stage open`);
+  return CORRUPT;
 }
 
 // The dotted path of the first difference between two parsed values, or null when they are equal.
@@ -150,7 +154,8 @@ function ticketSnapshotId(opts, live) {
 // The git config baseline of a ticket: { <dir>: [entries] } for the documents repository and every
 // code repository, and later each worktree the engine creates.
 function readGitBaseline(root, id) {
-  return readSnapshot(gitConfigSnapshotPath(root, id), 'git config');
+  const read = readSnapshot(gitConfigSnapshotPath(root, id));
+  return read === CORRUPT ? null : read;
 }
 
 function gitConfigChangeMessage(root, id, baseline) {
@@ -244,9 +249,12 @@ function context(opts) {
   // is sent with) or the approvers. A difference is reported on ctx and blocks the ticket in the
   // commands that guard (guardTicket); `begin` run again by a person accepts it.
   const snapshotId = ticketSnapshotId(opts, live);
-  const snapshot = snapshotId ? readSnapshot(configSnapshotPath(root, snapshotId), 'config') : null;
+  const snapshotRead = snapshotId ? readSnapshot(configSnapshotPath(root, snapshotId)) : null;
+  const snapshot = snapshotRead === CORRUPT ? null : snapshotRead;
   const marker = snapshot ? { ...live, tickets: snapshot.tickets, autopilot: snapshot.autopilot } : live;
-  const configChange = snapshot ? configChangeMessage(snapshotId, snapshot, live) : null;
+  const configChange = snapshotRead === CORRUPT
+    ? `.ultrapowers/autopilot/${snapshotId}.config.json (the config snapshot of ${snapshotId}) cannot be read. The ticket is blocked. Check what changed it; if the change is yours, run begin again with no stage open to take a fresh snapshot`
+    : snapshot ? configChangeMessage(snapshotId, snapshot, live) : null;
   const settings = effectiveAutopilot(marker);
   for (const [what, name] of [['autopilot.baseBranch', settings.baseBranch], ...(Array.isArray(marker.repos) ? marker.repos.map((r) => [`repos[${r?.name}].defaultBranch`, r?.defaultBranch]) : [])]) {
     const problem = name ? branchNameProblem(name) : null;
@@ -271,7 +279,12 @@ function context(opts) {
   const dirs = repoDirs(root, marker);
   // The repositories' own git config is compared before the engine runs any git that could act on
   // it (the checkout below runs filters, for one); a changed key leaves the repository untouched.
-  const gitConfigChange = snapshotId && opts.command !== 'status' ? gitConfigChangeMessage(root, snapshotId, readGitBaseline(root, snapshotId)) : null;
+  const gitBaselineRead = snapshotId ? readSnapshot(gitConfigSnapshotPath(root, snapshotId)) : null;
+  const gitConfigChange = snapshotId && opts.command !== 'status'
+    ? (gitBaselineRead === CORRUPT
+      ? `.ultrapowers/autopilot/${snapshotId}.gitconfig.json (the git config baseline of ${snapshotId}) cannot be read. The ticket is blocked. Check what changed it; if the change is yours, run begin again with no stage open to take a fresh baseline`
+      : gitConfigChangeMessage(root, snapshotId, gitBaselineRead))
+    : null;
   // The ticket's documents live on its branch, checked out in place: put the documents
   // repository there before anything reads the state, so two tickets can share one workspace.
   if (!gitConfigChange) ensureOnTicketBranch(dirs.docs, opts.id);
@@ -410,7 +423,9 @@ async function rejectPickup(tracker, number, settings, message) {
 // ready label, has no record and no binding.
 async function guardBody(ctx, opts, stage) {
   if (ctx.settings.mode === 'off') return;
-  const brief = readSnapshot(briefPath(ctx.root, opts.id), 'brief');
+  const brief = readSnapshot(briefPath(ctx.root, opts.id));
+  // An unreadable brief record: the binding it held is gone, so the ticket is blocked, not run.
+  if (brief === CORRUPT) throw new AutopilotError('brief-corrupt', `.ultrapowers/autopilot/${opts.id}.brief.json (the record of the body the ready label approved) cannot be read; a maintainer re-applies the ready label, and the engine records the body again`);
   if (!brief) return;
   const { tracker, settings } = ctx;
   const number = ctx.source.number;
@@ -466,7 +481,11 @@ async function blockStage(ctx, id, door, stage, message, { label = true, commit 
 // post a comment as the engine. So the packet the state names must be the latest one the engine
 // itself posted on the tracker (same Packet id), whatever the attribution, and an event approval
 // must come after that packet.
-const PACKET_ID_LINE = /Packet id\s+([0-9a-f]{12})\b/;
+const PACKET_ID_LINE = /^Packet id ([0-9a-f]{12})\s*$/m;
+// The packet comment is the one whose first line is the packet template's (templates/packet.md); the QA
+// report (templates/report.md) carries a Packet id line too and is posted after the approval, so it is
+// never the packet.
+const PACKET_FIRST_LINE = /^Autopilot packet for /;
 
 // The latest comment the engine's own account posted that carries a Packet id line: { id, at, url },
 // or null. Ties on the tracker's clock go to the later comment in the list.
@@ -477,8 +496,11 @@ async function latestEnginePacket(ctx) {
   let best = null;
   for (const c of comments) {
     if (c.author !== me) continue;
-    const m = PACKET_ID_LINE.exec(String(c.body ?? '').replace(/<[^>]+>/g, ''));
-    if (!m) continue;
+    const text = String(c.body ?? '').replace(/<[^>]+>/g, '').replace(/\r\n?/g, '\n').trim();
+    if (!PACKET_FIRST_LINE.test(text)) continue;
+    const ids = [...text.matchAll(new RegExp(PACKET_ID_LINE.source, 'gm'))];
+    if (!ids.length) continue;
+    const m = ids[ids.length - 1];
     const at = Date.parse(String(c.at ?? ''));
     if (!Number.isFinite(at)) continue;
     if (!best || at >= best.time) best = { id: m[1], at: c.at, time: at, url: c.url ?? '' };
@@ -1149,6 +1171,33 @@ async function permittedLabels(ctx) {
   return out;
 }
 
+// The stages begin may open for a ticket: scaffold for a new ticket; else the open stage (a retry), the
+// stage the state is at (running or blocked), or the stage nextStage names from the state and the
+// tracker's facts. Anything else is wrong-stage.
+async function assertBeginStage(ctx, opts, open) {
+  const state = readState(ctx.root, opts.id);
+  if (!state) {
+    if (opts.stage !== 'scaffold') throw new AutopilotError('wrong-stage', `${opts.id} has no autopilot state; the first stage is scaffold`);
+    return;
+  }
+  const allowed = new Set();
+  if (open && open.ticket === opts.id && open.stage) allowed.add(open.stage);
+  if (['running', 'blocked'].includes(state.stageStatus ?? '')) allowed.add(state.stage);
+  // A block that guardTicket placed (the config or the git config changed) is not the stage's own
+  // failure: once a person accepts the change, the ticket goes on from the stage it had finished.
+  const last = readLog(ctx.root, opts.id).at(-1);
+  const configBlock = state.stageStatus === 'blocked' && last?.event === 'blocked' && /^(\.agents\/ultrapowers\.json changed|the git config of a repository changed|\.ultrapowers\/autopilot\/)/.test(String(last.message ?? ''));
+  const view = configBlock ? { ...state, stageStatus: 'finished' } : state;
+  let facts = { mode: state.mode ?? ctx.settings.mode, labels: [], events: ctx.settings.events, qaConfigured: Boolean(ctx.marker.qa) };
+  try { facts.labels = await labelsOf(ctx); } catch { facts.labels = []; }
+  const next = nextStage(view, facts);
+  if (next.action === 'run' && next.stage) allowed.add(next.stage);
+  // At the gate the engine's answer depends on an approval it checks in begin itself: execute is a
+  // candidate there (recheckApproval decides), and changes when the label asks for it.
+  if (state.stage === 'gate') { allowed.add('execute'); allowed.add('changes'); }
+  if (!allowed.has(opts.stage)) throw new AutopilotError('wrong-stage', `${opts.id} is at ${state.stage} (${state.stageStatus ?? 'finished'}); begin ${opts.stage} is not its next stage (${[...allowed].join(', ') || 'none'})`);
+}
+
 async function runBegin(opts) {
   let ctx = context(opts);
   if (ctx.configChange || ctx.gitConfigChange) {
@@ -1171,6 +1220,10 @@ async function runBegin(opts) {
   // An open stage may re-enter itself (a retry inside the same session); no other stage may start.
   const open = openStage(ctx);
   if (open && !(open.ticket === opts.id && open.stage === opts.stage)) assertNoOpenStage(ctx, `begin ${opts.stage}`);
+  // The stage is the engine's to choose: begin takes the next stage of the state (nextStage), the
+  // open stage again (a retry), or a stage the state is at. A stage that names another one (an execute
+  // stage asking for spec, whose egress rules are wider) is refused.
+  await assertBeginStage(ctx, opts, open);
   const lock = acquireLock(ctx.root, opts.id, opts.door, opts.pid);
   if (!lock.ok) throw new AutopilotError('locked', `${opts.id} is being run by the ${lock.door} door${lock.pid ? ` (pid ${lock.pid})` : ''}`);
   let state = readState(ctx.root, opts.id);
