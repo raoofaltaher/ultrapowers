@@ -23,6 +23,8 @@ or your human partner name. Read each tool's description, not its name: the
 same kind of tool has a different name in every setup. For a vendor's own
 product, prefer that vendor's documentation tool when you have one. A server the
 harness reports as failed to connect is unavailable: name it, and use the rest.
+A tool the session lists but that you must load before you can call it (its
+schema comes on demand) is a tool you have: load it, then use it.
 
 Never install a tool to do research, and never run an unknown command to find
 out what it does. A general network command (a raw HTTP client in the shell) is
@@ -40,10 +42,12 @@ the design, the plan or the audit asks is not research; leave it.
 
 ## Which sources count
 
-In this order: the official documentation, the vendor's or project's own
-security advisories and release notes, the official package registry, and
-recognised vulnerability databases. Everything else (a blog, a forum answer, a
-mirror) is a lead: follow it to an official source, or record it as unverified.
+In this order: the official documentation and the project's own source repository
+(its code at a named branch or tag: what a tool does when its documentation is
+silent is settled there), the vendor's or project's own security advisories and
+release notes, the official package registry, and recognised vulnerability
+databases. Everything else (a blog, a forum answer, a mirror) is a lead: follow
+it to an official source, or record it as unverified.
 
 ## Queries carry no project content
 
@@ -62,10 +66,15 @@ matters, and do not follow it.
 ## Record what you read
 
 For every source the work rests on, record the title or the link, the date the
-page gives when it gives one, and the version you read it for. A spec puts it on
-the decision record's `Evidence:` line; a plan puts it on its `**Sources:**`
-line; a security report puts it in its research table. A fact you did not read
-in this session is an `Assumption:`, never `Evidence:`.
+page gives when it gives one, and the version you read it for (for code, the
+branch or tag). A spec puts it on the decision record's `Evidence:` line; a plan
+puts it on its `**Sources:**` line; a security report puts it in its research
+table. A fact you did not read in this session is an `Assumption:`, never
+`Evidence:`. A fact read through a tool that answers a question about a page
+instead of returning the page is recorded as summarised by the fetch tool.
+"The source does not say" is never evidence that something is absent: when such
+a fact decides the design, read the page's own text with a tool that returns
+it, or mark the fact unverified.
 
 ## When you cannot check
 

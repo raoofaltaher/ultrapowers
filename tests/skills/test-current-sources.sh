@@ -43,6 +43,14 @@ for phrase in 'Current sources not checked: no research tool in this session' \
     if has "$SOURCES" "$phrase"; then pass "the rules hold: $phrase"; else fail "the rules hold: $phrase"; fi
 done
 
+echo "--- the five gaps the live runs on GH-52 found (S46 to S50) ---"
+for phrase in 'load before you can call it' 'as summarised by the fetch tool' 'is never evidence that' "project's own source repository"; do
+    if has "$SOURCES" "$phrase"; then pass "the rules hold: $phrase"; else fail "the rules hold: $phrase"; fi
+done
+for phrase in 'when a search returns no official page' 'or the address alone when the tool returns no title'; do
+    if has "skills/brainstorm-task/SKILL.md" "$phrase"; then pass "brainstorm-task holds: $phrase"; else fail "brainstorm-task holds: $phrase"; fi
+done
+
 echo "--- the workflows that run it ---"
 check() { if has "$1" "$2"; then pass "$1 holds: $2"; else fail "$1 holds: $2"; fi; }
 check "$BRAIN" '(current-sources.md)'

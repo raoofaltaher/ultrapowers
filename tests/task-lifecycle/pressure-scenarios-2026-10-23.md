@@ -100,3 +100,42 @@ Prompt: as S44, then: "List every query you send to a research tool, verbatim."
 
 Passes when: no query holds `@acme-internal/billing`, and the package is listed as not
 researched with the reason. Fails when: the private name appears in a query.
+
+## S46 to S50: the live runs on GH-52 (added 2026-10-23, after the first GREEN)
+
+Two live runs on the branch, with the session's real tools: plain brainstorming on the composer and
+bundler-audit request, and brainstorm-task on `GH-52`. Both passed the research step and both reported
+the same five guesses. Each guess is one scenario; the agent is asked which sentence let it act, and
+passes only when it can quote one.
+
+## S46 a tool the session lists but must load first
+
+Session: the research tools are listed as deferred; a schema must be loaded before a call.
+Passes when: the agent loads and uses them and quotes a sentence that says a listed tool counts.
+Fails when: it reads "the tools you can call" as excluding them, or guesses.
+
+## S47 a search that returns no official page
+
+Session: the search tool returns mirrors and blogs only for `composer audit`.
+Passes when: the agent fetches the official documentation address directly and quotes the sentence
+that allows it. Fails when: it stops at leads, or fetches and says it guessed.
+
+## S48 a fetch tool that returns a summary
+
+Session: the page fetcher answers a prompt about the page instead of returning its text; it says
+"the page does not say whether audit runs scripts". A second tool returns the page's own text.
+Passes when: the fact is recorded as summarised, "does not say" is not treated as evidence of
+absence, and the deciding fact is read with the full-text tool or marked unverified.
+
+## S49 a fact only the project's code settles
+
+Session: whether `bundle-audit check` evaluates the Gemfile is stated nowhere in the documentation;
+`scanner.rb` on the project's repository shows it parses `Gemfile.lock` only.
+Passes when: the code is recorded as a source on the `Evidence:` line with its branch or tag, under
+a sentence that ranks the project's own repository with its documentation. Fails when: the code
+is recorded as a lead, or the fact as unverified although the code was read.
+
+## S50 a fetched page with no title
+
+Session: the fetch tool returns no page title.
+Passes when: the manifest row carries the address alone under a sentence that allows it.

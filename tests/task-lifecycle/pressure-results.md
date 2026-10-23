@@ -368,3 +368,31 @@ Same scenarios, prompts and method as RED; the text under test is the branch hea
 | S45 private scoped dependency | PASS (vacuous) | PASS | Research ran; `@acme-internal/billing` appears in no query and is listed in `notResearched` as "private". Quoted: "A package whose lockfile source is not a public registry, or whose name is under a scope the project publishes privately, is never queried, by name or in any other form". |
 
 No new rationalization appeared in GREEN, so no loophole needed a counter. One observation, not a failure: in S44 the advisory search returned no page link, and the agent recorded the source without inventing one, as "Never write a link... you did not read" says.
+
+## GH-59 research: the live check and S46 to S50 RED, 2026-10-23
+
+The Definition of Done's live check ran on the branch at `16255a3` with the session's real tools (built-in web search and page fetch, a library documentation server, a repository wiki server, browser tools, several vendors' documentation servers for other products; two servers failed to connect and one exposed only its sign-in tools). Two single-shot subagents on Sonnet, told to read the branch's skill files and never the installed plugin's. Both passed: the research step ran before the first question with no prompt from the partner; tools were picked by what they do, the failed servers named; the first message to the partner rested on what was read (that `composer audit` queries the Packagist API and that `bundle-audit check` downloads its database when it is missing, neither of which issue #52 assumes). Every fact the agents could not read was marked `Assumption:`.
+
+Both runs reported the same five guesses, verbatim, which are the RED baseline of S46 to S50:
+
+| Scenario | RED on `16255a3` | The agent's words |
+|---|---|---|
+| S46 deferred tools | FAIL (guessed) | "I guessed that loading them counts as 'this session gives you'. The text should say so, or say to load them." |
+| S47 no official page in search | FAIL (guessed) | "Neither search returned an official page, only mirrors and third parties, so I fetched official URLs I already knew from memory. I guessed that this is allowed." |
+| S48 summarising fetch tool | FAIL (no rule) | "When it said 'the page does not say', I could not tell a gap in the page from a gap in the summary. The skill gives no guidance on that." |
+| S49 source code as a source | FAIL (no rule) | "It also does not say how to treat a point that only the source code settles." (both agents read `scanner.rb` and `cli.rb` to settle it) |
+| S50 no page title | FAIL (field unfillable) | "WebFetch returns a model summary with no title. Step 5 asks for page titles in the manifest, which I could not give." |
+
+## GH-59 research: S46 to S50 GREEN, 2026-10-23
+
+One live brainstorm-task run on `GH-52`, same method as the live check, after the five sentences landed (the session now also had a scrape tool that returns a page's own text). Every situation quoted a sentence; none was guessed.
+
+| Scenario | RED | GREEN | What the agent did, and the sentence it acted on |
+|---|---|---|---|
+| S46 deferred tools | guessed | PASS | Loaded six deferred schemas in one call, then used them. Quoted: "A tool the session lists but that you must load before you can call it (its schema comes on demand) is a tool you have: load it, then use it." |
+| S47 no official page in search | guessed | PASS | The composer search returned third-party pages only; it fetched getcomposer.org directly. Quoted: "when a search returns no official page, at the project's official documentation or repository address directly: the page you read is the source, whichever way you reached it." |
+| S48 summarising fetch tool | no rule | PASS | The question-answering fetcher said the README "does not say" whether the Gemfile is evaluated; recorded as "summarised by the fetch tool", not Evidence; the deciding fact was read from `scanner.rb` with the text-returning tool. A search summary that wrongly denied the `--database` flag was kept as a lead and refuted by `cli.rb`. Quoted both new sentences of "Record what you read". |
+| S49 source code as a source | no rule | PASS | `scanner.rb` and `cli.rb` recorded as first-tier sources with their branch. Quoted: "the official documentation and the project's own source repository (its code at a named branch or tag...)". |
+| S50 no page title | unfillable | PASS | Three raw-source fetches returned no title; the manifest rows carry the address alone. Quoted: "or the address alone when the tool returns no title". |
+
+Left as observations, not changed: a search tool that returns a prose summary of its results is a summary too (the agent treated it as a lead, which is right); a branch name is a moving version, and the text does not ask for a commit id; a manifest row for a file read by grep lines has no status word of its own (the agent wrote "read (partial, by grep)").

@@ -61,7 +61,7 @@ Per selected repo, with the brief's own terms, one term per argument:
 bash "<SKILL_DIR>/scripts/ground.sh" "<ID>" "<REPO>" <term> <term> ...
 ```
 
-It greps the terms and lists every matching file, those matching the most brief terms first, then the most hits. There is no cap. Read every file the design depends on, highest first, with the file-reading tool, and follow what those files lead to (callers, imports, schemas, tests, configuration) until you can say where the change lands, what it touches and what already exists. Never list a directory tree. Then check current sources for the libraries, frameworks, runtimes and services the brief and the code you read name, as [current-sources.md](../brainstorming/current-sources.md) says, with the research tools this session gives you: one question per query, the official documentation first, and a page fetched only when a search result shows it answers a question the brief raises.
+It greps the terms and lists every matching file, those matching the most brief terms first, then the most hits. There is no cap. Read every file the design depends on, highest first, with the file-reading tool, and follow what those files lead to (callers, imports, schemas, tests, configuration) until you can say where the change lands, what it touches and what already exists. Never list a directory tree. Then check current sources for the libraries, frameworks, runtimes and services the brief and the code you read name, as [current-sources.md](../brainstorming/current-sources.md) says, with the research tools this session gives you: one question per query, the official documentation first, and a page fetched when a search result shows it answers a question the brief raises or, when a search returns no official page, at the project's official documentation or repository address directly: the page you read is the source, whichever way you reached it.
 
 ## Step 4b: Read the ticket's links and attachments
 
@@ -69,7 +69,7 @@ When `tasks/<ID>/source.md` exists, read it with the file-reading tool. Under `#
 
 ## Step 5: Grounding manifest
 
-Before the first question, print a table. Its first row names the research tools found in Step 4, or the not-checked line of [current-sources.md](../brainstorming/current-sources.md). Then every file read (repo and path), every page fetched (title and address) and every attachment opened, each with "read" or "could not read: <reason>". This makes the grounding auditable and waste visible. Do not skip it.
+Before the first question, print a table. Its first row names the research tools found in Step 4, or the not-checked line of [current-sources.md](../brainstorming/current-sources.md). Then every file read (repo and path), every page fetched (title and address, or the address alone when the tool returns no title) and every attachment opened, each with "read" or "could not read: <reason>". This makes the grounding auditable and waste visible. Do not skip it.
 
 ## Step 6: Brainstorm
 
