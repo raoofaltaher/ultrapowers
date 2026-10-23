@@ -12,7 +12,6 @@
       "Bash(git show:*)",
       "Bash(git branch --list:*)",
       "Bash(git branch --show-current:*)",
-      "Bash(git blame:*)",
       "Bash(git rev-parse:*)",
       "Bash(docker ps:*)",
       "Bash(docker logs:*)",
@@ -73,6 +72,9 @@
       "Read(**/.env.test)",
       "Read(**/.env.staging)",
       "Read(**/.env.secret)",
+      "Read(**/.env.secrets)",
+      "Read(**/.dev.vars)",
+      "Read(**/.dev.vars.*)",
       "Read(~/.aws/**)",
       "Read(~/.config/gh/**)",
       "Read(~/.config/glab-cli/**)",
@@ -86,7 +88,10 @@
       "Bash(git diff *--ou*)",
       "Bash(git show *--ou*)",
       "Bash(git diff *--no-index*)",
+      "Bash(git diff */dev/null*)",
       "Bash(git blame *--contents*)",
+      "Bash(git blame *-S*)",
+      "Bash(git blame *--ignore-revs-file*)",
       "Bash(git show *:.env*)"
     ]
   },

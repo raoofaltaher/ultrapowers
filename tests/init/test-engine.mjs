@@ -495,11 +495,12 @@ test('the rendered Claude Code settings deny reads of secret files and the --out
     assert.ok(deny.includes(rule), `deny has ${rule}`);
   }
   const allow = settings.permissions.allow;
-  for (const kept of ['Bash(git log:*)', 'Bash(git diff:*)', 'Bash(git show:*)', 'Bash(go build:*)', 'Bash(go test:*)']) {
+  for (const kept of ['Bash(git log:*)', 'Bash(git diff:*)', 'Bash(git show:*)']) {
     assert.ok(allow.includes(kept), `${kept} stays pre-approved`);
   }
-  // No allow was added; the example env file stays readable because no deny names it.
-  assert.equal(allow.filter((r) => !r.startsWith('Skill(')).length, 26, 'the non-skill allow list is the original 26 entries');
+  assert.equal(allow.includes('Bash(git blame:*)'), false, 'git blame reads any file through its options, so it asks');
+  // No allow was added; the toolchain entries come only with their marker file (test-secret-denies.mjs); the example env file stays readable because no deny names it.
+  assert.equal(allow.filter((r) => !r.startsWith('Skill(')).length, 14, 'an empty project gets the 14 non-skill entries that name no toolchain');
   assert.equal(allow.includes('Read(**/.env.example)'), false); assert.equal(deny.includes('Read(**/.env.*)'), false, 'example env files stay readable');
 });
 
@@ -551,7 +552,7 @@ test('the scaffold writes Cursor ignore and CLI deny rules for secret files, onl
   assert.ok(report.written.includes('.cursorignore'));
   assert.ok(report.written.includes('.cursor/cli.json'));
   const ignore = fs.readFileSync(path.join(root, '.cursorignore'), 'utf8').split('\n').filter((l) => l && !l.startsWith('#'));
-  assert.deepEqual(ignore, ['.agents/mcp-secrets.env', '.env', '.env.local', '.env.*.local', '.env.production']);
+  assert.deepEqual(ignore, ['.agents/mcp-secrets.env', '.env', '.env.local', '.env.*.local', '.env.production', '.env.development', '.env.test', '.env.staging', '.env.secret', '.env.secrets', '.dev.vars', '.dev.vars.*']);
   const cli = JSON.parse(fs.readFileSync(path.join(root, '.cursor', 'cli.json'), 'utf8'));
   for (const rule of [
     'Read(**/.agents/mcp-secrets.env)', 'Read(**/.env)', 'Read(**/.env.local)', 'Read(**/.env.*.local)', 'Read(**/.env.production)',

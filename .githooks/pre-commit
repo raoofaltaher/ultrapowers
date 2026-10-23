@@ -20,10 +20,12 @@ if [ -n "$GITLEAKS" ]; then
     exit 1
   }
 elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-  # The image is pinned to a release tag (supply chain): update the tag on purpose,
-  # after reading the gitleaks release notes, never by pulling :latest.
+  # The image is pinned to a release tag and to its multi-arch index digest (supply chain): update
+  # tag and digest together, on purpose, after reading the gitleaks release notes, never by pulling
+  # :latest. The scan needs no network, so the container gets none.
   docker_status=0
-  MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd):/repo:ro" -w /repo zricethezav/gitleaks:v8.30.1 \
+  MSYS_NO_PATHCONV=1 docker run --rm --network none -v "$(pwd):/repo:ro" -w /repo \
+    zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
     git --pre-commit --staged --no-banner "$@" || docker_status=$?
   if [ "$docker_status" -eq 1 ]; then
     echo "gitleaks (docker): potential secret in staged changes - commit blocked." >&2

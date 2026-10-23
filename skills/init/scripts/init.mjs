@@ -4,6 +4,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { resolveTool, childEnv } from '../../../hooks/lib/resolve-tool.mjs';
 import { effectiveTransport, serverId as ticketServerId, validateTickets, resolveTicket } from '../../new-task/scripts/ticket-sources.mjs';
 import { validateAutopilot, odooApproverErrors, DEFAULTS as AUTOPILOT_DEFAULTS, ODOO_EVENTS, loadSecretsFile } from '../../autopilot/scripts/autopilot-lib.mjs';
 import { trackerFor } from '../../autopilot/scripts/tracker.mjs';
@@ -161,6 +162,13 @@ export const QWEN_PERMISSIONS = {
     'Read(**/.env.*.local)',
     'Read(**/.env.production)',
     'Read(~/.ssh/**)',
+    'Read(**/.env.development)',
+    'Read(**/.env.test)',
+    'Read(**/.env.staging)',
+    'Read(**/.env.secret)',
+    'Read(**/.env.secrets)',
+    'Read(**/.dev.vars)',
+    'Read(**/.dev.vars.*)',
     'Read(~/.aws/**)',
     'Read(~/.config/gh/**)',
     'Read(~/.config/glab-cli/**)',
@@ -190,6 +198,8 @@ export const OPENCODE_PERMISSION = {
     '*': 'allow',
     '*.env': 'deny',
     '*.env.*': 'deny',
+    '*.dev.vars': 'deny',
+    '*.dev.vars.*': 'deny',
     '*.env.example': 'allow',
     '~/.ssh/**': 'deny',
     '~/.aws/**': 'deny',
@@ -500,12 +510,20 @@ export function missingContent(target, existingText, renderedText) {
   return { missing };
 }
 
+// git, started by the absolute path of a git outside the project (a repository that commits git.exe
+// at its root, or a relative PATH entry, must not be the git that init runs), with an environment
+// that stops cmd.exe searching the current directory too. A missing git fails like a missing
+// command did before: with an ENOENT error the callers already handle.
+function gitOutput(args, { root, cwd }) {
+  const git = resolveTool('git', { root });
+  if (!git) throw Object.assign(new Error('spawnSync git ENOENT'), { code: 'ENOENT' });
+  return execFileSync(git, args, { cwd, encoding: 'utf8', env: childEnv(), stdio: ['ignore', 'pipe', 'ignore'] });
+}
+
 // The remote's default branch (origin/HEAD) when the clone knows it, else the branch checked out.
-function defaultBranchOf(repoDir) {
+function defaultBranchOf(repoDir, root) {
   try {
-    const remoteHead = execFileSync('git', ['--git-dir', path.join(repoDir, '.git'), 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], {
-      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
+    const remoteHead = gitOutput(['--git-dir', path.join(repoDir, '.git'), 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], { root }).trim();
     if (remoteHead.startsWith('origin/')) return remoteHead.slice('origin/'.length);
   } catch {
     // No origin/HEAD: fall back to HEAD below.
@@ -525,7 +543,7 @@ export function detectRepos(root) {
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name === 'node_modules') continue;
     if (!fs.existsSync(path.join(root, entry.name, '.git'))) continue;
-    repos.push({ name: entry.name, path: entry.name, defaultBranch: defaultBranchOf(path.join(root, entry.name)) });
+    repos.push({ name: entry.name, path: entry.name, defaultBranch: defaultBranchOf(path.join(root, entry.name), root) });
   }
   return repos.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -810,6 +828,46 @@ function emptyReport(mode, opts) {
   };
 }
 
+// The shared .claude/settings.json pre-approves build and test commands, and those run the
+// repository's own code without a prompt. templates/.claude/settings.json.tmpl lists the commands
+// of every toolchain; the scaffold keeps the ones of the toolchains it finds at the project root
+// and drops the rest, so a project never pre-approves a tool it does not use.
+export const TOOLCHAIN_ALLOW = {
+  npm: ['Bash(npm test:*)', 'Bash(npm run build:*)', 'Bash(npm run lint:*)'],
+  dotnet: ['Bash(dotnet build:*)', 'Bash(dotnet test:*)'],
+  python: ['Bash(python -m pytest:*)', 'Bash(pytest:*)'],
+  cargo: ['Bash(cargo build:*)', 'Bash(cargo test:*)'],
+  go: ['Bash(go build:*)', 'Bash(go test:*)'],
+};
+const TOOLCHAIN_FILES = {
+  npm: (name) => name === 'package.json',
+  dotnet: (name) => /\.(sln|csproj|fsproj)$/i.test(name),
+  python: (name) => ['pyproject.toml', 'setup.py', 'setup.cfg', 'pytest.ini', 'tox.ini'].includes(name) || /^requirements.*\.txt$/.test(name),
+  cargo: (name) => name === 'Cargo.toml',
+  go: (name) => name === 'go.mod',
+};
+
+// The toolchains the project root holds a marker file of. Only the root is read: a nested clone's
+// toolchain is the clone's own business.
+export function detectToolchains(root) {
+  let names = [];
+  try {
+    names = fs.readdirSync(root, { withFileTypes: true }).filter((entry) => !entry.isDirectory()).map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+  return Object.keys(TOOLCHAIN_FILES).filter((id) => names.some(TOOLCHAIN_FILES[id]));
+}
+
+// Removes the allow entries of the toolchains that are not in `found` from a rendered settings file.
+export function filterToolchainAllow(rendered, found) {
+  const drop = new Set(Object.entries(TOOLCHAIN_ALLOW).filter(([id]) => !found.includes(id)).flatMap(([, entries]) => entries.map((e) => JSON.stringify(e))));
+  return rendered
+    .split('\n')
+    .filter((line) => !drop.has(line.trim().replace(/,$/, '')))
+    .join('\n');
+}
+
 export function planPayload(opts, repos, harnesses) {
   const vars = buildVars(opts, repos, harnesses, []);
   const files = [];
@@ -824,7 +882,8 @@ export function planPayload(opts, repos, harnesses) {
       renderMarker(vars);
       continue;
     }
-    const rendered = render(readTemplate(source), vars, path.relative(TEMPLATES_DIR, source));
+    let rendered = render(readTemplate(source), vars, path.relative(TEMPLATES_DIR, source));
+    if (target === '.claude/settings.json') rendered = filterToolchainAllow(rendered, detectToolchains(opts.root));
     files.push({ target, content: provenance(target, rendered, vars), executable: path.posix.basename(target) === 'pre-commit' });
   }
   if (harnesses.includes(TARGET_HARNESS[OUTPUT_STYLE_TARGET])) {
@@ -1729,7 +1788,7 @@ export async function main(argv) {
 // The effective value from any scope: a global core.hooksPath disables .git/hooks too.
 export function gitConfigGet(root, key) {
   try {
-    return execFileSync('git', ['config', '--get', key], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return gitOutput(['config', '--get', key], { root, cwd: root }).trim();
   } catch {
     return '';
   }
@@ -1738,7 +1797,7 @@ export function gitConfigGet(root, key) {
 function liveHooks(root) {
   let dir;
   try {
-    dir = path.resolve(root, execFileSync('git', ['rev-parse', '--git-path', 'hooks'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim());
+    dir = path.resolve(root, gitOutput(['rev-parse', '--git-path', 'hooks'], { root, cwd: root }).trim());
   } catch {
     return [];
   }
@@ -1752,7 +1811,7 @@ function liveHooks(root) {
 }
 
 export function gitConfigSet(root, key, value) {
-  execFileSync('git', ['config', '--local', key, value], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  gitOutput(['config', '--local', key, value], { root, cwd: root });
 }
 
 function invokedDirectly() {

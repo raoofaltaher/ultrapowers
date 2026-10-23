@@ -11,7 +11,7 @@ bash tests/init/test-templates-clean.sh
 echo "== init: engine"
 node --test tests/init/test-engine.mjs
 
-for extra in tests/init/test-mcp-transforms.mjs tests/init/test-modes.mjs tests/init/test-nudge-injectors.mjs; do
+for extra in tests/init/test-mcp-transforms.mjs tests/init/test-modes.mjs tests/init/test-nudge-injectors.mjs tests/init/test-secret-denies.mjs; do
   if [ -f "$extra" ]; then
     echo "== init: $(basename "$extra" .mjs)"
     node --test "$extra"
