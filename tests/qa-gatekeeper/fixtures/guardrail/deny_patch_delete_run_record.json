@@ -1,0 +1,1 @@
+{"tool_name":"apply_patch","tool_input":{"patch":"*** Begin Patch\n*** Delete File: .ultrapowers/runs/qa-1234-0a1b2c3d.json\n*** End Patch"},"reason":"is a run record; no call of a run writes, moves or removes one"}

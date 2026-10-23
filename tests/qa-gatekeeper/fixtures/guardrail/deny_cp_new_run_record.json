@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"cp reviews/1234/artifacts/forged.json .ultrapowers/runs/qa-9999-deadbeef.json"},"reason":"is a run record; no call of a run writes, moves or removes one"}

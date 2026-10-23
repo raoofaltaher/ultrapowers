@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 # Fixture-driven tests for hooks/qa-guardrail.
-# Pass 1: marker present -> deny_* fixtures exit 2 with a QA-GUARDRAIL DENY line, allow_* exit 0.
-# Pass 2: marker absent -> every fixture exits 0 and prints nothing.
+# Pass 1: a QA run record present (.ultrapowers/runs/qa-1234-0a1b2c3d.json, bound to no session) ->
+#         deny_* fixtures exit 2 with a QA-GUARDRAIL DENY line, allow_* exit 0.
+# Pass 2: no run record -> every fixture exits 0 and prints nothing.
 # Pass 3: registration files name the hook.
+# Between them: the run-record model (hooks/lib/run-records.mjs): a record bound to a session guards only
+# the calls of that session (the event's top-level session_id), several records of different sessions
+# are active at once, a record above a nested project never guards it, a record past its run is inert,
+# and a corrupt record refuses every call of its project.
+# {{PLUGIN}} is this repository's root (the plugin folder, for the hook's own scripts).
 # Fixtures may contain {{ROOT}} (POSIX path of the temp project), {{WINROOT}} (its Windows
 # form, JSON-escaped; fixtures ending in _winpath run only where cygpath exists), {{WINSHORT}}
 # (the 8.3 short form of the project, forward slashes) and {{WINSHORT_SECRETS}} (the short form of
@@ -35,6 +41,16 @@ TEST_ROOT="$(mktemp -d)"
 cleanup() { rm -rf "$TEST_ROOT"; }
 trap cleanup EXIT
 
+# write_run <project root> <profile> <id> [session] [run suffix] [startedAt]: writes the run record
+# <root>/.ultrapowers/runs/<profile>-<id>-<suffix>.json, bound to no session unless one is given.
+write_run() {
+  local r="$1" prof="$2" id="$3" sess="${4:-}" suffix="${5:-0a1b2c3d}" started="${6:-}" sj="null"
+  [[ -n "$started" ]] || started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  [[ -n "$sess" ]] && sj="\"$sess\""
+  mkdir -p "$r/.ultrapowers/runs"
+  printf '{"run":"%s-%s-%s","profile":"%s","id":"%s","session":%s,"startedAt":"%s"}\n' "$prof" "$id" "$suffix" "$prof" "$id" "$sj" "$started" > "$r/.ultrapowers/runs/$prof-$id-$suffix.json"
+}
+
 ROOT="$TEST_ROOT/project"
 mkdir -p "$ROOT/.agents" "$ROOT/.ultrapowers" "$ROOT/reviews/1234/artifacts" "$ROOT/repo-a/src" "$TEST_ROOT/elsewhere"
 : > "$ROOT/.agents/mcp-secrets.env"
@@ -50,7 +66,7 @@ cat > "$ROOT/.agents/ultrapowers.json" <<'JSON'
   }
 }
 JSON
-printf '%s' "1234" > "$ROOT/.ultrapowers/qa-active"
+write_run "$ROOT" qa 1234
 ELSEWHERE="$TEST_ROOT/elsewhere"
 DECOY="$TEST_ROOT/decoy"
 mkdir -p "$DECOY/.agents" "$DECOY/.ultrapowers"
@@ -66,7 +82,7 @@ CS_OK="$(node "$FIXTURE_PATHS" casesens "$(node_path "$CSROOT")" 2>/dev/null || 
 if [[ "$CS_OK" == "1" ]]; then
   mkdir -p "$CSROOT/.agents" "$CSROOT/.ultrapowers" "$CSROOT/reviews/1234/artifacts"
   cp "$ROOT/.agents/ultrapowers.json" "$CSROOT/.agents/ultrapowers.json"
-  printf '%s' "1234" > "$CSROOT/.ultrapowers/qa-active"
+  write_run "$CSROOT" qa 1234
 fi
 
 # 8.3 short forms (Windows volumes that generate them).
@@ -98,6 +114,7 @@ render() {
   text="${text//\{\{WINSHORT\}\}/$WINSHORT}"
   text="${text//\{\{ELSEWHERE\}\}/$ELSEWHERE}"
   text="${text//\{\{DECOY\}\}/$DECOY}"
+  text="${text//\{\{PLUGIN\}\}/$REPO_ROOT}"
   printf '%s' "$text"
 }
 
@@ -135,7 +152,7 @@ run_hook() {
   printf '%s|%s|%s' "$code" "$err" "$out"
 }
 
-echo "qa-guardrail fixture tests (marker present)"
+echo "qa-guardrail fixture tests (run record present)"
 count=0
 for f in "$FIXTURES"/*.json; do
   name="$(basename "$f" .json)"
@@ -179,7 +196,7 @@ if [[ "$count" -lt 60 ]]; then
   fail "expected at least 60 fixtures, found $count"
 fi
 
-echo "qa-guardrail: marker found through the event cwd when the process cwd has none"
+echo "qa-guardrail: run record found through the event cwd when the process cwd has none"
 # The event itself must carry the cwd; the deny_git_push fixture has none.
 event="{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push origin qa\"},\"cwd\":\"$ROOT\"}"
 result="$(run_hook "$event" "$TEST_ROOT/elsewhere")"
@@ -189,13 +206,13 @@ else
   fail "event cwd activates the guardrail (exit ${result%%|*})"
 fi
 
-echo "qa-guardrail: the marker is found from a nested clone, and from the run directory the bridge names"
+echo "qa-guardrail: the run record is found from a nested clone, and from the run directory the bridge names"
 mkdir -p "$ROOT/repo-a/src"
 for variant in   "event cwd in a nested clone|{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push origin qa\"},\"cwd\":\"$ROOT/repo-a/src\"}|$TEST_ROOT/elsewhere|"   "ULTRAPOWERS_RUN_DIR in a nested clone|{\"tool_name\":\"bash\",\"tool_input\":{\"command\":\"git push origin qa\",\"workdir\":\"$ROOT/repo-a/src\"}}|$TEST_ROOT/elsewhere|$ROOT/repo-a/src"   "process cwd in a nested clone|{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push origin qa\"}}|$ROOT/repo-a/src|"; do
   label="${variant%%|*}"; rest="${variant#*|}"; event="${rest%%|*}"; rest="${rest#*|}"; dir="${rest%%|*}"; rd="${rest#*|}"
   RUN_ENV=(); [[ -n "$rd" ]] && RUN_ENV=("ULTRAPOWERS_RUN_DIR=$rd")
   result="$(run_hook "$event" "$dir")"; RUN_ENV=()
-  if [[ "${result%%|*}" -eq 2 ]]; then pass "marker found: $label"; else fail "marker found: $label (exit ${result%%|*})"; fi
+  if [[ "${result%%|*}" -eq 2 ]]; then pass "run record found: $label"; else fail "run record found: $label (exit ${result%%|*})"; fi
 done
 # A key under tool_input never roots the hook: the root comes from the hook's cwd (or the bridge's
 # ULTRAPOWERS_RUN_DIR) and the event's top-level cwd alone.
@@ -207,7 +224,7 @@ done
 # killed hook lets the call through, so the walk must end.
 if command -v timeout >/dev/null 2>&1; then
   result="$(cd "$TEST_ROOT/elsewhere" && printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"rel/dir","workdir":"src"}' | timeout 10 bash "$HOOK" 2>&1; echo "|$?")"
-  if [[ "$result" == "|0" ]]; then pass "a relative event cwd ends the marker walk"; else fail "a relative event cwd ends the marker walk (got: $result)"; fi
+  if [[ "$result" == "|0" ]]; then pass "a relative event cwd ends the run-record walk"; else fail "a relative event cwd ends the run-record walk (got: $result)"; fi
 fi
 
 echo "qa-guardrail: an active run with node missing from PATH denies"
@@ -261,7 +278,7 @@ else
   fail "a 200-file patch is denied in under 5 s (exit ${result%%|*}, $((t_end - t_start)) s)"
 fi
 
-echo "qa-guardrail: the marker prefilter is linear and bounded"
+echo "qa-guardrail: the run-record prefilter is linear and bounded"
 # The prefilter runs when the hook's cwd holds no run. A model-controlled argument of 1 MB before a
 # nested "cwd" key took minutes when each match was stripped with ${rest#*match}, and a hook killed
 # at its timeout lets the call through on some harnesses. It must answer in under 2 s; past its
@@ -292,19 +309,106 @@ else
   fail "a top-level cwd after 2000 nested cwd keys still roots the hook (exit ${result%%|*})"
 fi
 
-echo "qa-guardrail: a marker whose ticket would widen the write area refuses every call"
-for bad in '..' '1234/../..' 'a\b'; do
-  printf '%s' "$bad" > "$ROOT/.ultrapowers/qa-active"
+echo "qa-guardrail: a record whose id would widen the write area, or that cannot be read, refuses every call"
+# The id names the write area reviews/<id>/: an id with a parent segment or a separator makes the record
+# corrupt, and a corrupt record refuses every call of its project (it cannot say whose it is).
+for bad in '..' '1234/../..' 'a\\b'; do
+  printf '{"run":"qa-1234-0a1b2c3d","profile":"qa","id":"%s","session":null,"startedAt":"%s"}\n' "$bad" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$ROOT/.ultrapowers/runs/qa-1234-0a1b2c3d.json"
   result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"ls"}}' "$ROOT")"
-  if [[ "${result%%|*}" -eq 2 && "$result" == *"the run marker holds"* ]]; then pass "deny_marker_value: a marker holding '$bad' refuses every call"; else fail "deny_marker_value: a marker holding '$bad' refuses every call (got $result)"; fi
+  if [[ "${result%%|*}" -eq 2 && "$result" == *"a run record cannot be read"* ]]; then pass "deny_record_id: a record holding the id '$bad' refuses every call"; else fail "deny_record_id: a record holding the id '$bad' refuses every call (got $result)"; fi
 done
-printf '%s' "1234" > "$ROOT/.ultrapowers/qa-active"
+write_run "$ROOT" qa 1234
+
+echo "qa-guardrail: a corrupt record refuses a read, a session of another run, and every other call of its project"
+CORROOT="$TEST_ROOT/corruptproject"
+mkdir -p "$CORROOT/.agents" "$CORROOT/reviews/1234"
+cp "$ROOT/.agents/ultrapowers.json" "$CORROOT/.agents/ultrapowers.json"
+write_run "$CORROOT" qa 1234 sess-one
+mkdir -p "$CORROOT/.ultrapowers/runs"
+printf '%s' '{ "run": "qa-5678-ffffffff", "profile": ' > "$CORROOT/.ultrapowers/runs/qa-5678-ffffffff.json"
+for variant in "Read of a file|{\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"$CORROOT/reviews/1234/QA-REPORT.md\"},\"session_id\":\"sess-one\"}" "Read from a session no record names|{\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"$CORROOT/.agents/ultrapowers.json\"},\"session_id\":\"sess-other\"}" "Bash ls with no session|{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls\"}}"; do
+  label="${variant%%|*}"; event="${variant#*|}"
+  result="$(run_hook "$event" "$CORROOT")"
+  if [[ "${result%%|*}" -eq 2 && "$result" == *"QA-GUARDRAIL DENY: a run record cannot be read ("*"qa-5678-ffffffff.json"* ]]; then pass "deny_corrupt_record: $label is refused, naming the record"; else fail "deny_corrupt_record: $label is refused, naming the record (got $result)"; fi
+done
+# A record of any other shape is corrupt too: a profile outside qa/hunt, a session that is an empty string, a start that is no date.
+for body in '{"run":"x-1-0a1b2c3d","profile":"autopilot","id":"1","session":null,"startedAt":"2026-10-23T00:00:00Z"}' '{"run":"qa-1-0a1b2c3d","profile":"qa","id":"1","session":"","startedAt":"2026-10-23T00:00:00Z"}' '{"run":"qa-1-0a1b2c3d","profile":"qa","id":"1","session":null,"startedAt":"yesterday"}' '[]' ''; do
+  printf '%s' "$body" > "$CORROOT/.ultrapowers/runs/qa-5678-ffffffff.json"
+  result="$(run_hook '{"tool_name":"Read","tool_input":{"file_path":"x"}}' "$CORROOT")"
+  if [[ "${result%%|*}" -eq 2 && "$result" == *"a run record cannot be read"* ]]; then pass "deny_corrupt_record: the record '${body:0:48}' refuses a read"; else fail "deny_corrupt_record: the record '${body:0:48}' refuses a read (got $result)"; fi
+done
+
+echo "qa-guardrail: two records of different ids and sessions are active at once; each judges its own session's calls"
+SESSROOT="$TEST_ROOT/sessproject"
+mkdir -p "$SESSROOT/.agents" "$SESSROOT/reviews/1111" "$SESSROOT/reviews/2222" "$SESSROOT/reviews/3333"
+cp "$ROOT/.agents/ultrapowers.json" "$SESSROOT/.agents/ultrapowers.json"
+write_run "$SESSROOT" qa 1111 sess-one 1111aaaa
+write_run "$SESSROOT" qa 2222 sess-two 2222bbbb
+sess_write() { printf '{"tool_name":"Write","tool_input":{"file_path":"%s/reviews/%s/x.md","content":"x"},"session_id":"%s"}' "$SESSROOT" "$1" "$2"; }
+for combo in "1111 sess-one 0" "2222 sess-one 2" "2222 sess-two 0" "1111 sess-two 2"; do
+  set -- $combo
+  result="$(run_hook "$(sess_write "$1" "$2")" "$SESSROOT")"
+  if [[ "${result%%|*}" -eq "$3" ]]; then pass "session $2 writing reviews/$1/ is judged by its own run (exit ${result%%|*})"; else fail "session $2 writing reviews/$1/ is judged by its own run (want exit $3, got $result)"; fi
+done
+result="$(run_hook "$(sess_write 2222 sess-one)" "$SESSROOT")"
+if [[ "$result" == *"reviews/1111/"* && "$result" == *"qa-1111-1111aaaa.json"* && "$result" != *"qa-2222-2222bbbb.json"* ]]; then pass "the deny of session sess-one names its own record and report folder"; else fail "the deny of session sess-one names its own record and report folder (got $result)"; fi
+result="$(run_hook "$(sess_write 1111 sess-two)" "$SESSROOT")"
+if [[ "$result" == *"reviews/2222/"* && "$result" == *"qa-2222-2222bbbb.json"* ]]; then pass "the deny of session sess-two names its own record and report folder"; else fail "the deny of session sess-two names its own record and report folder (got $result)"; fi
+result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"git push origin qa"},"session_id":"sess-two"}' "$SESSROOT")"
+if [[ "${result%%|*}" -eq 2 ]]; then pass "the run of a session still denies a push"; else fail "the run of a session still denies a push (got $result)"; fi
+
+echo "qa-guardrail: a call of a session that no record names is inert while only session-bound records exist"
+result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"git push origin qa"},"session_id":"sess-three"}' "$SESSROOT")"
+if [[ "${result%%|*}" -eq 0 && "${result#*|}" == "|" ]]; then pass "session sess-three (no record) is allowed silently"; else fail "session sess-three (no record) is allowed silently (got $result)"; fi
+result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"git push origin qa"}}' "$SESSROOT")"
+if [[ "${result%%|*}" -eq 0 ]]; then pass "a call that names no session is allowed while only session-bound records exist"; else fail "a call that names no session is allowed while only session-bound records exist (got $result)"; fi
+# Only the top-level session_id counts: a copy nested under tool_input never binds a call to a run, or frees one from it.
+result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"git push origin qa","session_id":"sess-one"}}' "$SESSROOT")"
+if [[ "${result%%|*}" -eq 0 ]]; then pass "tool_input.session_id never binds a call to a run"; else fail "tool_input.session_id never binds a call to a run (got $result)"; fi
+result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"git push origin qa","session_id":"sess-three"},"session_id":"sess-one"}' "$SESSROOT")"
+if [[ "${result%%|*}" -eq 2 ]]; then pass "tool_input.session_id never frees a call from its run"; else fail "tool_input.session_id never frees a call from its run (got $result)"; fi
+# A record bound to no session guards every call made inside its project folder, whatever its session.
+write_run "$SESSROOT" qa 3333 "" 3333cccc
+result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"git push origin qa"},"session_id":"sess-three"}' "$SESSROOT")"
+if [[ "${result%%|*}" -eq 2 && "$result" == *"qa-3333-3333cccc.json"* ]]; then pass "a record bound to no session guards a session no record names"; else fail "a record bound to no session guards a session no record names (got $result)"; fi
+result="$(run_hook "$(sess_write 3333 sess-three)" "$SESSROOT")"
+if [[ "${result%%|*}" -eq 0 ]]; then pass "that session writes the report folder of the record that guards it"; else fail "that session writes the report folder of the record that guards it (got $result)"; fi
+rm -f "$SESSROOT/.ultrapowers/runs/qa-3333-3333cccc.json"
+
+echo "qa-guardrail: a record past its run guards nothing"
+EXPROOT="$TEST_ROOT/expproject"
+mkdir -p "$EXPROOT/.agents"
+cp "$ROOT/.agents/ultrapowers.json" "$EXPROOT/.agents/ultrapowers.json"
+write_run "$EXPROOT" qa 1234 "" 0a1b2c3d 2020-01-01T00:00:00Z
+result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"git push origin qa"}}' "$EXPROOT")"
+if [[ "${result%%|*}" -eq 0 ]]; then pass "a record older than a day is inert"; else fail "a record older than a day is inert (got $result)"; fi
+
+echo "qa-guardrail: a record in a parent project does not guard a nested folder that has its own project config"
+NESTED="$ROOT/nested-project"
+mkdir -p "$NESTED/.agents" "$NESTED/src" "$ROOT/plain-folder/src"
+cp "$ROOT/.agents/ultrapowers.json" "$NESTED/.agents/ultrapowers.json"
+push='"tool_name":"Bash","tool_input":{"command":"git push origin qa"}'
+result="$(run_hook "{$push}" "$NESTED/src")"
+if [[ "${result%%|*}" -eq 0 ]]; then pass "the process cwd in a nested project is not guarded by the parent's record"; else fail "the process cwd in a nested project is not guarded by the parent's record (got $result)"; fi
+result="$(run_hook "{$push,\"cwd\":\"$NESTED/src\"}" "$TEST_ROOT/elsewhere")"
+if [[ "${result%%|*}" -eq 0 ]]; then pass "the event cwd in a nested project is not guarded by the parent's record"; else fail "the event cwd in a nested project is not guarded by the parent's record (got $result)"; fi
+RUN_ENV=("ULTRAPOWERS_RUN_DIR=$NESTED/src")
+result="$(run_hook "{$push}" "$TEST_ROOT/elsewhere")"; RUN_ENV=()
+if [[ "${result%%|*}" -eq 0 ]]; then pass "the run directory of the bridge in a nested project is not guarded by the parent's record"; else fail "the run directory of the bridge in a nested project is not guarded by the parent's record (got $result)"; fi
+# Control: a folder of the parent with no project config of its own is still guarded.
+result="$(run_hook "{$push}" "$ROOT/plain-folder/src")"
+if [[ "${result%%|*}" -eq 2 ]]; then pass "a plain folder of the parent project is still guarded by its record"; else fail "a plain folder of the parent project is still guarded by its record (got $result)"; fi
+# The nested project's own record guards it, and only it.
+write_run "$NESTED" qa 7777
+result="$(run_hook "{$push}" "$NESTED/src")"
+if [[ "${result%%|*}" -eq 2 && "$result" == *"qa-7777-0a1b2c3d.json"* ]]; then pass "the nested project's own record guards it"; else fail "the nested project's own record guards it (got $result)"; fi
+rm -rf "$NESTED" "$ROOT/plain-folder"
 
 echo "qa-guardrail: a config with a byte order mark keeps its host lists"
 BOMROOT="$TEST_ROOT/bomproject"
 mkdir -p "$BOMROOT/.agents" "$BOMROOT/.ultrapowers"
 { printf '\357\273\277'; cat "$ROOT/.agents/ultrapowers.json"; } > "$BOMROOT/.agents/ultrapowers.json"
-printf '%s' "1234" > "$BOMROOT/.ultrapowers/qa-active"
+write_run "$BOMROOT" qa 1234
 result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"curl -s http://prod.example.com/"}}' "$BOMROOT")"
 if [[ "${result%%|*}" -eq 2 ]]; then
   pass "a forbidden host stays denied when the config starts with a BOM"
@@ -316,7 +420,7 @@ echo "qa-guardrail: an unreadable config denies while a run is active"
 BADROOT="$TEST_ROOT/badconfig"
 mkdir -p "$BADROOT/.agents" "$BADROOT/.ultrapowers"
 printf '%s' '{ "qa": { "hosts": ' > "$BADROOT/.agents/ultrapowers.json"
-printf '%s' "1234" > "$BADROOT/.ultrapowers/qa-active"
+write_run "$BADROOT" qa 1234
 result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"curl -s http://prod.example.com/"}}' "$BADROOT")"
 rest="${result#*|}"
 if [[ "${result%%|*}" -eq 2 && "$rest" == *"QA-GUARDRAIL DENY: "* ]]; then
@@ -329,9 +433,9 @@ echo "qa-guardrail: the inert path runs on shell builtins alone"
 mkdir -p "$TEST_ROOT/emptybin"
 result="$(cd "$TEST_ROOT/elsewhere" && printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"/nowhere"}' | PATH="$TEST_ROOT/emptybin" "$BASH" "$HOOK" 2>&1; echo "|$?")"
 if [[ "$result" == "|0" ]]; then
-  pass "no marker: exit 0 and no output with an empty PATH"
+  pass "no run record: exit 0 and no output with an empty PATH"
 else
-  fail "no marker: exit 0 and no output with an empty PATH (got: $result)"
+  fail "no run record: exit 0 and no output with an empty PATH (got: $result)"
 fi
 
 echo "qa-guardrail: an active run with a PATH that resolves node but not the text tools"
@@ -379,10 +483,11 @@ if command -v cmd.exe >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; the
   fi
 fi
 
-echo "qa-guardrail: every deny names the run marker, the ticket and who can end the run"
+echo "qa-guardrail: every deny names the run record, the ticket and who can end the run"
 result="$(run_hook "$(render "$FIXTURES/deny_git_push.json")" "$ROOT")"
 err="${result#*|}"; err="${err%%|*}"
-for want in ".ultrapowers/qa-active" "1234" " old" "your human partner"; do
+# (the hook prints the record's path in the spelling node gives it: backslashes on Windows)
+for want in "qa-1234-0a1b2c3d.json" "1234" " old" "your human partner"; do
   if [[ "$err" == *"$want"* ]]; then pass "a QA deny names '$want'"; else fail "a QA deny names '$want' (stderr: $err)"; fi
 done
 if [[ "$err" != *"autopilot"* ]]; then pass "a QA deny never speaks of the autopilot engine"; else fail "a QA deny never speaks of the autopilot engine (stderr: $err)"; fi
@@ -390,7 +495,7 @@ if [[ "$err" != *"autopilot"* ]]; then pass "a QA deny never speaks of the autop
 result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"Set-Content x.txt hello"}}' "$ROOT")"
 err="${result#*|}"; err="${err%%|*}"
 if [[ "$err" == *"during a QA run"* ]]; then pass "the PowerShell deny names a QA run"; else fail "the PowerShell deny names a QA run (stderr: $err)"; fi
-# The suffix never tells the agent to remove the marker itself: the advice is for the human partner.
+# The suffix never tells the agent to remove the record itself: the advice is for the human partner.
 if [[ "$err" == *"your human partner can"* && "$err" != *"you can remove"* ]]; then pass "the removal advice is addressed to the human partner"; else fail "the removal advice is addressed to the human partner (stderr: $err)"; fi
 
 echo "qa-guardrail: Cursor shape adds a permission JSON on stdout"
@@ -401,8 +506,8 @@ else
   fail "Cursor deny JSON emitted (got: $result)"
 fi
 
-echo "qa-guardrail fixture tests (marker absent)"
-rm -f "$ROOT/.ultrapowers/qa-active"
+echo "qa-guardrail fixture tests (no run record)"
+rm -rf "$ROOT/.ultrapowers/runs"
 for f in "$FIXTURES"/*.json; do
   name="$(basename "$f" .json)"
   [[ -n "$(skip_fixture "$name")" ]] && continue
@@ -411,9 +516,9 @@ for f in "$FIXTURES"/*.json; do
   code="${result%%|*}"
   rest="${result#*|}"
   if [[ "$code" -eq 0 && -z "${rest//|/}" ]]; then
-    pass "$name inert without marker"
+    pass "$name inert without a run record"
   else
-    fail "$name inert without marker (exit $code, output: $rest)"
+    fail "$name inert without a run record (exit $code, output: $rest)"
   fi
 done
 

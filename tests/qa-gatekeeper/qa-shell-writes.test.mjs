@@ -467,14 +467,17 @@ test('an array slice is a read; psql interpolation is refused in its three spell
   }
 });
 
-test('the run markers are protected; no call of the run removes its own marker (audit-2026-10-23 M5)', () => {
-  for (const cmd of ["printf '%s' 1234 > /p/.ultrapowers/qa-active", 'rm /p/.ultrapowers/qa-active /p/.ultrapowers/qa-token.json', 'rm /p/.ultrapowers/qa-active; ls', 'rm /p/.ultrapowers/hunt-active', 'mv /p/.ultrapowers/qa-active /p/reviews/1234/x', 'rm /p/.ultrapowers/*-active']) {
-    assert.match(analyze(cmd, ctx), /the run marker/, cmd);
+test('the run records are protected; no call of a run writes, moves or removes one (audit-2026-10-23 M5)', () => {
+  const rec = '.ultrapowers/runs/qa-1234-0a1b2c3d.json';
+  for (const cmd of [`printf '%s' '{}' > /p/${rec}`, `rm /p/${rec} /p/.ultrapowers/qa-token.json`, `rm /p/${rec}; ls`, 'rm /p/.ultrapowers/runs/hunt-audit-1-0a1b2c3d.json', `mv /p/${rec} /p/reviews/1234/x`, 'rm /p/.ultrapowers/runs/*', 'rm /p/.ultrapowers/runs', 'rm /p/.ultrapowers/*/*.json']) {
+    assert.match(analyze(cmd, ctx), /is a run record; no call of a run writes, moves or removes one/, cmd);
   }
-  assert.match(analyze('rm -f /p/.ultrapowers/qa-active', ctx), /recursive or forced delete|the run marker/);
-  assert.match(analyze('rm /p/.ultrapowers/qa-active', ctx), /the run marker.*your human partner ends the run/);
-  assert.match(analyze('rm .ultrapowers/hunt-active', { ...ctx, profile: 'hunt' }), /the run marker/);
-  assert.match(analyze('rm .ultrapowers/qa-active', { ...ctx, profile: 'hunt' }), /the run marker/);
+  assert.match(analyze(`rm -f /p/${rec}`, ctx), /recursive or forced delete|is a run record/);
+  assert.match(analyze(`rm /p/${rec}`, ctx), /is a run record.*run-records\.mjs end once its report holds its Verdict line/);
+  assert.match(analyze('rm .ultrapowers/runs/hunt-audit-1-0a1b2c3d.json', { ...ctx, profile: 'hunt' }), /is a run record/);
+  assert.match(analyze(`rm ${rec}`, { ...ctx, profile: 'hunt' }), /is a run record/);
+  // A run's own report-area and run-state files stay writable: only .ultrapowers/runs/ is a record.
+  assert.equal(analyze('rm /p/.ultrapowers/qa-token.json', ctx), '');
 });
 
 test('with an egress allow-list curl and wget take only literal URLs on listed hosts and no redirecting option', () => {

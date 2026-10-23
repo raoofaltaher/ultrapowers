@@ -1,1 +1,1 @@
-{"tool_name":"Bash","tool_input":{"command":"rm -f .ultrapowers/qa-active"},"reason":"recursive or forced delete"}
+{"tool_name":"Bash","tool_input":{"command":"rm -f .ultrapowers/runs/qa-1234-0a1b2c3d.json"},"reason":"recursive or forced delete"}

@@ -1,1 +1,1 @@
-{"tool_name":"Bash","tool_input":{"command":"chmod u+r {{ROOT}}/.ultrapowers/qa-active"}}
+{"tool_name":"Bash","tool_input":{"command":"chmod u+r {{ROOT}}/.ultrapowers/runs/qa-1234-0a1b2c3d.json"}}

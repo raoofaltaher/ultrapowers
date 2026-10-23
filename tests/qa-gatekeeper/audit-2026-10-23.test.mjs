@@ -138,11 +138,13 @@ test('M4: autopilot git operands are held to the protected paths', () => {
   ], ['autopilot']);
 });
 
-test('M5: the run marker is never the run\'s to remove', () => {
-  assert.ok(denied('rm -f .ultrapowers/qa-active', qa));
-  assert.ok(denied('rm .ultrapowers/qa-active', qa));
-  assert.ok(denied('rm -f .ultrapowers/hunt-active', hunt));
-  assert.ok(denied('rm /p/.ultrapowers/hunt-active', hunt));
+test('M5: a run record is never a call of the run\'s to write, move or remove', () => {
+  assert.ok(denied('rm -f .ultrapowers/runs/qa-1234-0a1b2c3d.json', qa));
+  assert.ok(denied('rm .ultrapowers/runs/qa-1234-0a1b2c3d.json', qa));
+  assert.ok(denied('rm -f .ultrapowers/runs/hunt-audit-1-0a1b2c3d.json', hunt));
+  assert.ok(denied('rm /p/.ultrapowers/runs/hunt-audit-1-0a1b2c3d.json', hunt));
+  assert.ok(denied('rm /p/.ultrapowers/runs/*', hunt));
+  assert.match(analyze('rm .ultrapowers/runs/qa-1234-0a1b2c3d.json', qa), /is a run record; no call of a run writes, moves or removes one/);
 });
 
 test('a role variable never stands for a tracker credential, and the hunt reads none', () => {

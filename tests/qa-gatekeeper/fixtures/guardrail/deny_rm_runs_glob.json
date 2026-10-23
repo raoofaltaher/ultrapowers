@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"rm .ultrapowers/runs/*"},"reason":"is a run record; no call of a run writes, moves or removes one"}

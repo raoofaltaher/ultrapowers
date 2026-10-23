@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"node {{PLUGIN}}/hooks/lib/run-records.mjs end --root {{ROOT}} --run qa-1234-0a1b2c3d"}}

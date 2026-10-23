@@ -1,0 +1,1 @@
+{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.ultrapowers/runs/qa-9999-deadbeef.json","content":"{\"run\":\"qa-9999-deadbeef\",\"profile\":\"qa\",\"id\":\"9999\",\"session\":null,\"startedAt\":\"2026-10-23T00:00:00Z\"}"},"reason":"is a run record; no call of a run writes, moves or removes one"}

@@ -1,1 +1,1 @@
-{"tool_name":"Bash","tool_input":{"command":"rm {{ROOT}}/.ultrapowers/qa-active"},"reason":"your human partner ends the run"}
+{"tool_name":"Bash","tool_input":{"command":"rm {{ROOT}}/.ultrapowers/runs/qa-1234-0a1b2c3d.json"},"reason":"is a run record; no call of a run writes, moves or removes one"}

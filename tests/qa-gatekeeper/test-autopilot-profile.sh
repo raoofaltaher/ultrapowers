@@ -2,7 +2,9 @@
 # Fixture-driven tests for the autopilot profile of hooks/qa-guardrail.
 # Pass 1: .ultrapowers/autopilot-active present -> deny_* cases exit 2 with an
 #         AUTOPILOT-GUARDRAIL DENY line, allow_* cases exit 0.
-# Pass 2: both markers present -> the QA profile wins: `git commit` is denied with the QA prefix.
+# Pass 2: a QA run record (.ultrapowers/runs/qa-GH-16-0a1b2c3d.json, bound to no session) and the
+#         autopilot marker -> the QA profile wins: `git commit` is denied with the QA prefix. A QA record
+#         bound to another session does not shadow the marker for a call of a different session.
 # Pass 3: no marker -> every case exits 0 and prints nothing.
 # Cases live in fixtures/autopilot/cases.json: [{ name, event, reason?, dir?, env? }], with {{ROOT}}
 # (POSIX path of the temp project), {{ELSEWHERE}} (a sibling directory outside it) and {{DECOY}}
@@ -30,6 +32,16 @@ fail() { echo "  [FAIL] $1"; FAILURES=$((FAILURES + 1)); }
 TEST_ROOT="$(mktemp -d)"
 cleanup() { rm -rf "$TEST_ROOT"; }
 trap cleanup EXIT
+
+# write_run <project root> <profile> <id> [session] [run suffix] [startedAt]: writes the run record
+# <root>/.ultrapowers/runs/<profile>-<id>-<suffix>.json, bound to no session unless one is given.
+write_run() {
+  local r="$1" prof="$2" id="$3" sess="${4:-}" suffix="${5:-0a1b2c3d}" started="${6:-}" sj="null"
+  [[ -n "$started" ]] || started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  [[ -n "$sess" ]] && sj="\"$sess\""
+  mkdir -p "$r/.ultrapowers/runs"
+  printf '{"run":"%s-%s-%s","profile":"%s","id":"%s","session":%s,"startedAt":"%s"}\n' "$prof" "$id" "$suffix" "$prof" "$id" "$sj" "$started" > "$r/.ultrapowers/runs/$prof-$id-$suffix.json"
+}
 
 ROOT="$TEST_ROOT/project"
 ELSEWHERE="$TEST_ROOT/elsewhere"
@@ -59,7 +71,7 @@ printf '%s' '{"ticket":"GH-99","branch":"GH-99-x","scope":["."]}' > "$DECOY/.ult
 # The decoy's ticket snapshot lists the server its URL case calls, so that case meets the host rule it is about.
 mkdir -p "$DECOY/.ultrapowers/autopilot"
 printf '%s' '{"mcpServers":{"Firecrawl":{}}}' > "$DECOY/.ultrapowers/autopilot/mcp.json"
-QA_MARKER="$ROOT/.ultrapowers/qa-active"
+QA_MARKER="$ROOT/.ultrapowers/runs/qa-GH-16-0a1b2c3d.json"
 printf '%s' '{"ticket":"GH-16","branch":"GH-16-x","scope":["repo-a"]}' > "$MARKER"
 # The ticket's MCP snapshot (taken at begin): an autopilot stage reaches only these servers. It lists every
 # server the cases call, so each case meets the rule it is about; deny_mcp_server_not_in_snapshot calls one outside it.
@@ -168,28 +180,44 @@ else
   fail "a 500-segment command is denied in under 5 s (exit ${result%%|*}, $((t_end - t_start)) s)"
 fi
 
-echo "autopilot profile: both markers present, the QA profile wins"
-printf '%s' "GH-16" > "$QA_MARKER"
+echo "autopilot profile: a QA record and the autopilot marker present, the QA profile wins"
+write_run "$ROOT" qa GH-16
 result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' "$ROOT")"
 code="${result%%|*}"
 rest="${result#*|}"
 err="${rest%%|*}"
 if [[ "$code" -eq 2 ]] && printf '%s' "$err" | grep -q '^QA-GUARDRAIL DENY: '; then
-  pass "git commit is denied by the QA rules when both markers exist"
+  pass "git commit is denied by the QA rules when a QA record and the autopilot marker exist"
 else
-  fail "git commit is denied by the QA rules when both markers exist (exit $code, stderr: $err)"
+  fail "git commit is denied by the QA rules when a QA record and the autopilot marker exist (exit $code, stderr: $err)"
 fi
 result="$(run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$ROOT/repo-a/src/x.ts\",\"content\":\"x\"}}" "$ROOT")"
 code="${result%%|*}"
 if [[ "$code" -eq 2 ]]; then
-  pass "a code write is denied by the QA rules when both markers exist"
+  pass "a code write is denied by the QA rules when a QA record and the autopilot marker exist"
 else
-  fail "a code write is denied by the QA rules when both markers exist (exit $code)"
+  fail "a code write is denied by the QA rules when a QA record and the autopilot marker exist (exit $code)"
 fi
+# A call the QA record guards may not write the record, whatever the autopilot marker allows.
+result="$(run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$QA_MARKER\",\"content\":\"{}\"}}" "$ROOT")"
+if [[ "${result%%|*}" -eq 2 && "$result" == *"QA-GUARDRAIL DENY: "* && "$result" == *"is a run record; no call of a run writes, moves or removes one"* ]]; then pass "with a QA record a write of the record is refused by the QA rules"; else fail "with a QA record a write of the record is refused by the QA rules (got $result)"; fi
+rm -f "$QA_MARKER"
+
+echo "autopilot profile: a QA record bound to another session does not shadow the autopilot marker"
+write_run "$ROOT" qa GH-16 q-one
+result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"git push origin GH-16-x"},"session_id":"q-one"}' "$ROOT")"
+if [[ "${result%%|*}" -eq 2 && "$result" == *"QA-GUARDRAIL DENY: "* ]]; then pass "the session of the QA record is judged by the QA profile"; else fail "the session of the QA record is judged by the QA profile (got $result)"; fi
+result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"git push origin GH-16-x"},"session_id":"ap-stage"}' "$ROOT")"
+if [[ "${result%%|*}" -eq 2 && "$result" == *"AUTOPILOT-GUARDRAIL DENY: "* ]]; then pass "a call of another session is judged by the autopilot profile"; else fail "a call of another session is judged by the autopilot profile (got $result)"; fi
+result="$(run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$ROOT/repo-a/src/x.ts\",\"content\":\"x\"},\"session_id\":\"ap-stage\"}" "$ROOT")"
+if [[ "${result%%|*}" -eq 0 ]]; then pass "a source write of another session still passes under the autopilot profile"; else fail "a source write of another session still passes under the autopilot profile (got $result)"; fi
+result="$(run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$ROOT/repo-a/src/x.ts\",\"content\":\"x\"},\"session_id\":\"q-one\"}" "$ROOT")"
+if [[ "${result%%|*}" -eq 2 && "$result" == *"QA-GUARDRAIL DENY: "* ]]; then pass "a source write of the QA session is refused by the QA profile"; else fail "a source write of the QA session is refused by the QA profile (got $result)"; fi
 rm -f "$QA_MARKER"
 
 echo "autopilot profile: no marker, everything passes silently"
 rm -f "$MARKER"
+rm -rf "$ROOT/.ultrapowers/runs"
 silent=0
 while IFS=$'\t' read -r name reason cdir cenv event; do
   [ -n "$name" ] || continue
