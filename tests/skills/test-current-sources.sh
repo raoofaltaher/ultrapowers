@@ -58,6 +58,7 @@ check "$BRAIN" '## Check Current Sources'
 check "$BRAIN" 'not an offer'
 check "$PLANS" '## Check Current Sources'
 check "$BRAIN" 'This is a quick, clear'
+check "$BRAIN" 'On the bounded path'
 check "$TASK" '(../brainstorming/current-sources.md)'
 check "$TASK" 'research tools found'
 if grep -qi 'firecrawl' "$REPO_ROOT/$TASK"; then fail "$TASK no longer names a scrape product"; else pass "$TASK no longer names a scrape product"; fi

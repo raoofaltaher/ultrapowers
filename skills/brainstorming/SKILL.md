@@ -48,9 +48,11 @@ offer and you do not wait to be asked: it is how you know what you are
 talking about before you ask anything. Use what you read in your
 questions and your playback, and put each source the design rests on in
 the decision record's `Evidence:` lines. With no research tool, the
-not-checked line from that file goes in the spec as an `Assumption:` row
-of the ledger. In the ticket form, `ultrapowers:brainstorm-task` runs this
-step while it grounds the ticket; do not repeat it.
+not-checked line from that file goes in the spec's assumption ledger as
+one row. On the bounded path the sources and the not-checked line go in
+the short chat design; on a spike, in the reported recommendation. In the
+ticket form, `ultrapowers:brainstorm-task` runs this step while it grounds
+the ticket; do not repeat it.
 
 ## Your First Message
 
