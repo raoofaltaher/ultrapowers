@@ -32,6 +32,18 @@ function isText(value) {
   return typeof value === 'string' && value.trim() !== '';
 }
 
+// https, or http to this machine itself: a credential sent over plain http to any other host can be read on the way.
+const LOOPBACK_HOST = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\]|::1)$/i;
+
+function secureUrl(value) {
+  try {
+    const u = new URL(value);
+    return u.protocol === 'https:' || (u.protocol === 'http:' && LOOPBACK_HOST.test(u.hostname));
+  } catch {
+    return false;
+  }
+}
+
 export function validateTickets(tickets) {
   if (!isObject(tickets)) return ['tickets must be an object'];
   const errors = [];
@@ -70,8 +82,12 @@ export function validateTickets(tickets) {
       if (field in source && source[field] !== undefined && !isText(source[field])) errors.push(`${at}.${field} must be a non-empty string`);
     }
     for (const field of ['url', 'mcpUrl']) {
-      if (isText(source[field]) && !/^https?:\/\/[^/\s]+/.test(source[field])) {
+      if (!isText(source[field])) continue;
+      if (!/^https?:\/\/[^/\s]+/.test(source[field])) {
         errors.push(`${at}.${field} must be an http or https URL`);
+      } else if (!secureUrl(source[field])) {
+        // ODOO_API_KEY travels with every call to these two addresses (the MCP header, the JSON-RPC body).
+        errors.push(`${at}.${field} must use https: ODOO_API_KEY is sent to it and must not travel in clear text (plain http is accepted only for localhost, 127.0.0.1 and [::1])`);
       }
     }
     if ('autopilot' in source && typeof source.autopilot !== 'boolean') {

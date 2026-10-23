@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
@@ -314,5 +314,44 @@ test('runState.unfinished reads plan rows only, never lane or suite statuses', (
   r = preflight({ cwd: root, ticket: '1234', env: ENV_ALL });
   assert.equal(r.runState.unfinished, false);
   assert.match(r.runState.error, /JSON|Unexpected|end/i);
+  rmSync(root, { recursive: true, force: true });
+});
+
+const ORIGINAL_PATH = process.env.PATH ?? process.env.Path ?? '';
+
+// The environment with exactly one PATH variable (Windows spells it Path).
+function envWithPath(value) {
+  const env = { ...process.env, ...ENV_ALL };
+  for (const key of Object.keys(env)) if (key.toLowerCase() === 'path') delete env[key];
+  env[process.platform === 'win32' ? 'Path' : 'PATH'] = value;
+  return env;
+}
+
+// M10: git is started by its absolute path from a PATH entry outside the project, never by bare name.
+// The planted "git" is a copy of node that records, through NODE_OPTIONS, that it ran.
+test('a git planted in the project root, found through the working directory or a relative PATH entry, is not started', () => {
+  const root = makeProject();
+  const side = mkdtempSync(join(tmpdir(), 'qa-preflight-plant-'));
+  const marker = join(side, 'ran.txt').replace(/\\/g, '/');
+  const hook = join(side, 'plant-hook.cjs').replace(/\\/g, '/');
+  writeFileSync(hook, "const p=require('path');if(/^git(\\.exe)?$/i.test(p.basename(process.execPath)))require('fs').appendFileSync(process.env.PLANT_MARKER,'ran\\n');\n");
+  copyFileSync(process.execPath, join(root, process.platform === 'win32' ? 'git.exe' : 'git'));
+  const env = { ...envWithPath(['.', root, ORIGINAL_PATH].join(delimiter)), PLANT_MARKER: marker, NODE_OPTIONS: `--require ${hook}` };
+  const run = spawnSync(process.execPath, [scriptPath, '1234', '--cwd', root], { cwd: root, encoding: 'utf8', env });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(existsSync(marker), false, 'the planted git was started');
+  const entry = JSON.parse(run.stdout).changeSet.find((r) => r.repo === 'repo-a');
+  assert.equal(entry.onTicketBranch, true, 'the real git still answered');
+  rmSync(root, { recursive: true, force: true });
+  rmSync(side, { recursive: true, force: true });
+});
+
+test('with no git outside the project the change set reports it, and the preflight still answers', () => {
+  const root = makeProject();
+  const env = envWithPath(root);
+  const run = spawnSync(process.execPath, [scriptPath, '1234', '--cwd', root], { cwd: root, encoding: 'utf8', env });
+  assert.equal(run.status, 0, run.stderr);
+  const entry = JSON.parse(run.stdout).changeSet.find((r) => r.repo === 'repo-a');
+  assert.match(entry.error, /git was not found/);
   rmSync(root, { recursive: true, force: true });
 });

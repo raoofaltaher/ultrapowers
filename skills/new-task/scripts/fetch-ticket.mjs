@@ -16,6 +16,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { resolveTool, childEnv } from '../../../hooks/lib/resolve-tool.mjs';
 import { resolveTicket, TicketError } from './ticket-sources.mjs';
 import { createOdooClient, discoverDb, htmlToText, odooIso } from '../../autopilot/scripts/odoo.mjs';
 import { loadSecretsFile, AutopilotError, activeMarkerPath, effectiveAutopilot } from '../../autopilot/scripts/autopilot-lib.mjs';
@@ -61,12 +62,18 @@ function timeoutMs() {
 // The user's gh or glab, or the binary ULTRAPOWERS_GH / ULTRAPOWERS_GLAB
 // names; a .js, .mjs or .cjs override runs under this node. glab reads its
 // host from GITLAB_HOST for `-R group/project`, so a self-hosted source sets it.
-function runCli(resolution, args) {
+// The tool is started by its absolute path, found on the absolute PATH entries outside the project
+// root, never by bare name (a gh.exe or glab.exe committed in the checkout would run with the
+// user's token); a tool that does not resolve answers like one that is not installed.
+function runCli(resolution, args, root = process.cwd()) {
   const { provider, host } = resolution;
   const override = process.env[CLI[provider].env];
   const command = override || CLI[provider].name;
-  const [file, argv] = /\.[cm]?js$/i.test(command) ? [process.execPath, [command, ...args]] : [command, args];
-  const env = provider === 'gitlab' ? { ...process.env, GITLAB_HOST: host } : process.env;
+  const script = /\.[cm]?js$/i.test(command);
+  const tool = script ? process.execPath : resolveTool(command, { root, env: process.env });
+  if (!tool) return Promise.resolve({ ok: false, missing: true });
+  const [file, argv] = script ? [tool, [command, ...args]] : [tool, args];
+  const env = childEnv(provider === 'gitlab' ? { ...process.env, GITLAB_HOST: host } : process.env);
   return new Promise((resolve) => {
     execFile(file, argv, { env, timeout: timeoutMs(), windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (!error) return resolve({ ok: true, stdout, stderr });
@@ -77,18 +84,18 @@ function runCli(resolution, args) {
   });
 }
 
-async function cliReady(resolution) {
-  const result = await runCli(resolution, ['auth', 'status', '--hostname', resolution.host]);
+async function cliReady(resolution, root) {
+  const result = await runCli(resolution, ['auth', 'status', '--hostname', resolution.host], root);
   return result.ok;
 }
 
 // What fetch would use for this source on this machine, without fetching: 'cli' when the signed-in
 // CLI is there, 'mcp' when the agent goes to the MCP server, 'json-rpc' for an Odoo source with a
 // login and ODOO_API_KEY, 'unavailable' when the source insists on a CLI that is not signed in.
-export async function transportOnThisMachine(resolution) {
+export async function transportOnThisMachine(resolution, root = process.cwd()) {
   if (resolution.provider === 'odoo') return process.env.ODOO_API_KEY && resolution.login ? 'json-rpc' : 'mcp';
   if (resolution.transport === 'mcp') return 'mcp';
-  if (await cliReady(resolution)) return 'cli';
+  if (await cliReady(resolution, root)) return 'cli';
   return resolution.transport === 'cli' ? 'unavailable' : 'mcp';
 }
 
@@ -310,6 +317,51 @@ async function collaboratorMessages(root, marker, resolution, messages) {
   return kept;
 }
 
+// Every HTML comment, closed or not (an unclosed one runs to the end of the text), with the number
+// removed. Browsers end a comment at "-->" or "--!>"; the pass repeats so that removing one cannot
+// join the pieces around it into another.
+export function stripHtmlComments(text) {
+  let out = String(text ?? '');
+  let count = 0;
+  for (;;) {
+    const next = out.replace(/<!--[\s\S]*?(?:--!?>|$)/g, () => {
+      count += 1;
+      return '';
+    });
+    if (next === out) return { text: out, count };
+    out = next;
+  }
+}
+
+// In the autopilot form the person who added the ready label sees the rendered ticket, where an HTML
+// comment is invisible: what they approved does not include it, so it never reaches an unattended
+// stage. A plain line at the end of the body says how many were removed. strip(text) is the filter
+// for one text; the count of a comment is kept on its message (`hidden`) so that a comment filtered
+// out later is not counted.
+function commentStripper(ctx) {
+  if (!ctx || !inAutopilotForm(ctx.root)) return null;
+  return (text) => stripHtmlComments(text);
+}
+
+function hideComments(ctx, ticket, messages, bodyCount = 0) {
+  const strip = commentStripper(ctx);
+  if (!strip) return messages;
+  let removed = bodyCount;
+  const body = strip(ticket.body);
+  ticket.body = body.text;
+  removed += body.count;
+  const kept = messages.map((m) => {
+    const { hidden = 0, ...rest } = m;
+    const b = strip(m.body);
+    removed += hidden + b.count;
+    return { ...rest, body: b.text };
+  });
+  if (removed > 0) {
+    ticket.body = `${ticket.body}${ticket.body ? '\n\n' : ''}(${removed} hidden HTML comment(s) removed: not visible to the person who approved the ticket.)`;
+  }
+  return kept;
+}
+
 function withReads(ticket, messages) {
   ticket.messages = messages;
   ticket.links = collectLinks([ticket.body, ...messages.map((m) => m.body)]);
@@ -318,12 +370,12 @@ function withReads(ticket, messages) {
 }
 
 // The issue's comments through the CLI; a system note on GitLab is not a message.
-async function commentsFor(resolution) {
+async function commentsFor(resolution, root) {
   const cli = CLI[resolution.provider];
   const args = resolution.provider === 'github'
     ? ['api', `repos/${resolution.path}/issues/${resolution.number}/comments`, '--paginate', '--slurp']
     : ['api', `projects/${encodeURIComponent(resolution.path)}/issues/${resolution.number}/notes?per_page=100&sort=asc&order_by=created_at`];
-  const out = await runCli(resolution, args);
+  const out = await runCli(resolution, args, root);
   if (out.timedOut) throw new FetchError('timeout', `${cli.name} did not answer within ${timeoutMs()} ms while reading the comments`);
   if (!out.ok) throw new FetchError('cli-failed', `${cli.name}: the comments could not be read: ${firstLine(out.stderr ?? '')}`);
   let data;
@@ -380,15 +432,22 @@ async function fetchOdoo(resolution, ctx) {
     };
     const rows = await c.call('mail.message', 'search_read', [[['model', '=', 'project.task'], ['res_id', '=', n], ['message_type', '=', 'comment']]], { fields: ['id', 'date', 'author_id', 'body'], order: 'date asc' });
     const messages = [];
-    for (const m of rows) messages.push({ author: await loginOf(m.author_id?.[0]), at: odooIso(m.date), body: htmlToText(m.body) });
+    // In the autopilot form a comment of the HTML is removed before the tags are, so that its text
+    // cannot survive the conversion to plain text (the count rides on the message until it is kept).
+    const auto = Boolean(ctx) && inAutopilotForm(ctx.root);
+    for (const m of rows) {
+      const html = auto ? stripHtmlComments(m.body) : { text: m.body, count: 0 };
+      messages.push({ author: await loginOf(m.author_id?.[0]), at: odooIso(m.date), body: htmlToText(html.text), hidden: html.count });
+    }
     const files = await c.call('ir.attachment', 'search_read', [[['res_model', '=', 'project.task'], ['res_id', '=', n]]], { fields: ['id', 'name', 'mimetype', 'file_size', 'type', 'url'] });
     // A file kept outside Odoo (a URL attachment, a cloud storage module) is listed at its own
     // address: /web/content would only redirect there, and its bytes are not in the database.
     const addressOf = (f) => (EXTERNAL_ATTACHMENT_TYPES.has(f.type) && typeof f.url === 'string' && f.url ? f.url : `${resolution.url}/web/content/${f.id}?download=true`);
     const author = task.create_uid?.[0] ? (await c.call('res.users', 'read', [[task.create_uid[0]]], { fields: ['login'] }))[0]?.login ?? null : null;
+    const description = auto ? stripHtmlComments(task.description) : { text: task.description, count: 0 };
     const ticket = {
       title: task.name ?? '',
-      body: htmlToText(task.description),
+      body: htmlToText(description.text),
       url: `${resolution.url}/web#model=project.task&id=${n}`,
       state: odooState(task.state) || String(task.stage_id?.[1] ?? '').toLowerCase(),
       labels: tags,
@@ -396,7 +455,7 @@ async function fetchOdoo(resolution, ctx) {
       via: 'rpc',
       attachments: files.map((f) => ({ id: f.id, name: f.name, mimetype: f.mimetype ?? null, size: f.file_size ?? null, url: addressOf(f) })),
     };
-    return withReads(ticket, await filterMessages(ctx, resolution, messages));
+    return withReads(ticket, hideComments(ctx, ticket, await filterMessages(ctx, resolution, messages), description.count));
   } catch (err) {
     throw fetchErrorFrom(err);
   }
@@ -414,13 +473,13 @@ async function fetchTicket(resolution, ctx) {
   }
   if (resolution.transport === 'mcp') return mcpAnswer(resolution);
   const cli = CLI[resolution.provider];
-  if (!(await cliReady(resolution))) {
+  if (!(await cliReady(resolution, ctx?.root))) {
     if (resolution.transport === 'cli') {
       throw new FetchError('no-cli', `${cli.name} is not installed or not signed in for ${resolution.host}; install ${cli.name} and run "${cli.name} auth login", or set ${cli.token}`);
     }
     return mcpAnswer(resolution);
   }
-  const view = await runCli(resolution, viewArgs(resolution));
+  const view = await runCli(resolution, viewArgs(resolution), ctx?.root);
   if (view.timedOut) throw new FetchError('timeout', `${cli.name} did not answer within ${timeoutMs()} ms`);
   if (view.missing) throw new FetchError('no-cli', `${cli.name} disappeared between the sign-in check and the fetch`);
   if (!view.ok) {
@@ -437,7 +496,8 @@ async function fetchTicket(resolution, ctx) {
   if (resolution.provider === 'github' && /\/pull\/\d+/.test(ticket.url)) {
     throw new FetchError('not-found', `${resolution.path}#${resolution.number} is a pull request, not an issue`);
   }
-  return withReads(ticket, await filterMessages(ctx, resolution, await commentsFor(resolution)));
+  const messages = await filterMessages(ctx, resolution, await commentsFor(resolution, ctx?.root));
+  return withReads(ticket, hideComments(ctx, ticket, messages));
 }
 
 // Downloads the ticket's attachments under the cap into tasks/<ID>/attachments/ and records, in the
@@ -677,7 +737,7 @@ export async function main(argv) {
     const id = resolution.id ?? opts.id;
     if (isUrl && resolution.provider === 'local') throw new FetchError('bad-ticket', `${opts.id} matches no configured ticket source`);
     let result;
-    if (opts.command === 'resolve') result = resolution.provider === 'local' ? resolution : { ...resolution, transportOnThisMachine: await transportOnThisMachine(resolution) };
+    if (opts.command === 'resolve') result = resolution.provider === 'local' ? resolution : { ...resolution, transportOnThisMachine: await transportOnThisMachine(resolution, root) };
     else if (opts.command === 'fetch') result = await fetchTicket(resolution, { root, marker });
     else if (opts.command === 'attachments') result = await downloadAttachments(root, resolution, id, { ...opts, from: path.resolve(opts.from) });
     else result = writeSource(root, resolution, id, { ...opts, from: path.resolve(opts.from) });

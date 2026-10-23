@@ -13,6 +13,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { resolveTool, childEnv } from '../../../hooks/lib/resolve-tool.mjs';
 
 export const DEFAULT_TICKET_PATTERN = '^#?[A-Za-z0-9][A-Za-z0-9._-]*$';
 const AUTH_TYPES = ['form', 'oidc-password', 'custom'];
@@ -192,8 +193,12 @@ function listFiles(root, rel) {
   return readdirSync(full).filter((f) => statSync(join(full, f)).isFile()).sort();
 }
 
-function runGit(dir, args) {
-  const run = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
+// git is started by the absolute path found on PATH outside the project, never by bare name: a
+// git.exe committed in the checkout (Windows looks in the working directory first) would run here.
+function runGit(root, dir, args) {
+  const git = resolveTool('git', { root });
+  if (!git) return { ok: false, out: '', err: 'git was not found on PATH (outside the project)' };
+  const run = spawnSync(git, ['-C', dir, ...args], { encoding: 'utf8', env: childEnv(process.env) });
   return { ok: run.status === 0, out: (run.stdout || '').trim(), err: (run.stderr || '').trim() };
 }
 
@@ -206,7 +211,7 @@ function changeSetFor(root, repos, ticket) {
       entry.error = `repo path not found: ${repo.path}`;
       return entry;
     }
-    const head = runGit(dir, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    const head = runGit(root, dir, ['rev-parse', '--abbrev-ref', 'HEAD']);
     if (!head.ok) {
       entry.error = `not a git repository or no commits: ${head.err}`;
       return entry;
@@ -215,19 +220,19 @@ function changeSetFor(root, repos, ticket) {
     entry.onTicketBranch = regex.test(entry.branch);
     if (!entry.onTicketBranch) return entry;
     let range = `${entry.defaultBranch}...HEAD`;
-    let files = runGit(dir, ['diff', '--name-only', range]);
+    let files = runGit(root, dir, ['diff', '--name-only', range]);
     if (!files.ok) {
       range = `${entry.defaultBranch}..HEAD`;
-      files = runGit(dir, ['diff', '--name-only', range]);
+      files = runGit(root, dir, ['diff', '--name-only', range]);
     }
     if (!files.ok) {
       entry.error = `cannot diff against ${entry.defaultBranch}: ${files.err}`;
       return entry;
     }
     entry.files = files.out ? files.out.split(/\r?\n/) : [];
-    const stat = runGit(dir, ['diff', '--stat', range]);
+    const stat = runGit(root, dir, ['diff', '--stat', range]);
     entry.diffStat = stat.ok ? stat.out.split(/\r?\n/).slice(0, 40).join('\n') : '';
-    const commits = runGit(dir, ['log', '--oneline', `${entry.defaultBranch}..HEAD`]);
+    const commits = runGit(root, dir, ['log', '--oneline', `${entry.defaultBranch}..HEAD`]);
     entry.commits = commits.ok && commits.out ? commits.out.split(/\r?\n/).slice(0, 20) : [];
     return entry;
   });

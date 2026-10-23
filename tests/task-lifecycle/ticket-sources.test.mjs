@@ -224,3 +224,39 @@ test('a source may set autopilot to a boolean; anything else is refused', () => 
     assert.ok(validateTickets(u).some((e) => e.includes('tickets.sources[2].autopilot')), JSON.stringify(bad));
   }
 });
+
+// L5: ODOO_API_KEY goes to url (JSON-RPC) and mcpUrl (MCP header); never in clear text.
+test('validateTickets refuses an Odoo url or mcpUrl over plain http, naming the key and https', () => {
+  for (const field of ['url', 'mcpUrl']) {
+    const t = specExample();
+    t.sources[2][field] = 'http://odoo.example.com';
+    const errors = validateTickets(t);
+    const hit = errors.find((e) => e.startsWith(`tickets.sources[2].${field}`));
+    assert.ok(hit, `${field}: ${JSON.stringify(errors)}`);
+    assert.match(hit, /https/);
+    assert.match(hit, /ODOO_API_KEY/);
+  }
+});
+
+test('validateTickets accepts https, and http only to this machine (localhost, 127.0.0.1, [::1])', () => {
+  for (const base of ['https://odoo.example.com', 'http://localhost:8069', 'http://127.0.0.1:8069', 'http://[::1]:8069']) {
+    const t = specExample();
+    t.sources[2].url = base;
+    t.sources[2].mcpUrl = `${base}/mcp`;
+    assert.deepEqual(validateTickets(t), [], base);
+  }
+});
+
+test('validateTickets does not take a look-alike host for localhost', () => {
+  for (const base of ['http://localhost.evil.example', 'http://127.0.0.1.evil.example', 'http://evil.example/localhost']) {
+    const t = specExample();
+    t.sources[2].mcpUrl = `${base}/mcp`;
+    assert.ok(validateTickets(t).some((e) => e.startsWith('tickets.sources[2].mcpUrl')), base);
+  }
+});
+
+test('resolveTicket refuses an Odoo source whose url is plain http to another host', () => {
+  const t = specExample();
+  t.sources[2].url = 'http://odoo.example.com';
+  assert.throws(() => resolveTicket(marker(t), 'ODOO-12-5'), (e) => e.code === 'bad-tickets' && /ODOO_API_KEY/.test(e.message));
+});
