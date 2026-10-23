@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"node /dev/stdin <<'EOF'\nconsole.log(process.env)\nEOF"},"reason":"device or process file"}

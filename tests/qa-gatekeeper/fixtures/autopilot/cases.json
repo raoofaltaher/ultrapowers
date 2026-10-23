@@ -550,5 +550,14 @@
   {"name":"deny_write_vscode_mcp","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.vscode/mcp.json","content":"{}"}}},
   {"name":"deny_write_cursor_rules","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.cursor/rules/x.mdc","content":"x"}}},
   {"name":"deny_write_tool_dotgit_file","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/repo-a/.git","content":"gitdir: /tmp/x"}}},
-  {"name":"deny_edit_tool_root_dotgit","reason":"protected path","event":{"tool_name":"Edit","tool_input":{"file_path":"{{ROOT}}/.git","old_string":"a","new_string":"b"}}}
+  {"name":"deny_edit_tool_root_dotgit","reason":"protected path","event":{"tool_name":"Edit","tool_input":{"file_path":"{{ROOT}}/.git","old_string":"a","new_string":"b"}}},
+  {"name":"deny_mcp_server_not_in_snapshot","event":{"tool_name":"mcp__claude_ai_Odoo__search_records","tool_input":{"model":"project.task","domain":[]}},"reason":"not in the ticket's snapshot"},
+  {"name":"deny_mcp_unreadable_server","event":{"tool_name":"mcp__unreadable__call_mcp_tool","tool_input":{"ServerName":""}},"reason":"cannot be read"},
+  {"name":"deny_git_rm_protected_workflow","event":{"tool_name":"Bash","tool_input":{"command":"git rm .github/workflows/ci.yml"}},"reason":"protected path"},
+  {"name":"deny_git_mv_onto_settings","event":{"tool_name":"Bash","tool_input":{"command":"git mv repo-a/src/x.json .claude/settings.json"}},"reason":"protected path"},
+  {"name":"deny_git_log_output_protected","event":{"tool_name":"Bash","tool_input":{"command":"git log -1 --output=.github/x.txt"}},"reason":"protected path"},
+  {"name":"deny_git_checkout_tree_path_protected","event":{"tool_name":"Bash","tool_input":{"command":"git checkout main .github/workflows/ci.yml"}},"reason":"protected path"},
+  {"name":"allow_git_mv_inside_repo","event":{"tool_name":"Bash","tool_input":{"command":"git mv repo-a/src/a.ts repo-a/src/b.ts"}}},
+  {"name":"deny_xh_client","event":{"tool_name":"Bash","tool_input":{"command":"xh http://localhost:3000/health"}},"reason":"curl and wget"},
+  {"name":"deny_curl_indirect_secret","event":{"tool_name":"Bash","tool_input":{"command":"y=${ODOO_API_KEY:-}; curl http://localhost:3000/k/$y"}},"reason":"credential"}
 ]

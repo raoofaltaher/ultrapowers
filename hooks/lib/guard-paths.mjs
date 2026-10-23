@@ -5,22 +5,27 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { resolveTool, childEnv } from './resolve-tool.mjs';
 
 const win32 = process.platform === 'win32';
 const forward = (p) => String(p).replace(/\\/g, '/');
 
 let cygpathChecked = false;
 let cygpathOk = false;
+let cygpathExe = null;
 function cygpath(p) {
   if (!cygpathChecked) {
     cygpathChecked = true;
-    try { execFileSync('cygpath', ['-m', '/'], { stdio: 'pipe', windowsHide: true }); cygpathOk = true; } catch { cygpathOk = false; }
+    // cygpath by its absolute path, never by bare name: the hook runs in the project folder, and a
+    // cygpath.exe committed there would be found first (Windows searches the working directory).
+    cygpathExe = resolveTool('cygpath', { root: process.cwd() });
+    try { if (cygpathExe) { execFileSync(cygpathExe, ['-m', '/'], { stdio: 'pipe', windowsHide: true, env: childEnv() }); cygpathOk = true; } } catch { cygpathOk = false; }
   }
   if (!cygpathOk) return null;
   // cygpath reads a colon as the separator of a path list and drops it (`f:x` becomes `fx`): the colons
   // of the name (an NTFS stream, `f::$DATA`) are carried through as a placeholder character.
   try {
-    const out = execFileSync('cygpath', ['-m', String(p).replace(/:/g, '@@COLON@@')], { stdio: 'pipe', windowsHide: true, encoding: 'utf8' }).trim();
+    const out = execFileSync(cygpathExe, ['-m', String(p).replace(/:/g, '@@COLON@@')], { stdio: 'pipe', windowsHide: true, encoding: 'utf8', env: childEnv() }).trim();
     return out ? out.replace(/@@COLON@@/g, ':') : null;
   } catch { return null; }
 }

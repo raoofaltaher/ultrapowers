@@ -93,7 +93,6 @@ test('the lanes\' own commands still pass', () => {
     'mv /p/reviews/1234/run-state.json /p/.ultrapowers/run-state-1234.previous.json',
     'mv /p/reviews/1234/artifacts /p/.ultrapowers/artifacts-1234-20260101T000000Z',
     "mkdir -p /p/reviews/1234/artifacts/suites/app && nohup bash run-suite.sh /p/app /p/reviews/1234/artifacts/suites/app 'node s.mjs {{out}}/j.xml' > /dev/null 2>&1 & echo $!",
-    'rm /p/.ultrapowers/qa-active',
     'rm /p/.ultrapowers/qa-token.json',
     'ls -la 2>/dev/null',
     'echo done &> /dev/null',
@@ -468,12 +467,13 @@ test('an array slice is a read; psql interpolation is refused in its three spell
   }
 });
 
-test('the run markers are protected; only a sole rm of the run\'s own marker passes', () => {
+test('the run markers are protected; no call of the run removes its own marker (audit-2026-10-23 M5)', () => {
   for (const cmd of ["printf '%s' 1234 > /p/.ultrapowers/qa-active", 'rm /p/.ultrapowers/qa-active /p/.ultrapowers/qa-token.json', 'rm /p/.ultrapowers/qa-active; ls', 'rm /p/.ultrapowers/hunt-active', 'mv /p/.ultrapowers/qa-active /p/reviews/1234/x', 'rm /p/.ultrapowers/*-active']) {
     assert.match(analyze(cmd, ctx), /the run marker/, cmd);
   }
-  assert.equal(analyze('rm -f /p/.ultrapowers/qa-active', ctx), '');
-  assert.equal(analyze('rm .ultrapowers/hunt-active', { ...ctx, profile: 'hunt' }), '');
+  assert.match(analyze('rm -f /p/.ultrapowers/qa-active', ctx), /recursive or forced delete|the run marker/);
+  assert.match(analyze('rm /p/.ultrapowers/qa-active', ctx), /the run marker.*your human partner ends the run/);
+  assert.match(analyze('rm .ultrapowers/hunt-active', { ...ctx, profile: 'hunt' }), /the run marker/);
   assert.match(analyze('rm .ultrapowers/qa-active', { ...ctx, profile: 'hunt' }), /the run marker/);
 });
 
@@ -497,7 +497,12 @@ test('the hunt is a program allow-list', () => {
   for (const cmd of ['node reviews/audit-1/x.mjs', 'python /p/reviews/audit-1/x.py', 'bash repo-a/run.sh', './repo-a/run', 'make build', 'awk -f p.awk in', 'sqlite3 db', 'curl http://localhost/', 'eval ls', 'node --require x /tmp/y.js']) {
     assert.notEqual(analyze(cmd, h), '', cmd);
   }
-  for (const cmd of ['cat repo-a/src/app.ts', 'git log --oneline', 'sh -c "ls repo-a"', 'node /elsewhere/plugin/x.mjs', 'node /p/skills/vulnerability-hunt/scripts/hunt-preflight.mjs audit-1', 'jq . reviews/audit-1/security-findings.json']) {
+  // A script outside the project runs only when it is a regular file (audit-2026-10-23 H1).
+  const outside = mkdtempSync(join(tmpdir(), 'hunt-script-'));
+  writeFileSync(join(outside, 'x.mjs'), '');
+  const outsideScript = join(outside, 'x.mjs').replace(/\\/g, '/');
+  assert.notEqual(analyze('node /elsewhere/plugin/missing.mjs', h), '');
+  for (const cmd of ['cat repo-a/src/app.ts', 'git log --oneline', 'sh -c "ls repo-a"', `node ${outsideScript}`, 'node /p/skills/vulnerability-hunt/scripts/hunt-preflight.mjs audit-1', 'jq . reviews/audit-1/security-findings.json']) {
     assert.equal(analyze(cmd, h), '', cmd);
   }
   assert.match(analyze('make build', h), /the hunt reads; make is not on its list/);

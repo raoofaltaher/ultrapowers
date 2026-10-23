@@ -1,1 +1,1 @@
-{"tool_name":"Bash","tool_input":{"command":"rm {{ROOT}}/.ultrapowers/qa-active"}}
+{"tool_name":"Bash","tool_input":{"command":"rm {{ROOT}}/.ultrapowers/qa-active"},"reason":"your human partner ends the run"}

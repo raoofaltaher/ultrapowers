@@ -287,7 +287,7 @@ hook_dir_node="$hook_dir"
 if command -v cygpath >/dev/null 2>&1; then hook_dir_node="$(cygpath -m "$hook_dir" 2>/dev/null || printf '%s' "$hook_dir")"; fi
 
 parse_status=""; tool=""; cmd=""; wpath=""; url=""; event_cwd=""; allowed=""; forbidden=""; ticket=""; keypaths=""; tracker_hosts=""; ignore_case="0"
-wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""; role_vars=""; ro_role=""; marker_age=""; marker_stage=""; known_issues=""; workdir_state=""; workdir_real=""; keyglob=""
+wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""; role_vars=""; ro_role=""; marker_age=""; marker_stage=""; known_issues=""; workdir_state=""; workdir_real=""; keyglob=""; mcp_servers=""
 {
   IFS= read -r -d '' parse_status || true
   IFS= read -r -d '' tool || true
@@ -313,6 +313,7 @@ wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""; role_vars=""; ro_r
   IFS= read -r -d '' workdir_state || true
   IFS= read -r -d '' workdir_real || true
   IFS= read -r -d '' keyglob || true
+  IFS= read -r -d '' mcp_servers || true
 } < <(printf '%s' "$event" | node -e '
 const fs = require("node:fs");
 const path = require("node:path");
@@ -514,6 +515,9 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
     str(qa.knownIssues).trim() ? resolve(path.resolve(root, str(qa.knownIssues).trim())).rel.replace(/^\.\//, "") : "",
     workdirState, workdirReal,
     globFields.find((g) => guard.keyGlobReaches(g)) || "",
+    // The MCP servers of the snapshot the ticket began with (an autopilot stage reaches only these), names folded the way
+    // the hook folds the server of a tool name.
+    (() => { try { return Object.keys(JSON.parse(fs.readFileSync(path.join(root, ".ultrapowers", "autopilot", "mcp.json"), "utf8").replace(/^\uFEFF/, "")).mcpServers || {}).map((n) => n.toLowerCase().replace(/[^a-z0-9]/g, "_")).join(","); } catch (e) { return ""; } })(),
   ].join("\0") + "\0");
 }, (e) => {
   process.stdout.write(["noresolver:" + String(e.message).split("\n")[0], "", "", "", "", "", "", "", ""].join("\0") + "\0");
@@ -596,10 +600,10 @@ AUTOPILOT_PROTECTED_RE='(^|/)\.github/|(^|/)\.gitlab-ci\.yml$|(^|/)hooks/(qa-gua
 # record and the agents' rules: a stage that edits its own baseline hides a failure from the QA
 # gate. The baseline's path is qa.knownIssues (default qa/known-issues.md, matched above).
 known_lc="$(lower "$known_issues")"
-# The QA and hunt run markers: never written, moved or removed by the run through a file tool or a
-# patch (a sole `rm` of the run's own marker, from the shell, is how the gatekeeper ends it).
+# The QA and hunt run markers: never written, moved or removed by the run, through a file tool, a patch
+# or the shell; the human partner ends the run (an agent told to remove its own guardrail would do it).
 MARKER_RE='(^|/)\.ultrapowers/(qa-active|hunt-active)$'
-MARKER_WHY="is the run marker; the run marker is not the run's to change, the gatekeeper ends the run (with rm of its own marker as a call of its own)"
+MARKER_WHY="is the run marker; the run marker is not the run's to change: your human partner ends the run by removing it (\`! rm .ultrapowers/<marker>\` in the session, or from their own terminal)"
 # --- MCP tools of a tracker, of mail or chat, or of git (git: autopilot only): reads pass; in an autopilot stage writes belong to the
 # engine between stages (the approve label among them). A tool name with a read verb is a read.
 # This rule comes before the file-tool gate: a tracker tool that carries a `path` argument
@@ -630,6 +634,17 @@ if [ -n "$PROFILE" ]; then
         deny "tracker and mail writes through MCP tools are never run during $run_kind; the run reads, it does not post"
       fi
     fi
+  fi
+  # An MCP call whose server or tool name could not be read (guardrail-cli.mjs maps it so) is judged by
+  # nothing: refused in every run.
+  case "$tool_lc" in mcp__unreadable__*) deny "an MCP call whose server or tool name cannot be read is refused during $run_kind" ;; esac
+  # An autopilot stage reaches only the MCP servers of the ticket's snapshot (.ultrapowers/autopilot/mcp.json,
+  # taken at begin): a harness that loads the user's own servers (a connector, a tracker, mail) is held to the
+  # project's list. Judged where the name carries its server: mcp__<server>__<tool>.
+  if [ "$PROFILE" = "autopilot" ] && [[ "$tool_lc" == mcp__?*__?* ]]; then
+    mcp_srv="${tool_lc#mcp__}"; mcp_srv="${mcp_srv%%__*}"; mcp_srv="${mcp_srv//[^a-z0-9]/_}"
+    [[ ",$mcp_servers," == *",$mcp_srv,"* ]] \
+      || deny "the MCP server '$mcp_srv' is not in the ticket's snapshot of .mcp.json; an autopilot stage reaches only the servers the project lists"
   fi
   git_mcp_re='(^|_)git_git_(push|reset)|^git_(push|reset)'
   if [ "$PROFILE" = "autopilot" ] && [[ "$tool_norm" =~ $git_mcp_re ]]; then
@@ -897,18 +912,10 @@ if printf '%s' "$lc" | grep -Eq '\bpsql\b'; then
     && deny "SQL comments inside inline psql are blocked; they only serve to hide a write verb"
 fi
 
-# Destructive filesystem: short and long rm options, find -delete, disk tools, device writes.
-# One exception, QA run and hunt: a call whose entire command is `rm -f <the run's own marker>` (the
-# write analyzer below confirms the operand is that marker; anything else stays refused).
-own_marker="qa-active"
-[ "$PROFILE" = "hunt" ] && own_marker="hunt-active"
-sole_rm_re='^[[:space:]]*rm[[:space:]]+-f[[:space:]]+("[^"$`\\]*"|'"'"'[^'"'"']*'"'"'|[^[:space:];&|<>()$`"'"'"'\\]+)[[:space:]]*$'
-sole_rm=0
-if [ "$PROFILE" != "autopilot" ] && [[ "$cmd" =~ $sole_rm_re ]]; then
-  op="${BASH_REMATCH[1]}"; op="${op#[\"\']}"; op="${op%[\"\']}"
-  [[ "$op" == ".ultrapowers/$own_marker" || "$op" == */".ultrapowers/$own_marker" ]] && sole_rm=1
-fi
-[ "$sole_rm" -eq 0 ] && printf '%s' "$lc" | grep -Eq "${B}rm[[:space:]]+-[a-z]*[rf]|${B}rm[[:space:]]+--(recursive|force|dir)|${B}(rmdir|shred|mkfs|dd)[[:space:]]|>[[:space:]]*/dev/(sd|nvme)|${B}find[[:space:]][^;&|]*[[:space:]]-delete\\b|${B}(rd|rmdir)[[:space:]]+/s|${B}del[[:space:]][^;&|]*/[sfq]\\b|remove-item[^;&|]*[[:space:]]-(recurse|force)" \
+# Destructive filesystem: short and long rm options, find -delete, disk tools, device writes. No
+# exception: the run's own marker is removed by the human partner, never by a call of the run (the
+# write analyzer below reads the same rules on the words the shell runs, however they are quoted).
+printf '%s' "$lc" | grep -Eq "${B}rm[[:space:]]+-[a-z]*[rf]|${B}rm[[:space:]]+--(recursive|force|dir)|${B}(rmdir|shred|mkfs|dd)[[:space:]]|>[[:space:]]*/dev/(sd|nvme)|${B}find[[:space:]][^;&|]*[[:space:]]-delete\\b|${B}(rd|rmdir)[[:space:]]+/s|${B}del[[:space:]][^;&|]*/[sfq]\\b|remove-item[^;&|]*[[:space:]]-(recurse|force)" \
   && deny "recursive or forced delete is blocked"
 # PowerShell file cmdlets write, move or delete files; the file tools are gated to
 # reviews/<id>/ and .ultrapowers/, these are not.
@@ -941,12 +948,15 @@ printf '%s' "$lc" | grep -Eq '/dev/(tcp|udp)/' \
 # Key material named anywhere in a command, whatever reads or sends it; environment dumps;
 # uploads. `.env.example` is the documented template and stays readable.
 key_lc="${lc//.env.example/}"
+# The canonical spelling: `~/.config//gh` and `~/.config/./gh` open the same file as `~/.config/gh`.
+while [[ "$key_lc" == *//* ]]; do key_lc="${key_lc//\/\//\/}"; done
+while [[ "$key_lc" == */./* ]]; do key_lc="${key_lc//\/.\//\/}"; done
 printf '%s' "$key_lc" | grep -Eq '(^|/)\.ssh([^a-z0-9_.-]|$)|authorized_keys|id_rsa|id_ed25519|\.aws/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|[/[:space:]@"'"'"'=])\.env([^a-z0-9_]|$)|\.git-credentials|(^|[/[:space:]@"'"'"'=])\.(netrc|npmrc)([^a-z0-9_]|$)|\.config/(gh|glab-cli)(/|[^a-z0-9_.-]|$)|\.docker/config\.json|(^|[/[:space:]@"'"'"'=])\.(kube|gnupg)(/|[^a-z0-9_.-]|$)' \
   && deny "reading or transferring key material is blocked"
 printf '%s' "$lc" | grep -Eq "${B}(printenv|env)[[:space:]]*(\$|[;&|])" \
   && deny "dumping the environment is blocked; check a variable with \${NAME:+set} instead"
 # The process environment is also a file: /proc/<pid>/environ holds every variable.
-printf '%s' "$lc" | grep -Eq '/proc/[^/[:space:]]+/environ' \
+printf '%s' "$lc" | grep -Eq '/proc/[^[:space:];&|]*environ' \
   && deny "reading a process environment (/proc/<pid>/environ) is blocked; check a variable with \${NAME:+set} instead"
 # (-t is curl's -T upload only: wget's -T is its timeout and -t its retry count.)
 { printf '%s' "$lc" | grep -Eq '(curl|wget)[^;&|]*(--upload-file|--data-binary[[:space:]]*@|-d[[:space:]]*@|-f[[:space:]][^;&|]*@)' \

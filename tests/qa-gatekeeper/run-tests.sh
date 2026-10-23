@@ -27,6 +27,7 @@ SUITES=(
   "bash tests/qa-gatekeeper/test-autopilot-profile.sh"
   "bash tests/qa-gatekeeper/test-hunt-profile.sh"
   "node --test tests/qa-gatekeeper/qa-shell-writes.test.mjs"
+  "node --test tests/qa-gatekeeper/audit-2026-10-23.test.mjs"
   "node --test tests/qa-gatekeeper/guard-paths.test.mjs"
   "node --test tests/qa-gatekeeper/judge.test.mjs"
   "bash tests/qa-gatekeeper/test-run-suite.sh"

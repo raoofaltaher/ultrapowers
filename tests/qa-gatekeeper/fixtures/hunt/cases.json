@@ -298,7 +298,7 @@
   {"name":"deny_write_tool_on_other_marker","reason":"the run marker","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.ultrapowers/qa-active","content":"x"}}},
   {"name":"deny_patch_marker","reason":"the run marker","event":{"tool_name":"apply_patch","tool_input":{"patch":"*** Begin Patch\n*** Delete File: .ultrapowers/hunt-active\n*** End Patch"}}},
   {"name":"deny_rm_f_other_marker","reason":"forced delete","event":{"tool_name":"Bash","tool_input":{"command":"rm -f .ultrapowers/qa-active"}}},
-  {"name":"allow_rm_own_marker_sole_command","event":{"tool_name":"Bash","tool_input":{"command":"rm .ultrapowers/hunt-active"}}},
+  {"name":"deny_rm_own_marker_sole_command","event":{"tool_name":"Bash","tool_input":{"command":"rm .ultrapowers/hunt-active"}},"reason":"your human partner ends the run"},
   {"name":"allow_rm_f_own_marker_absolute_quoted","event":{"tool_name":"Bash","tool_input":{"command":"rm -f \"{{ROOT}}/.ultrapowers/hunt-active\""}}},
   {"name":"allow_write_other_ultrapowers_state","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.ultrapowers/sdd/x.md","content":"x"}}},
   {"name":"deny_git_dash_c_fsmonitor","reason":"git -c and --exec-path","event":{"tool_name":"Bash","tool_input":{"command":"git -c core.fsmonitor='touch repo-a/x' status"}}},
@@ -459,5 +459,16 @@
   {"name":"deny_mcp_odoo_post_message","reason":"writes through MCP tools are never run during","event":{"tool_name":"mcp__claude_ai_Odoo__post_message","tool_input":{"model":"project.task","res_id":1,"body":"x"}}},
   {"name":"deny_mcp_outlook_send_mail","reason":"writes through MCP tools are never run during","event":{"tool_name":"mcp__claude_ai_Microsoft_365__outlook_send_mail","tool_input":{"to":"a@example.com","body":"x"}}},
   {"name":"allow_mcp_github_get_issue","event":{"tool_name":"mcp__github__get_issue","tool_input":{"owner":"o","repo":"r","issue_number":1}}},
-  {"name":"allow_mcp_odoo_search_records","event":{"tool_name":"mcp__claude_ai_Odoo__search_records","tool_input":{"model":"project.task","domain":[]}}}
+  {"name":"allow_mcp_odoo_search_records","event":{"tool_name":"mcp__claude_ai_Odoo__search_records","tool_input":{"model":"project.task","domain":[]}}},
+  {"name":"deny_node_dev_stdin_heredoc","event":{"tool_name":"Bash","tool_input":{"command":"node /dev/stdin <<'EOF'\nrequire('https').get('https://example.com')\nEOF"}},"reason":"device or process file"},
+  {"name":"deny_python_proc_fd_script","event":{"tool_name":"Bash","tool_input":{"command":"python3 /proc/self/fd/0 <<'EOF'\nimport os\nEOF"}},"reason":"device or process file"},
+  {"name":"deny_find_delete_double_quoted","event":{"tool_name":"Bash","tool_input":{"command":"\"find\" repo-a -delete"}},"reason":"recursive or forced delete"},
+  {"name":"deny_default_expansion_secret","event":{"tool_name":"Bash","tool_input":{"command":"echo ${NPM_TOKEN:-}"}},"reason":"credential"},
+  {"name":"deny_declare_p_secret","event":{"tool_name":"Bash","tool_input":{"command":"typeset -p DB_PASSWORD"}},"reason":"credential"},
+  {"name":"allow_date_utc_iso","event":{"tool_name":"Bash","tool_input":{"command":"date -u +%Y-%m-%dT%H:%M:%SZ"}}},
+  {"name":"deny_date_set_clock","event":{"tool_name":"Bash","tool_input":{"command":"date -s 2020-01-01"}},"reason":"never sets it"},
+  {"name":"allow_npm_audit_omit_dev","event":{"tool_name":"Bash","tool_input":{"command":"npm audit --package-lock-only --json --omit=dev"}}},
+  {"name":"allow_npm_ls_lock_only_package","event":{"tool_name":"Bash","tool_input":{"command":"npm ls toml --package-lock-only --json"}}},
+  {"name":"allow_npm_ls_prefix_inside","event":{"tool_name":"Bash","tool_input":{"command":"npm ls --prefix repo-a --package-lock-only --json"}}},
+  {"name":"deny_npm_ls_prefix_outside","event":{"tool_name":"Bash","tool_input":{"command":"npm ls --prefix /etc --json"}},"reason":"outside the project"}
 ]

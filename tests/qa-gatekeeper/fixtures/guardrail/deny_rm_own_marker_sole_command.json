@@ -1,1 +1,1 @@
-{"tool_name":"Bash","tool_input":{"command":"rm -f .ultrapowers/qa-active"}}
+{"tool_name":"Bash","tool_input":{"command":"rm -f .ultrapowers/qa-active"},"reason":"recursive or forced delete"}
