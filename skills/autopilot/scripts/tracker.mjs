@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import { execFile } from 'node:child_process';
 import { AutopilotError } from './autopilot-lib.mjs';
+import { resolveTool, childEnv as nodeChildEnv } from '../../../hooks/lib/resolve-tool.mjs';
 import { createOdooClient, discoverDb, htmlToText, textToNoteHtml, markdownToNoteHtml, tagEventsFromTracking, lastWriterEvents, odooColorIndex, odooIso } from './odoo.mjs';
 
 const CLI = {
@@ -25,13 +26,19 @@ function run(resolution, env, args, stdin) {
   const override = env[CLI[provider].env];
   const command = override || CLI[provider].name;
   const script = /\.[cm]?js$/i.test(command);
-  const [file, argv] = script ? [process.execPath, [command, ...args]] : [command, args];
-  const childEnv = provider === 'gitlab' ? { ...env, GITLAB_HOST: host } : env;
+  // Never a bare name: gh and glab resolve from the absolute PATH entries outside the project (the
+  // engine passes its root in the resolution), so a checkout that commits `gh.exe` starts nothing.
+  const tool = script ? null : resolveTool(command, { root: resolution.root ?? process.cwd(), env });
+  const [file, argv] = script ? [process.execPath, [command, ...args]] : [tool ?? command, args];
+  const childEnvironment = nodeChildEnv(provider === 'gitlab' ? { ...env, GITLAB_HOST: host } : env);
   return new Promise((resolve, reject) => {
     if (script && !fs.existsSync(command)) {
       return reject(new AutopilotError('no-cli', `${CLI[provider].name} override ${command} does not exist`));
     }
-    const child = execFile(file, argv, { env: childEnv, timeout: timeoutMs(env), windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
+    if (!script && !tool) {
+      return reject(new AutopilotError('no-cli', `${CLI[provider].name} is not on PATH (${command}; only absolute PATH entries outside the project are searched)`));
+    }
+    const child = execFile(file, argv, { env: childEnvironment, timeout: timeoutMs(env), windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (!error) return resolve({ stdout: String(stdout ?? ''), stderr: String(stderr ?? '') });
       if (error.code === 'ENOENT') return reject(new AutopilotError('no-cli', `${CLI[provider].name} is not on PATH (${file})`));
       if (error.killed) return reject(new AutopilotError('timeout', `${CLI[provider].name} ${args.slice(0, 2).join(' ')} took longer than ${timeoutMs(env)} ms`));

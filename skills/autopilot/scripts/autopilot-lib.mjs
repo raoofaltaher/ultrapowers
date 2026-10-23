@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { HARNESS_NAMES } from './harnesses.mjs';
+import { HARNESS_NAMES, HARNESSES as ADAPTERS } from './harnesses.mjs';
 import { textLines } from '../../brainstorming/scripts/check-doc.mjs';
 
 export class AutopilotError extends Error {
@@ -69,6 +69,17 @@ function isPositiveInt(v) {
   return Number.isInteger(v) && v > 0;
 }
 
+const STAGE_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*\*?$/;
+
+// Why a configured branch name could reach git as an option or a revision expression, or null. The
+// pure part of the check; the engine also asks git itself (repos.mjs checkBranchName).
+export function branchNameProblem(name) {
+  if (typeof name !== 'string' || name.trim() === '') return 'must be a non-empty string';
+  if (name.startsWith('-')) return `(${JSON.stringify(name)}) starts with "-": git would read it as an option`;
+  if (/[\u0000- \u007f~^:?*[\\]|\.\.|@\{|\/\/|\.lock$|\/$|^\//.test(name)) return `(${JSON.stringify(name)}) is not a valid branch name`;
+  return null;
+}
+
 // Returns a list of error strings, empty when the block is valid.
 export function validateAutopilot(block) {
   const errors = [];
@@ -76,6 +87,13 @@ export function validateAutopilot(block) {
   if (!MODES.includes(block.mode)) errors.push(`autopilot.mode must be one of ${MODES.join(', ')}`);
   if (block.baseBranch !== undefined && (typeof block.baseBranch !== 'string' || block.baseBranch.trim() === '')) {
     errors.push('autopilot.baseBranch must be a non-empty string');
+  } else if (block.baseBranch !== undefined && branchNameProblem(block.baseBranch)) {
+    errors.push(`autopilot.baseBranch ${branchNameProblem(block.baseBranch)}`);
+  }
+  if (block.stageEnv !== undefined) {
+    if (!Array.isArray(block.stageEnv) || block.stageEnv.some((n) => typeof n !== 'string' || !STAGE_ENV_NAME.test(n))) {
+      errors.push('autopilot.stageEnv must be a list of variable names, each a name or a PREFIX_* pattern (letters, digits and underscores)');
+    }
   }
   if (block.approvers !== undefined) {
     if (!Array.isArray(block.approvers) || block.approvers.some((a) => typeof a !== 'string' || a.trim() === '')) {
@@ -148,6 +166,8 @@ export function effectiveAutopilot(marker) {
     approvers: [...(block.approvers ?? [])],
     execution: block.execution ?? DEFAULTS.execution,
     harness: block.harness ?? DEFAULTS.harness,
+    // Extra variable names (or PREFIX_* patterns) a headless stage may hold, beyond the allow-list.
+    stageEnv: [...(block.stageEnv ?? [])],
     // The watch door takes an approval from the account it runs as only when the project says so.
     watchSelfApproval: block.watchSelfApproval === true,
     events: { ...DEFAULTS.events, ...(block.events ?? {}) },
@@ -443,6 +463,132 @@ export function loadSecretsFile(root, env = process.env) {
     }
   }
   return loaded;
+}
+
+// ---- The environment of a headless stage (audit 2026-10-23, M6 and L3) ----
+//
+// A stage runs a coding agent with permission prompts bypassed, and anything it writes and runs (a
+// script, a test) reads its environment. The engine's own process holds credentials the stage has
+// no use for: the Odoo key and every key `loadSecretsFile` pulled out of .agents/mcp-secrets.env.
+// So the stage environment is built from a list of what it needs, not by removing what it must not
+// have. A key an MCP server of the stage needs stays readable by a script the stage runs; only an
+// OS sandbox removes that, which this plugin does not provide.
+
+// The operating-system and toolchain base: where things are, who and where the user is, the
+// language, the terminal, the proxy and CA settings, the engine's own ULTRAPOWERS_* names, and the
+// non-secret git identity. On Windows the names match case-insensitively.
+const STAGE_ENV_BASE = Object.freeze([
+  'PATH', 'PATHEXT', 'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA',
+  'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'CommonProgramFiles', 'CommonProgramFiles(x86)', 'CommonProgramW6432',
+  'SystemRoot', 'SYSTEMDRIVE', 'WINDIR', 'COMSPEC', 'TEMP', 'TMP', 'TMPDIR', 'USER', 'USERNAME', 'LOGNAME', 'SHELL',
+  'LANG', 'LANGUAGE', 'LC_*', 'TZ', 'TERM', 'COLORTERM', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE', 'OS', 'XDG_*', 'MSYSTEM',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'all_proxy',
+  'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
+  'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM',
+  'GH_HOST', 'GITLAB_HOST',
+  'ULTRAPOWERS_*',
+]);
+
+// The tracker tokens and the ssh agent of the engine. Without stage credentials the stage shares
+// them, as before; with stage credentials they are removed and the mapped stage tokens set instead.
+export const ENGINE_TOKEN_VARS = Object.freeze(['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GLAB_TOKEN', 'GITLAB_ACCESS_TOKEN', 'GITLAB_PRIVATE_TOKEN', 'GL_TOKEN']);
+const STAGE_SHARED_VARS = Object.freeze([...ENGINE_TOKEN_VARS, 'CI_JOB_TOKEN', 'OAUTH_TOKEN', 'SSH_AUTH_SOCK', 'GIT_SSH_COMMAND', 'GIT_SSH', 'GH_CONFIG_DIR', 'GLAB_CONFIG_DIR']);
+const STAGE_TOKEN_NAMES = Object.freeze(['ULTRAPOWERS_STAGE_GH_TOKEN', 'ULTRAPOWERS_STAGE_GITLAB_TOKEN']);
+// Never passed, whatever a harness, the project or an MCP reference lists: it loads code into node.
+const STAGE_ENV_NEVER = Object.freeze(['NODE_OPTIONS']);
+
+function nameTest(patterns, caseInsensitive) {
+  const fold = (s) => (caseInsensitive ? s.toLowerCase() : s);
+  const exact = new Set();
+  const prefixes = [];
+  for (const p of patterns) {
+    const q = fold(String(p));
+    if (q.endsWith('*')) prefixes.push(q.slice(0, -1));
+    else exact.add(q);
+  }
+  return (name) => {
+    const n = fold(name);
+    return exact.has(n) || prefixes.some((pre) => n.startsWith(pre));
+  };
+}
+
+// Every ${NAME} (or ${NAME:-default}) the text of an MCP configuration references, once each: the
+// variables the servers it names expect in their environment, headers, arguments or url.
+export function mcpEnvNames(text) {
+  const names = new Set();
+  for (const m of String(text ?? '').matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::?[-=?+][^}]*)?\}/g)) names.add(m[1]);
+  return [...names];
+}
+
+// The environment of a headless stage, built from `env` (the engine's own). `harness` adds that
+// adapter's auth names, `extra` is autopilot.stageEnv, `mcpNames` the variables the stage's MCP
+// snapshot references. `noAuthDir` is where gh and glab find an empty configuration when the stage
+// has credentials of its own. Pure: nothing is read from or written to the disk or process.env.
+export function stageEnvFrom(env, { harness, extra = [], mcpNames = [], noAuthDir = null, platform = process.platform } = {}) {
+  const ci = platform === 'win32';
+  const fold = (s) => (ci ? s.toLowerCase() : s);
+  const get = (name) => {
+    for (const k of Object.keys(env)) if (fold(k) === fold(name) && env[k]) return env[k];
+    return undefined;
+  };
+  const stageGh = get('ULTRAPOWERS_STAGE_GH_TOKEN');
+  const stageGl = get('ULTRAPOWERS_STAGE_GITLAB_TOKEN');
+  const stageCreds = Boolean(stageGh || stageGl);
+  const adapter = ADAPTERS[harness];
+  const allowed = nameTest([
+    ...STAGE_ENV_BASE,
+    ...(adapter?.envAllow ?? []),
+    ...extra,
+    ...mcpNames,
+    ...(stageCreds ? [] : STAGE_SHARED_VARS),
+  ], ci);
+  const never = nameTest(STAGE_ENV_NEVER, ci);
+  const dropped = nameTest(stageCreds ? [...STAGE_SHARED_VARS, ...STAGE_TOKEN_NAMES] : STAGE_TOKEN_NAMES, ci);
+  const out = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (typeof v !== 'string' || never(k) || dropped(k) || !allowed(k)) continue;
+    out[k] = v;
+  }
+  out.ULTRAPOWERS_AUTOPILOT_INSIDE = '1';
+  out.GIT_TERMINAL_PROMPT = '0';
+  if (stageCreds) {
+    // gh and glab see an empty configuration directory, so a stage steered into labelling a ticket
+    // has nothing to do it with; and the git credential helper is reset behind any pins already there.
+    if (noAuthDir) {
+      out.GH_CONFIG_DIR = path.join(noAuthDir, 'gh');
+      out.GLAB_CONFIG_DIR = path.join(noAuthDir, 'glab');
+    }
+    if (stageGh) out.GH_TOKEN = stageGh;
+    if (stageGl) out.GITLAB_TOKEN = stageGl;
+    const n = Number.parseInt(out.GIT_CONFIG_COUNT ?? '0', 10) || 0;
+    out[`GIT_CONFIG_KEY_${n}`] = 'credential.helper';
+    out[`GIT_CONFIG_VALUE_${n}`] = '';
+    out.GIT_CONFIG_COUNT = String(n + 1);
+  }
+  return out;
+}
+
+// The MCP configuration a stage loads is the project's with its remote servers left out: a server
+// with a `url`, or of type http, sse or streamable-http, is a connection the stage would open with
+// the credentials in its headers; only servers that run a local command stay. The result is the
+// filtered JSON text (a config that is not JSON, or has no server table, loads no server).
+export function filterMcpServers(text) {
+  const none = '{"mcpServers":{}}';
+  let parsed;
+  try {
+    parsed = JSON.parse(String(text ?? '').replace(/^﻿/, ''));
+  } catch {
+    return none;
+  }
+  if (!isObject(parsed) || !isObject(parsed.mcpServers)) return none;
+  const kept = {};
+  for (const [name, server] of Object.entries(parsed.mcpServers)) {
+    if (!isObject(server)) continue;
+    const stdio = server.type === undefined || server.type === 'stdio';
+    const command = typeof server.command === 'string' && server.command.trim() !== '';
+    if (stdio && command && server.url === undefined) kept[name] = server;
+  }
+  return JSON.stringify({ ...parsed, mcpServers: kept }, null, 2);
 }
 
 // The lines under the first heading with this text, up to the next heading. A spec may quote the

@@ -4,12 +4,48 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { AutopilotError, pushAllowed } from './autopilot-lib.mjs';
+import { AutopilotError, pushAllowed, branchNameProblem } from './autopilot-lib.mjs';
+import { resolveTool, childEnv } from '../../../hooks/lib/resolve-tool.mjs';
 
 const WORKTREES = '.worktrees';
 
-function gitBinary() {
-  return process.env.ULTRAPOWERS_GIT || 'git';
+// The absolute path of the git the engine starts, never a bare name: a bare `git` resolves through
+// the child's working directory first on Windows, and through any relative PATH entry on every
+// platform, and the working directory is a checkout a stage wrote. ULTRAPOWERS_GIT overrides the
+// lookup, and only as an absolute path. `root` is the project, whose own folders are never searched.
+function gitBinary(root) {
+  const override = process.env.ULTRAPOWERS_GIT;
+  if (override) {
+    if (!path.isAbsolute(override)) throw new AutopilotError('bad-git', `ULTRAPOWERS_GIT must be an absolute path to a git executable, not ${JSON.stringify(override)}`);
+    const file = resolveTool(override);
+    if (!file) throw new AutopilotError('no-git', `ULTRAPOWERS_GIT ${override} is not a file`);
+    return file;
+  }
+  const found = resolveTool('git', { root });
+  if (!found) throw new AutopilotError('no-git', 'git is not on PATH (only absolute PATH entries outside the project are searched)');
+  return found;
+}
+
+// A configured or remote-supplied branch name must not reach git as an option or a revision
+// expression: refuse it before any argv is built from it.
+function assertBranch(name, what = 'branch') {
+  const problem = branchNameProblem(name);
+  if (problem) throw new AutopilotError('bad-branch', `${what} ${problem}`);
+  return name;
+}
+
+// null when git accepts `name` as a branch name too (check-ref-format), else a sentence. The pure
+// rules come first, so `-x` and `@{-1}` never reach git as arguments.
+export function checkBranchName(root, name) {
+  const problem = branchNameProblem(name);
+  if (problem) return `branch ${problem}`;
+  try {
+    execFileSync(gitBinary(root), ['check-ref-format', '--branch', name], { cwd: root, encoding: 'utf8', env: childEnv(process.env), windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    return null;
+  } catch (err) {
+    if (err instanceof AutopilotError) return err.message;
+    return `branch ${JSON.stringify(name)} is not a valid branch name for git`;
+  }
 }
 
 // The engine's git reads the repository's config, and a stage can reach it (a nested worktree's
@@ -34,7 +70,7 @@ function hooksSnapshotDir(root) {
 export function snapshotHooks(root) {
   let source = null;
   try {
-    const cfg = execFileSync(gitBinary(), ['config', '--get', 'core.hooksPath'], { cwd: root, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const cfg = execFileSync(gitBinary(root), ['config', '--get', 'core.hooksPath'], { cwd: root, encoding: 'utf8', env: childEnv(process.env), windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
     if (cfg) source = path.resolve(root, cfg);
   } catch { source = null; }
   if (!source || !fs.existsSync(source)) source = path.join(root, '.git', 'hooks');
@@ -52,7 +88,11 @@ export function gitArgs(dir, args) {
   if (!root) throw new AutopilotError('no-workspace', `${dir} is not inside an ultrapowers workspace (no .agents/ultrapowers.json above it); the engine's git runs only inside one`);
   const hooks = hooksSnapshotDir(root);
   fs.mkdirSync(hooks, { recursive: true });
-  return ['-c', 'core.fsmonitor=false', '-c', 'core.sshCommand=ssh', '-c', 'diff.external=', '-c', 'core.gitProxy=', '-c', 'core.pager=cat',
+  // core.askPass is emptied too: the engine never prompts (GIT_TERMINAL_PROMPT=0), and a program a
+  // repository's config names there would run on every credential question. credential.helper and
+  // gpg.program stay the user's: their global helper and signing must keep working; a repository-
+  // local change to them is caught by the config snapshot instead (gitConfigChanges).
+  return ['-c', 'core.fsmonitor=false', '-c', 'core.sshCommand=ssh', '-c', 'diff.external=', '-c', 'core.gitProxy=', '-c', 'core.pager=cat', '-c', 'core.askPass=',
     '-c', 'core.hooksPath=' + hooks.split(path.sep).join('/'), ...args];
 }
 
@@ -61,7 +101,7 @@ export function gitArgs(dir, args) {
 export function git(dir, args) {
   const argv = gitArgs(dir, args);
   try {
-    const stdout = execFileSync(gitBinary(), argv, { cwd: dir, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const stdout = execFileSync(gitBinary(workspaceRoot(dir)), argv, { cwd: dir, encoding: 'utf8', env: childEnv(process.env), windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     return { ok: true, stdout, stderr: '' };
   } catch (err) {
     return { ok: false, stdout: String(err.stdout ?? ''), stderr: String(err.stderr ?? err.message) };
@@ -78,7 +118,73 @@ function must(dir, args, what) {
 export function remoteHead(dir) {
   const r = git(dir, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']);
   if (!r.ok) return 'main';
-  return r.stdout.trim().replace(/^origin\//, '') || 'main';
+  const name = r.stdout.trim().replace(/^origin\//, '');
+  // The name comes from the remote: one that git would read as an option is not a default branch.
+  return name && !branchNameProblem(name) ? name : 'main';
+}
+
+// ---- Repository-local git config that runs programs or redirects a remote (audit L2) ----
+//
+// The engine's git pins the keys it knows (gitArgs), but a stage can reach .git/config of a clone
+// (and of a worktree), and git has more keys that start a program than any list of pins keeps up
+// with: filter drivers run on `git add`, textconv on `git log -p`, an alias, an include, a
+// remote's receive-pack. At `begin` the engine records the keys of the repository's own config that
+// can run something or send the work elsewhere; before it does git work in `end` and `pr`, it
+// compares, and any key added, changed or removed blocks the ticket.
+
+const WATCHED_CORE = ['fsmonitor', 'sshcommand', 'pager', 'hookspath', 'askpass', 'editor', 'gitproxy', 'alternaterefscommand'];
+const WATCHED_REMOTE = ['url', 'pushurl', 'uploadpack', 'receivepack', 'proxy', 'vcs'];
+const WATCHED_HTTP = ['proxy', 'extraheader', 'sslverify', 'sslcainfo', 'cookiefile', 'sslcert', 'sslkey'];
+
+// `key` as git prints it: section and variable lowercased, subsection as written.
+export function watchedConfigKey(key) {
+  const first = key.indexOf('.');
+  const last = key.lastIndexOf('.');
+  if (first < 0) return false;
+  const section = key.slice(0, first);
+  const variable = key.slice(last + 1);
+  if (variable === 'textconv') return true;
+  switch (section) {
+    case 'core': return WATCHED_CORE.includes(key.slice(first + 1));
+    case 'credential': case 'gpg': case 'filter': case 'alias': case 'include': case 'includeif': case 'url': return true;
+    case 'diff': return variable === 'command' || variable === 'external';
+    case 'merge': return variable === 'driver' || variable === 'recursivedriver';
+    case 'remote': return first !== last && WATCHED_REMOTE.includes(variable);
+    case 'http': return WATCHED_HTTP.includes(variable);
+    default: return false;
+  }
+}
+
+// Every [key, value] of one scope of the repository's config.
+function configPairs(dir, scope) {
+  const r = git(dir, ['config', scope, '--list', '--null']);
+  if (!r.ok) return [];
+  const out = [];
+  for (const raw of r.stdout.split('\0')) {
+    if (!raw) continue;
+    const nl = raw.indexOf('\n');
+    out.push(nl < 0 ? [raw, ''] : [raw.slice(0, nl), raw.slice(nl + 1)]);
+  }
+  return out;
+}
+
+// The watched entries (`key=value`, sorted) of the repository's own config, and of its
+// config.worktree when the repository uses extensions.worktreeConfig.
+export function gitConfigSnapshot(dir) {
+  const local = configPairs(dir, '--local');
+  const perWorktree = local.some(([k, v]) => k === 'extensions.worktreeconfig' && /^(true|yes|on|1)$/i.test(v));
+  const pairs = perWorktree ? [...local, ...configPairs(dir, '--worktree')] : local;
+  return [...new Set(pairs.filter(([k]) => watchedConfigKey(k)).map(([k, v]) => `${k}=${v}`))].sort();
+}
+
+// The keys whose entries differ between `before` and the config now: added, changed or removed.
+export function gitConfigChanges(dir, before) {
+  const now = new Set(gitConfigSnapshot(dir));
+  const was = new Set(before);
+  const changed = new Set();
+  for (const e of now) if (!was.has(e)) changed.add(e.slice(0, e.indexOf('=')));
+  for (const e of was) if (!now.has(e)) changed.add(e.slice(0, e.indexOf('=')));
+  return [...changed].sort();
 }
 
 function hasRemote(dir) {
@@ -93,10 +199,12 @@ function branchExists(dir, branch) {
 // fetch. A local base with unpushed commits wins over origin; an origin ahead of a stale local wins
 // over it; when they diverged, the local base is what the developer sees, so it wins.
 function startPoint(dir, base) {
+  assertBranch(base, 'base branch');
   const local = git(dir, ['rev-parse', '--verify', '--quiet', `refs/heads/${base}`]).ok;
   let remote = false;
   if (hasRemote(dir)) {
-    const f = git(dir, ['fetch', '--quiet', 'origin', base]);
+    // A full refspec: the name can only ever be a branch of the remote, never an option of fetch.
+    const f = git(dir, ['fetch', '--quiet', 'origin', `+refs/heads/${base}:refs/remotes/origin/${base}`]);
     remote = f.ok && git(dir, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${base}`]).ok;
   }
   // Full ref names: a tag or a file called like the branch must not stand in for it.
@@ -165,6 +273,8 @@ export function ensureWorktree(cloneDir, branch, base) {
 
 // The sha of a ref, or null when it does not resolve.
 export function tip(dir, ref = 'HEAD') {
+  // A revision that starts with "-" is an option, not a revision: it resolves to nothing.
+  if (typeof ref !== 'string' || ref.startsWith('-')) return null;
   const r = git(dir, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
   return r.ok ? r.stdout.trim() : null;
 }
@@ -172,6 +282,7 @@ export function tip(dir, ref = 'HEAD') {
 // The newest commit on `ref` that touches anything other than the ticket's two state files.
 // Engine bookkeeping commits (state and log only) never move the work tip, so they are never drift.
 export function workTip(dir, id, ref = 'HEAD') {
+  if (typeof ref !== 'string' || ref.startsWith('-')) return null;
   const r = git(dir, ['log', '--format=%x00%H', '--name-only', '-n', '200', ref, '--']);
   if (!r.ok) return tip(dir, ref);
   const bookkeeping = new Set([`tasks/${id}/autopilot.json`, `tasks/${id}/stage-log.jsonl`]);
@@ -217,7 +328,9 @@ export function baseAhead(dir, base) {
 
 // True when any of `paths` differs between the two revisions; an unreadable revision counts as changed.
 export function pathsChanged(dir, from, to, paths) {
-  const r = git(dir, ['diff', '--quiet', from, to, '--', ...paths]);
+  // The revisions can come from the state file, which a stage can write: never an option of git.
+  if ([from, to].some((rev) => typeof rev !== 'string' || rev.startsWith('-'))) return true;
+  const r =git(dir, ['diff', '--quiet', from, to, '--', ...paths]);
   return !r.ok;
 }
 

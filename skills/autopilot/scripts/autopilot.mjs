@@ -21,11 +21,12 @@ import {
   nextStage, acquireLock, releaseLock, liveLock, readLock, lockPath,
   writeActiveMarker, clearActiveMarker, readActiveMarker, verifyApproval, observeTags,
   renderPacket, assumptionsFrom, scopeFrom, freezeScope, pushAllowed, loadSecretsFile, packetId, hashLine,
-  reviewFolderProblem, isTicketBranch,
+  reviewFolderProblem, isTicketBranch, stageEnvFrom, mcpEnvNames, filterMcpServers, branchNameProblem,
 } from './autopilot-lib.mjs';
 import { trackerFor } from './tracker.mjs';
 import { HARNESSES, GUARDED_HARNESSES, PLUGIN_ROOT } from './harnesses.mjs';
-import { ensureBranch, ensureOnTicketBranch, ensureWorktree, worktreePath, ticketBranch, remoteHead, forgeFor, tip, workTip, commitPaths, push, repoDirs, baseAhead, pathsChanged, git, snapshotHooks } from './repos.mjs';
+import { ensureBranch, ensureOnTicketBranch, ensureWorktree, worktreePath, ticketBranch, remoteHead, forgeFor, tip, workTip, commitPaths, push, repoDirs, baseAhead, pathsChanged, git, snapshotHooks, gitConfigSnapshot, gitConfigChanges, checkBranchName } from './repos.mjs';
+import { resolveTool, childEnv } from '../../../hooks/lib/resolve-tool.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PACKET_TEMPLATE = path.join(HERE, '..', 'templates', 'packet.md');
@@ -76,6 +77,112 @@ function readMarker(root) {
   } catch (err) {
     throw new AutopilotError('marker-corrupt', `${MARKER.replace(/\\/g, '/')} is not valid JSON: ${err.message}`);
   }
+}
+
+// ---- What a ticket runs under: the config and the repositories' own git config (audit L1, L2) ----
+//
+// `context()` reads .agents/ultrapowers.json on every command, from a tree a stage can write, and
+// the engine's git reads each repository's own config. `begin` of a ticket therefore records both
+// under .ultrapowers/autopilot/: the parsed config as <ID>.config.json, and the git config keys that
+// run a program or redirect a remote as <ID>.gitconfig.json. Every later command compares: a change
+// to `tickets` or `autopilot`, or to a watched git key, blocks the ticket until a person has looked
+// at it and run `begin` again with no stage open.
+
+const SNAPSHOT_KEYS = ['tickets', 'autopilot'];
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function engineDir(root) {
+  return path.join(root, '.ultrapowers', 'autopilot');
+}
+
+function configSnapshotPath(root, id) {
+  return path.join(engineDir(root), `${id}.config.json`);
+}
+
+function gitConfigSnapshotPath(root, id) {
+  return path.join(engineDir(root), `${id}.gitconfig.json`);
+}
+
+function readSnapshot(file, what) {
+  if (!fs.existsSync(file)) return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+  } catch { /* falls through */ }
+  throw new AutopilotError('snapshot-corrupt', `.ultrapowers/autopilot/${path.basename(file)} (the ${what} snapshot) is not readable; check what changed it, then run begin again with no stage open`);
+}
+
+// The dotted path of the first difference between two parsed values, or null when they are equal.
+function firstDifference(a, b, at) {
+  const plain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  if (plain(a) && plain(b)) {
+    for (const k of [...new Set([...Object.keys(a), ...Object.keys(b)])].sort()) {
+      const d = firstDifference(a[k], b[k], at ? `${at}.${k}` : k);
+      if (d) return d;
+    }
+    return null;
+  }
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return at;
+    for (let i = 0; i < a.length; i += 1) {
+      const d = firstDifference(a[i], b[i], `${at}[${i}]`);
+      if (d) return d;
+    }
+    return null;
+  }
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null) ? null : at;
+}
+
+function configChangeMessage(id, snapshot, live) {
+  const paths = SNAPSHOT_KEYS.map((k) => firstDifference(snapshot[k], live[k], k)).filter(Boolean);
+  if (!paths.length) return null;
+  return `${MARKER.replace(/\\/g, '/')} changed since ${id} began (${paths.join(', ')}). The ticket is blocked. Check the change; if it is yours, run begin again with no stage open to run ${id} under the new configuration`;
+}
+
+function ticketSnapshotId(opts, live) {
+  let id = opts.id;
+  if (/^https?:\/\//i.test(id)) {
+    try { id = resolveTicket(live, id).id ?? id; } catch { return null; }
+  }
+  return SAFE_ID.test(String(id)) ? id : null;
+}
+
+// The git config baseline of a ticket: { <dir>: [entries] } for the documents repository and every
+// code repository, and later each worktree the engine creates.
+function readGitBaseline(root, id) {
+  return readSnapshot(gitConfigSnapshotPath(root, id), 'git config');
+}
+
+function gitConfigChangeMessage(root, id, baseline) {
+  const lines = [];
+  for (const [dir, before] of Object.entries(baseline ?? {})) {
+    if (!Array.isArray(before) || !fs.existsSync(dir)) continue;
+    const changed = gitConfigChanges(dir, before);
+    if (changed.length) lines.push(`${path.relative(root, dir).replace(/\\/g, '/') || '.'}: ${changed.join(', ')}`);
+  }
+  if (!lines.length) return null;
+  return `the git config of a repository changed since ${id} began (${lines.join('; ')}); these keys run a program or redirect a remote. The ticket is blocked. Look at it with git config --local --list; if the change is yours, run begin again with no stage open`;
+}
+
+// Records both baselines for the ticket, from the files as they are now.
+function takeTicketSnapshots(ctx, id) {
+  const dir = engineDir(ctx.root);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(configSnapshotPath(ctx.root, id), `${JSON.stringify(readMarker(ctx.root), null, 2)}\n`);
+  const baseline = {};
+  for (const d of new Set([ctx.dirs.docs, ...Object.values(ctx.dirs.repos)])) {
+    if (fs.existsSync(d)) baseline[d] = gitConfigSnapshot(d);
+  }
+  fs.writeFileSync(gitConfigSnapshotPath(ctx.root, id), `${JSON.stringify(baseline, null, 2)}\n`);
+}
+
+// A worktree the engine just created gets its own baseline (its config.worktree, when used).
+function recordGitBaseline(ctx, id, dir) {
+  const file = gitConfigSnapshotPath(ctx.root, id);
+  const baseline = fs.existsSync(file) ? readGitBaseline(ctx.root, id) : null;
+  if (!baseline || Object.hasOwn(baseline, dir)) return;
+  baseline[dir] = gitConfigSnapshot(dir);
+  fs.writeFileSync(file, `${JSON.stringify(baseline, null, 2)}\n`);
 }
 
 function parseArgs(argv) {
@@ -131,8 +238,20 @@ function context(opts) {
   if (!isUrl && /[/\\]|\.\./.test(opts.id)) throw new AutopilotError('bad-ticket', `${opts.id} names a path; a ticket id holds no "/", "\\" or ".."`);
   const root = opts.root ? path.resolve(opts.root) : findRoot(process.cwd());
   if (!fs.existsSync(path.join(root, MARKER))) throw new AutopilotError('no-marker', `no ${MARKER.replace(/\\/g, '/')} in ${root}`);
-  const marker = readMarker(root);
+  const live = readMarker(root);
+  // The config a ticket runs under is the copy `begin` took: its `tickets` and `autopilot` keys come
+  // from there, so a stage that rewrote the working file cannot repoint the tracker (and the key it
+  // is sent with) or the approvers. A difference is reported on ctx and blocks the ticket in the
+  // commands that guard (guardTicket); `begin` run again by a person accepts it.
+  const snapshotId = ticketSnapshotId(opts, live);
+  const snapshot = snapshotId ? readSnapshot(configSnapshotPath(root, snapshotId), 'config') : null;
+  const marker = snapshot ? { ...live, tickets: snapshot.tickets, autopilot: snapshot.autopilot } : live;
+  const configChange = snapshot ? configChangeMessage(snapshotId, snapshot, live) : null;
   const settings = effectiveAutopilot(marker);
+  for (const [what, name] of [['autopilot.baseBranch', settings.baseBranch], ...(Array.isArray(marker.repos) ? marker.repos.map((r) => [`repos[${r?.name}].defaultBranch`, r?.defaultBranch]) : [])]) {
+    const problem = name ? branchNameProblem(name) : null;
+    if (problem) throw new AutopilotError('bad-branch', `${what} ${problem}`);
+  }
   loadSecretsFile(root, process.env);
   const resolution = resolveTicket(marker, opts.id);
   if (resolution.provider === 'local') {
@@ -147,16 +266,35 @@ function context(opts) {
   }
   // A task URL resolves to the ticket's id; every state path uses that id.
   if (resolution.id && resolution.id !== opts.id) opts.id = resolution.id;
-  const tracker = trackerFor(resolution, process.env);
+  const tracker = trackerFor({ ...resolution, root }, process.env);
   const source = { provider: resolution.provider, path: resolution.path, number: resolution.number };
   const dirs = repoDirs(root, marker);
+  // The repositories' own git config is compared before the engine runs any git that could act on
+  // it (the checkout below runs filters, for one); a changed key leaves the repository untouched.
+  const gitConfigChange = snapshotId && opts.command !== 'status' ? gitConfigChangeMessage(root, snapshotId, readGitBaseline(root, snapshotId)) : null;
   // The ticket's documents live on its branch, checked out in place: put the documents
   // repository there before anything reads the state, so two tickets can share one workspace.
-  ensureOnTicketBranch(dirs.docs, opts.id);
+  if (!gitConfigChange) ensureOnTicketBranch(dirs.docs, opts.id);
   // Inside a watcher's headless stage the engine CLI holds the stage's credentials, which may be
   // read-only; the tracker writes of begin and end are then made by the watcher around the stage.
   const inside = process.env.ULTRAPOWERS_AUTOPILOT_INSIDE === '1';
-  return { root, marker, settings, resolution, source, tracker, dirs, inside };
+  return { root, marker, live, settings, resolution, source, tracker, dirs, inside, configChange, gitConfigChange };
+}
+
+// The commands that act on a ticket stop when the config or a repository's git config changed since
+// `begin`: the ticket is blocked once (state, log, label and comment, as any blocked stage), and the
+// error says what to check. A change in git config blocks without committing: a filter or a hook
+// key is exactly what a commit would run.
+async function guardTicket(ctx, opts, stage) {
+  const problem = ctx.configChange
+    ? { code: 'config-changed', message: ctx.configChange }
+    : ctx.gitConfigChange ? { code: 'git-config-changed', message: ctx.gitConfigChange } : null;
+  if (!problem) return;
+  const state = readState(ctx.root, opts.id);
+  const last = state ? readLog(ctx.root, opts.id).at(-1) : null;
+  const already = state?.stageStatus === 'blocked' && last?.event === 'blocked' && last.message === problem.message;
+  if (!already) await blockStage(ctx, opts.id, opts.door, stage ?? state?.stage ?? 'scaffold', problem.message, { commit: problem.code !== 'git-config-changed' });
+  throw new AutopilotError(problem.code, problem.message);
 }
 
 function trailerOf(marker) {
@@ -199,14 +337,14 @@ function previewScope(ctx, state) {
 
 // Ends an engine stage as blocked: the state, the log, the commit, the label, the comment, and the
 // lock and marker released, so a failed packet or pull request never strands the ticket or the watcher.
-async function blockStage(ctx, id, door, stage, message, { label = true } = {}) {
+async function blockStage(ctx, id, door, stage, message, { label = true, commit = true } = {}) {
   const state = readState(ctx.root, id);
   if (state) {
     state.stage = stage;
     state.stageStatus = 'blocked';
     writeState(ctx.root, id, state);
     appendLog(ctx.root, id, { stage, event: 'blocked', actor: 'engine', trigger: door, repo: 'docs', message });
-    commitState(ctx, id, `chore(${id}): autopilot ${stage} blocked`);
+    if (commit) commitState(ctx, id, `chore(${id}): autopilot ${stage} blocked`);
   }
   clearActiveMarker(ctx.root);
   releaseLock(ctx.root, id);
@@ -312,11 +450,12 @@ async function runStatus(opts) {
   const state = readState(ctx.root, opts.id);
   const log = readLog(ctx.root, opts.id).slice(-10);
   const lock = readLock(ctx.root, opts.id);
-  return { ticket: opts.id, state, log, chain: verifyChain(ctx.root, opts.id), lock };
+  return { ticket: opts.id, state, log, chain: verifyChain(ctx.root, opts.id), lock, ...(ctx.configChange ? { configChange: ctx.configChange } : {}) };
 }
 
 async function runNext(opts) {
   const ctx = context(opts);
+  await guardTicket(ctx, opts, null);
   const state = readState(ctx.root, opts.id);
   const labels = await permittedLabels(ctx);
   const block = ctx.marker.autopilot ?? { mode: 'off' };
@@ -431,6 +570,7 @@ async function runPacket(opts) {
   const ctx = context(opts);
   if (ctx.settings.mode === 'off') throw new AutopilotError('mode-off', 'autopilot.mode is off for this project; nothing runs');
   assertNoOpenStage(ctx, 'packet');
+  await guardTicket(ctx, opts, 'gate');
   const state = readState(ctx.root, opts.id);
   if (!state) throw new AutopilotError('no-state', `${opts.id} has no autopilot state; run the scaffold, spec and plan stages first`);
   const lock = acquireLock(ctx.root, opts.id, opts.door, opts.pid);
@@ -557,6 +697,7 @@ function trustState(ctx, id, state) {
 async function runApproval(opts) {
   const ctx = context(opts);
   assertNoOpenStage(ctx, 'approval');
+  await guardTicket(ctx, opts, 'gate');
   const state = readState(ctx.root, opts.id);
   if (!state || state.stage !== 'gate') throw new AutopilotError('wrong-stage', `${opts.id} is not at the gate`);
   const approval = await pendingApproval(ctx, state, ctx.settings.events, opts.door);
@@ -570,13 +711,13 @@ async function runApproval(opts) {
 // GitLab ticket, a repository without a usable remote falls back to the ticket source as before.
 function forgeOf(ctx, name, dir) {
   const fromRemote = forgeFor(dir, { provider: ctx.resolution.provider, host: ctx.resolution.host });
-  if (fromRemote) return fromRemote;
+  if (fromRemote) return { ...fromRemote, root: ctx.root };
   if (!['github', 'gitlab'].includes(ctx.resolution.provider)) {
     throw new AutopilotError('no-forge', `${name} has no origin remote on a forge; an ${ctx.resolution.provider} ticket opens pull requests on the forge of each repository`);
   }
   const source = (ctx.marker.tickets?.sources ?? []).find((s) => s.prefix === ctx.resolution.prefix) ?? {};
   const base = source.provider === 'gitlab' ? source.namespace : source.owner;
-  return { ...ctx.resolution, path: name === 'docs' && ctx.resolution.path ? ctx.resolution.path : `${base}/${name}` };
+  return { ...ctx.resolution, root: ctx.root, path: name === 'docs' && ctx.resolution.path ? ctx.resolution.path : `${base}/${name}` };
 }
 
 // After the pull requests open, the QA report goes on the ticket and on every pull request, each
@@ -635,6 +776,7 @@ async function postReport(ctx, opts, state, prs, qaOn, stage = 'pr') {
 async function runPr(opts) {
   const ctx = context(opts);
   assertNoOpenStage(ctx, 'pr');
+  await guardTicket(ctx, opts, 'pr');
   const state = readState(ctx.root, opts.id);
   if (!state) throw new AutopilotError('no-state', `${opts.id} has no autopilot state`);
   if (!state.approval || !Array.isArray(state.scope.frozen)) throw new AutopilotError('not-approved', `${opts.id} has no verified approval; the gate has not been passed`);
@@ -840,8 +982,24 @@ async function permittedLabels(ctx) {
 }
 
 async function runBegin(opts) {
-  const ctx = context(opts);
+  let ctx = context(opts);
+  if (ctx.configChange || ctx.gitConfigChange) {
+    // A person who has looked at the change accepts it by running begin again, with no stage open:
+    // never from inside a stage, never while one is open, and never from the engine's own fallback
+    // after a stage (opts.refresh === false), so nothing a stage wrote can accept itself.
+    if (!ctx.inside && !openStage(ctx) && opts.refresh !== false) {
+      takeTicketSnapshots(ctx, opts.id);
+      ctx = context(opts);
+    } else {
+      await guardTicket(ctx, opts, opts.stage);
+    }
+  }
   if (ctx.settings.mode === 'off') throw new AutopilotError('mode-off', 'autopilot.mode is off for this project; nothing runs');
+  for (const [what, name] of [['autopilot.baseBranch', ctx.settings.baseBranch], ...(Array.isArray(ctx.marker.repos) ? ctx.marker.repos : []).map((r) => [`repos[${r?.name}].defaultBranch`, r?.defaultBranch])]) {
+    // The pure rules ran in context; here git itself is asked too (check-ref-format).
+    const problem = name ? checkBranchName(ctx.root, name) : null;
+    if (problem) throw new AutopilotError('bad-branch', `${what}: ${problem}`);
+  }
   // An open stage may re-enter itself (a retry inside the same session); no other stage may start.
   const open = openStage(ctx);
   if (open && !(open.ticket === opts.id && open.stage === opts.stage)) assertNoOpenStage(ctx, `begin ${opts.stage}`);
@@ -856,7 +1014,11 @@ async function runBegin(opts) {
     }
     // The first stage of a ticket fixes the MCP server list every later stage loads. A stage's own
     // `begin` (inside) never takes it: the engine did, before the stage started (run, below).
-    if (!ctx.inside) snapshotMcpConfig(ctx.root);
+    // The config the ticket runs under and the repositories' git config are recorded with it.
+    if (!ctx.inside) {
+      snapshotMcpConfig(ctx.root);
+      takeTicketSnapshots(ctx, opts.id);
+    }
     const title = await ctx.tracker.title(ctx.source.number);
     const labels = await permittedLabels(ctx);
     const mode = modeFor(ctx.marker.autopilot, { arg: opts.mode, labels });
@@ -922,6 +1084,7 @@ function prepareWorktrees(ctx, state) {
     r.branch = state.docs.branch;
     r.base = base;
     r.worktree = worktree;
+    recordGitBaseline(ctx, state.ticket, worktree);
     r.tip = tip(worktree, state.docs.branch);
   }
 }
@@ -973,6 +1136,7 @@ function specBlock(ctx, id) {
 
 async function runEnd(opts) {
   const ctx = context(opts);
+  await guardTicket(ctx, opts, opts.stage);
   const result = opts.result;
   let state = readState(ctx.root, opts.id);
   const lock = readLock(ctx.root, opts.id);
@@ -1097,26 +1261,20 @@ function committedVerdict(ctx, report) {
 // directory, so a stage steered into labelling a ticket has nothing to do it with. Without stage
 // credentials the stage shares the engine's, as before, and the guardrail is the brake. Git
 // never prompts, and the git credential helper is reset so a pushed-by-hand attempt finds none.
-function stageEnvironment(root) {
-  const env = { ...process.env, ULTRAPOWERS_AUTOPILOT_INSIDE: '1', GIT_TERMINAL_PROMPT: '0' };
+//
+// The environment is an allow-list (autopilot-lib stageEnvFrom): the OS and toolchain base, the
+// harness's own authentication names, the project's autopilot.stageEnv, and the variables the
+// stage's MCP snapshot references. The engine's other variables, the Odoo key and the keys of
+// .agents/mcp-secrets.env among them, are not in the stage. What an MCP server of the stage needs
+// stays readable by a script the stage runs; only an OS sandbox removes that.
+function stageEnvironment(root, harness, extra = []) {
   const noAuth = path.join(root, '.ultrapowers', 'autopilot', 'no-auth');
-  const stageGh = process.env.ULTRAPOWERS_STAGE_GH_TOKEN;
-  const stageGl = process.env.ULTRAPOWERS_STAGE_GITLAB_TOKEN;
-  if (stageGh || stageGl) {
-    // The engine's tokens, and the ssh agent: a push over ssh would not need a token at all.
-    // ODOO_API_KEY stays: it is the one Odoo key, and the project's Odoo MCP server reads it.
-    for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GLAB_TOKEN', 'GITLAB_ACCESS_TOKEN', 'GITLAB_PRIVATE_TOKEN', 'GL_TOKEN', 'CI_JOB_TOKEN', 'OAUTH_TOKEN', 'SSH_AUTH_SOCK', 'GIT_SSH_COMMAND', 'GIT_SSH']) delete env[k];
+  if (process.env.ULTRAPOWERS_STAGE_GH_TOKEN || process.env.ULTRAPOWERS_STAGE_GITLAB_TOKEN) {
     for (const d of ['gh', 'glab']) fs.mkdirSync(path.join(noAuth, d), { recursive: true });
-    env.GH_CONFIG_DIR = path.join(noAuth, 'gh');
-    env.GLAB_CONFIG_DIR = path.join(noAuth, 'glab');
-    if (stageGh) env.GH_TOKEN = stageGh;
-    if (stageGl) env.GITLAB_TOKEN = stageGl;
-    const n = Number.parseInt(env.GIT_CONFIG_COUNT ?? '0', 10) || 0;
-    env[`GIT_CONFIG_KEY_${n}`] = 'credential.helper';
-    env[`GIT_CONFIG_VALUE_${n}`] = '';
-    env.GIT_CONFIG_COUNT = String(n + 1);
   }
-  return env;
+  let mcpNames = [];
+  try { mcpNames = mcpEnvNames(fs.readFileSync(mcpSnapshotPath(root), 'utf8')); } catch { mcpNames = []; }
+  return stageEnvFrom(process.env, { harness, extra, mcpNames, noAuthDir: noAuth });
 }
 
 // Only the MCP servers the project lists load into a headless stage: the user's own connectors
@@ -1133,7 +1291,9 @@ function snapshotMcpConfig(root) {
   const snap = mcpSnapshotPath(root);
   if (fs.existsSync(project)) {
     fs.mkdirSync(path.dirname(snap), { recursive: true });
-    fs.copyFileSync(project, snap);
+    // Not a byte copy: the servers that run a local command only. A remote server (a url, or type
+    // http, sse, streamable-http) would carry the credentials of its headers out of the stage.
+    fs.writeFileSync(snap, `${filterMcpServers(fs.readFileSync(project, 'utf8'))}\n`);
   } else {
     fs.rmSync(snap, { force: true });
   }
@@ -1150,15 +1310,21 @@ function mcpConfigArgs(root) {
 }
 
 // One headless harness call; resolves { code, timedOut, stdout, stderr }.
-function spawnHarness(name, prompt, cwd, root = cwd) {
+function spawnHarness(name, prompt, cwd, root = cwd, stageEnv = []) {
   const adapter = HARNESSES[name];
   if (!adapter) throw new AutopilotError('bad-autopilot', `autopilot.harness ${name} has no headless adapter; ${Object.keys(HARNESSES).join(', ')} do`);
   const override = process.env[adapter.env];
   const command = override || adapter.bin;
   const script = /\.[cm]?js$/i.test(command);
   const args = [...adapter.args(prompt, maxTurns(), { pluginRoot: PLUGIN_ROOT }), ...(name === 'claude-code' ? mcpConfigArgs(root) : [])];
-  const [file, argv] = script ? [process.execPath, [command, ...args]] : [command, args];
-  const env = stageEnvironment(root);
+  // Never a bare name: the harness resolves from the absolute PATH entries outside the project (the
+  // working directory of the stage is a checkout a stage wrote, and Windows looks there first).
+  const tool = script ? null : resolveTool(command, { root, env: process.env });
+  if (!script && !tool) {
+    return Promise.resolve({ code: 127, timedOut: false, stdout: '', stderr: `${adapter.bin} is not on PATH (${command}; only absolute PATH entries outside the project are searched)` });
+  }
+  const [file, argv] = script ? [process.execPath, [command, ...args]] : [tool, args];
+  const env = childEnv(stageEnvironment(root, name, stageEnv));
   return new Promise((resolve) => {
     execFile(file, argv, { cwd, env, timeout: stageTimeoutMs(), windowsHide: true, maxBuffer: 64 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (!error) return resolve({ code: 0, timedOut: false, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') });
@@ -1243,8 +1409,11 @@ async function runStages(ctx, base, opts, stages, seen) {
       // The watcher makes the tracker writes around the stage: the stage may hold a read-only credential.
       await markRunning(ctx);
       if (stage === 'changes') await takeChangesLabel(ctx, opts.id, 'watch');
-      if (!readState(ctx.root, opts.id) && !readLock(ctx.root, opts.id)?.pending) snapshotMcpConfig(ctx.root);
-      const spawned = await spawnHarness(ctx.settings.harness, stagePrompt(stage, opts.id), ctx.dirs.docs, ctx.root);
+      if (!readState(ctx.root, opts.id) && !readLock(ctx.root, opts.id)?.pending) {
+        snapshotMcpConfig(ctx.root);
+        takeTicketSnapshots(ctx, opts.id);
+      }
+      const spawned = await spawnHarness(ctx.settings.harness, stagePrompt(stage, opts.id), ctx.dirs.docs, ctx.root, ctx.settings.stageEnv);
       const state = readState(ctx.root, opts.id);
       const pending = readLock(ctx.root, opts.id)?.pending;
       const ended = state ? state.stage === stage && state.stageStatus !== 'running' : false;
@@ -1266,7 +1435,7 @@ async function runStages(ctx, base, opts, stages, seen) {
         try {
           // A harness that died before `begin` left no stage open: open and close it here, so
           // the ticket still ends blocked with its label and its comment.
-          if (!state && !pending) await runBegin({ ...base, stage });
+          if (!state && !pending) await runBegin({ ...base, stage, refresh: false });
           await runEnd({ ...base, stage, result: { ok: false, message, actor: 'engine' } });
         } catch (err) {
           message = `${message}; and the stage could not be closed: ${err.message}`;
@@ -1320,7 +1489,7 @@ async function watchCycle(root, marker, settings, opts, previousSleepMs) {
       events.push({ event: 'unwatched', source: source.prefix, reason: err.message });
       continue;
     }
-    const tracker = trackerFor(resolution, process.env);
+    const tracker = trackerFor({ ...resolution, root }, process.env);
     try {
       // `ready` is the only start signal (spec §7): a ticket that carries approve or changes but
       // has no state here was never started by this engine, and is left alone.

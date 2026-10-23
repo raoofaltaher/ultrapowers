@@ -71,12 +71,17 @@ export function makeWorkspace({ dir = null, autopilot = { mode: 'gated', baseBra
   marker.tickets = { transport: 'cli', sources: [{ prefix: 'GH', provider: 'github', owner: 'o', defaultProject: 'r' }] };
   // The tests run watcher stages without stage tokens unless a test sets them: say so in the block,
   // as a real project without stage tokens must (autopilot.watch.sharedCredentials).
-  if (autopilot) marker.autopilot = { ...autopilot, watch: { sharedCredentials: true, ...(autopilot.watch ?? {}) } };
+  // The stage environment is an allow-list: the stubs read their knobs (STUB_*, HARNESS_*) from it,
+  // so the block lists them as a project that wants its own variables in the stage does.
+  if (autopilot) marker.autopilot = { ...autopilot, watch: { sharedCredentials: true, ...(autopilot.watch ?? {}) }, stageEnv: ['STUB_*', 'HARNESS_*', ...(autopilot.stageEnv ?? [])] };
   if (odoo) {
     marker.tickets = { sources: [{ prefix: 'ODOO', provider: 'odoo', url: odoo, mcpUrl: `${odoo}/mcp`, login: 'bot', ...(odooDb ? { db: odooDb } : {}), defaultProject: '34' }] };
     if (marker.autopilot) marker.autopilot.events = { ...ODOO_EVENTS, ...(autopilot?.events ?? {}) };
     // An Odoo source that autopilot runs needs human approvers (#32); the fake's approver is `val`.
     if (marker.autopilot && !(marker.autopilot.approvers ?? []).length) marker.autopilot.approvers = ['val', 'intern'];
+    // The engine inside a stage signs in to Odoo with the one key, and the project's Odoo MCP server
+    // is a remote one that no stage loads: a project that wants the key in its stages lists it.
+    if (marker.autopilot) marker.autopilot.stageEnv = [...marker.autopilot.stageEnv, 'ODOO_API_KEY'];
   }
   // `qa: true` means a configured QA gate: at least one url, which is what the engine checks.
   if (!qa) delete marker.qa;
