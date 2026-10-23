@@ -76,7 +76,7 @@ printf '%s' '{"ticket":"GH-16","branch":"GH-16-x","scope":["repo-a"]}' > "$MARKE
 # The ticket's MCP snapshot (taken at begin): an autopilot stage reaches only these servers. It lists every
 # server the cases call, so each case meets the rule it is about; deny_mcp_server_not_in_snapshot calls one outside it.
 mkdir -p "$ROOT/.ultrapowers/autopilot"
-printf '%s' '{"mcpServers":{"github":{},"GitLab":{},"git":{},"tickets-odoo":{},"odoo":{},"tickets-gl":{},"tickets-gh":{},"tickets-erp":{},"Firecrawl":{},"playwright":{},"plugin_chrome-devtools-mcp_chrome-devtools":{},"claude-in-chrome":{}}}' > "$ROOT/.ultrapowers/autopilot/mcp.json"
+printf '%s' '{"mcpServers":{"github":{},"GitLab":{},"git":{},"tickets-odoo":{},"odoo":{},"tickets-gl":{},"tickets-gh":{},"tickets-erp":{},"Firecrawl":{},"playwright":{},"plugin_chrome-devtools-mcp_chrome-devtools":{},"claude-in-chrome":{},"scraper":{},"chrome-devtools":{}}}' > "$ROOT/.ultrapowers/autopilot/mcp.json"
 
 # 8.3 short forms (Windows volumes that generate them); cases ending in _winshort run only there.
 FIXTURE_PATHS="$SCRIPT_DIR/fixture-paths.mjs"
