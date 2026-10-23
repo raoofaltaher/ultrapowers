@@ -128,7 +128,7 @@ else
 fi
 
 changes_at() { node -e 'const c=require(process.argv[1]);process.stdout.write(String(c[process.argv[2]]))' "$TEMPLATES/CHANGES.json" "$1"; }
-for entry in AGENTS.md:2.0.0 CLAUDE.md:2.2.0 .claude/settings.json:2.2.0 README.md:2.1.0 .mcp.json:2.2.0   .codex/config.toml:2.2.0 .cursor/mcp.json:2.2.0 .gemini/settings.json:2.2.0 .qwen/settings.json:2.2.0 opencode.json:2.2.0   .factory/mcp.json:2.2.0 .kimi/mcp.json:2.2.0 .vscode/mcp.json:2.2.0 .githooks/pre-commit:2.2.0 .cursor/cli.json:2.2.0   .cursorignore:2.2.0 .gitignore:2.2.0   .gemini/hooks/ultrapowers-guardrail.mjs:2.2.0 specs/README.md:2.2.0 specs/_template/Spec.md:2.2.0; do
+for entry in AGENTS.md:2.0.0 CLAUDE.md:2.3.0 .claude/settings.json:2.3.0 README.md:2.1.0 .mcp.json:2.3.0   .codex/config.toml:2.3.0 .cursor/mcp.json:2.3.0 .gemini/settings.json:2.3.0 .qwen/settings.json:2.3.0 opencode.json:2.3.0   .factory/mcp.json:2.3.0 .kimi/mcp.json:2.3.0 .vscode/mcp.json:2.3.0 .githooks/pre-commit:2.3.0 .cursor/cli.json:2.3.0   .cursorignore:2.3.0 .gitignore:2.3.0   .gemini/hooks/ultrapowers-guardrail.mjs:2.3.0 specs/README.md:2.2.0 specs/_template/Spec.md:2.2.0; do
   target="${entry%:*}"
   version="${entry##*:}"
   if [ "$(changes_at "$target")" = "$version" ]; then

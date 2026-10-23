@@ -1,6 +1,6 @@
 # Ultrapowers Release Notes
 
-## Unreleased
+## v2.3.0 (2026-10-23)
 
 The fixes for the 2026-10-23 vulnerability hunt of this repository (`reviews/audit-2026-10-23/`, not committed) and for the findings of a hunt of a project `init` scaffolded that trace back to the plugin. They join the next release; no version was bumped.
 
@@ -12,7 +12,7 @@ The fixes for the 2026-10-23 vulnerability hunt of this repository (`reviews/aud
 - A ticket's `.agents/ultrapowers.json` and repository git config are snapshotted at `begin`; a later change blocks the ticket until `begin` runs again with no stage open.
 - An Odoo `url` or `mcpUrl` must use https, except for a loopback host.
 - Scaffolded `.claude/settings.json` no longer pre-approves `git blame`, and pre-approves the build and test commands of the toolchains found at the project root only. The `.gitignore` block ignores `.env`, `.env.*` (not `.env.example`, `.env.sample`, `.env.template` or `.env.dist`) and `.dev.vars` files.
-- **At release time:** `templates/CHANGES.json` records the changed targets at 2.2.0. Set those entries, and the list in `tests/init/test-templates-clean.sh`, to the release version, or projects already at 2.2.0 are not offered the upgrade.
+- Upgrade mode (`/ultrapowers:init`) offers the sixteen scaffold targets this release changed (the Claude, Cursor, Qwen and OpenCode settings, the MCP files, the gitignore block, the pre-commit hook and the Gemini hook); `templates/CHANGES.json` records them at 2.3.0.
 
 **Guardrail**
 
