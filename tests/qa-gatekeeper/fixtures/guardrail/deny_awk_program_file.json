@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"awk -f prog.awk data.txt"},"reason":"awk program file"}

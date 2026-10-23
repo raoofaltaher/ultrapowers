@@ -505,9 +505,14 @@ test('the hunt is a program allow-list', () => {
   writeFileSync(join(outside, 'x.mjs'), '');
   const outsideScript = join(outside, 'x.mjs').replace(/\\/g, '/');
   assert.notEqual(analyze('node /elsewhere/plugin/missing.mjs', h), '');
-  for (const cmd of ['cat repo-a/src/app.ts', 'git log --oneline', 'sh -c "ls repo-a"', `node ${outsideScript}`, 'node /p/skills/vulnerability-hunt/scripts/hunt-preflight.mjs audit-1', 'jq . reviews/audit-1/security-findings.json']) {
+  for (const cmd of ['cat repo-a/src/app.ts', 'git log --oneline', 'sh -c "ls repo-a"', `node ${outsideScript}`, 'jq . reviews/audit-1/security-findings.json']) {
     assert.equal(analyze(cmd, h), '', cmd);
   }
+  // The plugin's own preflight runs when the audited project is the plugin itself; a copy of it inside any other
+  // audited project is that project's code and is refused (release review of dev b78058f, finding 9).
+  const pluginRoot = resolve(__dirname, '../..').replace(/\\/g, '/');
+  assert.equal(analyze(`node ${pluginRoot}/skills/vulnerability-hunt/scripts/hunt-preflight.mjs audit-1`, { ...h, cwd: pluginRoot, root: pluginRoot }), '');
+  assert.notEqual(analyze('node /p/skills/vulnerability-hunt/scripts/hunt-preflight.mjs audit-1', h), '');
   assert.match(analyze('make build', h), /the hunt reads; make is not on its list/);
   assert.match(analyze('curl http://localhost/', h), /the hunt's network is its audit tools and gh api; curl is refused/);
 });

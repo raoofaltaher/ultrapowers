@@ -13,7 +13,7 @@
 // record older than RUN_TTL_MS is past its run and guards nothing.
 //
 // CLI: node run-records.mjs start --root <dir> --profile qa|hunt --id <ticket or audit id>
-//      node run-records.mjs end --root <dir> --run <run id>
+//      node run-records.mjs end --root <dir> --run <run id> [--force]   (--force: a terminal that names no session)
 //      node run-records.mjs list --root <dir>
 //      node run-records.mjs pick --root <dir>  < event.json   (the hook's: the record guarding a call)
 // Each prints one JSON line (pick: one tab-separated line); exit 0 on success, 2 on a usage or
@@ -86,10 +86,37 @@ export function applicableRuns(root, session, now = Date.now()) {
   return readRuns(root, now).filter((r) => r.corrupt || (!r.expired && (r.session === null || (session && r.session === session))));
 }
 
+// The autopilot marker (.ultrapowers/autopilot-active) of the nearest folder at or above `startDir` that
+// holds one: { file, stage } (stage null when the marker names none or cannot be read), or null.
+export function autopilotMarker(startDir) {
+  let dir = path.resolve(startDir);
+  for (;;) {
+    const file = path.join(dir, '.ultrapowers', 'autopilot-active');
+    if (fs.existsSync(file)) {
+      let stage = null;
+      try {
+        const m = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, ''));
+        if (m && typeof m === 'object' && typeof m.stage === 'string') stage = m.stage;
+      } catch { stage = null; }
+      return { file, stage };
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
 // Starts a run: refuses a second active run of the same profile and id (both would write
 // reviews/<id>/), clears records past their run, and writes the new record.
-export function startRun(root, { profile, id, session = sessionFromEnv(), now = Date.now() } = {}) {
+// An autopilot stage starts none: a record outranks the stage's own profile for the rest of its session, so a
+// stage could swap its envelope for a weaker one. The one exception is the stage that is the QA gate (marker
+// stage `qa`, set by the engine): qa-specialist starts its own QA record there, by design.
+export function startRun(root, { profile, id, session = sessionFromEnv(), now = Date.now(), env = process.env } = {}) {
   if (!PROFILES.includes(profile)) throw new RunError('bad-args', `profile must be one of ${PROFILES.join(', ')}`);
+  const marker = autopilotMarker(root);
+  if ((marker || env.ULTRAPOWERS_AUTOPILOT_INSIDE === '1') && !(marker && marker.stage === 'qa' && profile === 'qa')) {
+    throw new RunError('autopilot-active', `an autopilot stage is running (${marker ? path.relative(root, marker.file).replace(/\\/g, '/') || marker.file : 'ULTRAPOWERS_AUTOPILOT_INSIDE'}); a stage starts and ends no QA run or hunt, the engine owns the envelope`);
+  }
   if (typeof id !== 'string' || !ID_RE.test(id) || id.includes('..')) throw new RunError('bad-args', `id ${JSON.stringify(id)} is not a ticket or audit id (letters, digits, . _ - #; no separator)`);
   if (!fs.existsSync(path.join(root, '.agents', 'ultrapowers.json'))) throw new RunError('bad-root', `${root} holds no .agents/ultrapowers.json`);
   const dir = runsDir(root);
@@ -108,15 +135,16 @@ export function startRun(root, { profile, id, session = sessionFromEnv(), now = 
 
 // Ends a run: only once its report holds a line starting `Verdict:`. The end is logged in
 // reviews/<id>/run-log.txt, so an early end is visible next to the report.
-// A session ends only its own runs: a run bound to another session is refused (a caller that names no
-// session, a terminal outside the harness, may end any).
-export function endRun(root, run, { now = Date.now(), session = sessionFromEnv() } = {}) {
+// A session ends only its own runs: a run bound to a session is refused to another session and to a caller
+// that names none (an empty CLAUDE_CODE_SESSION_ID must not end another session's run). `force` (the CLI's
+// --force, for your human partner at a terminal) ends it from a caller that names no session.
+export function endRun(root, run, { now = Date.now(), session = sessionFromEnv(), force = false } = {}) {
   if (typeof run !== 'string' || !RUN_FILE_RE.test(`${run}.json`)) throw new RunError('bad-args', `run ${JSON.stringify(run)} is not a run id`);
   const file = path.join(runsDir(root), `${run}.json`);
   const rec = readRuns(root, now).find((r) => r.file === file);
   if (!rec) throw new RunError('no-run', `no run ${run} in ${path.relative(root, runsDir(root)).replace(/\\/g, '/')}`);
   if (rec.corrupt) throw new RunError('corrupt', `the record of run ${run} cannot be read; your human partner removes it`);
-  if (rec.session && session && rec.session !== session) throw new RunError('other-session', `run ${run} belongs to another session; a session ends only its own runs`);
+  if (rec.session && (session ? rec.session !== session : !force)) throw new RunError('other-session', `run ${run} belongs to ${session ? 'another session' : 'a session, and this call names none'}; a session ends only its own runs (a human at a terminal passes --force)`);
   const report = path.join(root, 'reviews', rec.id, REPORTS[rec.profile]);
   let text = '';
   try { text = fs.readFileSync(report, 'utf8'); } catch { text = ''; }
@@ -145,7 +173,8 @@ function args(argv) {
   const o = { _: [] };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
-    if (a.startsWith('--')) { o[a.slice(2)] = argv[i + 1]; i += 1; } else o._.push(a);
+    if (a === '--force') o.force = true;
+    else if (a.startsWith('--')) { o[a.slice(2)] = argv[i + 1]; i += 1; } else o._.push(a);
   }
   return o;
 }
@@ -157,7 +186,7 @@ function main(argv) {
   try {
     let out;
     if (cmd === 'start') out = startRun(root, { profile: o.profile, id: o.id });
-    else if (cmd === 'end') out = endRun(root, o.run);
+    else if (cmd === 'end') out = endRun(root, o.run, { force: o.force === true });
     else if (cmd === 'list') out = readRuns(root).map(({ file, ...r }) => ({ ...r, file: path.relative(root, file).replace(/\\/g, '/') }));
     else if (cmd === 'pick') {
       // For the hook: tab-separated `profile id run startedAt file` (profile `corrupt` for an unreadable

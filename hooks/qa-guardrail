@@ -235,7 +235,7 @@ else
       norm_path_r "$candidate"
       if find_root_r "$REPLY"; then hit=1; break; fi
     done
-    PROFILE=""
+    PROFILE=""; RUN_ID=""; RUN_FILE=""; RUN_STARTED=""
     # Past the bound with no node the event cannot be read: an inert session must not depend on
     # node, so the call goes on to the CURSOR_PROJECT_DIR start and, failing that, is allowed.
     if [ -z "$hit" ] && [ -n "$over_cap" ] && command -v node >/dev/null 2>&1; then hit=1; fi
@@ -571,8 +571,14 @@ if [ -n "$event_cwd" ]; then
     base_cwd="$ev_norm"
     # Through the bridge the event cwd is the call's own directory, which the bridge bounded to the
     # run it found; the root stays the one ULTRAPOWERS_RUN_DIR gave, so both judge the same run.
-    if [ -z "${ULTRAPOWERS_RUN_DIR+x}" ] && ev_root="$(find_root "$ev_norm")"; then
-      root="$ev_root"
+    # find_root_r runs in this shell, not a command substitution: a deny inside pick_run_r must end the hook, and
+    # the profile and run it picks (PROFILE, RUN_ID, RUN_FILE, RUN_STARTED) are the ones this call is judged by.
+    if [ -z "${ULTRAPOWERS_RUN_DIR+x}" ] && find_root_r "$ev_norm"; then
+      root="$REPLY"
+      [ "$PROFILE" = "corrupt" ] && deny "a run record cannot be read ($RUN_FILE); every call of this project is refused while it exists. Your human partner removes that file"
+      GUARD_PREFIX="QA-GUARDRAIL"; run_kind="a QA run"
+      [ "$PROFILE" = "autopilot" ] && { GUARD_PREFIX="AUTOPILOT-GUARDRAIL"; run_kind="an autopilot stage"; }
+      [ "$PROFILE" = "hunt" ] && { GUARD_PREFIX="HUNT-GUARDRAIL"; run_kind="a vulnerability hunt"; }
     fi
   fi
 fi
@@ -880,7 +886,7 @@ if [ "$PROFILE" = "autopilot" ]; then
   # A browser tool is told by its name (the harnesses and MCP servers spell them differently): the
   # browser words, the engine names and the automation servers. A browser tool whose name holds
   # none of these gets the fetch rule; that limit is documented in the README.
-  case "$tool_lc" in *browser*|*navigate*|*playwright*|*puppeteer*|*chrome*|*chromium*|*firefox*|*webkit*|*devtools*|*selenium*|*stagehand*|*browserbase*|*computer_use*|*computeruse*) [ "$research_stage" -eq 1 ] && research_browser=1; research_stage=0 ;; esac
+  case "$tool_lc" in *browser*|*navigate*|*playwright*|*puppeteer*|*chrome*|*chromium*|*firefox*|*webkit*|*devtools*|*selenium*|*stagehand*|*computer_use*|*computeruse*) [ "$research_stage" -eq 1 ] && research_browser=1; research_stage=0 ;; esac
 fi
 # 0 when the host in $1 is not a public one: loopback, link-local, private, unspecified, single-label, or a
 # reserved local suffix. Builtins only.
@@ -898,7 +904,11 @@ non_public_host() {
     172.1[6-9].*|172.2[0-9].*|172.3[01].*) return 0 ;;
     100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*) return 0 ;;
     ::1|::|fe80:*|fc*:*|fd*:*|::ffff:*) return 0 ;;
-    *.*|*:*) return 1 ;;
+    # Any other host with a colon is an IPv6 literal (the port is already gone): every one is non-public here
+    # ([0:0:0:0:0:0:0:1], fe90::, ...); a research fetch has no business at a raw IPv6 address, and a public
+    # host is named. Before the dotted pattern: an IPv4-mapped literal holds dots too.
+    *:*) return 0 ;;
+    *.*) return 1 ;;
     *) return 0 ;;
   esac
 }
@@ -1046,7 +1056,11 @@ if printf '%s' "$lc" | grep -Eq "$remote_re"; then
 fi
 printf '%s' "$lc" | grep -Eq "${B}(python3?|node|nodejs|perl|ruby|php|deno|bun)(\\.exe)?[[:space:]]+(-c|-e|-p|--print|--eval|-)([[:space:]]|\$)" \
   && deny "inline interpreter code is blocked; it is an unbounded egress and execution bypass"
-printf '%s' "$lc" | grep -Eq '/dev/(tcp|udp)/' \
+# Empty quote pairs inside a word change nothing for the shell (/dev/t""cp, envi''ron): the rules below that name
+# a path read the command without them.
+dq='"'; sq="'"
+lc_nq="${lc//$dq$dq/}"; lc_nq="${lc_nq//$sq$sq/}"
+printf '%s' "$lc_nq" | grep -Eq '/dev/(tcp|udp)/' \
   && deny "/dev/tcp and /dev/udp network redirection is blocked"
 
 # Key material named anywhere in a command, whatever reads or sends it; environment dumps;
@@ -1060,7 +1074,7 @@ printf '%s' "$key_lc" | grep -Eq '(^|/)\.ssh([^a-z0-9_.-]|$)|authorized_keys|id_
 printf '%s' "$lc" | grep -Eq "${B}(printenv|env)[[:space:]]*(\$|[;&|])" \
   && deny "dumping the environment is blocked; check a variable with \${NAME:+set} instead"
 # The process environment is also a file: /proc/<pid>/environ holds every variable.
-printf '%s' "$lc" | grep -Eq '/proc/[^[:space:];&|]*environ' \
+printf '%s' "$lc_nq" | grep -Eq '/proc/[^[:space:];&|]*environ' \
   && deny "reading a process environment (/proc/<pid>/environ) is blocked; check a variable with \${NAME:+set} instead"
 # (-t is curl's -T upload only: wget's -T is its timeout and -t its retry count.)
 { printf '%s' "$lc" | grep -Eq '(curl|wget)[^;&|]*(--upload-file|--data-binary[[:space:]]*@|-d[[:space:]]*@|-f[[:space:]][^;&|]*@)' \

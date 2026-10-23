@@ -79,12 +79,72 @@ test('a run ends itself only once its report holds a Verdict line, and the end i
   assert.throws(() => endRun(root, r.run, own), { code: 'no-run' });
 });
 
-test('a session ends only its own runs; a caller with no session may end any', () => {
+test('a session ends only its own runs; a caller with no session is refused unless it forces (a human at a terminal)', () => {
   const root = project();
   const r = startRun(root, { profile: 'qa', id: 'GH-7', session: 's1' });
   report(root, 'GH-7', 'QA-REPORT.md', 'Verdict: PASS\n');
   assert.throws(() => endRun(root, r.run, { session: 's2' }), { code: 'other-session' });
+  assert.throws(() => endRun(root, r.run, { session: null }), { code: 'other-session' });
+  assert.equal(readRuns(root).length, 1, 'a refused end leaves the record');
+  assert.equal(endRun(root, r.run, { session: null, force: true }).ended, r.run);
+});
+
+test('a run with no session ends from any caller: it guards its folder, not a session', () => {
+  const root = project();
+  const r = startRun(root, { profile: 'qa', id: 'GH-8', session: null });
+  report(root, 'GH-8', 'QA-REPORT.md', 'Verdict: PASS\n');
   assert.equal(endRun(root, r.run, { session: null }).ended, r.run);
+});
+
+test('the CLI: an empty CLAUDE_CODE_SESSION_ID cannot end the run of another session; --force can', () => {
+  const root = project();
+  const r = startRun(root, { profile: 'qa', id: 'GH-9', session: 's1' });
+  report(root, 'GH-9', 'QA-REPORT.md', 'Verdict: PASS\n');
+  const env = { ...process.env, CLAUDE_CODE_SESSION_ID: '' };
+  const refused = spawnSync(process.execPath, [CLI, 'end', '--root', root, '--run', r.run], { encoding: 'utf8', env });
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /other-session/);
+  assert.equal(readRuns(root).length, 1);
+  const forced = spawnSync(process.execPath, [CLI, 'end', '--force', '--root', root, '--run', r.run], { encoding: 'utf8', env });
+  assert.equal(forced.status, 0, forced.stderr);
+  assert.equal(readRuns(root).length, 0);
+});
+
+test('an autopilot stage cannot start a run: the marker at or above the root, or ULTRAPOWERS_AUTOPILOT_INSIDE, refuses it', () => {
+  const root = project();
+  fs.mkdirSync(path.join(root, '.ultrapowers'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.ultrapowers', 'autopilot-active'), '{"ticket":"GH-1","branch":"GH-1-x","scope":["."],"stage":"execute"}');
+  assert.throws(() => startRun(root, { profile: 'qa', id: 'X', session: 's1' }), { code: 'autopilot-active' });
+  assert.equal(readRuns(root).length, 0, 'no record is written');
+  // A marker above the root (the project nested in a worktree of the ticket) counts too.
+  const outer = project();
+  fs.mkdirSync(path.join(outer, '.ultrapowers'), { recursive: true });
+  fs.writeFileSync(path.join(outer, '.ultrapowers', 'autopilot-active'), '{}');
+  const inner = path.join(outer, 'wt');
+  fs.mkdirSync(path.join(inner, '.agents'), { recursive: true });
+  fs.writeFileSync(path.join(inner, '.agents', 'ultrapowers.json'), '{}');
+  assert.throws(() => startRun(inner, { profile: 'hunt', id: 'X', session: null }), { code: 'autopilot-active' });
+  // The headless stage's environment alone refuses it, marker or not.
+  const bare = project();
+  assert.throws(() => startRun(bare, { profile: 'qa', id: 'X', session: null, env: { ULTRAPOWERS_AUTOPILOT_INSIDE: '1' } }), { code: 'autopilot-active' });
+  assert.equal(startRun(bare, { profile: 'qa', id: 'X', session: null, env: { ULTRAPOWERS_AUTOPILOT_INSIDE: '0' } }).id, 'X');
+  const cli = spawnSync(process.execPath, [CLI, 'start', '--root', root, '--profile', 'qa', '--id', 'X'], { encoding: 'utf8' });
+  assert.equal(cli.status, 2);
+  assert.match(cli.stderr, /autopilot-active/);
+});
+
+test('the stage that is the QA gate (marker stage qa) starts its own QA record, and nothing else', () => {
+  const root = project();
+  fs.mkdirSync(path.join(root, '.ultrapowers'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.ultrapowers', 'autopilot-active'), '{"ticket":"GH-1","branch":"GH-1-x","scope":["."],"stage":"qa"}');
+  assert.throws(() => startRun(root, { profile: 'hunt', id: 'GH-1', session: 's1' }), { code: 'autopilot-active' });
+  const rec = startRun(root, { profile: 'qa', id: 'GH-1', session: 's1', env: { ULTRAPOWERS_AUTOPILOT_INSIDE: '1' } });
+  assert.equal(rec.profile, 'qa');
+  // An unreadable marker names no stage: refused.
+  const broken = project();
+  fs.mkdirSync(path.join(broken, '.ultrapowers'), { recursive: true });
+  fs.writeFileSync(path.join(broken, '.ultrapowers', 'autopilot-active'), '{nope');
+  assert.throws(() => startRun(broken, { profile: 'qa', id: 'GH-1', session: 's1' }), { code: 'autopilot-active' });
 });
 
 test('ids and run names that would leave reviews/ are refused', () => {

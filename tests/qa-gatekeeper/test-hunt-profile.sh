@@ -82,11 +82,11 @@ if command -v cygpath >/dev/null 2>&1; then CASES_NODE="$(cygpath -m "$CASES" 2>
 # One case per line: name<TAB>reason<TAB>dir<TAB>env<TAB>event JSON ("-" for a missing reason, dir or
 # env; env is NAME=value pairs joined by \x1f), with the placeholders substituted.
 case_lines() {
-  DECOY_DIR="$DECOY" ELSEWHERE_DIR="$ELSEWHERE" node -e '
+  DECOY_DIR="$DECOY" ELSEWHERE_DIR="$ELSEWHERE" PLUGIN_DIR="$(cygpath -m "$REPO_ROOT" 2>/dev/null || printf %s "$REPO_ROOT")" node -e '
 const fs = require("node:fs");
 const [file, root] = process.argv.slice(1);
 for (const c of JSON.parse(fs.readFileSync(file, "utf8"))) {
-  const fill = (t) => t.split("{{ROOT}}").join(root).split("{{DECOY}}").join(process.env.DECOY_DIR).split("{{ELSEWHERE}}").join(process.env.ELSEWHERE_DIR);
+  const fill = (t) => t.split("{{ROOT}}").join(root).split("{{DECOY}}").join(process.env.DECOY_DIR).split("{{ELSEWHERE}}").join(process.env.ELSEWHERE_DIR).split("{{PLUGIN}}").join(process.env.PLUGIN_DIR);
   const text = fill(JSON.stringify(c.event));
   const env = Object.entries(c.env || {}).map(([k, v]) => `${k}=${fill(String(v))}`).join("\x1f") || "-";
   process.stdout.write(`${c.name}\t${c.reason || "-"}\t${c.dir ? fill(c.dir) : "-"}\t${env}\t${text}\n`);

@@ -14,8 +14,13 @@
 // command substitution). A regex hook cannot contain a determined adversary; this closes the
 // ordinary spellings of a write.
 import { readFileSync, statSync } from 'node:fs';
-import { posix } from 'node:path';
+import { posix, resolve as resolvePath, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { inside, realCanonical, rel, keyGlobReaches } from './guard-paths.mjs';
+
+// The plugin this analyzer runs from (hooks/lib/ is two folders below its root): the only place the hunt
+// trusts the plugin's own scripts from when the audited project holds a file of the same name.
+const PLUGIN_ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 const DEVICES = new Set(['/dev/null', '/dev/stdout', '/dev/stderr', '/dev/tty', 'nul', '/dev/fd/1', '/dev/fd/2']);
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'ash', 'mksh', 'rbash', 'fish', 'csh', 'tcsh']);
@@ -38,6 +43,9 @@ const PSQL_PROGRAMS = new Set(['psql']);
 // psql as a token inside a word that holds whitespace (a command string for another program).
 const PSQL_TOKEN_RE = /(^|[\s;&|(`'"])(?:[^\s'"`;&|()]*[\\/])?psql(\.exe)?(?=[\s;&|)`'"]|$)/gi;
 const psqlTokens = (text) => (String(text).match(PSQL_TOKEN_RE) || []).length;
+// Programs that resolve a name or probe a host, refused in every profile (see simple()).
+const HOST_PROBE_PROGRAMS = new Set(['nslookup', 'dig', 'host', 'ping', 'ping6', 'traceroute', 'tracert', 'arp']);
+const HOST_DATABASES = new Set(['hosts', 'ahosts', 'ahostsv4', 'ahostsv6']);
 // Other PostgreSQL client tools: never run during a run; lane 4 reaches the database through
 // psql -c as the read-only role only.
 const PG_TOOLS = new Set(['pgcli', 'usql', 'dropdb', 'createdb', 'createuser', 'dropuser', 'pg_restore', 'pg_dump', 'pg_dumpall', 'pgbench', 'vacuumdb', 'reindexdb', 'clusterdb', 'pg_ctl', 'pg_basebackup', 'pg_resetwal', 'pg_upgrade', 'pg_rewind']);
@@ -63,6 +71,34 @@ const WRITE_PROGRAMS = new Set(['rm', 'unlink', 'mv', 'cp', 'tee', 'sed', 'perl'
 // here-document body): { kind: 'cmd', src } when its inner text was cut out, { kind: 'proc' } for
 // <( ) and >( ), and { kind: 'opaque' } when the inner text cannot be cut out reliably.
 const SUB_RE = /\$\(|`/;
+// The variables an unquoted here-document line reads, as the parts a word would carry (readVar's judgement):
+// $NAME and ${NAME} are { t: 'var' }; ${NAME<op>WORD} reads NAME and the $X inside WORD (a :+ or + presence
+// check and a #NAME length read none); ${!NAME} is an indirection. A backslash-escaped $ is text.
+function heredocExpansions(line) {
+  const parts = [];
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === '\\') { i++; continue; }
+    if (line[i] !== '$') continue;
+    if (line[i + 1] === '{') {
+      const j = line.indexOf('}', i + 2);
+      const name = j === -1 ? line.slice(i + 2) : line.slice(i + 2, j);
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) parts.push({ t: 'var', v: name });
+      else {
+        const m = /^([!#]?)([A-Za-z_][A-Za-z0-9_]*)(.*)$/s.exec(name);
+        if (m && m[1] === '!') parts.push({ t: 'dyn', indirect: true });
+        else {
+          const reads = [...name.matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)/g)].map((x) => x[1]);
+          if (m && !(m[1] === '#' && m[3] === '') && !/^:?\+/.test(m[3])) reads.unshift(m[2]);
+          parts.push({ t: 'dyn', reads });
+        }
+      }
+      continue;
+    }
+    const m = /^[A-Za-z_][A-Za-z0-9_]*/.exec(line.slice(i + 1));
+    if (m) { parts.push({ t: 'var', v: m[0] }); i += m[0].length; }
+  }
+  return parts;
+}
 function tokenize(src) {
   const toks = [];
   toks.subs = [];
@@ -133,14 +169,18 @@ function tokenize(src) {
     if (c === '\n') {
       op(';'); i++;
       while (heredocs.length) { // skip each pending here-document body
-        const { delim, quoted } = heredocs.shift();
+        const { delim, quoted, opTok } = heredocs.shift();
         for (;;) {
           const nl = src.indexOf('\n', i);
           const line = src.slice(i, nl === -1 ? src.length : nl);
           i = nl === -1 ? src.length : nl + 1;
           if (line.replace(/^\t+/, '') === delim || nl === -1) break;
-          // An unquoted delimiter: the body is expanded, and a substitution in it runs.
-          if (!quoted && SUB_RE.test(line)) toks.subs.push({ kind: 'opaque' });
+          // An unquoted delimiter: the body is expanded, and a substitution in it runs. The variables it
+          // reads are kept on the << token of its command, which judges them like the words of that command.
+          if (!quoted) {
+            if (SUB_RE.test(line)) toks.subs.push({ kind: 'opaque' });
+            for (const part of heredocExpansions(line)) (opTok.parts ||= []).push(part);
+          }
         }
       }
       continue;
@@ -180,7 +220,7 @@ function tokenize(src) {
         // all end at a line EOF); any quote or backslash in it leaves the body unexpanded.
         let j = i; while (src[j] === ' ' || src[j] === '\t') j++;
         const m = /^(?:'[^']*'|"[^"]*"|\\.|[^\s<>;&|()'"\\])+/.exec(src.slice(j));
-        if (m) heredocs.push({ delim: m[0].replace(/\\(.)/g, '$1').replace(/['"]/g, ''), quoted: /['"\\]/.test(m[0]) });
+        if (m) heredocs.push({ delim: m[0].replace(/\\(.)/g, '$1').replace(/['"]/g, ''), quoted: /['"\\]/.test(m[0]), opTok: toks[toks.length - 1] });
       }
       continue;
     }
@@ -433,7 +473,7 @@ const STDIN_WHY = 'an interpreter reading its code from stdin (a pipe, a heredoc
 // A script operand that is a device or a process file (/dev/stdin, /dev/fd/0, /proc/self/fd/0): the code is
 // whatever the descriptor holds, a heredoc or a pipe, which no rule reads. Judged by spelling: the name says it.
 const STDIN_FILE_WHY = 'an interpreter or shell given a device or process file as its script (/dev/stdin, /dev/fd/N, /proc/*/fd/N) reads its code from stdin, which cannot be inspected; run a script file';
-function stdinScript(word) { return typeof word === 'string' && /^\/(dev|proc)(\/|$)/i.test(normPath(word)); }
+function stdinScript(word) { return typeof word === 'string' && /^\/(dev|proc)(\/|$)/i.test(posix.normalize(normPath(word))); }
 export function interpreterKind(p) {
   if (/^(python(\d+(\.\d+)*)?w?|py|pypy\d*(\.\d+)*)$/.test(p)) return 'python';
   if (/^(node|nodejs|bun|tsx|ts-node|ts-node-esm|ts-node-script|tsm)$/.test(p)) return 'js';
@@ -1125,7 +1165,9 @@ function huntProgramWhy(prog, args, interpKind, { dir, rootC, ignoreCase, inArea
       try { if (statSync(real).isFile()) return ''; } catch { /* missing */ }
       return `the hunt reads; ${prog} ${script.v} is not a regular file outside the project (a device, a pipe or a missing file runs code nobody read)`;
     }
-    if (HUNT_OWN_SCRIPTS_RE.test(real.replace(/\\/g, '/')) && !inArea(real)) return '';
+    // A script of that name inside the audited project counts only when the project is the plugin itself (its
+    // real path is under the plugin root this analyzer runs from); a copy shipped by the audited code is its code.
+    if (HUNT_OWN_SCRIPTS_RE.test(real.replace(/\\/g, '/')) && !inArea(real) && inside(real, realCanonical(PLUGIN_ROOT, PLUGIN_ROOT), ignoreCase)) return '';
     return `the hunt reads; ${prog} ${script.v} is not on its list (${prog} runs only the hunt's own preflight script or a script outside the project, never a file of the project or of the report area)`;
   }
   return HUNT_NOT_LISTED(prog);
@@ -1193,6 +1235,12 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
   // The QA baseline named by qa.knownIssues (the default qa/known-issues.md is in the pattern): a
   // stage never edits its own baseline.
   let knownReal = '';
+  // The stage that is the QA gate (marker stage `qa`, written by the engine) starts its own QA record through
+  // run-records.mjs: the one stage that runs it (see the refusal in simple()).
+  let qaGateStage = false;
+  if (autopilot) {
+    try { qaGateStage = JSON.parse(readFileSync(`${rootC}/.ultrapowers/autopilot-active`, 'utf8').replace(/^﻿/, '')).stage === 'qa'; } catch { qaGateStage = false; }
+  }
   if (autopilot) {
     try {
       const cfg = JSON.parse(readFileSync(`${rootC}/.agents/ultrapowers.json`, 'utf8').replace(/^﻿/, ''));
@@ -1268,9 +1316,12 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
   const checkAlias = (w, dir) => {
     const raw = resolveWord(w);
     const keyWhy = (what) => deny(`key material (${what}) is never read, searched, uploaded or written during ${runKind}`);
+    const environWhy = () => deny(`reading a process environment (${raw ?? w.parts.filter((p) => p.t === 'lit').map((p) => p.v).join('')}) is blocked during ${runKind}; check a variable with \${NAME:+set} instead`);
     if (raw === null) {
       const lit = w.parts.filter((p) => p.t === 'lit').map((p) => p.v).join('');
       if (lit && KEY_RE.test(keyText(lit))) keyWhy(lit);
+      // The literal text around an expansion, in its canonical form: /proc/$$/envi""ron is /proc//environ.
+      if (lit && ENVIRON_RE.test(posix.normalize(keyText(lit)))) environWhy();
       return;
     }
     if (KEY_RE.test(keyText(raw))) return keyWhy(raw);
@@ -1278,7 +1329,10 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     // file the shell opens, whatever the spelling.
     const flat = posix.normalize(keyText(raw));
     if (KEY_RE.test(flat)) return keyWhy(raw);
-    if (ENVIRON_RE.test(flat)) return deny(`reading a process environment (${raw}) is blocked during ${runKind}; check a variable with \${NAME:+set} instead`);
+    if (ENVIRON_RE.test(flat)) return environWhy();
+    // A bare `environ` after `cd /proc/self` (or after a cd whose target is built from a variable, where the
+    // folder is unknown) names the same file: the word is judged under the folder it resolves in.
+    if (!raw.startsWith('/') && !raw.startsWith('-') && !raw.startsWith('~') && /^\/proc(\/|$)/.test(dir === null ? '/proc/_' : dir) && ENVIRON_RE.test(posix.normalize(`${dir === null ? '/proc/_' : dir}/${keyText(raw)}`))) return environWhy();
     if (/[*?[\]{}]/.test(raw) && keyGlobReaches(raw.replace(/\.env\.example/gi, ''))) return deny(`a glob (${raw}) can expand to key material, which is never read, searched, uploaded or written during ${runKind}; name the file`);
     // A path-shaped word is resolved to its real spelling (a symlink in the project, an 8.3 alias) and the real
     // name is tested too. An option, a URL and a home path are text only (the rules above read them).
@@ -1352,8 +1406,9 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         const firstWord = first ? (resolveWord(first) ?? '') : '';
         const isTest = ['[', '[[', 'test'].includes(firstWord);
         if (!isTest) {
+          // The unquoted here-document of this command expands its variables as a word does.
           for (const t of items) {
-            if (t.k !== 'w') continue;
+            if (t.k !== 'w' && !(t.k === 'op' && t.parts)) continue;
             if (t.parts.some((p) => p.t === 'dyn' && p.indirect)) return deny(`\${!NAME} reads a variable whose name is only known at run time; ${runKind} never reads one out that way, name the variable`);
             const names = t.parts.flatMap((p) => (p.t === 'var' ? [p.v] : p.t === 'dyn' && p.reads ? p.reads : []));
             const hit = names.find(credential);
@@ -1371,6 +1426,13 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         const t = items[k];
         if (t.k === 'op') {
           const next = items[k + 1];
+          // A redirect from /dev/tcp/HOST/PORT or /dev/udp/HOST/PORT opens a connection (bash's own), in every
+          // profile. The word is judged as the shell resolves it: quotes removed, `//`, `/./` and `..` collapsed
+          // (</dev/t""cp/$X/80), the literal text around an expansion kept.
+          if (['<', '<<<', '<>'].includes(t.v) && next && next.k === 'w') {
+            const lit = next.parts.filter((p) => p.t === 'lit').map((p) => p.v).join('');
+            if (/^\/dev\/(tcp|udp)(\/|$)/i.test(posix.normalize(normPath(lit)))) return deny('a /dev/tcp or /dev/udp redirect opens a connection; blocked in every profile');
+          }
           if (['>', '>>', '>|', '&>', '&>>', '<>'].includes(t.v)) {
             if (next && next.k === 'w') {
               const target = resolveWord(next);
@@ -1645,6 +1707,26 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       }
       if (PG_TOOLS.has(prog)) return deny(`${prog} is not run during ${runKind}; lane 4 reaches the database through psql -c as the read-only role only`);
       const rest = args.slice(1);
+      // Every profile: the programs that resolve a name or probe a host open a connection of their own (DNS carries
+      // data out as the lookup name); a run reaches the network through its listed tools only.
+      if (HOST_PROBE_PROGRAMS.has(prog) || (prog === 'getent' && rest.length && (rest[0].v === null || HOST_DATABASES.has(rest[0].v) || rest.some((x) => x.v !== null && HOST_DATABASES.has(x.v))))) {
+        return deny(`${prog} resolves or probes a host; a run reaches the network through its listed tools only`);
+      }
+      // An autopilot stage starts and ends no QA run or hunt: a run record written from inside the stage outranks the
+      // stage's own profile for the rest of its session. Any word that is a path to run-records.mjs (a symlink to it
+      // too) is refused whatever the interpreter and options in front of it. The one exception is the stage that is
+      // the QA gate (qaGateStage): qa-specialist starts its own QA record there, and run-records.mjs start itself
+      // refuses every other profile.
+      if (autopilot && !qaGateStage && interpreterKind(prog) === 'js') {
+        for (const x of rest) {
+          if (x.v === null || x.v.startsWith('-')) continue;
+          let p = normPath(x.v);
+          if (!p.startsWith('/')) p = `${dir === null ? rootC : dir}/${p.replace(/^\.\//, '')}`;
+          if (/(^|\/)hooks\/lib\/run-records\.mjs$/i.test(posix.normalize(p)) || /(^|\/)hooks\/lib\/run-records\.mjs$/i.test(realCanonical(p, rootC).replace(/\\/g, '/'))) {
+            return deny('an autopilot stage starts and ends no QA run or hunt; the engine owns the envelope');
+          }
+        }
+      }
       // A program reads its environment before it runs: a variable set for it by a prefix, an env assignment or
       // env -u, or exported earlier in the command, is refused unless it is on the short list of harmless ones.
       // QA run: every program (a read-only run needs no other variable). Autopilot stage: a shell, an
@@ -2012,11 +2094,21 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
           }
           // The path operands of rm and mv are files the stage deletes, moves or overwrites (and rm --cached
           // stages a deletion the commit carries): each is held to the protected paths like any write.
+          // A pathspec file names its operands in a file nobody reads here; a pathspec with magic (:(top).github/x,
+          // :/.github/x) names a path the protected patterns cannot match as written: both are refused.
+          const PATHSPEC_MAGIC_WHY = 'a pathspec with magic (:...) cannot be checked against the protected paths; spell the path';
+          if (sub === 'rm' || sub === 'mv' || sub === 'checkout') {
+            for (const x of subWords) {
+              if (x.v === null) continue;
+              if (longIs(x.v, 'pathspec-from-file', 11) || longIs(x.v, 'pathspec-file-nul', 11)) return deny(`git ${sub} ${x.v.split('=')[0]} reads its operands from a file that cannot be checked against the protected paths; spell the paths on the command line`);
+            }
+          }
           if (sub === 'rm' || sub === 'mv') {
             let pastDash = false;
             for (const x of subWords) {
               if (!pastDash && x.v === '--') { pastDash = true; continue; }
               if (!pastDash && x.v !== null && x.v.startsWith('-')) continue;
+              if (x.v !== null && x.v.startsWith(':')) return deny(PATHSPEC_MAGIC_WHY);
               checkTarget(x.w, dir, `git ${sub} operand`, container);
             }
             return;
@@ -2048,7 +2140,10 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
                 if (v !== null && v.startsWith('-')) continue;
                 positional.push(subWords[o]);
               }
-              for (const x of positional.slice(1)) checkTarget(x.w, dir, 'git checkout path', container);
+              for (const x of positional.slice(1)) {
+                if (x.v !== null && x.v.startsWith(':')) return deny(PATHSPEC_MAGIC_WHY);
+                checkTarget(x.w, dir, 'git checkout path', container);
+              }
             }
             return;
           }
@@ -2086,17 +2181,25 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         // An awk program can run a command (system(), a pipe, getline from a command) or write a file
         // (print > "f"); -i inplace rewrites its operands.
         const AWK_VALUED = new Set(['-F', '-v', '-f', '-i', '-e', '-W', '--field-separator', '--assign', '--file', '--include', '--source']);
+        const AWK_PROGRAM_FILE_WHY = 'an awk program file cannot be inspected; give the program inline';
+        const AWK_PROGRAM_VAR_WHY = 'an awk program built from a variable or substitution cannot be inspected; give the program inline';
         const texts = [];
-        let progFromFile = false;
         for (let k = 0; k < rest.length; k++) {
           const v = rest[k].v;
-          if (v === null) continue;
+          if (v === null) {
+            // An option with its value attached to an expansion (-F"$SEP") is skipped; any other word built at run
+            // time is the program (or the next word is, after -e) and cannot be read.
+            const first = rest[k].w.parts[0];
+            if (first && first.t === 'lit' && first.v.startsWith('-')) continue;
+            if (texts.length === 0) return deny(AWK_PROGRAM_VAR_WHY);
+            break;
+          }
           if (v === '-i' || v.startsWith('--inplace') || v === '--include=inplace') return deny('awk -i inplace rewrites files that cannot be seen before it runs; edit through the file tools');
-          if (v === '-f' || v === '--file') { progFromFile = true; k++; continue; }
-          if (v === '-e' || v === '--source') { if (rest[k + 1] && rest[k + 1].v !== null) texts.push(rest[k + 1].v); k++; continue; }
+          if (v === '-f' || v === '--file' || v.startsWith('--file=') || /^-f./.test(v)) return deny(AWK_PROGRAM_FILE_WHY);
+          if (v === '-e' || v === '--source') { if (rest[k + 1] && rest[k + 1].v !== null) texts.push(rest[k + 1].v); else return deny(AWK_PROGRAM_VAR_WHY); k++; continue; }
           if (AWK_VALUED.has(v)) { k++; continue; }
           if (v.startsWith('-')) continue;
-          if (!progFromFile && texts.length === 0) texts.push(v);
+          if (texts.length === 0) texts.push(v);
           break;
         }
         for (const text of texts) {
