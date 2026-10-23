@@ -51,7 +51,7 @@ node "<SKILL_DIR>/scripts/init.mjs" detect --root "<ROOT>"
    node "<SKILL_DIR>/scripts/init.mjs" scaffold --root "<ROOT>" --name "<NAME>" --dry-run
    ```
 
-3. Show the report: `written` (created); `skipped` (exist, stay byte-identical); each `blocks` entry (`created`, `appended` or `replaced` between the `# >>> ultrapowers` markers); `omitted` (harnesses not chosen); `incomplete` and `nearFolders` when present. Say that, with `claude-code`, `.claude/settings.json` pre-approves test and build commands (only those of the toolchains it found at the project root), which run repository code. Ask: "Write these files? (yes / no)".
+3. Show the report: `written` (created); `skipped` (exist, stay byte-identical); each `blocks` entry (`created`, `appended` or `replaced` between the `# >>> ultrapowers` markers); `omitted` (harnesses not chosen); `incomplete` and `nearFolders` when present. Say that, with `claude-code`, `.claude/settings.json` pre-approves test and build commands, which run repository code. Ask: "Write these files? (yes / no)".
 4. Only an explicit yes continues. "Looks good?", a question or a change request is not a yes: answer it, adjust the flags, show a new dry run.
 5. Run the same command without `--dry-run`. Report `written` and `skipped` from the real report, then `nextSteps` as a numbered list, verbatim.
 6. Continue with join mode for this clone.

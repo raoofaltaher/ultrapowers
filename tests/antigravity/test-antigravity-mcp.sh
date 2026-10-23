@@ -55,6 +55,9 @@ const assert = (cond, msg) => { if (!cond) { console.error(`FAIL: ${msg}`); proc
   fs.mkdirSync(path.join(project, '.ultrapowers'), { recursive: true });
   fs.writeFileSync(path.join(project, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'p', autopilot: { mode: 'gated' } }));
   fs.writeFileSync(path.join(project, '.ultrapowers', 'autopilot-active'), JSON.stringify({ ticket: 'GH-16', branch: 'GH-16-x', scope: ['.'], stage: 'execute' }));
+  // The ticket's MCP snapshot: a stage reaches only the servers it lists.
+  fs.mkdirSync(path.join(project, '.ultrapowers', 'autopilot'), { recursive: true });
+  fs.writeFileSync(path.join(project, '.ultrapowers', 'autopilot', 'mcp.json'), JSON.stringify({ mcpServers: { github: {} } }));
   const hook = (args) => {
     const r = spawnSync(process.execPath, [path.join(repo, 'hooks', 'lib', 'guardrail-cli.mjs'), '--antigravity'], {
       input: JSON.stringify({ toolCall: { name: 'call_mcp_tool', args }, workspacePaths: [project] }), encoding: 'utf8', cwd: project, env: { ...process.env, ULTRAPOWERS_AUTOPILOT_INSIDE: '' },
@@ -66,6 +69,10 @@ const assert = (cond, msg) => { if (!cond) { console.error(`FAIL: ${msg}`); proc
   assert(out.decision === 'deny' && /^AUTOPILOT-GUARDRAIL DENY: /.test(out.reason), `a tracker write by MCP during a stage: denied (${JSON.stringify(out)})`);
   out = hook({ ServerName: 'github', ToolName: 'get_issue', Arguments: { id: 1 } });
   assert(out.decision === 'allow', `a tracker read by MCP during a stage: allowed (${JSON.stringify(out)})`);
+  out = hook({ ServerName: 'slack', ToolName: 'search_messages', Arguments: { q: 'x' } });
+  assert(out.decision === 'deny' && /not in the ticket's snapshot/.test(out.reason), `a server outside the snapshot during a stage: denied (${JSON.stringify(out)})`);
+  out = hook({ ServerName: '', ToolName: 'get_issue', Arguments: {} });
+  assert(out.decision === 'deny' && /cannot be read/.test(out.reason), `an unreadable server during a stage: denied (${JSON.stringify(out)})`);
 
   console.log('test-antigravity-mcp: OK');
 })().catch((e) => { console.error(`FAIL: ${e.stack || e}`); process.exit(1); });
