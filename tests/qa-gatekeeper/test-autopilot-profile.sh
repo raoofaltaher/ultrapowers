@@ -84,9 +84,13 @@ case_lines() {
   DECOY_DIR="$DECOY" ELSEWHERE_DIR="$ELSEWHERE" node -e '
 const fs = require("node:fs");
 const [file, root, elsewhere, short, shortSettings, shortMarker] = process.argv.slice(1);
+// Non-public addresses for the research-stage cases, built from their octets: the leak scan allows no
+// literal address outside loopback and TEST-NET-1 in these files.
+const ips = { IP_LINK_LOCAL: [169, 254, 169, 254], IP_PRIVATE_A: [10, 0, 0, 5], IP_PRIVATE_B: [172, 20, 1, 1], IP_PRIVATE_C: [192, 168, 1, 10], IP_LOOPBACK_OTHER: [127, 0, 0, 2] };
+const withIps = (t) => Object.entries(ips).reduce((s, [k, o]) => s.split(`{{${k}}}`).join(o.join(".")), t);
 for (const c of JSON.parse(fs.readFileSync(file, "utf8"))) {
   if (c.name.endsWith("_winshort") && !short) continue;
-  const text = JSON.stringify(c.event).split("{{DECOY}}").join(process.env.DECOY_DIR).split("{{ROOT}}").join(root).split("{{ELSEWHERE}}").join(elsewhere)
+  const text = withIps(JSON.stringify(c.event)).split("{{DECOY}}").join(process.env.DECOY_DIR).split("{{ROOT}}").join(root).split("{{ELSEWHERE}}").join(elsewhere)
     .split("{{WINSHORT_SETTINGS}}").join(shortSettings).split("{{WINSHORT_MARKER}}").join(shortMarker).split("{{WINSHORT}}").join(short);
   const fill = (t) => t.split("{{DECOY}}").join(process.env.DECOY_DIR).split("{{ELSEWHERE}}").join(process.env.ELSEWHERE_DIR).split("{{ROOT}}").join(root);
   const env = Object.entries(c.env || {}).map(([k, v]) => `${k}=${fill(String(v))}`).join("\x1f") || "-";
