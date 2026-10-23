@@ -10,7 +10,19 @@ import { denyText, runGuardrail } from './guardrail-bridge.mjs';
 import fs from 'node:fs';
 
 // Antigravity tool names to the shell-hook vocabulary the guardrail already reads.
-const AG_TOOLS = { run_command: 'Bash', write_to_file: 'Write', replace_file_content: 'Edit', multi_replace_file_content: 'Edit', view_file: 'Read', call_mcp_tool: 'mcp__tool' };
+const AG_TOOLS = { run_command: 'Bash', write_to_file: 'Write', replace_file_content: 'Edit', multi_replace_file_content: 'Edit', view_file: 'Read' };
+
+// An MCP call is { name: 'call_mcp_tool', args: { ServerName, ToolName, Arguments } } (measured on agy 1.3.3).
+// It becomes mcp__<server>__<tool>, the spelling the guardrail judges by server and tool. A name that
+// cannot be read as a non-empty string maps to a server no run allows, so the call fails closed during
+// a run and is harmless outside one. Both parts keep [A-Za-z0-9_-]; any other character becomes `_`.
+const mcpPart = (v) => (typeof v === 'string' && v.trim() !== '' ? v.replace(/[^A-Za-z0-9_-]/g, '_') : '');
+function antigravityToolName(name, args) {
+  if (name !== 'call_mcp_tool') return AG_TOOLS[name] ?? name;
+  const server = mcpPart(args.ServerName);
+  const tool = mcpPart(args.ToolName);
+  return server && tool ? `mcp__${server}__${tool}` : 'mcp__unreadable__call_mcp_tool';
+}
 
 export function eventFrom(text, { antigravity: ag = false } = {}) {
   let ev;
@@ -38,7 +50,7 @@ export function eventFrom(text, { antigravity: ag = false } = {}) {
     const workspaces = Array.isArray(ev.workspacePaths) ? ev.workspacePaths.filter((p) => typeof p === 'string' && p !== '') : [];
     const cwd = workspaces[0] ?? process.cwd();
     const dirs = [...workspaces, process.cwd(), ...(typeof argsIn.Cwd === 'string' && argsIn.Cwd ? [argsIn.Cwd] : [])];
-    return { toolName: AG_TOOLS[name] ?? name, input, cwd, dirs };
+    return { toolName: antigravityToolName(name, argsIn), input, cwd, dirs };
   }
   return { toolName: ev.tool_name ?? ev.toolName ?? '', input: ev.tool_input ?? ev.toolArgs ?? ev.input, cwd: ev.cwd ?? process.cwd() };
 }

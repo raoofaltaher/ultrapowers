@@ -62,8 +62,9 @@ JS
 if command -v agy >/dev/null 2>&1; then
   output="$(agy plugin validate "$REPO_ROOT" 2>&1)" \
     || { echo "$output" >&2; echo "FAIL: agy plugin validate failed" >&2; exit 1; }
-  grep -q '\[ok\]' <<<"$output" \
-    || { echo "$output" >&2; echo "FAIL: agy plugin validate did not report [ok]" >&2; exit 1; }
+  # agy 1.3.1 printed "[ok]"; agy 1.3.3 prints "Validation passed" (and "[ok]" only for a plugin folder).
+  grep -qE '\[ok\]|Validation passed' <<<"$output" \
+    || { echo "$output" >&2; echo "FAIL: agy plugin validate did not report [ok] or Validation passed" >&2; exit 1; }
 else
   echo "SKIP: agy not on PATH; not running agy plugin validate"
 fi

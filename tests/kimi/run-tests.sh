@@ -5,3 +5,4 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 bash "$SCRIPT_DIR/test-plugin-manifest.sh"
 bash "$SCRIPT_DIR/test-guardrail-hook.sh"
+bash "$SCRIPT_DIR/test-guardrail-decoy.sh"

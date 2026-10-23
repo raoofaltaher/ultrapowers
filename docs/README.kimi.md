@@ -28,7 +28,7 @@ The manifest does three things:
 2. Loads `using-ultrapowers` at session start through `sessionStart.skill`.
 3. Provides Kimi-specific tool mapping through `skillInstructions`.
 
-Kimi Code reads Ultrapowers skills from this repository. There are no copied skills, symlinks, or extra runtime dependencies. The manifest also registers one `PreToolUse` hook, `hooks/lib/guardrail-cli.mjs`, which is the guardrail of a QA run or an autopilot stage and does nothing outside one.
+Kimi Code reads Ultrapowers skills from this repository. There are no copied skills, symlinks, or extra runtime dependencies. The manifest also registers one `PreToolUse` hook, `hooks/lib/guardrail-cli.mjs`, which is the guardrail of a QA run or an autopilot stage and does nothing outside one. Kimi Code's plugin guide says a plugin hook runs with its working directory set to the plugin root, so the manifest's `./hooks/lib/guardrail-cli.mjs` path resolves inside the plugin and never in your project (documented behaviour; not measured here, Kimi Code was not installed).
 
 ## Tool Mapping
 
