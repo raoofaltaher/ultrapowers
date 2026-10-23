@@ -637,6 +637,45 @@ if [ -n "$PROFILE" ]; then
   fi
 fi
 
+# --- The hunt: its network is its audit tools and gh/glab api, called from the shell. This runs before the
+# write rules, so a path field in a tool's input cannot carry an unknown tool past it (GH-59 review).
+# A fetch or search tool, and any tool whose input holds a url, is refused whatever qa.hosts lists; the
+# local file readers are not URL tools (a search for a URL string is a file search). Then a tool the
+# hunt does not use is refused by default, whatever its name: research tools (search, documentation,
+# scrape) have no fixed names, and a query can carry data out. The hunt's own tools pass: the write
+# tools (the write rules below judge their paths), the shell tools (the shell rules below judge the
+# command), the file readers, subagent dispatch and its lifecycle, task tracking, skills, asking the
+# user, loading a tool's schema, and tracker and mail reads (the tracker rule above has refused their
+# writes; for an `mcp__<server>__<tool>` name the tracker word must be a whole segment of the server).
+# Research belongs to STEP 0b of the hunt contract, before the marker exists. Names are matched
+# lowercased, without `_ :.-/`.
+if [ "$PROFILE" = "hunt" ]; then
+  tool_flat="${tool_lc//[_ :.-]/}"
+  tool_flat="${tool_flat////}"
+  case "$tool_flat" in
+    webfetch|websearch|*googlewebsearch*|*fetchurl*|*urlfetch*|*searchweb*|*webbrowse*|*webread*) deny "the hunt's network is its audit tools and gh api; $tool is refused" ;;
+  esac
+  if [ -n "$url" ]; then
+    case "$tool_lc" in
+      read|grep|glob|ls|lsp|notebookread|read_file|read_many_files|list_directory|grep_search|search_file_content|find_by_name|view_file|list_dir|codebase_search|file_search) ;;
+      *) deny "the hunt's network is its audit tools and gh api; $tool carrying a URL is refused" ;;
+    esac
+  fi
+  hunt_write_re='^(write|edit|multiedit|notebookedit|create|applypatch|writefile|replace|editfile|writetofile|replacefilecontent|multireplacefilecontent|strreplacefile|patch|newfile)$'
+  hunt_shell_re='^(bash|shell|runshellcommand|terminal|runterminalcmd|runcommand|execute|exec|execcommand|executecommand|powershell|monitor)$'
+  hunt_tools_re='^(read|readfile|readmanyfiles|notebookread|view|viewfile|viewfileoutline|viewimage|grep|glob|ls|list|lsp|find|listdirectory|listdir|grepsearch|searchfilecontent|findbyname|codebasesearch|filesearch|search|searchfiles|agent|task|invokesubagent|invokeagent|delegatetask|subagentspawn|subagent|spawnagent|waitagent|listagents|followuptask|closeagent|completetask|sendmessage|managetask|commandstatus|readbash|todowrite|todoread|todolist|writetodos|todo|updatetodo|updateplan|settodolist|taskcreate|taskupdate|tasklist|taskget|taskoutput|taskstop|bashoutput|killshell|skill|skills|skillslist|activateskill|skillview|askuserquestion|requestuserinput|askuser|clarify|question|toolsearch|think)$'
+  hunt_tracker_re='(^|_)(github|gitlab|glab|jira|linear|odoo|bitbucket|azure_?devops|outlook|microsoft_365|gmail|slack|teams)(_|$)|^tickets_'
+  tracker_name="$tool_norm"
+  case "$tool_lc" in
+    mcp__*__*) tracker_name="${tool_lc#mcp__}"; tracker_name="${tracker_name%%__*}"; tracker_name="${tracker_name//-/_}"; tracker_name="${tracker_name//./_}" ;;
+  esac
+  tracker_read=0
+  if [[ "$tracker_name" =~ $hunt_tracker_re ]] || { [ "$tool_server_less" -eq 1 ] && [[ "$tool_norm" =~ $object_re ]]; }; then tracker_read=1; fi
+  if ! [[ "$tool_flat" =~ $hunt_write_re ]] && ! [[ "$tool_flat" =~ $hunt_shell_re ]] && ! [[ "$tool_flat" =~ $hunt_tools_re ]] && [ "$tracker_read" -eq 0 ]; then
+    deny "the hunt's network is its audit tools and gh api; $tool is not a tool the hunt uses (research belongs to STEP 0b, before the marker)"
+  fi
+fi
+
 is_write_tool=0
 case "$tool" in
   Write|Edit|MultiEdit|NotebookEdit|Create|ApplyPatch) is_write_tool=1 ;;
@@ -770,36 +809,6 @@ on_list() {
   # $1 comma-separated list, $2 host
   [ -n "$1" ] && [ -n "$2" ] && [[ ",$1," == *",$2,"* ]]
 }
-
-# --- The hunt reaches no URL: its network is its audit tools and gh/glab api, called from the shell, so a
-# fetch or search tool and any tool whose input holds a url is refused whatever qa.hosts lists. The local
-# file readers are not URL tools (a search for a URL string is a file search).
-if [ "$PROFILE" = "hunt" ]; then
-  tool_flat="${tool_lc//[_ :.-]/}"
-  tool_flat="${tool_flat////}"
-  case "$tool_flat" in
-    webfetch|websearch|*googlewebsearch*|*fetchurl*|*urlfetch*|*searchweb*|*webbrowse*|*webread*) deny "the hunt's network is its audit tools and gh api; $tool is refused" ;;
-  esac
-  if [ -n "$url" ]; then
-    case "$tool_lc" in
-      read|grep|glob|ls|lsp|notebookread|read_file|read_many_files|list_directory|grep_search|search_file_content|find_by_name|view_file|list_dir|codebase_search|file_search) ;;
-      *) deny "the hunt's network is its audit tools and gh api; $tool carrying a URL is refused" ;;
-    esac
-  fi
-  # A tool the hunt does not use is refused by default, whatever its name: research tools (search,
-  # documentation, scrape) have no fixed names, and a query can carry data out. The hunt's own tools
-  # pass: the shell tools (the shell rules below judge the command), the file readers, subagent
-  # dispatch, task tracking, skills, asking the user and loading a tool's schema, and tracker and
-  # mail reads (the tracker rule above has refused their writes). Research belongs to STEP 0b of the
-  # hunt contract, before the marker exists. Names are matched lowercased, without `_ :.-/`.
-  hunt_shell_re='^(bash|shell|runshellcommand|terminal|runterminalcmd|runcommand|execute|exec|execcommand|executecommand|powershell)$'
-  hunt_tools_re='^(read|readfile|readmanyfiles|notebookread|viewfile|viewimage|grep|glob|ls|list|lsp|find|listdirectory|listdir|grepsearch|searchfilecontent|findbyname|codebasesearch|filesearch|search|searchfiles|agent|task|invokesubagent|invokeagent|delegatetask|subagentspawn|subagent|spawnagent|todowrite|todoread|writetodos|todo|updateplan|settodolist|taskcreate|taskupdate|tasklist|taskget|taskoutput|taskstop|bashoutput|killshell|skill|activateskill|skillview|askuserquestion|requestuserinput|askuser|question|toolsearch|think)$'
-  tracker_read=0
-  if [[ "$tool_norm" =~ $tracker_re ]] || { [ "$tool_server_less" -eq 1 ] && [[ "$tool_norm" =~ $object_re ]]; }; then tracker_read=1; fi
-  if ! [[ "$tool_flat" =~ $hunt_shell_re ]] && ! [[ "$tool_flat" =~ $hunt_tools_re ]] && [ "$tracker_read" -eq 0 ]; then
-    deny "the hunt's network is its audit tools and gh api; $tool is not a tool the hunt uses (research belongs to STEP 0b, before the marker)"
-  fi
-fi
 
 # --- Any tool that carries a url (navigation, fetch, scrape, crawl, whatever its name), under
 # `url`, `uri`, `link` or a `urls` array: forbidden hosts never; allowed hosts only when a list is set.
