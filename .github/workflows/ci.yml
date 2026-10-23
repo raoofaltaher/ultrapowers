@@ -42,6 +42,7 @@ jobs:
       - run: node --test tests/hooks/test-guardrail-bridge.mjs
       - run: node --test tests/hooks/test-guardrail-entrypoints-parity.mjs
       - run: node --test tests/hooks/test-resolve-tool.mjs
+      - run: node --test tests/hooks/test-run-records.mjs
       - run: bash tests/init/run-tests.sh
       - run: node --test tests/team-memory/memory-lint.test.mjs
       - run: bash tests/team-memory/test-templates.sh
@@ -100,6 +101,7 @@ jobs:
       - run: node --test tests/hooks/test-guardrail-bridge.mjs
       - run: node --test tests/hooks/test-guardrail-entrypoints-parity.mjs
       - run: node --test tests/hooks/test-resolve-tool.mjs
+      - run: node --test tests/hooks/test-run-records.mjs
       - run: bash tests/init/run-tests.sh
       # fetch-ticket spawns gh and glab without a shell; Windows resolves them differently.
       - run: node --test tests/task-lifecycle/fetch-ticket.test.mjs

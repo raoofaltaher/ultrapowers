@@ -41,6 +41,10 @@ if [[ -f "$AGENT" ]]; then
     if grep -Fq -- "**$step" "$AGENT"; then pass "agent has $step"; else fail "agent has $step"; fi
   done
   if grep -Fq 'QA-GUARDRAIL DENY' "$AGENT"; then pass "agent names the guardrail denial"; else fail "agent names the guardrail denial"; fi
+  for needle in 'run-records.mjs end' '.ultrapowers/runs/'; do
+    if grep -Fq -- "$needle" "$AGENT"; then pass "agent ends its run through '$needle'"; else fail "agent ends its run through '$needle'"; fi
+  done
+  if grep -Eq 'qa-active|[!] rm' "$AGENT"; then fail "agent names no single marker file and no human '! rm'"; else pass "agent names no single marker file and no human '! rm'"; fi
 else
   echo "  [SKIP] agents/qa-specialist.md not present yet"
 fi
@@ -104,11 +108,11 @@ if [[ -f "$ENTRY" ]]; then
       pass "qa-specialist: description avoids workflow word '$word'"
     fi
   done
-  for needle in '## Checklist' 'qa-preflight.mjs' '.ultrapowers/qa-active' 'agents/qa-specialist.md' \
+  for needle in '## Checklist' 'qa-preflight.mjs' 'run-records.mjs" start' 'run-records.mjs end' '.ultrapowers/runs/' 'agents/qa-specialist.md' \
     'run-state.json' 'PRECONDITION-FAILED' 'inline' 'Verdict: <value> — reviews/<ID>/QA-REPORT.md'; do
     if printf '%s\n' "$entry_body" | grep -Fq -- "$needle"; then pass "qa-specialist: body mentions $needle"; else fail "qa-specialist: body mentions $needle"; fi
   done
-  for field in missing preconditions warnings markerExists runState changeSet onTicketBranch errors; do
+  for field in missing preconditions warnings runs activeRun runState changeSet onTicketBranch errors; do
     if printf '%s\n' "$entry_body" | grep -Fq -- "\`$field" && grep -Fq -- "$field" "$PREFLIGHT"; then
       pass "qa-specialist: preflight field $field is used and exists"
     else
@@ -120,9 +124,9 @@ if [[ -f "$ENTRY" ]]; then
   else
     pass "qa-specialist: body has no \$N placeholder"
   fi
-  # Loaded only when invoked; about 1,300 words as written, headroom for Task 12's red-flag rows.
+  # Loaded only when invoked; the cap moved from 1500 to 1700 for the run-record start and end steps.
   entry_words="$(printf '%s\n' "$entry_body" | wc -w | tr -d ' ')"
-  if [[ "$entry_words" -le 1500 ]]; then pass "qa-specialist: body within 1500 words ($entry_words)"; else fail "qa-specialist: body within 1500 words ($entry_words)"; fi
+  if [[ "$entry_words" -le 1700 ]]; then pass "qa-specialist: body within 1700 words ($entry_words)"; else fail "qa-specialist: body within 1700 words ($entry_words)"; fi
 else
   fail "skills/qa-specialist/SKILL.md exists"
 fi

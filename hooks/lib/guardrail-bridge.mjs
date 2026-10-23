@@ -1,46 +1,59 @@
 // The guardrail bridge for in-process harnesses (OpenCode, Pi). They have no shell PreToolUse
 // hook, so their plugin calls this before every tool: it runs hooks/qa-guardrail with the same
 // event JSON a shell-hook harness sends ({ tool_name, tool_input, cwd }) and reports the
-// verdict. One rule of the hook is kept here too: nothing is spawned unless a run marker
-// (.ultrapowers/qa-active, hunt-active or autopilot-active) exists at or above the cwd, or the
-// session is a headless stage (ULTRAPOWERS_AUTOPILOT_INSIDE=1), so an ordinary session pays a
-// directory walk and no process. Node built-ins only.
+// verdict. One rule of the hook is kept here too: nothing is spawned unless a run guards the call
+// (a run record of .ultrapowers/runs/ in the nearest project root that is bound to no session, these
+// harnesses naming none; or .ultrapowers/autopilot-active at or above the cwd), or the session is a
+// headless stage (ULTRAPOWERS_AUTOPILOT_INSIDE=1), so an ordinary session pays a directory walk and
+// no process. Node built-ins only.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { applicableRuns } from './run-records.mjs';
 
 const HOOK_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DENY_RE = /((?:QA|HUNT|AUTOPILOT)-GUARDRAIL) DENY: (.*)/;
 
-// The run markers and the deny prefix of each, in the order the hook applies them when several
-// exist in one directory: the QA run, the vulnerability hunt, the autopilot stage.
-const RUN_MARKERS = ['qa-active', 'hunt-active', 'autopilot-active'];
-const MARKER_PREFIX = { 'qa-active': 'QA-GUARDRAIL', 'hunt-active': 'HUNT-GUARDRAIL', 'autopilot-active': 'AUTOPILOT-GUARDRAIL' };
+const PROFILE_PREFIX = { qa: 'QA-GUARDRAIL', hunt: 'HUNT-GUARDRAIL' };
 
-// The directory holding a run marker at or above `startDir`, or null.
-export function markerRoot(startDir) {
+// The run that guards a call made from `startDir`, the way the hook finds it: { dir, prefix } or null.
+// A run record counts only up to the nearest project root (.agents/ultrapowers.json), and only when it
+// is bound to no session (the calls these harnesses send name none; a record of a Claude Code session
+// guards that session alone); a corrupt record counts for every call. QA before hunt, a record before
+// the autopilot marker, which counts at any height.
+function runAt(startDir) {
   let dir;
   try {
     dir = fs.realpathSync.native(path.resolve(startDir));
   } catch {
     return null;
   }
+  let pastProject = false;
   for (;;) {
-    if (RUN_MARKERS.some((m) => fs.existsSync(path.join(dir, '.ultrapowers', m)))) return dir;
+    if (!pastProject) {
+      const runs = applicableRuns(dir, null);
+      if (runs.length) {
+        const pick = runs.find((r) => r.corrupt) ?? runs.find((r) => r.profile === 'qa') ?? runs[0];
+        return { dir, prefix: PROFILE_PREFIX[pick.profile] ?? 'QA-GUARDRAIL' };
+      }
+    }
+    if (fs.existsSync(path.join(dir, '.ultrapowers', 'autopilot-active'))) return { dir, prefix: 'AUTOPILOT-GUARDRAIL' };
+    if (fs.existsSync(path.join(dir, '.agents', 'ultrapowers.json'))) pastProject = true;
     const parent = path.dirname(dir);
     if (parent === dir) return null;
     dir = parent;
   }
 }
 
-// The deny prefix of the run marker found at or above `startDir`: the first of qa, hunt, autopilot
-// that exists in the directory holding a marker, as in the hook.
+// The directory of the run that guards a call made from `startDir`, or null.
+export function markerRoot(startDir) {
+  return runAt(startDir)?.dir ?? null;
+}
+
+// The deny prefix of that run: QA-GUARDRAIL, HUNT-GUARDRAIL or AUTOPILOT-GUARDRAIL, or null.
 export function markerPrefix(startDir) {
-  const root = markerRoot(startDir);
-  if (!root) return null;
-  const marker = RUN_MARKERS.find((m) => fs.existsSync(path.join(root, '.ultrapowers', m)));
-  return MARKER_PREFIX[marker] ?? 'AUTOPILOT-GUARDRAIL';
+  return runAt(startDir)?.prefix ?? null;
 }
 
 // A headless watcher stage carries ULTRAPOWERS_AUTOPILOT_INSIDE=1: the hook then treats the run

@@ -1,6 +1,6 @@
 # Stage: qa
 
-The project configures the QA gatekeeper (`qa` in `.agents/ultrapowers.json`), or the engine would have gone to `pr`. Invoke `/ultrapowers:qa-specialist <ID>` and let it run to its verdict line, `Verdict: <value> — reviews/<ID>/QA-REPORT.md`. It writes its own run marker, so the QA profile of the guardrail applies while it runs; it never commits.
+The project configures the QA gatekeeper (`qa` in `.agents/ultrapowers.json`), or the engine would have gone to `pr`. Invoke `/ultrapowers:qa-specialist <ID>` and let it run to its verdict line, `Verdict: <value> — reviews/<ID>/QA-REPORT.md`. It starts its own run record, so the QA profile of the guardrail applies to its calls while it runs, and ends it after the report; it never commits.
 
 When it ends, commit the report on the documents branch: `git add reviews/<ID>` then `git commit -m "qa(<ID>): <verdict>"`.
 

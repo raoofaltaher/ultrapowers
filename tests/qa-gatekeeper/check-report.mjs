@@ -7,7 +7,7 @@
 //
 // `report` checks reviews/<id>/QA-REPORT.md against the ultrapowers:qa-report headings, the one
 // Verdict line, the per-lane not-covered reasons, one embedded screenshot per role, embedded
-// files on disk, no bare .png links, no bearer token or JWT, and the removed run marker.
+// files on disk, no bare .png links, no bearer token or JWT, and the ended run record.
 // `snapshot` prints {file: sha256} for the top-level .png and .txt evidence of a directory.
 // `resume` compares run-state before and after a resumed run. Output: [PASS]/[FAIL] lines, then
 // STATUS: PASSED or STATUS: FAILED (n failure(s)); exit 0 or 1, and 2 on usage.
@@ -153,7 +153,10 @@ function main(argv) {
       verdict: option(args, '--verdict'),
       exists: (rel) => existsSync(join(dir, rel)),
     });
-    results.push({ ok: !existsSync(join(root, '.ultrapowers', 'qa-active')), name: 'run marker removed' });
+    // The run ended itself (hooks/lib/run-records.mjs end): no record of this ticket's QA run is left.
+    let left = [];
+    try { left = readdirSync(join(root, '.ultrapowers', 'runs')).filter((n) => n.startsWith(`qa-${id}-`) && n.endsWith('.json')); } catch { left = []; }
+    results.push({ ok: left.length === 0, name: 'run record ended' });
     return print(results);
   }
   if (mode === 'snapshot' && args.length === 1) {

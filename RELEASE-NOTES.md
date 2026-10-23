@@ -6,7 +6,7 @@ The fixes for the 2026-10-23 vulnerability hunt of this repository (`reviews/aud
 
 **Heads up:**
 
-- A QA run or a hunt no longer removes its own run marker: the guardrail refuses it, whatever the spelling. The run ends by asking you to run `! rm "<ROOT>/.ultrapowers/qa-active"` (or `hunt-active`), and the session stays read-only until you do.
+- QA runs and hunts no longer hold a project-wide marker. The single `.ultrapowers/qa-active` and `hunt-active` files are gone: each run is its own record under `.ultrapowers/runs/` (`hooks/lib/run-records.mjs`), and any number run at once: several tickets of one project in different sessions and harnesses, and several projects on one disk. A record guards only its own run: on Claude Code its session and the session's subagents (`CLAUDE_CODE_SESSION_ID`), elsewhere the calls made in its own project folder; the guardrail never takes a record from above the nearest project root, so a run in a parent folder no longer guards a nested worktree or project, and your other sessions are never made read-only by it. The run ends itself once its report holds its `Verdict:` line (logged in `reviews/<id>/run-log.txt`); no step of yours is needed. A record past 24 hours guards nothing. Only a second live run of the same ticket or audit id is refused, because both would write `reviews/<id>/`. Old `qa-active` and `hunt-active` files left in a project do nothing.
 - An autopilot stage reaches only the hosts in `qa.hosts.allowed` with `curl` and `wget`, an empty list included, and only the MCP servers of the ticket's snapshot of `.mcp.json`; remote MCP servers stay out of that snapshot. A stage's environment is an allow-list: `ODOO_API_KEY` and the keys of `.agents/mcp-secrets.env` reach it only when a server of its snapshot names them, or when `autopilot.stageEnv` lists them.
 - Autopilot refuses a ticket whose body was edited after the ready label went on, removes the label and asks a maintainer to re-apply it. On Odoo with tracked tags, any task write after the ready tag counts as an edit.
 - A ticket's `.agents/ultrapowers.json` and repository git config are snapshotted at `begin`; a later change blocks the ticket until `begin` runs again with no stage open.
@@ -42,7 +42,7 @@ The fixes for the 2026-10-23 vulnerability hunt of this repository (`reviews/aud
 - The brainstorm server's session directory under `/tmp` comes from `mktemp`, mode 700.
 - Antigravity runs a plugin hook from the plugin's folder (measured on agy 1.3.3), so issue #53's relative hook path is safe there; Kimi Code documents the same.
 
-**Known residuals, out of scope by decision:** a script a stage writes and runs still reads the keys its MCP servers need, and can still rewrite engine files a call cannot; only an OS sandbox or a signed, engine-owned store removes that.
+**Known residuals, out of scope by decision:** a script a stage writes and runs still reads the keys its MCP servers need, and can still rewrite engine files a call cannot; only an OS sandbox or a signed, engine-owned store removes that. A QA run or a hunt ends itself, so a prompt-injected agent of the run can end its own guard early (audit finding M5): only through `run-records.mjs end`, only after a report with a `Verdict:` line exists, and the end is logged in `reviews/<id>/run-log.txt`. Ending a run by hand was the alternative, and it blocked concurrent runs.
 
 ## v2.2.0 (2026-10-13)
 

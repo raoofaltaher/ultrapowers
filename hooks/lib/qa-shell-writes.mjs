@@ -212,8 +212,8 @@ function normPath(p) {
 // React app and `appsettings.json` of a .NET app are ordinary files; the ticket's state files are
 // the gate's record; the repository's commit hooks run inside the engine's own commit and push.
 // The autopilot marker, the kill switch and the engine's lock folder are the envelope's own
-// switches, written by the engine outside the stage. The QA marker stays writable: the QA skill
-// writes and removes it itself inside the session, and so does the hunt (its marker is refused to an autopilot stage only).
+// switches, written by the engine outside the stage. The run records of a QA run or a hunt
+// (.ultrapowers/runs/) are refused to every call of a run (MARKER_RE) and to an autopilot stage.
 const PROTECTED_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|(^|\/)\.aws(\/|$)|mcp-secrets\.env|\.local\.(sh|env|json)$|hooks\/qa-guardrail|\.agents\/ultrapowers\.json|(^|\/)\.claude\/|(^|\/)\.git\/|(^|\/)\.git$|(^|\/)\.githooks\/|(^|\/)\.[a-z0-9_-]+\/settings(\.local)?\.json$|(^|\/)tasks\/[^/]+\/(autopilot\.json|stage-log\.jsonl|changes-comments\.md)$|(^|\/)\.ultrapowers\/(autopilot-active|autopilot-stop)$|(^|\/)\.ultrapowers\/autopilot(\/|$)|(^|\/)\.ultrapowers$/;
 // Key material no stage may read through a shell (the same list as the hook's shell rule). The
 // hook tests the typed command; an 8.3 short name (MCP-SE~1.ENV) hides the name from it, so any
@@ -222,7 +222,7 @@ const KEY_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|\.aws\/crede
 const SHORT_SEG = /[^\\/]~[0-9]/;
 // A process environment as a file: /proc/<pid>/environ and /proc/<pid>/task/<tid>/environ.
 const ENVIRON_RE = /^\/proc\/(.+\/)?environ$/;
-const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)hooks\/(qa-guardrail|session-start|team-memory-[a-z]+|lib\/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|\/)\.gemini\/hooks\/|(^|\/)\.husky\/|(^|\/)\.pre-commit-config\.ya?ml$|(^|\/)lefthook\.ya?ml$|(^|\/)\.env($|\.)|(^|\/)qa\/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|\/)\.ultrapowers\/(qa-active|hunt-active|autopilot-active|autopilot-stop)$|(^|\/)\.mcp\.json$|(^|\/)\.cursor\/(mcp\.json|cli\.json|rules\/)|(^|\/)\.vscode\/|(^|\/)\.codex\/|(^|\/)\.kimi\/|(^|\/)\.factory\/|(^|\/)\.gemini\/|(^|\/)\.qwen\/|(^|\/)opencode\.jsonc?$|(^|\/)\.hermes\//;
+const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)hooks\/(qa-guardrail|session-start|team-memory-[a-z]+|lib\/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|\/)\.gemini\/hooks\/|(^|\/)\.husky\/|(^|\/)\.pre-commit-config\.ya?ml$|(^|\/)lefthook\.ya?ml$|(^|\/)\.env($|\.)|(^|\/)qa\/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|\/)\.ultrapowers\/(autopilot-active|autopilot-stop)$|(^|\/)\.ultrapowers\/runs(\/|$)|(^|\/)\.mcp\.json$|(^|\/)\.cursor\/(mcp\.json|cli\.json|rules\/)|(^|\/)\.vscode\/|(^|\/)\.codex\/|(^|\/)\.kimi\/|(^|\/)\.factory\/|(^|\/)\.gemini\/|(^|\/)\.qwen\/|(^|\/)opencode\.jsonc?$|(^|\/)\.hermes\//;
 // Git subcommands an autopilot stage may run: the read-only set plus the commands that build the
 // ticket branch. Pushing and integrating belong to the engine; nothing discards work; `config` and
 // the `-c` global option are refused because an alias resolves to any command at all.
@@ -1034,7 +1034,7 @@ const HUNT_PROGRAMS = new Set(['date', 'cat', 'ls', 'head', 'tail', 'wc', 'grep'
 const HUNT_NET_PROGRAMS = new Set(['curl', 'wget', 'iwr', 'irm', 'invoke-webrequest', 'invoke-restmethod', 'http', 'https', 'httpie', 'xh', 'nc', 'ncat', 'netcat', 'telnet', 'ssh', 'scp', 'sftp', 'rsync', 'socat', 'ftp', 'tftp', 'lftp']);
 const HUNT_BUILTINS = new Set(['cd', 'pushd', 'popd', 'set', 'unset', 'local', ':']);
 // The scripts of the plugin that a hunt (or a task review) runs by name when the audited project is the plugin itself.
-const HUNT_OWN_SCRIPTS_RE = /(^|\/)skills\/(vulnerability-hunt\/scripts\/hunt-preflight|task-review\/scripts\/assemble-review)\.mjs$/;
+const HUNT_OWN_SCRIPTS_RE = /(^|\/)(skills\/(vulnerability-hunt\/scripts\/hunt-preflight|task-review\/scripts\/assemble-review)|hooks\/lib\/run-records)\.mjs$/;
 const HUNT_NOT_LISTED = (prog) => `the hunt reads; ${prog} is not on its list (the read verbs, git read commands, the audit tools and gh/glab api GET)`;
 // The reason the hunt refuses this program ('' when it is on the list). args: the words of the command from
 // the program on ({ w, v } with v === null for a word built from a variable); dir: the directory the command
@@ -1136,9 +1136,9 @@ const ENV_DUMP = 'dumping the environment is blocked; check a variable with ${NA
 const DESTRUCTIVE_WHY = 'recursive or forced delete is blocked';
 const SUBST_WHY = 'a command substitution cannot be analysed; spell the command out (run the inner command as its own call)';
 const SUBST_DEPTH = 3;
-// The run markers of the QA and hunt profiles: the gatekeeper's switches, never the run's to change.
-const MARKER_RE = /(^|\/)\.ultrapowers\/(qa-active|hunt-active)$/;
-const MARKER_WHY = 'is the run marker; the run marker is not the run\'s to change: your human partner ends the run by removing it (`! rm .ultrapowers/<marker>` in the session, or from their own terminal)';
+// The run records of the QA and hunt profiles (.ultrapowers/runs/): the guardrail's switches, never a call's to change.
+const MARKER_RE = /(^|\/)\.ultrapowers\/runs(\/|$)/;
+const MARKER_WHY = 'is a run record; no call of a run writes, moves or removes one: the run ends itself through hooks/lib/run-records.mjs end once its report holds its Verdict line';
 // A stage reads no tracker credential and nothing named like a secret out of the environment.
 const TRACKER_VARS = /^(GH_TOKEN|GITHUB_TOKEN|GITLAB_TOKEN|GLAB_TOKEN|ODOO_API_KEY|ULTRAPOWERS_STAGE_.*)$/i;
 const SECRET_VARS = /TOKEN|KEY|SECRET|PASS|CREDENTIAL|AUTH|COOKIE|SESSION|PRIVATE/i;
@@ -1232,10 +1232,10 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     }
     if (p.split('/').includes('..')) return deny(`${what} (${raw}) has a parent-directory segment and cannot be verified`);
     const real = realCanonical(p, rootC);
-    // QA run and hunt: both run markers are protected from every write, move and removal (one sole
-    // `rm` of the run's own marker excepted, before the walk), and so is what can reach them: a
-    // pattern under .ultrapowers/ (rm .ultrapowers/*-active) and .ultrapowers/ itself as the folder
-    // something is extracted into.
+    // QA run and hunt: the run records are protected from every write, move and removal (a run ends
+    // itself through hooks/lib/run-records.mjs end), and so is what can reach them: a pattern under
+    // .ultrapowers/ (rm .ultrapowers/runs/*) and .ultrapowers/ itself as the folder something is
+    // extracted into.
     if (!autopilot) {
       const innerL = (rel(real, rootC, ignoreCase) ?? real).toLowerCase();
       if (MARKER_RE.test(innerL) || /(^|\/)\.ultrapowers\/_$/.test(innerL) || (/[*?[{]/.test(raw) && /(^|\/)\.ultrapowers(\/|$)/i.test(p))) {

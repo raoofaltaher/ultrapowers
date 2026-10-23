@@ -9,14 +9,18 @@
 # exit 0 : allow.  exit 2 : deny; stderr carries "QA-GUARDRAIL DENY: <reason>",
 #          "HUNT-GUARDRAIL DENY: <reason>" or "AUTOPILOT-GUARDRAIL DENY: <reason>".
 #
-# Inert unless a run marker exists at or above the working directory: `.ultrapowers/qa-active`
-# (the QA profile: read-only, writes under reviews/<id>/ only), `.ultrapowers/hunt-active` (the
-# hunt profile: the QA rules with the audit id in place of the ticket, plus the audit tools of the
-# hunt allowed and no test suite, no worktree and no tracker write) or `.ultrapowers/autopilot-active`
-# (the autopilot profile: writes anywhere in the worktree except protected paths; no push, no
-# merge, no tracker write; the engine does those between stages). With several markers in one
-# directory the first of qa, hunt, autopilot applies. The skills write the markers and remove them
-# at the end of the run, so every other session pays only a directory walk.
+# Inert unless a run guards this call. A QA run (the QA profile: read-only, writes under
+# reviews/<id>/ only) or a vulnerability hunt (the hunt profile: the QA rules with the audit id in
+# place of the ticket, plus the audit tools of the hunt allowed and no test suite, no worktree and no
+# tracker write) is a run record, .ultrapowers/runs/<run>.json in the nearest project root
+# (hooks/lib/run-records.mjs): any number are active at once, and a record guards only its own
+# session (Claude Code's session_id, its subagents included) or, bound to no session, the calls made
+# in its own project folder. A record above the nearest project root never counts. An autopilot stage
+# is `.ultrapowers/autopilot-active` at or above the working directory (the autopilot profile: writes
+# anywhere in the worktree except protected paths; no push, no merge, no tracker write; the engine does
+# those between stages). A record that guards the call comes before the autopilot marker. The skills
+# write the records and end them at the end of the run; every other session pays a directory walk,
+# and one node start while some run of its project is active.
 #
 # `set -uo pipefail` and NOT `-e`: the "grep matches -> deny, else continue" pattern below
 # relies on a non-matching grep returning non-zero without aborting the script.
@@ -58,11 +62,11 @@ marker_suffix_r() {
       REPLY=" (autopilot stage${ticket_id:+ for ticket $ticket_id}: ULTRAPOWERS_AUTOPILOT_INSIDE is set and the marker $f is gone. If no stage is running, your human partner can end it with autopilot.mjs end ${ticket_id:-<ID>} ${stage:-<stage>} or unset that variable.)"
     fi
   elif [ "${PROFILE:-}" = "hunt" ]; then
-    f="$root/.ultrapowers/hunt-active"
-    REPLY=" (vulnerability hunt${ticket_id:+ $ticket_id}: $f${age:+, $age old}. If no hunt is in progress, your human partner can end it by running /ultrapowers:vulnerability-hunt again or by removing that file.)"
+    f="${RUN_FILE:-$root/.ultrapowers/runs/}"
+    REPLY=" (vulnerability hunt${ticket_id:+ $ticket_id}: $f${age:+, $age old}. The hunt ends itself when its report is written; if its run is gone, your human partner can remove that file.)"
   else
-    f="$root/.ultrapowers/qa-active"
-    REPLY=" (QA run${ticket_id:+ for ticket $ticket_id}: $f${age:+, $age old}. If no QA run is in progress, your human partner can end it with /ultrapowers:qa-specialist ${ticket_id:-<id>} or remove that file.)"
+    f="${RUN_FILE:-$root/.ultrapowers/runs/}"
+    REPLY=" (QA run${ticket_id:+ for ticket $ticket_id}: $f${age:+, $age old}. The run ends itself when its report is written; if its run is gone, your human partner can remove that file.)"
   fi
 }
 
@@ -96,30 +100,54 @@ lower_r() {
   REPLY="$s"
 }
 
-# Walk up from $1 looking for a run marker; REPLY is the directory that holds it and
-# PROFILE is `qa`, `hunt` or `autopilot` (in that order of precedence when several markers exist in
-# the same directory).
-PROFILE=""
+# The run record that guards this call in the project root $1, picked by hooks/lib/run-records.mjs
+# from the records there and the event's top-level session_id. Sets PROFILE (qa, hunt or corrupt),
+# RUN_ID, RUN_FILE and RUN_STARTED; fails when no record guards the call. Records exist, so a run of
+# this project is active: without node the call cannot be judged, and it is refused.
+pick_run_r() {
+  local d="$1" rr_src rr_js d_node picked rest
+  command -v node >/dev/null 2>&1 || deny "node is required to read the run records of $d/.ultrapowers/runs/ and is not on PATH"
+  rr_src="${BASH_SOURCE[0]}"
+  rr_src="${rr_src//\\//}"
+  case "$rr_src" in */*) rr_js="${rr_src%/*}/lib/run-records.mjs" ;; *) rr_js="lib/run-records.mjs" ;; esac
+  d_node="$d"
+  if command -v cygpath >/dev/null 2>&1; then
+    rr_js="$(cygpath -m "$rr_js" 2>/dev/null || printf '%s' "$rr_js")"
+    d_node="$(cygpath -m "$d" 2>/dev/null || printf '%s' "$d")"
+  fi
+  picked="$(printf '%s' "$event" | node "$rr_js" pick --root "$d_node" 2>/dev/null)" \
+    || deny "the run records of $d/.ultrapowers/runs/ could not be read; every call of this project is refused while they cannot"
+  [ -n "$picked" ] || return 1
+  PROFILE="${picked%%$'\t'*}"; rest="${picked#*$'\t'}"
+  RUN_ID="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+  rest="${rest#*$'\t'}"
+  RUN_STARTED="${rest%%$'\t'*}"; RUN_FILE="${rest#*$'\t'}"
+  return 0
+}
+
+# Walk up from $1 looking for a run; REPLY is the directory and PROFILE is `qa`, `hunt`, `corrupt`
+# or `autopilot`. Run records count only up to the nearest project root (the first folder with
+# .agents/ultrapowers.json), and only the one that guards this call; the autopilot marker counts at
+# any height, after a record of the same folder.
+PROFILE=""; RUN_ID=""; RUN_FILE=""; RUN_STARTED=""
 find_root_r() {
-  local d="$1"
+  local d="$1" past_project="" f
   REPLY=""
   [ -n "$d" ] || return 1
   while :; do
-    if [ -f "$d/.ultrapowers/qa-active" ]; then
-      REPLY="$d"
-      PROFILE="qa"
-      return 0
-    fi
-    if [ -f "$d/.ultrapowers/hunt-active" ]; then
-      REPLY="$d"
-      PROFILE="hunt"
-      return 0
+    if [ -z "$past_project" ] && [ -d "$d/.ultrapowers/runs" ]; then
+      for f in "$d/.ultrapowers/runs/"*.json; do
+        [ -e "$f" ] || break
+        if pick_run_r "$d"; then REPLY="$d"; return 0; fi
+        break
+      done
     fi
     if [ -f "$d/.ultrapowers/autopilot-active" ]; then
       REPLY="$d"
       PROFILE="autopilot"
       return 0
     fi
+    [ -f "$d/.agents/ultrapowers.json" ] && past_project=1
     case "$d" in
       /|.|"") return 1 ;;
       # A relative path with no slash left has no parent to climb to (a hook that never returns
@@ -250,6 +278,7 @@ if [ -z "$root" ] && [ "${ULTRAPOWERS_AUTOPILOT_INSIDE:-}" = "1" ]; then
   [ -n "$root" ] || deny "an autopilot stage is running (ULTRAPOWERS_AUTOPILOT_INSIDE) outside any ultrapowers project; the call cannot be verified"
 fi
 [ -n "$root" ] || exit 0
+[ "$PROFILE" = "corrupt" ] && deny "a run record cannot be read ($RUN_FILE); every call of this project is refused while it exists. Your human partner removes that file"
 [ "$PROFILE" = "autopilot" ] && GUARD_PREFIX="AUTOPILOT-GUARDRAIL"
 [ "$PROFILE" = "hunt" ] && GUARD_PREFIX="HUNT-GUARDRAIL"
 run_kind="a QA run"
@@ -380,10 +409,8 @@ for (const source of sources) {
     try { if (str(source[key])) trackerHosts.push(new URL(source[key]).hostname.toLowerCase()); } catch (e) { /* not a URL */ }
   }
 }
-let ticket = "";
-try { ticket = fs.readFileSync(path.join(root, ".ultrapowers", "qa-active"), "utf8").trim(); } catch (e) { ticket = ""; }
-// The hunt marker holds the audit id as plain text, like the QA marker: a ticket id or audit-<date>.
-if (!ticket) { try { ticket = fs.readFileSync(path.join(root, ".ultrapowers", "hunt-active"), "utf8").trim(); } catch (e) { ticket = ""; } }
+// A QA run or a hunt: the id of the record the shell picked (run-records.mjs validated it).
+let ticket = str(process.argv[4]).trim();
 if (!ticket) {
   // The autopilot marker is JSON: { ticket, branch, scope }. Its ticket id serves the same role.
   try { ticket = str(JSON.parse(fs.readFileSync(path.join(root, ".ultrapowers", "autopilot-active"), "utf8")).ticket).trim(); } catch (e) { ticket = ""; }
@@ -399,12 +426,12 @@ if (ticket && (ticket.includes("..") || /[\/\\]/.test(ticket))) {
 let markerAge = "";
 let markerStage = "";
 try {
-  const qaMarker = path.join(root, ".ultrapowers", "qa-active");
-  const huntMarker = path.join(root, ".ultrapowers", "hunt-active");
-  const marker = fs.existsSync(qaMarker) ? qaMarker : fs.existsSync(huntMarker) ? huntMarker : path.join(root, ".ultrapowers", "autopilot-active");
-  const seconds = Math.max(0, Math.round((Date.now() - fs.statSync(marker).mtimeMs) / 1000));
-  markerAge = seconds < 60 ? "<1m" : seconds < 3600 ? Math.floor(seconds / 60) + "m" : seconds < 172800 ? Math.floor(seconds / 3600) + "h" : Math.floor(seconds / 86400) + "d";
-  if (marker !== qaMarker && marker !== huntMarker) markerStage = str(JSON.parse(fs.readFileSync(marker, "utf8")).stage).trim();
+  const started = str(process.argv[5]).trim();
+  const marker = path.join(root, ".ultrapowers", "autopilot-active");
+  const since = started ? Date.parse(started) : fs.statSync(marker).mtimeMs;
+  const seconds = Math.max(0, Math.round((Date.now() - since) / 1000));
+  if (Number.isFinite(seconds)) markerAge = seconds < 60 ? "<1m" : seconds < 3600 ? Math.floor(seconds / 60) + "m" : seconds < 172800 ? Math.floor(seconds / 3600) + "h" : Math.floor(seconds / 86400) + "d";
+  if (!started) markerStage = str(JSON.parse(fs.readFileSync(marker, "utf8")).stage).trim();
 } catch (e) { /* no facts: the deny message omits them */ }
 // Every path-shaped field any tool carries (a read, a search, an upload), for the
 // key-material check that applies to all tools, not only to file writes.
@@ -522,7 +549,7 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
 }, (e) => {
   process.stdout.write(["noresolver:" + String(e.message).split("\n")[0], "", "", "", "", "", "", "", ""].join("\0") + "\0");
 });
-' "$root_node" "$hook_dir_node" "$root_start_node")
+' "$root_node" "$hook_dir_node" "$root_start_node" "$RUN_ID" "$RUN_STARTED")
 case "$parse_status" in
   noresolver:*) deny "the path resolver hooks/lib/guard-paths.mjs cannot be loaded (${parse_status#noresolver:}); every call is refused during $run_kind" ;;
   badconfig:*) deny "the project config .agents/ultrapowers.json cannot be read (${parse_status#badconfig:}); every call is refused while a run marker exists under .ultrapowers/" ;;
@@ -595,15 +622,16 @@ PROTECTED_RE='(^|/)\.ssh(/|$)|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws(/|$)|
 # The autopilot envelope also keeps the agent out of CI, the plugin hooks, the repository's commit
 # hooks (they run inside the engine's own commit and push) and the env file: a stage that
 # rewrites the workflow or the hooks rewrites its own brakes.
-AUTOPILOT_PROTECTED_RE='(^|/)\.github/|(^|/)\.gitlab-ci\.yml$|(^|/)hooks/(qa-guardrail|session-start|team-memory-[a-z]+|lib/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|/)\.gemini/hooks/|(^|/)\.husky/|(^|/)\.pre-commit-config\.ya?ml$|(^|/)lefthook\.ya?ml$|(^|/)\.env($|\.)|(^|/)qa/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|/)\.ultrapowers/(qa-active|hunt-active|autopilot-active|autopilot-stop)$|(^|/)\.mcp\.json$|(^|/)\.cursor/(mcp\.json|cli\.json|rules/)|(^|/)\.vscode/|(^|/)\.codex/|(^|/)\.kimi/|(^|/)\.factory/|(^|/)\.gemini/|(^|/)\.qwen/|(^|/)opencode\.jsonc?$|(^|/)\.hermes/'
+AUTOPILOT_PROTECTED_RE='(^|/)\.github/|(^|/)\.gitlab-ci\.yml$|(^|/)hooks/(qa-guardrail|session-start|team-memory-[a-z]+|lib/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|/)\.gemini/hooks/|(^|/)\.husky/|(^|/)\.pre-commit-config\.ya?ml$|(^|/)lefthook\.ya?ml$|(^|/)\.env($|\.)|(^|/)qa/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|/)\.ultrapowers/(autopilot-active|autopilot-stop)$|(^|/)\.ultrapowers/runs(/|$)|(^|/)\.mcp\.json$|(^|/)\.cursor/(mcp\.json|cli\.json|rules/)|(^|/)\.vscode/|(^|/)\.codex/|(^|/)\.kimi/|(^|/)\.factory/|(^|/)\.gemini/|(^|/)\.qwen/|(^|/)opencode\.jsonc?$|(^|/)\.hermes/'
 # The QA baseline (known-issues) and the instruction files every later session obeys are the gate's
 # record and the agents' rules: a stage that edits its own baseline hides a failure from the QA
 # gate. The baseline's path is qa.knownIssues (default qa/known-issues.md, matched above).
 known_lc="$(lower "$known_issues")"
-# The QA and hunt run markers: never written, moved or removed by the run, through a file tool, a patch
-# or the shell; the human partner ends the run (an agent told to remove its own guardrail would do it).
-MARKER_RE='(^|/)\.ultrapowers/(qa-active|hunt-active)$'
-MARKER_WHY="is the run marker; the run marker is not the run's to change: your human partner ends the run by removing it (\`! rm .ultrapowers/<marker>\` in the session, or from their own terminal)"
+# The QA and hunt run records: never written, moved or removed by a call of a run, through a file tool,
+# a patch or the shell. A run ends itself through hooks/lib/run-records.mjs end, which removes its
+# record only once its report holds its Verdict line (and logs the end in reviews/<id>/run-log.txt).
+MARKER_RE='(^|/)\.ultrapowers/runs(/|$)'
+MARKER_WHY="is a run record; no call of a run writes, moves or removes one: the run ends itself through run-records.mjs end once its report holds its Verdict line"
 # --- MCP tools of a tracker, of mail or chat, or of git (git: autopilot only): reads pass; in an autopilot stage writes belong to the
 # engine between stages (the approve label among them). A tool name with a read verb is a read.
 # This rule comes before the file-tool gate: a tracker tool that carries a `path` argument

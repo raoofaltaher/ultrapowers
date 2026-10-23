@@ -205,7 +205,7 @@ test('scanContentHint finds generation terms and stays quiet otherwise', () => {
   assert.equal(scanContentHint('Adds a sort button to the table.').active, false);
 });
 
-test('preflight resolves docs, run-state, marker and the change set from ticket branches', () => {
+test('preflight resolves docs, run-state, run records and the change set from ticket branches', () => {
   const root = makeProject();
   const report = preflight({ cwd: join(root, 'repo-b'), ticket: '1234', env: ENV_ALL });
   assert.equal(report.ok, true);
@@ -214,7 +214,9 @@ test('preflight resolves docs, run-state, marker and the change set from ticket 
   assert.equal(report.docs.spec.exists, true);
   assert.equal(report.docs.plans.length, 1);
   assert.equal(report.runState.exists, false);
-  assert.equal(report.markerExists, false);
+  assert.deepEqual(report.runs, []);
+  assert.equal(report.activeRun, null);
+  assert.equal(report.markerExists, undefined, 'the single marker file is gone');
   assert.equal(report.knownIssues.exists, true);
   const a = report.changeSet.find((r) => r.repo === 'repo-a');
   const b = report.changeSet.find((r) => r.repo === 'repo-b');
@@ -228,15 +230,55 @@ test('preflight resolves docs, run-state, marker and the change set from ticket 
   rmSync(root, { recursive: true, force: true });
 });
 
-test('preflight reports run-state and marker when present and turns lane 7 off without generation terms', () => {
+test('preflight reports run-state when present and turns lane 7 off without generation terms', () => {
   const root = makeProject({ specText: 'Adds a sort button to the table.' });
-  mkdirSync(join(root, '.ultrapowers'));
-  writeFileSync(join(root, '.ultrapowers', 'qa-active'), '1234');
   writeFileSync(join(root, 'reviews', '1234', 'run-state.json'), '{}');
   const report = preflight({ cwd: root, ticket: '1234', env: ENV_ALL });
   assert.equal(report.runState.exists, true);
-  assert.equal(report.markerExists, true);
+  assert.equal(report.activeRun, null);
   assert.equal(report.gates.lane7.active, false);
+  rmSync(root, { recursive: true, force: true });
+});
+
+// A run record as hooks/lib/run-records.mjs writes it: .ultrapowers/runs/<run>.json.
+function writeRun(root, { profile = 'qa', id, session = null, ageMs = 0, suffix = 'aaaaaaaa' } = {}) {
+  const run = `${profile}-${id}-${suffix}`;
+  mkdirSync(join(root, '.ultrapowers', 'runs'), { recursive: true });
+  writeFileSync(join(root, '.ultrapowers', 'runs', `${run}.json`), JSON.stringify({ run, profile, id, session, startedAt: new Date(Date.now() - ageMs).toISOString() }));
+  return run;
+}
+
+test('a live QA record of another ticket, or a hunt of this id, is reported and never stops the run', () => {
+  const root = makeProject();
+  const other = writeRun(root, { id: '9999', session: 'sess-other' });
+  const hunt = writeRun(root, { profile: 'hunt', id: '1234', suffix: 'bbbbbbbb' });
+  const report = preflight({ cwd: root, ticket: '1234', env: ENV_ALL });
+  assert.deepEqual(report.runs.map((r) => r.run).sort(), [other, hunt].sort());
+  assert.equal(report.activeRun, null);
+  assert.equal(report.runs.find((r) => r.run === other).session, 'sess-other');
+  assert.equal(report.runs.find((r) => r.run === other).file, `.ultrapowers/runs/${other}.json`);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('a live QA record of this ticket is the activeRun, with its session, whatever session asks', () => {
+  const root = makeProject();
+  const run = writeRun(root, { id: '1234', session: 'sess-a', ageMs: 60 * 60 * 1000 });
+  writeRun(root, { id: '9999' });
+  const report = preflight({ cwd: root, ticket: '1234', env: ENV_ALL });
+  assert.equal(report.activeRun.run, run);
+  assert.equal(report.activeRun.session, 'sess-a');
+  assert.equal(report.activeRun.expired, false);
+  assert.equal(report.runs.length, 2);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('a record past its 24 hours is no stop and is not listed; a corrupt one is listed and stops nothing by itself', () => {
+  const root = makeProject();
+  writeRun(root, { id: '1234', ageMs: 25 * 60 * 60 * 1000 });
+  writeFileSync(join(root, '.ultrapowers', 'runs', 'qa-1234-cccccccc.json'), '{ not json');
+  const report = preflight({ cwd: root, ticket: '1234', env: ENV_ALL });
+  assert.equal(report.activeRun, null);
+  assert.deepEqual(report.runs.map((r) => [r.run, r.corrupt]), [['qa-1234-cccccccc', true]]);
   rmSync(root, { recursive: true, force: true });
 });
 

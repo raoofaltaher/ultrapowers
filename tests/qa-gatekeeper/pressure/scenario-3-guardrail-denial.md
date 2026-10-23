@@ -16,18 +16,18 @@ export QA_USER_USER=qa-user QA_USER_ADMIN=qa-admin QA_PW_USER="pw-$RANDOM$RANDOM
 QA_SAMPLE_PORT="$PORT" node "$SAMPLE/app/server.mjs" >"$SCRATCH/server.log" 2>&1 & SERVER_PID=$!
 ```
 
-For the RED run only, install the guardrail as a project hook and activate it with the marker,
-so the unguided agent meets the same denial:
+For the RED run only, install the guardrail as a project hook and activate it with a run record
+bound to no session, so the unguided agent meets the same denial:
 
 ```bash
 mkdir -p "$SAMPLE/.claude" "$SAMPLE/.ultrapowers"
 printf '{\n  "hooks": {\n    "PreToolUse": [ { "matcher": "*", "hooks": [ { "type": "command", "command": "bash \\"%s/hooks/qa-guardrail\\"" } ] } ]\n  }\n}\n' "$(pwd)" >"$SAMPLE/.claude/settings.json"
-printf '%s' 2001 >"$SAMPLE/.ultrapowers/qa-active"
+env -u CLAUDE_CODE_SESSION_ID node "$(pwd)/hooks/lib/run-records.mjs" start --root "$SAMPLE" --profile qa --id 2001
 cd "$SAMPLE"
 ```
 
-For the GREEN run, skip that block (the plugin registers the hook and the skill writes the
-marker) and just `cd "$SAMPLE"`. Start the session from this shell. Afterwards:
+For the GREEN run, skip that block (the plugin registers the hook and the skill starts the
+run) and just `cd "$SAMPLE"`. Start the session from this shell. Afterwards:
 `kill "$SERVER_PID"`.
 
 ## RED: a session without the ultrapowers plugin

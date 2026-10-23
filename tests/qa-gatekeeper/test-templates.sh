@@ -41,7 +41,7 @@ done
 
 # Piece 2 keeps the managed gitignore block body in templates/_blocks/gitignore.tmpl.
 GITIGNORE_BLOCK="$REPO_ROOT/templates/_blocks/gitignore.tmpl"
-assert_file_contains "$GITIGNORE_BLOCK" '.ultrapowers/qa-active' "hygiene block ignores the run marker"
+assert_file_contains "$GITIGNORE_BLOCK" '.ultrapowers/runs/' "hygiene block ignores the run records"
 assert_file_contains "$GITIGNORE_BLOCK" 'reviews/**/run-state.json' "hygiene block ignores run-state.json"
 
 SETTINGS="$REPO_ROOT/templates/.claude/settings.json.tmpl"

@@ -5,15 +5,17 @@
 // to .agents/ultrapowers.json, validates the `qa` section against spec 3.2 (required keys and
 // placeholder detection), decides which lanes are gated off and why, checks credential
 // PRESENCE by variable name (never values), locates the ticket's brief, spec, plans and
-// review folder, and derives the change set from repos on a branch matching the ticket
+// review folder, lists the project's live run records (`runs`, and `activeRun` for a live QA
+// record of this ticket), and derives the change set from repos on a branch matching the ticket
 // (diffed against their default branch). Prints one JSON report on stdout. With --change-set-only
 // it prints just the changeSet array and needs no qa section (the task-review skill uses it).
 //
 // Exit codes: 0 a report was produced (read `ok`), 2 usage, 3 no project root, 4 invalid ticket.
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { resolveTool, childEnv } from '../../../hooks/lib/resolve-tool.mjs';
+import { readRuns } from '../../../hooks/lib/run-records.mjs';
 
 export const DEFAULT_TICKET_PATTERN = '^#?[A-Za-z0-9][A-Za-z0-9._-]*$';
 const AUTH_TYPES = ['form', 'oidc-password', 'custom'];
@@ -251,7 +253,7 @@ function projectFor(cwd, ticket) {
   } catch (error) {
     return { fail: { ok: false, root, ticket, errors: [`ERROR: .agents/ultrapowers.json is not valid JSON: ${error.message}`], exitCode: 3 } };
   }
-  // The id names the marker content and the reviews/<id>/ folder, so anything that names
+  // The id names the run record and the reviews/<id>/ folder, so anything that names
   // another path is refused whatever ticketPattern allows, and so is a leading _, which marks
   // a template folder such as reviews/_template (the same rule as ticket-lib.sh).
   if (/^(\.|\.\.|[-_].*)$/.test(String(ticket)) || /[/\\\s]/.test(String(ticket))) {
@@ -316,6 +318,12 @@ export function preflight({ cwd, ticket, env }) {
       runState.error = `run-state.json is not valid JSON: ${error.message}`;
     }
   }
+  // The run records of the project (hooks/lib/run-records.mjs): those not past their run, and any that
+  // cannot be read. Only a live QA record of this very ticket stops a run (it would write the same
+  // reviews/<id>/); other tickets, other sessions and the hunt never do, and an expired record guards
+  // nothing (the start clears it).
+  const runs = readRuns(root).filter((r) => r.corrupt || !r.expired).map(({ file, ...r }) => ({ ...r, file: relative(root, file).split('\\').join('/') }));
+  const activeRun = runs.find((r) => !r.corrupt && r.profile === 'qa' && r.id === ticket) ?? null;
   const report = {
     ok: validated.missing.length === 0,
     root, ticket,
@@ -330,7 +338,8 @@ export function preflight({ cwd, ticket, env }) {
     gates: validated.gates,
     docs,
     runState,
-    markerExists: existsSync(join(root, '.ultrapowers', 'qa-active')),
+    runs,
+    activeRun,
     changeSet: changeSetFor(root, repoList, ticket),
     contentHint: hint,
     exitCode: 0,

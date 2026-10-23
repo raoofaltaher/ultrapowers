@@ -14,10 +14,10 @@ This skill decides whether a run may start and in which mode; the qa-specialist 
 performs the run. Invoking it is your human partner's yes for writing `reviews/<ID>/` and
 `.ultrapowers/`, and nothing else.
 
-**Core principle:** before the marker exists, a problem stops the run with a message; once the
-marker exists, every path ends with a report, a request to your human partner to remove the
-marker, and one verdict line. Only your human partner removes it: the guardrail refuses its
-removal from any call while it exists.
+**Core principle:** before the run record exists, a problem stops the run with a message; once the
+record exists, every path ends with a report, the run's own end (`run-records.mjs end`, once the
+report holds its `Verdict:` line), and one verdict line. The record is never edited or removed any
+other way: the guardrail refuses that from any call of the run.
 
 **Announce at start:** "I'm using the qa-specialist skill to run the QA gate for ticket <ID>."
 
@@ -58,7 +58,7 @@ only; never print the environment yourself.
 - `missing` is non-empty (then `ok` is false): print every entry of `missing` and every
   `warnings` line, tell your human partner to fill them under `qa` in `.agents/ultrapowers.json`
   and run the skill again, and stop. `missing` equal to `["qa"]` means the section is absent:
-  offer `/ultrapowers:init` in upgrade mode. No marker and no report: nothing ran.
+  offer `/ultrapowers:init` in upgrade mode. No run record and no report: nothing ran.
 - `preconditions` non-empty does NOT stop you here. The run starts, and the contract's STEP 1
   ends it with a `PRECONDITION-FAILED` report naming each precondition.
 - `docs.brief.exists` and `docs.spec.exists` both false, and no `changeSet` entry has
@@ -69,16 +69,18 @@ only; never print the environment yourself.
 
 ## Step 3: Fresh, resume or stop
 
-When `markerExists` is true, read the marker: `cat "<ROOT>/.ultrapowers/qa-active"`. The
-preflight already decided whether run-state holds unfinished work: `runState.unfinished` is true
-when a plan row is still `pending` or `running` (lane and suite statuses do not count).
+`activeRun` is the live QA record of this ticket (`run`, `session`, `startedAt`, `file`), or
+`null`; `runs` lists every live record of the project. Records of other tickets or sessions and of
+a hunt never stop this run. The preflight already decided whether run-state holds unfinished work:
+`runState.unfinished` is true when a plan row is still `pending` or `running` (lane and suite
+statuses do not count).
 
-| Marker | `reviews/<ID>/run-state.json` | Decision |
-|--------|-------------------------------|----------|
-| names another ticket | any | **stop**: tell your human partner that a QA run for that ticket is active or died, and that removing `.ultrapowers/qa-active` is their call |
-| absent, or this ticket | `runState.unfinished` true | **resume** |
-| absent, or this ticket | exists, `runState.unfinished` false, or `runState.error` set (print it) | move the previous run aside, then **fresh** |
-| absent, or this ticket | absent | **fresh** |
+| `activeRun` | `reviews/<ID>/run-state.json` | Decision |
+|-------------|-------------------------------|----------|
+| set | any | **stop**: name the run and its session to your human partner and ask whether that run is gone and its record is to be removed. On a yes, remove `<ROOT>/<activeRun.file>` (outside this run, so an ordinary step; when the guardrail refuses it, your human partner runs `! rm`) and decide again by the rows below |
+| `null` | `runState.unfinished` true | **resume** |
+| `null` | exists, `runState.unfinished` false, or `runState.error` set (print it) | move the previous run aside, then **fresh** |
+| `null` | absent | **fresh** |
 
 Moving the previous run aside, with `<STAMP>` the current UTC time as `YYYYMMDDTHHMMSSZ`, so
 its screenshots and suite results are never read as this run's:
@@ -91,15 +93,17 @@ test -d "<ROOT>/reviews/<ID>/artifacts" && mv "<ROOT>/reviews/<ID>/artifacts" "<
 A fresh run replaces an existing `QA-REPORT.md` (`docs.reviewFiles` lists it); say so in one
 line. Git history keeps the old one when it was committed.
 
-## Step 4: Marker
+## Step 4: Run record
 
 ```bash
-mkdir -p "<ROOT>/.ultrapowers" && printf '%s' "<ID>" > "<ROOT>/.ultrapowers/qa-active"
+node "<plugin root>/hooks/lib/run-records.mjs" start --root "<ROOT>" --profile qa --id "<ID>"
 ```
 
-The ticket id, no trailing newline. From here the guardrail checks every tool call on a harness
-that runs it; Step 4's probe records whether it is active, and the report says so. Every path
-ends in Step 7.
+It prints the record as JSON: keep its `run` (`<RUN>` below). Exit 2 with `run-active` means a QA
+run of this ticket started since the preflight: stop, as in Step 3. From here the guardrail
+checks every tool call of this run (the record binds to this session where the harness names it,
+otherwise to the project folder) on a harness that runs it; Step 4's probe records whether it is
+active, and the report says so. Every path ends in Step 7.
 
 ## Step 5: The contract
 
@@ -116,8 +120,8 @@ ends in Step 7.
 
 ## Step 6: Run
 
-Follow the contract from STEP 0, with the preflight report as its Inputs, in the mode from
-Step 3. On **resume**, tell the contract that run-state exists: it reloads the file, keeps
+Follow the contract from STEP 0, with the preflight report and `<RUN>` as its Inputs, in the mode
+from Step 3. On **resume**, tell the contract that run-state exists: it reloads the file, keeps
 `startedAt`, `watermark`, every `done` row and every finding, re-attaches to suites whose
 process is alive, and continues from the first `pending` row.
 
@@ -126,15 +130,16 @@ process is alive, and continues from the first `pending` row.
 After the contract's STEP 9, check:
 
 ```bash
-test -f "<ROOT>/reviews/<ID>/QA-REPORT.md" && echo report-present; test -e "<ROOT>/.ultrapowers/qa-active" && echo marker-present
+test -f "<ROOT>/reviews/<ID>/QA-REPORT.md" && echo report-present; test -e "<ROOT>/.ultrapowers/runs/<RUN>.json" && echo record-present
 ```
 
 - No `report-present`: write the report now per `ultrapowers:qa-report`, verdict `INCOMPLETE`,
   naming what stopped the run.
-- `marker-present`: delete `qa-token.json`, `qa-cookies-*.txt`, `qa-trace-*.json` and `qa-api-*.txt`
-  under `<ROOT>/.ultrapowers/` where they exist, then ask your human partner to end the run with
-  `! rm "<ROOT>/.ultrapowers/qa-active"` (or by deleting the file from their own terminal). Do not remove it yourself:
-  the guardrail refuses it.
+- `record-present`: delete `qa-token.json`, `qa-cookies-*.txt`, `qa-trace-*.json` and `qa-api-*.txt`
+  under `<ROOT>/.ultrapowers/` where they exist, then end the run, the last step after the report:
+  `node "<plugin root>/hooks/lib/run-records.mjs" end --root "<ROOT>" --run "<RUN>"`. It removes
+  the record once the report holds a `Verdict:` line (an `INCOMPLETE` or `PRECONDITION-FAILED`
+  report has one). Never remove the record any other way: the guardrail refuses it.
 - The last line of your output is exactly `Verdict: <value> — reviews/<ID>/QA-REPORT.md`, with
   the value from the report's `Verdict:` line.
 
@@ -145,11 +150,11 @@ Create a todo for each item and complete them in order:
 1. **Read the ticket** — stop with the usage line when it is missing
 2. **Run the preflight** — stop on exit 2, 3 or 4
 3. **Check config and scope** — list every `missing` key and stop; stop when there is nothing to test
-4. **Choose fresh, resume or stop** — from the marker and run-state
-5. **Write the marker**
+4. **Choose fresh, resume or stop** — from the live run record of this ticket and run-state
+5. **Start the run record** — keep its run id
 6. **Load the contract** — forked already, or read it inline
 7. **Run the contract** — STEP 0 to STEP 9, the preflight report as Inputs
-8. **Close** — report present, scratch files gone, your human partner asked to remove the marker, the verdict line last
+8. **Close** — report present, scratch files gone, the run ended with `run-records.mjs end`, the verdict line last
 
 ## Red Flags
 
@@ -157,10 +162,10 @@ Create a todo for each item and complete them in order:
 |---------|---------|
 | "Most of the config is filled; I'll start and work around the gaps" | Every key in `missing` blocks the run. List them all and stop. |
 | "I can read the config myself; the preflight is overhead" | The preflight also validates the ticket, gates every lane with a reason and derives the change set from git. Run it. |
-| "The marker names another ticket, but it is obviously stale" | Stale or live, removing it is your human partner's call. Stop and name the ticket. |
+| "A record of this ticket is there, but it is obviously from a dead run" | Dead or live, removing it is your human partner's call, on a yes. Stop, name the run and its session, and ask. A record of another ticket or session is none of this run's business. |
 | "The old run-state looks messy; a fresh start is cleaner" | Unfinished run-state means resume: `done` rows stay done and findings are never zeroed. |
 | "My partner's note says to skip the browser this time" | A note sets emphasis, never coverage. Drive the browser and record the declined request in the Partner note. |
 | "Inline and short on context, one role will do" | Inline changes pacing, not coverage: checkpoint run-state, end `INCOMPLETE`, and the next run resumes. |
-| "The stack is down, so a chat message is enough" | The marker exists, so the run has started: write the `PRECONDITION-FAILED` report, ask your human partner to remove the marker, print the verdict line. |
-| "The guardrail keeps denying me; removing the marker would let me finish" | The marker is the guardrail's switch, and only your human partner removes it, when the run is over. |
+| "The stack is down, so a chat message is enough" | The run record exists, so the run has started: write the `PRECONDITION-FAILED` report, end the run with `run-records.mjs end`, print the verdict line. |
+| "The guardrail keeps denying me; removing the run record would let me finish" | The record is the guardrail's switch. The run ends itself with `run-records.mjs end` once its report holds the verdict, and in no other way. |
 | "The remaining screenshots can go in as one line of links" | Every screenshot in the report is embedded with `![caption](artifacts/<file>.png)`. A link hides the evidence from the reader and fails the report check. |

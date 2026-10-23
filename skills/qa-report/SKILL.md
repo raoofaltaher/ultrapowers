@@ -82,5 +82,5 @@ artifacts. Evidence file names: `<area>-<role>-<lang>-<what>.png`, `log-<contain
 
 ## Final chat line
 
-After writing the report, closing the browser and removing the marker, print exactly one line:
+After writing the report, closing the browser and ending the run (`run-records.mjs end`), print exactly one line:
 `Verdict: <value> — reviews/<ID>/QA-REPORT.md`. Nothing after it.
