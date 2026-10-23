@@ -36,6 +36,22 @@ request or the brief already supplies the purpose and constraints, play
 them back instead of asking again; gathering missing requirements never
 asks them to authorize the task a second time.
 
+## Check Current Sources
+
+On every path except the quick task, check current sources before your
+first question. Once you have classified the request, and before you send
+your first message, read [current-sources.md](current-sources.md) and
+look up the libraries, frameworks, runtimes and services the request names
+(for a request outside software, the standards, rules and products it
+names) with the research tools this session gives you. This is not an
+offer and you do not wait to be asked: it is how you know what you are
+talking about before you ask anything. Use what you read in your
+questions and your playback, and put each source the design rests on in
+the decision record's `Evidence:` lines. With no research tool, the
+not-checked line from that file goes in the spec as an `Assumption:` row
+of the ledger. In the ticket form, `ultrapowers:brainstorm-task` runs this
+step while it grounds the ticket; do not repeat it.
+
 ## Your First Message
 
 Before your first question, classify the request (see Three Paths) and say
@@ -166,8 +182,10 @@ make you wince if I got it wrong?" A guess they can correct ("I'm
 guessing this is because X keeps biting you?") often beats a question.
 
 **Offer recon.** Once you have a bit of grounding and looking would help,
-offer to go look: their codebase or project, their own files and data,
-or the web. Say what you'd look for. They decide whether you go.
+offer to go look: their codebase or project, or their own files and
+data. Say what you'd look for.
+They decide whether you go. Current sources for the technologies in play
+are not an offer: they are the step under Check Current Sources.
 Read-only exploration of the project is allowed at any time.
 
 **Think wide privately.** Before you propose anything, come up with

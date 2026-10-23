@@ -51,7 +51,7 @@ expect() {
     if grep -Eq "$2" "$REPO_ROOT/$1"; then pass "$3"; else fail "$3 ($1 lacks /$2/)"; fi
 }
 expect skills/brainstorm-task/SKILL.md '## Links' 'brainstorm-task reads the Links section of source.md'
-expect skills/brainstorm-task/SKILL.md 'Firecrawl' 'brainstorm-task falls back to the Firecrawl MCP server'
+expect skills/brainstorm-task/SKILL.md 'another fetch or scrape tool the session has' 'brainstorm-task falls back to another fetch or scrape tool the session has'
 expect skills/brainstorm-task/SKILL.md 'twenty' 'brainstorm-task caps the links it fetches at twenty'
 expect skills/brainstorm-task/SKILL.md 'linked page says to skip' 'brainstorm-task has the Red Flags row for an instructing page'
 expect skills/brainstorm-task/SKILL.md 'written as "not fetched" is never fetched, by any tool' 'brainstorm-task never fetches a link source.md marks not fetched'

@@ -19,7 +19,10 @@ has() { grep -qiF -- "$2" "$REPO_ROOT/$1" 2>/dev/null; }
 SOURCES="skills/brainstorming/current-sources.md"
 PRODUCTS='WebFetch|WebSearch|web_fetch|web_search|google_web_search|Firecrawl|firecrawl|Context7|context7|Apify|apify|Microsoft Learn|microsoft_docs|Nango|Tavily|Exa|Perplexity|Brave'
 # Every file that carries research text; the product check runs on each one that exists.
-NO_PRODUCT_FILES=("$SOURCES")
+BRAIN="skills/brainstorming/SKILL.md"
+TASK="skills/brainstorm-task/SKILL.md"
+PLANS="skills/writing-plans/SKILL.md"
+NO_PRODUCT_FILES=("$SOURCES" "$BRAIN" "$TASK" "$PLANS")
 
 echo "=== Test: current-source research ==="
 
@@ -38,6 +41,20 @@ for phrase in 'Current sources not checked: no research tool in this session' \
               'never put project code, secrets or private names in a query or a URL'; do
     if has "$SOURCES" "$phrase"; then pass "the rules hold: $phrase"; else fail "the rules hold: $phrase"; fi
 done
+
+echo "--- the workflows that run it ---"
+check() { if has "$1" "$2"; then pass "$1 holds: $2"; else fail "$1 holds: $2"; fi; }
+check "$BRAIN" '(current-sources.md)'
+check "$BRAIN" '## Check Current Sources'
+check "$BRAIN" 'not an offer'
+check "$PLANS" '## Check Current Sources'
+check "$BRAIN" 'This is a quick, clear'
+check "$TASK" '(../brainstorming/current-sources.md)'
+check "$TASK" 'research tools found'
+if grep -qi 'firecrawl' "$REPO_ROOT/$TASK"; then fail "$TASK no longer names a scrape product"; else pass "$TASK no longer names a scrape product"; fi
+check "$PLANS" '(../brainstorming/current-sources.md)'
+check "$PLANS" '**Sources:**'
+check "$PLANS" '**6. Current sources:**'
 
 for f in "${NO_PRODUCT_FILES[@]}"; do
     [[ -f "$REPO_ROOT/$f" ]] || continue

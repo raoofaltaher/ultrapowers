@@ -32,6 +32,10 @@ Before defining tasks, map out which files will be created or modified and what 
 
 This structure informs the task decomposition. Each task should produce self-contained changes that make sense independently.
 
+## Check Current Sources
+
+Before you write the tasks, check every API, option name, configuration value, code snippet and version the plan will pin against current documentation, as [current-sources.md](../brainstorming/current-sources.md) says, with the research tools this session gives you. The implementer copies what the plan pins; a name from memory that changed since becomes their failing build. Where a source shows that an API, option or version the spec names is out of date, the plan uses the current one and its first paragraph says so. Where a source shows a better or safer approach than the spec chose, the plan follows the spec and its first paragraph names the alternative, with its source, for your human partner. Put every page you read on the header's `**Sources:**` line.
+
 ## Task Right-Sizing
 
 A task is the smallest unit that carries its own test cycle and is worth a
@@ -67,6 +71,10 @@ independently testable deliverable.
 
 **Spec:** [path to the spec/design doc this plan implements — the plan
 argues from the spec, so the spec travels with it; executors read both]
+
+**Sources:** [each page the plan's APIs, options and versions were checked
+against: title or link, date, the version read for; or the line
+"Current sources not checked: <reason>"]
 
 ## Global Constraints
 
@@ -174,6 +182,8 @@ After writing the complete plan, look at the spec with fresh eyes and check the 
 **4. Review Focus:** For each input class or failure mode the spec implies, is there a task whose tests exercise it? The five uncovered ones most likely to bite a person go in the Review Focus section, and each line there gets its test added to the owning task. An empty section means you checked and found none, not that you skipped the check.
 
 **5. Proportion:** Compare the plan's length to the spec's. A plan several times longer than the spec it implements is a transcript of the program, not a plan. If code blocks are most of the document, replace bodies with signatures, test names and assertions, and check that each step is still unambiguous.
+
+**6. Current sources:** every API, version and snippet the plan pins was checked against a source on the `**Sources:**` line, or that line says it was not checked and why.
 
 If you find issues, fix them inline. No need to re-review — just fix and move on. If you find a spec requirement with no task, add the task.
 
