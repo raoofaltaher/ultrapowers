@@ -110,9 +110,13 @@ function cveSeverity(raw, name) {
 // { tools, status: checked | not-checked, reason, notResearched[{ subject, reason }], advisories[] }.
 // An `applies` row counts in the verdict like a tool CVE of the same severity, once: a row whose
 // advisory id (compared without regard to case) is already in this repository's CVE table counts
-// through the table. `unverified` and `does-not-apply` rows never count.
+// through the table. `unverified` and `does-not-apply` rows, and a row the verifier downgraded,
+// never count. A research row never stops the review: a severity word the scale does not know shows as
+// `unknown`, and an `applies` row with such a severity counts as `unverified`.
 const RESEARCH_STATUSES = ['applies', 'does-not-apply', 'unverified'];
 const RESEARCH_VERIFICATIONS = ['confirmed', 'downgraded', 'not-verified'];
+// The sources' own words, vendor scales among them, on the CVE scale.
+const RESEARCH_SEVERITY = { critical: 'critical', high: 'high', important: 'high', moderate: 'moderate', medium: 'moderate', low: 'low' };
 
 function normalizeResearch(raw, cves) {
   if (raw === null || raw === undefined) return null;
@@ -120,18 +124,24 @@ function normalizeResearch(raw, cves) {
   const inTable = new Set(cves.map((c) => key(c.advisory)).filter(Boolean));
   const advisories = (Array.isArray(raw.advisories) ? raw.advisories : []).map((a) => {
     const subject = String(a?.subject ?? '(unnamed)');
-    const status = key(a?.status);
+    let status = key(a?.status).replace(/\s+/g, '-');
     if (!RESEARCH_STATUSES.includes(status)) throw new Error(`advisory from research for ${JSON.stringify(subject)} has an unknown research status ${JSON.stringify(a?.status)} (one of ${RESEARCH_STATUSES.join(', ')})`);
-    const verification = key(a?.verification) || 'not-verified';
+    const verification = key(a?.verification).replace(/\s+/g, '-') || 'not-verified';
     if (!RESEARCH_VERIFICATIONS.includes(verification)) throw new Error(`advisory from research for ${JSON.stringify(subject)} has an unknown verification ${JSON.stringify(a?.verification)} (one of ${RESEARCH_VERIFICATIONS.join(', ')})`);
+    const severity = RESEARCH_SEVERITY[key(a?.severity)] ?? 'unknown';
+    let reason = String(a?.reason ?? '');
+    if (severity === 'unknown' && status === 'applies') {
+      status = 'unverified';
+      reason = `${reason ? `${reason}; ` : ''}severity ${JSON.stringify(String(a?.severity ?? ''))} is not on the scale`;
+    }
     const advisory = String(a?.advisory ?? '');
     const alsoReported = advisory && inTable.has(key(advisory)) ? 'the audit tools' : '';
     return {
       subject, version: String(a?.version ?? ''), versionSource: String(a?.versionSource ?? ''), advisory,
-      severity: cveSeverity(a?.severity, subject), affectedRange: String(a?.affectedRange ?? ''), fixedIn: String(a?.fixedIn ?? ''),
-      runtime: a?.runtime !== false, status, reason: String(a?.reason ?? ''), source: String(a?.source ?? ''),
+      severity, affectedRange: String(a?.affectedRange ?? ''), fixedIn: String(a?.fixedIn ?? ''),
+      runtime: a?.runtime !== false, status, reason, source: String(a?.source ?? ''),
       sourceDate: String(a?.sourceDate ?? ''), verification, verificationReason: String(a?.verificationReason ?? ''),
-      alsoReported, counted: status === 'applies' && !alsoReported,
+      alsoReported, counted: status === 'applies' && verification !== 'downgraded' && !alsoReported,
     };
   });
   return {

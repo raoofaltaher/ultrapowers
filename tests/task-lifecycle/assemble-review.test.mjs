@@ -579,3 +579,30 @@ test('not researched subjects are listed with their reason', () => {
 test('an unknown research status is refused', () => {
   assert.throws(() => decideSecurity([withResearch(research([adv('critical', true, 'maybe')]))]), /unknown research status/);
 });
+
+// GH-59 review: research rows must never crash the review, and a downgraded row never counts.
+test('a vendor severity word maps: Important counts as high', () => {
+  assert.equal(runResearch(withResearch(research([adv('Important', true, 'applies')]))).verdict, 'FAIL');
+});
+
+test('an unverified row with an empty or unknown severity is shown and changes nothing', () => {
+  const r = runResearch(withResearch(research([adv('', true, 'unverified'), adv('unknown', true, 'unverified', { advisory: 'CVE-2026-0003' })])));
+  assert.equal(r.verdict, 'PASS');
+  assert.match(r.markdown, /\| unknown \|/);
+});
+
+test('an applies row whose severity cannot be mapped counts as unverified', () => {
+  const r = runResearch(withResearch(research([adv('severe-ish', true, 'applies')])));
+  assert.equal(r.verdict, 'PASS');
+  assert.match(r.markdown, /\| unverified \|/);
+});
+
+test('the spaced status spelling "does not apply" is accepted', () => {
+  const r = runResearch(withResearch(research([adv('critical', true, 'does not apply')])));
+  assert.equal(r.verdict, 'PASS');
+  assert.match(r.markdown, /\| does not apply \|/);
+});
+
+test('a row the verifier downgraded changes nothing, even when its status still says applies', () => {
+  assert.equal(runResearch(withResearch(research([adv('critical', true, 'applies', { verification: 'downgraded' })]))).verdict, 'PASS');
+});
