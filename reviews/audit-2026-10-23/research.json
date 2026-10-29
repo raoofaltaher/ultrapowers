@@ -1,0 +1,24 @@
+{
+  "repos": [
+    {
+      "repo": "ultrapowers",
+      "research": {
+        "tools": [
+          "gh 2.103.0 (signed-in), GitHub global advisory database via gh api /advisories (GET only)",
+          "Firecrawl MCP: firecrawl_search, firecrawl_scrape",
+          "WebSearch and WebFetch (deferred, loadable)",
+          "context7-http and deepwiki documentation servers"
+        ],
+        "status": "not-checked",
+        "reason": "every declared subject is covered by an audit tool or not declared; nothing to research",
+        "notResearched": [
+          { "subject": "runtime", "reason": "not declared in a readable form" },
+          { "subject": "base image", "reason": "not declared in a readable form" },
+          { "subject": "@opencode-ai/plugin 1.15.13 (.opencode/package.json:3)", "reason": "covered by npm audit" },
+          { "subject": "ws ^8.22.0 (tests/brainstorm-server/package.json:8)", "reason": "covered by npm audit" }
+        ],
+        "advisories": []
+      }
+    }
+  ]
+}
