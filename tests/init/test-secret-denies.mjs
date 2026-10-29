@@ -77,6 +77,22 @@ test('every git subcommand the Claude settings pre-approve has its read-any-file
   }
 });
 
+// git diff with two paths outside the work tree (or outside any repository) is a no-index diff
+// without a flag: `git diff ~/.aws/credentials README.md` prints the file, and `--stat -p` prints
+// it too. A `git diff:*` prefix pre-approval lets that form through, so only the forms that cannot
+// carry it are pre-approved; any other form asks first (Medium 16 of the 2026-10-23 hunt).
+test('git diff is pre-approved only in forms that cannot read an outside path, never as a prefix', () => {
+  const { allow, deny } = claudeTemplate().permissions;
+  const diffs = allow.filter((rule) => rule.startsWith('Bash(git diff'));
+  assert.equal(diffs.includes('Bash(git diff:*)'), false, 'git diff:* would pre-approve the flagless outside-path form');
+  assert.deepEqual([...diffs].sort(), [
+    'Bash(git diff --cached:*)', 'Bash(git diff --name-only:*)', 'Bash(git diff --stat)', 'Bash(git diff HEAD:*)', 'Bash(git diff)',
+  ].sort());
+  // --stat is exact: `git diff --stat -p a b` on two outside paths prints both files, so no suffix is approved
+  assert.equal(diffs.some((rule) => /--stat.*:\*\)$/.test(rule)), false, 'no prefix approval after --stat');
+  for (const rule of GIT_READ_ANY_FILE.diff) assert.ok(deny.includes(rule), `deny has ${rule}`);
+});
+
 test('git blame is not pre-approved, so its options ask first', () => {
   const { allow, deny } = claudeTemplate().permissions;
   assert.equal(allow.some((rule) => rule.startsWith('Bash(git blame')), false);
@@ -171,7 +187,11 @@ test('upgrade proposes the settings for the toolchains of the project, next to t
 
 // ---- 3. the same secret-read denies in every harness config ------------------------------------
 
-const NEW_READ_DENIES = ['Read(**/.dev.vars)', 'Read(**/.dev.vars.*)', 'Read(**/.env.secrets)'];
+const NEW_READ_DENIES = [
+  'Read(**/.dev.vars)', 'Read(**/.dev.vars.*)', 'Read(**/.env.secrets)',
+  // the deployment-environment spellings the enumerated list missed (Low 18 of the 2026-10-23 hunt)
+  'Read(**/.env.prod)', 'Read(**/.env.dev)', 'Read(**/.env.preview)', 'Read(**/.env.prd)', 'Read(**/.env.stage)', 'Read(**/.env.uat)',
+];
 
 test('the Claude template denies the dev.vars and env.secrets files and keeps .env.example readable', () => {
   const deny = claudeTemplate().permissions.deny;
@@ -194,7 +214,9 @@ test('parity: every Read deny of the Claude template is in the Cursor CLI templa
 
 test('.cursorignore names the same env files as the Claude denies, plus dev.vars', () => {
   const lines = read('templates', '.cursorignore.tmpl').split('\n').filter((l) => l && !l.startsWith('#'));
-  for (const name of ['.agents/mcp-secrets.env', '.env', '.env.local', '.env.*.local', '.env.production', '.env.development', '.env.test', '.env.staging', '.env.secret', '.env.secrets', '.dev.vars', '.dev.vars.*']) {
+  const envNames = claudeTemplate().permissions.deny.map((rule) => /^Read\(\*\*\/((?:\.agents\/mcp-secrets|)\.env[^)]*|\.dev\.vars[^)]*)\)$/.exec(rule)?.[1]).filter(Boolean);
+  assert.ok(envNames.length >= 16, 'the Claude template has its env denies');
+  for (const name of envNames) {
     assert.ok(lines.includes(name), `.cursorignore has ${name}`);
   }
   assert.equal(lines.includes('.env.*'), false, 'example env files stay readable');
@@ -289,6 +311,20 @@ test('the Playwright MCP server starts isolated, in the template and in every ge
   assert.ok(generated.args.includes('--isolated'));
   const cursor = JSON.parse(fs.readFileSync(path.join(root, '.cursor', 'mcp.json'), 'utf8')).mcpServers.playwright;
   assert.ok(cursor.args.includes('--isolated'));
+});
+
+// ---- 6b. the generated MCP launcher starts nothing from the project --------------------------
+
+// The launcher runs `node -e` in the project's folder, in the user's own environment. On Windows it
+// starts cmd.exe, and cmd.exe then looks up `npx`: by bare name both are searched in the current
+// directory first, so a committed cmd.exe or npx.cmd would run with the server's secrets (Low 19 of
+// the 2026-10-23 hunt). cmd comes from %ComSpec% and the child's environment stops the search.
+test('the MCP launcher starts cmd from %ComSpec% and stops the working-directory search on Windows', () => {
+  const { NPX_LAUNCHER } = engine;
+  assert.match(NPX_LAUNCHER, /process\.env\.ComSpec/, 'cmd is the absolute %ComSpec%');
+  assert.doesNotMatch(NPX_LAUNCHER, /\[\s*'cmd'/, 'cmd is never started by bare name');
+  assert.match(NPX_LAUNCHER, /env:\{\.\.\.process\.env,NoDefaultCurrentDirectoryInExePath:'1'\}/, 'the child does not search the working directory');
+  assert.match(NPX_LAUNCHER, /'\/d','\/c','npx'/, 'npx still resolves inside the launcher environment');
 });
 
 // ---- 7. init starts the git that is outside the project ----------------------------------------

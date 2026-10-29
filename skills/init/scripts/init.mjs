@@ -96,7 +96,13 @@ function mapSecrets(map, format) {
 // starts as `node -e NPX_LAUNCHER -- <npx args>`, and the launcher runs npx the
 // way the machine it lands on needs. One committed file then works on Windows,
 // macOS and Linux alike.
-export const NPX_LAUNCHER = "const[c,...a]=process.platform==='win32'?['cmd','/d','/c','npx',...process.argv.slice(1)]:['npx',...process.argv.slice(1)];const p=require('child_process').spawn(c,a,{stdio:'inherit'});for(const s of['SIGINT','SIGTERM'])process.on(s,()=>p.kill(s));p.on('exit',(code)=>process.exit(code??1))";
+// The launcher runs in the user's own environment, from the project folder, holding the server's
+// secrets. On Windows it starts cmd.exe, which resolves `npx` itself: both are looked up in the
+// current directory before PATH when started by bare name, so a committed cmd.exe or npx.cmd would
+// run first. cmd is therefore %ComSpec% (absolute), and the child's NoDefaultCurrentDirectoryInExePath
+// stops cmd's own search of the working directory; `npx` stays a bare name so it resolves on the
+// user's PATH, as it does everywhere else.
+export const NPX_LAUNCHER = "const[c,...a]=process.platform==='win32'?[process.env.ComSpec||'cmd.exe','/d','/c','npx',...process.argv.slice(1)]:['npx',...process.argv.slice(1)];const p=require('child_process').spawn(c,a,{stdio:'inherit',env:{...process.env,NoDefaultCurrentDirectoryInExePath:'1'}});for(const s of['SIGINT','SIGTERM'])process.on(s,()=>p.kill(s));p.on('exit',(code)=>process.exit(code??1))";
 
 function launch(server) {
   const args = [...(server.args ?? [])];
@@ -167,6 +173,12 @@ export const QWEN_PERMISSIONS = {
     'Read(**/.env.staging)',
     'Read(**/.env.secret)',
     'Read(**/.env.secrets)',
+    'Read(**/.env.prod)',
+    'Read(**/.env.dev)',
+    'Read(**/.env.preview)',
+    'Read(**/.env.prd)',
+    'Read(**/.env.stage)',
+    'Read(**/.env.uat)',
     'Read(**/.dev.vars)',
     'Read(**/.dev.vars.*)',
     'Read(~/.aws/**)',
