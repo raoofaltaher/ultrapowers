@@ -60,7 +60,7 @@ const toolchainEntries = (allow) => allow.filter((e) => Object.values(TOOLCHAIN_
 const GIT_READ_ANY_FILE = {
   log: ['Bash(git log *--ou*)'],
   diff: ['Bash(git diff *--ou*)', 'Bash(git diff *--no-index*)', 'Bash(git diff */dev/null*)'],
-  show: ['Bash(git show *--ou*)', 'Bash(git show *:.env*)'],
+  show: ['Bash(git show *--ou*)', 'Bash(git show *:.env*)', 'Bash(git show *:*.env*)', 'Bash(git show *:*.dev.vars*)'],
   blame: ['Bash(git blame *--contents*)', 'Bash(git blame *-S*)', 'Bash(git blame *--ignore-revs-file*)'],
 };
 // Subcommands with no option that takes a file path to read or write, so no deny is needed for them.
@@ -91,6 +91,16 @@ test('git diff is pre-approved only in forms that cannot read an outside path, n
   // --stat is exact: `git diff --stat -p a b` on two outside paths prints both files, so no suffix is approved
   assert.equal(diffs.some((rule) => /--stat.*:\*\)$/.test(rule)), false, 'no prefix approval after --stat');
   for (const rule of GIT_READ_ANY_FILE.diff) assert.ok(deny.includes(rule), `deny has ${rule}`);
+});
+
+// `git show HEAD:web/.env` is pre-approved by `git show:*`, and the deny `*:.env*` needs the name right after
+// the colon: the `rev:path` forms that name an env or .dev.vars file at any depth are denied too, and
+// CLAUDE.md says so.
+test('git show denies the rev:path forms that name an env or dev.vars file at any depth, and CLAUDE.md says so', () => {
+  const { allow, deny } = claudeTemplate().permissions;
+  assert.ok(allow.includes('Bash(git show:*)'));
+  for (const rule of ['Bash(git show *:.env*)', 'Bash(git show *:*.env*)', 'Bash(git show *:*.dev.vars*)']) assert.ok(deny.includes(rule), `deny has ${rule}`);
+  assert.match(read('templates', 'CLAUDE.md.tmpl'), /`rev:path` forms of `git show` that name an `\.env` or `\.dev\.vars` file at any depth/);
 });
 
 test('git blame is not pre-approved, so its options ask first', () => {

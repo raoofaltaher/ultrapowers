@@ -496,7 +496,7 @@ test('the rendered Claude Code settings deny reads of secret files and the --out
     'Read(**/.agents/mcp-secrets.env)', 'Read(**/.env)', 'Read(**/.env.local)', 'Read(**/.env.*.local)', 'Read(**/.env.production)',
     'Read(~/.ssh/**)', 'Read(~/.aws/**)',
     'Bash(git log *--ou*)', 'Bash(git diff *--ou*)', 'Bash(git show *--ou*)',
-    'Bash(git diff *--no-index*)', 'Bash(git blame *--contents*)', 'Bash(git show *:.env*)', 'Read(**/.env.development)', 'Read(**/.env.test)', 'Read(**/.env.staging)', 'Read(**/.env.secret)',
+    'Bash(git diff *--no-index*)', 'Bash(git blame *--contents*)', 'Bash(git show *:.env*)', 'Bash(git show *:*.env*)', 'Bash(git show *:*.dev.vars*)', 'Read(**/.env.development)', 'Read(**/.env.test)', 'Read(**/.env.staging)', 'Read(**/.env.secret)',
     'Read(**/.env.prod)', 'Read(**/.env.dev)', 'Read(**/.env.preview)', 'Read(**/.env.prd)', 'Read(**/.env.stage)', 'Read(**/.env.uat)',
     'Read(~/.config/gh/**)', 'Read(~/.config/glab-cli/**)', 'Read(~/.git-credentials)', 'Read(~/.netrc)', 'Read(~/.npmrc)', 'Read(~/.gnupg/**)', 'Read(~/.kube/**)', 'Read(~/.docker/config.json)',
   ]) {
