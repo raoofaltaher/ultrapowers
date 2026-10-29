@@ -4,9 +4,9 @@
 // credential read-outs through ${NAME:-}, declare -p and awk ENVIRON, autopilot git operands and
 // egress, the run marker, the role variables of the hunt, and the hunt's read forms.
 import assert from 'node:assert/strict';
-import { dirname, resolve, join } from 'node:path';
+import { dirname, resolve, join, delimiter } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
@@ -1155,4 +1155,25 @@ test('R4 Medium 22: an autopilot stage moves no existing branch onto its tip (gi
   for (const cmd of ['git checkout -b GH-1-x', 'git switch -c GH-1-x', 'git checkout GH-1-x', 'git switch main']) {
     assert.ok(allowed(cmd, auto), cmd + ': ' + analyze(cmd, auto));
   }
+});
+
+test('R4 Low 7 (hook): a node planted in the project, on an absolute PATH entry or as ULTRAPOWERS_NODE, never runs the hook\'s helpers', { skip: !haveBash }, () => {
+  const root = hookProject('qa');
+  const tools = join(root, 'tools');
+  mkdirSync(tools);
+  const sentinel = join(root, 'decoy-ran.txt');
+  writeFileSync(join(tools, 'node'), `#!/bin/sh\necho ran > "${sentinel.replace(/\\/g, '/')}"\nexit 0\n`);
+  chmodSync(join(tools, 'node'), 0o755);
+  const event = JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git push origin GH-1-x' }, cwd: root });
+  const run = (extra) => spawnSync(BASH, [HOOK], { input: event, cwd: root, encoding: 'utf8', timeout: 60000, env: { ...process.env, ...extra } });
+  for (const [label, extra] of [['PATH entry', { PATH: `${tools}${delimiter}${process.env.PATH}` }], ['ULTRAPOWERS_NODE', { ULTRAPOWERS_NODE: join(tools, 'node') }]]) {
+    const r = run(extra);
+    assert.equal(r.status, 2, `${label}: ${r.stderr}`);
+    assert.match(r.stderr, /QA-GUARDRAIL DENY: git push/, label);
+    assert.equal(existsSync(sentinel), false, `${label}: the planted node ran`);
+  }
+  // The node the bridge runs on is taken first when it lies outside every project.
+  const r = run({ ULTRAPOWERS_NODE: process.execPath, PATH: `${tools}${delimiter}${process.env.PATH}` });
+  assert.equal(r.status, 2, r.stderr);
+  assert.equal(existsSync(sentinel), false, 'the planted node ran');
 });

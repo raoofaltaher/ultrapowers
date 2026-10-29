@@ -100,6 +100,35 @@ lower_r() {
   REPLY="$s"
 }
 
+# The node that runs the hook's helpers: the first node on an absolute PATH entry that lies in no project
+# (no .agents/ultrapowers.json at or above the entry), as hooks/lib/resolve-tool.mjs skips the project's
+# own, so a node planted in a tools/ or node_modules/.bin of the repository never judges the call. The
+# node the bridge itself runs on (ULTRAPOWERS_NODE) comes first, on the same terms. Found once, when needed.
+in_project_r() {
+  local d="$1"; REPLY=""
+  while [ -n "$d" ]; do
+    [ -f "$d/.agents/ultrapowers.json" ] && { REPLY=1; return 0; }
+    case "$d" in */*) d="${d%/*}" ;; *) return 0 ;; esac
+  done
+}
+NODE=""
+node_bin() {
+  [ -n "$NODE" ] && return 0
+  local entry cand candidates=()
+  [ -n "${ULTRAPOWERS_NODE:-}" ] && candidates+=("$ULTRAPOWERS_NODE")
+  local old_ifs="$IFS"; IFS=':'
+  for entry in $PATH; do candidates+=("$entry/node" "$entry/node.exe"); done
+  IFS="$old_ifs"
+  for cand in "${candidates[@]}"; do
+    norm_path_r "$cand"; cand="$REPLY"
+    case "$cand" in /*) ;; *) continue ;; esac
+    [ -f "$cand" ] && [ -x "$cand" ] || continue
+    in_project_r "${cand%/*}"; [ -n "$REPLY" ] && continue
+    NODE="$cand"; return 0
+  done
+  return 1
+}
+
 # The run record that guards this call in the folder $1, picked by hooks/lib/run-records.mjs
 # from the records there and the event's top-level session_id; with $2 = --session-only (a folder
 # above the call's nearest project root), only a record bound to this very session. Sets PROFILE
@@ -107,7 +136,7 @@ lower_r() {
 # Records exist, so a run is active: without node the call cannot be judged, and it is refused.
 pick_run_r() {
   local d="$1" only="${2:-}" rr_src rr_js d_node picked rest
-  command -v node >/dev/null 2>&1 || deny "node is required to read the run records of $d/.ultrapowers/runs/ and is not on PATH"
+  node_bin || deny "node is required to read the run records of $d/.ultrapowers/runs/, and no node outside a project is on PATH"
   rr_src="${BASH_SOURCE[0]}"
   rr_src="${rr_src//\\//}"
   case "$rr_src" in */*) rr_js="${rr_src%/*}/lib/run-records.mjs" ;; *) rr_js="lib/run-records.mjs" ;; esac
@@ -116,7 +145,7 @@ pick_run_r() {
     rr_js="$(cygpath -m "$rr_js" 2>/dev/null || printf '%s' "$rr_js")"
     d_node="$(cygpath -m "$d" 2>/dev/null || printf '%s' "$d")"
   fi
-  picked="$(printf '%s' "$event" | node "$rr_js" pick --root "$d_node" ${only:+"$only"} 2>/dev/null)" \
+  picked="$(printf '%s' "$event" | "$NODE" "$rr_js" pick --root "$d_node" ${only:+"$only"} 2>/dev/null)" \
     || deny "the run records of $d/.ultrapowers/runs/ could not be read; every call of this project is refused while they cannot"
   [ -n "$picked" ] || return 1
   PROFILE="${picked%%$'\t'*}"; rest="${picked#*$'\t'}"
@@ -242,15 +271,15 @@ else
     PROFILE=""; RUN_ID=""; RUN_FILE=""; RUN_STARTED=""
     # Past the bound with no node the event cannot be read: an inert session must not depend on
     # node, so the call goes on to the CURSOR_PROJECT_DIR start and, failing that, is allowed.
-    if [ -z "$hit" ] && [ -n "$over_cap" ] && command -v node >/dev/null 2>&1; then hit=1; fi
+    if [ -z "$hit" ] && [ -n "$over_cap" ] && node_bin; then hit=1; fi
     if [ -n "$hit" ]; then
-      command -v node >/dev/null 2>&1 || deny "node is required to read the event of a call that names a run directory, and is not on PATH"
+      node_bin || deny "node is required to read the event of a call that names a run directory, and no node outside a project is on PATH"
       ef_src="${BASH_SOURCE[0]}"
       ef_slash='/'
       ef_src="${ef_src//\\/$ef_slash}"
       case "$ef_src" in */*) ef_js="${ef_src%/*}/lib/event-fields.mjs" ;; *) ef_js="lib/event-fields.mjs" ;; esac
       if command -v cygpath >/dev/null 2>&1; then ef_js="$(cygpath -m "$ef_js" 2>/dev/null || printf '%s' "$ef_js")"; fi
-      top_fields="$(printf '%s' "$event" | node "$ef_js" cwd 'workspace_roots[0]')" || deny "the tool event could not be parsed for its top-level cwd; an uninspectable call is refused"
+      top_fields="$(printf '%s' "$event" | "$NODE" "$ef_js" cwd 'workspace_roots[0]')" || deny "the tool event could not be parsed for its top-level cwd; an uninspectable call is refused"
       case "$top_fields" in
         *$'\n'*) top_cwd="${top_fields%%$'\n'*}"; top_ws="${top_fields#*$'\n'}" ;;
         *) top_cwd="$top_fields"; top_ws="" ;;
@@ -290,7 +319,7 @@ run_kind="a QA run"
 [ "$PROFILE" = "hunt" ] && run_kind="a vulnerability hunt"
 
 # --- Active. From here on an uninspectable call is denied, never waved through.
-command -v node >/dev/null 2>&1 || deny "node is required to inspect tool calls during $run_kind and is not on PATH"
+node_bin || deny "node is required to inspect tool calls during $run_kind, and no node outside a project is on PATH"
 # The rules below are grep, sed and tr pipelines: a missing tool would make every rule
 # "not match" and allow the call.
 for tool in grep sed tr; do
@@ -347,7 +376,7 @@ wpath_real=""; wpath_rel=""; keypaths_real=""; patch_recs=""; role_vars=""; ro_r
   IFS= read -r -d '' workdir_real || true
   IFS= read -r -d '' keyglob || true
   IFS= read -r -d '' mcp_servers || true
-} < <(printf '%s' "$event" | node -e '
+} < <(printf '%s' "$event" | "$NODE" -e '
 const fs = require("node:fs");
 const path = require("node:path");
 let ev;
@@ -1134,7 +1163,7 @@ writes_js="$hook_dir_node/lib/qa-shell-writes.mjs"
 # Lane 4's psql rules live in the analyzer too: it walks xargs, find -exec, eval, sudo, su -c,
 # kubectl exec and brace groups, refuses a program built from a variable, and refuses a psql
 # word it did not inspect (fail closed on its own count), so no text check is repeated here.
-wreason="$(printf '%s\0%s\0%s\0%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$ignore_case" "$role_vars" "$ro_role" "$cmd" | ULTRAPOWERS_GUARD_PROFILE="$PROFILE" ULTRAPOWERS_GUARD_HOSTS="$allowed" node "$writes_js" 2>&1)" \
+wreason="$(printf '%s\0%s\0%s\0%s\0%s\0%s\0%s' "$base_cwd" "$root" "$ticket" "$ignore_case" "$role_vars" "$ro_role" "$cmd" | ULTRAPOWERS_GUARD_PROFILE="$PROFILE" ULTRAPOWERS_GUARD_HOSTS="$allowed" "$NODE" "$writes_js" 2>&1)" \
   || wreason="the command could not be analysed for writes; it is refused during $run_kind"
 [ -z "$wreason" ] || deny "$wreason"
 

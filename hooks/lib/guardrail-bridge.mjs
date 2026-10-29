@@ -315,6 +315,9 @@ export function runGuardrail({ toolName, input, cwd, dirs = [], hookDir = HOOK_D
   // The directory the run was found from travels out of band, never inside the event (a tool
   // argument would then choose the root): the hook starts its root scan there.
   env.ULTRAPOWERS_RUN_DIR = path.resolve(run.dir);
+  // The node this bridge runs on (the harness's own, or the one the Hermes plugin picked outside every
+  // project) runs the hook's helpers too, before any node on PATH; the hook still refuses one inside a project.
+  env.ULTRAPOWERS_NODE = process.execPath;
   const res = spawnSync(bash, [hook], { input: `${JSON.stringify(event)}\0`, cwd: path.resolve(hookDir, '..'), env, encoding: 'utf8', timeout: timeoutMs, windowsHide: true });
   if (res.status === 0) return { deny: false };
   const line = String(res.stderr ?? '').split('\n').map((l) => DENY_RE.exec(l)).find(Boolean);
