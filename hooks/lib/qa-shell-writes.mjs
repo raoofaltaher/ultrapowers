@@ -1491,7 +1491,11 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     for (const alt of alternatives(raw)) judgeText(alt, false);
     // A path-shaped word is resolved to its real spelling (a symlink in the project, an 8.3 alias) and the real
     // name is tested too. An option, a URL and a home path are text only (the rules above read them).
-    const pathy = !raw.startsWith('-') && !raw.includes('://') && !raw.startsWith('~') && !/[*?[\]{}=\s]/.test(raw) && (/[\\/]/.test(raw) || raw.startsWith('.') || SHORT_SEG.test(raw));
+    const plain = !raw.startsWith('-') && !raw.includes('://') && !raw.startsWith('~') && !/[*?[\]{}=\s]/.test(raw);
+    // A bare name (notes.txt) is a path too when it is a symlink in its folder: one lstat, and only for a word
+    // that can name a file.
+    const bareLink = (base, name) => { try { return lstatSync(`${base}/${name}`).isSymbolicLink(); } catch { return false; } };
+    const pathy = plain && (/[\\/]/.test(raw) || raw.startsWith('.') || SHORT_SEG.test(raw) || (/^[\w.-]+$/.test(raw) && bareLink(dir === null ? rootC : dir, raw)));
     if (!pathy) return;
     let p = normPath(raw);
     if (!p.startsWith('/')) p = `${dir === null ? rootC : dir}/${p.replace(/^\.\//, '')}`;
