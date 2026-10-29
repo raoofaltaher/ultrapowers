@@ -357,7 +357,7 @@
   {"name":"deny_bash_project_script","reason":"is not on its list","event":{"tool_name":"Bash","tool_input":{"command":"bash repo-a/script.sh"}}},
   {"name":"deny_dot_slash_program","reason":"the hunt reads; ./repo-a/run","event":{"tool_name":"Bash","tool_input":{"command":"./repo-a/run"}}},
   {"name":"deny_project_path_program","reason":"the hunt reads;","event":{"tool_name":"Bash","tool_input":{"command":"{{ROOT}}/repo-a/cat"}}},
-  {"name":"deny_awk_f","reason":"awk is not on its list","event":{"tool_name":"Bash","tool_input":{"command":"awk -f p.awk in"}}},
+  {"name":"deny_awk_f","reason":"an awk program file cannot be inspected","event":{"tool_name":"Bash","tool_input":{"command":"awk -f p.awk in"}}},
   {"name":"deny_sed_f","reason":"sed is not on its list","event":{"tool_name":"Bash","tool_input":{"command":"sed -f s.sed in"}}},
   {"name":"deny_shuf_o_outside","reason":"is outside reviews/audit-2026-10-11/","event":{"tool_name":"Bash","tool_input":{"command":"shuf -o repo-a/src/a in"}}},
   {"name":"deny_uniq_out_outside","reason":"is outside reviews/audit-2026-10-11/","event":{"tool_name":"Bash","tool_input":{"command":"uniq in repo-a/src/a"}}},

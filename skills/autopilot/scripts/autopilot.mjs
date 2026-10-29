@@ -1188,14 +1188,15 @@ async function assertBeginStage(ctx, opts, open) {
   const last = readLog(ctx.root, opts.id).at(-1);
   const configBlock = state.stageStatus === 'blocked' && last?.event === 'blocked' && /^(\.agents\/ultrapowers\.json changed|the git config of a repository changed|\.ultrapowers\/autopilot\/)/.test(String(last.message ?? ''));
   const view = configBlock ? { ...state, stageStatus: 'finished' } : state;
-  let facts = { mode: state.mode ?? ctx.settings.mode, labels: [], events: ctx.settings.events, qaConfigured: Boolean(ctx.marker.qa) };
-  try { facts.labels = await labelsOf(ctx); } catch { facts.labels = []; }
-  const next = nextStage(view, facts);
-  if (next.action === 'run' && next.stage) allowed.add(next.stage);
-  // At the gate the engine's answer depends on an approval it checks in begin itself: execute is a
-  // candidate there (recheckApproval decides), and changes when the label asks for it.
-  if (state.stage === 'gate') { allowed.add('execute'); allowed.add('changes'); }
-  if (!allowed.has(opts.stage)) throw new AutopilotError('wrong-stage', `${opts.id} is at ${state.stage} (${state.stageStatus ?? 'finished'}); begin ${opts.stage} is not its next stage (${[...allowed].join(', ') || 'none'})`);
+  // The stages that follow a finished one in the stage graph: the engine's automatic choice
+  // (nextStage) is one of them, and a person at the session door may take the other where the graph
+  // has two (qa by hand after execute when the project configures none; changes or execute from the
+  // gate). What the graph never has, a stage that names an earlier or a later stage, is refused.
+  // A QA stage whose verdict stopped the ticket (FAIL, PRECONDITION-FAILED, INCOMPLETE) is run again
+  // by hand, so qa follows qa too.
+  const FOLLOWS = { scaffold: ['spec'], spec: ['plan'], plan: ['changes', 'execute'], gate: ['changes', 'execute'], changes: ['changes', 'execute'], execute: ['qa', 'pr'], qa: ['qa', 'pr'], pr: [] };
+  if ((view.stageStatus ?? 'finished') === 'finished') for (const s of FOLLOWS[view.stage] ?? []) allowed.add(s);
+  if (!allowed.has(opts.stage)) throw new AutopilotError('wrong-stage', `${opts.id} is at ${state.stage} (${state.stageStatus ?? 'finished'}); begin ${opts.stage} is not a stage that follows it (${[...allowed].join(', ') || 'none'})`);
 }
 
 async function runBegin(opts) {
