@@ -46,13 +46,13 @@ if (stage === 'scaffold') {
 } else if (stage === 'spec') {
   fs.mkdirSync(path.join(root, 'specs', id), { recursive: true });
   fs.writeFileSync(path.join(root, 'specs', id, 'Spec.md'), `${fs.readFileSync(MINIMAL_SPEC, 'utf8').replace(/\r\n/g, '\n')}| 1 | Which? | this | low | stub |\n`);
-  git('add', '-A');
+  git('add', '--', 'specs');
   git('commit', '-q', '-m', `spec(${id}): stub`);
   result.scope = ['.'];
 } else if (stage === 'plan') {
   fs.mkdirSync(path.join(root, 'plans', id), { recursive: true });
   fs.writeFileSync(path.join(root, 'plans', id, 'Plan.md'), '# Plan\n\n## Repositories in scope\n\n- .\n');
-  git('add', '-A');
+  git('add', '--', 'plans');
   git('commit', '-q', '-m', `plan(${id}): stub`);
   result.scope = ['.'];
 } else if (stage === 'execute') {

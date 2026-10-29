@@ -21,11 +21,11 @@ import {
   nextStage, acquireLock, releaseLock, liveLock, readLock, lockPath,
   writeActiveMarker, clearActiveMarker, readActiveMarker, verifyApproval, observeTags,
   renderPacket, assumptionsFrom, scopeFrom, freezeScope, pushAllowed, loadSecretsFile, packetId, hashLine,
-  reviewFolderProblem, isTicketBranch, stageEnvFrom, mcpEnvNames, filterMcpServers, branchNameProblem,
+  reviewFolderProblem, isTicketBranch, stageEnvFrom, mcpEnvNames, filterMcpServers, branchNameProblem, defangRemoteImages,
 } from './autopilot-lib.mjs';
 import { trackerFor } from './tracker.mjs';
 import { HARNESSES, GUARDED_HARNESSES, PLUGIN_ROOT } from './harnesses.mjs';
-import { ensureBranch, ensureOnTicketBranch, ensureWorktree, worktreePath, ticketBranch, remoteHead, forgeFor, tip, workTip, commitPaths, push, repoDirs, baseAhead, pathsChanged, git, snapshotHooks, gitConfigSnapshot, gitConfigChanges, checkBranchName } from './repos.mjs';
+import { ensureBranch, ensureOnTicketBranch, ensureWorktree, worktreePath, ticketBranch, remoteHead, forgeFor, tip, workTip, commitPaths, push, repoDirs, baseAhead, pathsChanged, pathsOutside, git, snapshotHooks, gitConfigSnapshot, gitConfigChanges, checkBranchName } from './repos.mjs';
 import { resolveTool, childEnv } from '../../../hooks/lib/resolve-tool.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -61,6 +61,19 @@ export function stagePrompt(stage, id) {
   return `/ultrapowers:autopilot ${id} --stage ${stage} --door watch\n\n${body}`;
 }
 
+// Everything the engine posts goes through defangRemoteImages: a stage's text (a blocked message, an
+// assumption of the spec, a QA report) can carry an image whose address carries data out.
+function defanged(tracker) {
+  const clean = (text) => (typeof text === 'string' ? defangRemoteImages(text) : text);
+  for (const method of ['comment', 'prComment']) {
+    const original = tracker[method];
+    if (typeof original === 'function') tracker[method] = (target, body, ...rest) => original.call(tracker, target, clean(body), ...rest);
+  }
+  const create = tracker.createPr;
+  if (typeof create === 'function') tracker.createPr = (args, ...rest) => create.call(tracker, args && typeof args === 'object' ? { ...args, body: clean(args.body) } : args, ...rest);
+  return tracker;
+}
+
 function findRoot(start) {
   let dir = path.resolve(start);
   for (;;) {
@@ -85,10 +98,12 @@ function readMarker(root) {
 // the engine's git reads each repository's own config. `begin` of a ticket therefore records both
 // under .ultrapowers/autopilot/: the parsed config as <ID>.config.json, and the git config keys that
 // run a program or redirect a remote as <ID>.gitconfig.json. Every later command compares: a change
-// to `tickets` or `autopilot`, or to a watched git key, blocks the ticket until a person has looked
-// at it and run `begin` again with no stage open.
+// to a key the engine or the guardrail reads (SNAPSHOT_KEYS), or to a watched git key, blocks the ticket
+// until a person has looked at it and run `begin` again with no stage open.
 
-const SNAPSHOT_KEYS = ['tickets', 'autopilot'];
+// `repos` and `topology` choose the directories the engine pushes from, `qa` whether a QA verdict is needed.
+// `kb` names the knowledge-base folders the gate lets a documents branch change.
+const SNAPSHOT_KEYS = ['tickets', 'autopilot', 'repos', 'topology', 'qa', 'kb'];
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 function engineDir(root) {
@@ -237,6 +252,17 @@ function parseArgs(argv) {
   return opts;
 }
 
+// A repository of the config lives under the project root: its path is neither absolute nor holds a
+// `..` segment (the engine pushes from it and opens pull requests for it).
+function assertRepoPaths(marker) {
+  for (const r of Array.isArray(marker.repos) ? marker.repos : []) {
+    const p = String(r?.path ?? r?.name ?? '');
+    if (path.posix.isAbsolute(p) || path.win32.isAbsolute(p) || /(^|[\\/])\.\.([\\/]|$)/.test(p)) {
+      throw new AutopilotError('bad-repos', `repos[${r?.name}].path ${JSON.stringify(p)} is absolute or holds ".."; a repository path is relative to the project root and stays under it`);
+    }
+  }
+}
+
 // Everything a command needs about the ticket: root, marker, settings, source, tracker.
 function context(opts) {
   const isUrl = /^https?:\/\//i.test(opts.id);
@@ -244,14 +270,14 @@ function context(opts) {
   const root = opts.root ? path.resolve(opts.root) : findRoot(process.cwd());
   if (!fs.existsSync(path.join(root, MARKER))) throw new AutopilotError('no-marker', `no ${MARKER.replace(/\\/g, '/')} in ${root}`);
   const live = readMarker(root);
-  // The config a ticket runs under is the copy `begin` took: its `tickets` and `autopilot` keys come
-  // from there, so a stage that rewrote the working file cannot repoint the tracker (and the key it
-  // is sent with) or the approvers. A difference is reported on ctx and blocks the ticket in the
-  // commands that guard (guardTicket); `begin` run again by a person accepts it.
+  // The config a ticket runs under is the copy `begin` took: its SNAPSHOT_KEYS come from there, so a
+  // stage that rewrote the working file cannot repoint the tracker (and the key it is sent with), the
+  // approvers, the repositories the engine pushes from or the QA gate. A difference is reported on ctx
+  // and blocks the ticket in the commands that guard (guardTicket); `begin` run again by a person accepts it.
   const snapshotId = ticketSnapshotId(opts, live);
   const snapshotRead = snapshotId ? readSnapshot(configSnapshotPath(root, snapshotId)) : null;
   const snapshot = snapshotRead === CORRUPT ? null : snapshotRead;
-  const marker = snapshot ? { ...live, tickets: snapshot.tickets, autopilot: snapshot.autopilot } : live;
+  const marker = snapshot ? { ...live, ...Object.fromEntries(SNAPSHOT_KEYS.map((k) => [k, snapshot[k]])) } : live;
   const configChange = snapshotRead === CORRUPT
     ? `.ultrapowers/autopilot/${snapshotId}.config.json (the config snapshot of ${snapshotId}) cannot be read. The ticket is blocked. Check what changed it; if the change is yours, run begin again with no stage open to take a fresh snapshot`
     : snapshot ? configChangeMessage(snapshotId, snapshot, live) : null;
@@ -260,6 +286,7 @@ function context(opts) {
     const problem = name ? branchNameProblem(name) : null;
     if (problem) throw new AutopilotError('bad-branch', `${what} ${problem}`);
   }
+  assertRepoPaths(marker);
   loadSecretsFile(root, process.env);
   const resolution = resolveTicket(marker, opts.id);
   if (resolution.provider === 'local') {
@@ -274,19 +301,20 @@ function context(opts) {
   }
   // A task URL resolves to the ticket's id; every state path uses that id.
   if (resolution.id && resolution.id !== opts.id) opts.id = resolution.id;
-  const tracker = trackerFor({ ...resolution, root }, process.env);
+  const tracker = defanged(trackerFor({ ...resolution, root }, process.env));
   const source = { provider: resolution.provider, path: resolution.path, number: resolution.number };
   const dirs = repoDirs(root, marker);
   // The repositories' own git config is compared before the engine runs any git that could act on
   // it (the checkout below runs filters, for one); a changed key leaves the repository untouched.
   const gitBaselineRead = snapshotId ? readSnapshot(gitConfigSnapshotPath(root, snapshotId)) : null;
-  const gitConfigChange = snapshotId && opts.command !== 'status'
+  const gitConfigChange = snapshotId
     ? (gitBaselineRead === CORRUPT
       ? `.ultrapowers/autopilot/${snapshotId}.gitconfig.json (the git config baseline of ${snapshotId}) cannot be read. The ticket is blocked. Check what changed it; if the change is yours, run begin again with no stage open to take a fresh baseline`
       : gitConfigChangeMessage(root, snapshotId, gitBaselineRead))
     : null;
   // The ticket's documents live on its branch, checked out in place: put the documents
   // repository there before anything reads the state, so two tickets can share one workspace.
+  // `status` compares too and, with a changed key, runs no git that reads the work tree.
   if (!gitConfigChange) ensureOnTicketBranch(dirs.docs, opts.id);
   // Inside a watcher's headless stage the engine CLI holds the stage's credentials, which may be
   // read-only; the tracker writes of begin and end are then made by the watcher around the stage.
@@ -620,7 +648,7 @@ async function runStatus(opts) {
   const state = readState(ctx.root, opts.id);
   const log = readLog(ctx.root, opts.id).slice(-10);
   const lock = readLock(ctx.root, opts.id);
-  return { ticket: opts.id, state, log, chain: verifyChain(ctx.root, opts.id), lock, ...(ctx.configChange ? { configChange: ctx.configChange } : {}) };
+  return { ticket: opts.id, state, log, chain: verifyChain(ctx.root, opts.id), lock, ...(ctx.configChange ? { configChange: ctx.configChange } : {}), ...(ctx.gitConfigChange ? { gitConfigChange: ctx.gitConfigChange } : {}) };
 }
 
 async function runNext(opts) {
@@ -757,6 +785,27 @@ async function runPacket(opts) {
   }
 }
 
+// The folders of the documents repository a ticket's branch may change before the gate: its own folder under
+// tasks, specs, plans and reviews, and the knowledge-base folders the project lists in `kb` (handbooks,
+// playbooks, ...). Nothing else is a document: a CI file or a script pushed here would run before anyone approved.
+function documentFolders(marker, id) {
+  const ticketFolders = ['tasks', 'specs', 'plans', 'reviews'];
+  const kb = (Array.isArray(marker.kb) ? marker.kb : []).filter((f) => typeof f === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(f) && !ticketFolders.includes(f));
+  return [...ticketFolders.map((f) => `${f}/${id}/`), ...kb.map((f) => `${f}/`)];
+}
+
+// Before the gate pushes the documents branch, nothing on it but documents. The base is the engine's own
+// (autopilot.baseBranch, else origin's default), never the state file's: a stage can write that.
+function assertDocumentsOnly(ctx, id, state) {
+  const allowed = documentFolders(ctx.marker, id);
+  const base = ctx.settings.baseBranch ?? remoteHead(ctx.dirs.docs);
+  const outside = pathsOutside(ctx.dirs.docs, state.docs.branch, base, allowed);
+  if (outside === null) throw new AutopilotError('docs-scope', `the documents branch ${state.docs.branch} cannot be compared with its base ${base}, so nothing is known about what it changes; nothing was pushed`);
+  if (outside.length) {
+    throw new AutopilotError('docs-scope', `the documents branch ${state.docs.branch} changes paths that are not documents of ${id}: ${outside.slice(0, 10).join(', ')}${outside.length > 10 ? ` and ${outside.length - 10} more` : ''} (the folders allowed: ${allowed.join(', ')}); nothing was pushed. Take them off the branch (a code change belongs to the execute stage) and run the gate again`);
+  }
+}
+
 async function postPacket(ctx, opts, state) {
   const previous = state.packet;
   const retry = state.stage === 'gate' && state.stageStatus === 'blocked';
@@ -774,6 +823,7 @@ async function postPacket(ctx, opts, state) {
   writeState(ctx.root, opts.id, state);
   appendLog(ctx.root, opts.id, { stage: 'gate', event: 'started', actor: 'engine', trigger: opts.door, repo: 'docs' });
   commitState(ctx, opts.id, `chore(${opts.id}): autopilot gate started`);
+  assertDocumentsOnly(ctx, opts.id, state);
   push(ctx.dirs.docs, state.docs.branch, { state, repoName: 'docs', ticket: opts.id });
   const docsTip = workTip(ctx.dirs.docs, opts.id, state.docs.branch);
   const ahead = baseAhead(ctx.dirs.docs, state.docs.base);
@@ -933,7 +983,7 @@ async function postReport(ctx, opts, state, prs, qaOn, stage = 'pr') {
   for (const [name, prUrl] of Object.entries(prs)) {
     if (state.report.prComments[name] || !prUrl) continue;
     const dir = name === 'docs' ? ctx.dirs.docs : ctx.dirs.repos[name];
-    state.report.prComments[name] = await trackerFor(forgeOf(ctx, name, dir), process.env).prComment(prUrl, text);
+    state.report.prComments[name] = await defanged(trackerFor(forgeOf(ctx, name, dir), process.env)).prComment(prUrl, text);
     writeState(ctx.root, opts.id, state);
   }
   if (posted || !readLog(ctx.root, opts.id).some((l) => l.event === 'report posted')) {
@@ -1020,7 +1070,7 @@ async function openPullRequests(ctx, opts, state, { resuming, qaOn }) {
   for (const r of state.repos ?? []) {
     if (!state.scope.frozen.includes(r.name) || r.name === '.') continue;
     const dir = ctx.dirs.repos[r.name];
-    const tracker = trackerFor(forgeOf(ctx, r.name, dir), process.env);
+    const tracker = defanged(trackerFor(forgeOf(ctx, r.name, dir), process.env));
     const known = await verifiedPr(ctx, opts, state, tracker, r.name, r.branch, r.prUrl);
     if (known) {
       r.prUrl = known;
@@ -1036,7 +1086,7 @@ async function openPullRequests(ctx, opts, state, { resuming, qaOn }) {
     writeState(ctx.root, opts.id, state);
   }
   push(ctx.dirs.docs, state.docs.branch, { state, repoName: 'docs', ticket: opts.id });
-  const docsTracker = trackerFor(forgeOf(ctx, 'docs', ctx.dirs.docs), process.env);
+  const docsTracker = defanged(trackerFor(forgeOf(ctx, 'docs', ctx.dirs.docs), process.env));
   state.pr.docs = await verifiedPr(ctx, opts, state, docsTracker, 'docs', state.docs.branch, state.pr.docs);
   if (!state.pr.docs) {
     const docsBody = `${cite('the documents repository')}\n${Object.entries(prs).map(([n, u]) => `- ${n}: ${u}`).join('\n')}`;
@@ -1206,6 +1256,7 @@ async function runBegin(opts) {
     // never from inside a stage, never while one is open, and never from the engine's own fallback
     // after a stage (opts.refresh === false), so nothing a stage wrote can accept itself.
     if (!ctx.inside && !openStage(ctx) && opts.refresh !== false) {
+      assertRepoPaths(ctx.live); // the new baseline is the live file: never one whose repositories leave the project
       takeTicketSnapshots(ctx, opts.id);
       ctx = context(opts);
     } else {
@@ -1721,7 +1772,7 @@ async function watchCycle(root, marker, settings, opts, previousSleepMs) {
       events.push({ event: 'unwatched', source: source.prefix, reason: err.message });
       continue;
     }
-    const tracker = trackerFor({ ...resolution, root }, process.env);
+    const tracker = defanged(trackerFor({ ...resolution, root }, process.env));
     try {
       // `ready` is the only start signal (spec §7): a ticket that carries approve or changes but
       // has no state here was never started by this engine, and is left alone.

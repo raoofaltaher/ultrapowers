@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startOdooFake, seed } from './fixtures/odoo-fake.mjs';
 import {
-  createOdooClient, discoverDb, htmlToText, textToNoteHtml, markdownToNoteHtml, parseOdooTaskUrl, splitTagNames,
+  createOdooClient, discoverDb, htmlToText, stripHiddenElements, textToNoteHtml, markdownToNoteHtml, parseOdooTaskUrl, splitTagNames,
   tagEventsFromTracking, lastWriterEvents, odooColorIndex, odooIso,
 } from '../../skills/autopilot/scripts/odoo.mjs';
 
@@ -167,4 +167,47 @@ test('the client does not follow a redirect, so the key never travels to another
   const f = await fake(seed({ redirectTo: `${elsewhere.url}/jsonrpc` }));
   await assert.rejects(createOdooClient({ url: f.url, db: 'erp', login: 'bot', apiKey: 'k1' }).authenticate(), (e) => e.code === 'tracker-failed' && /redirect/.test(e.message));
   assert.equal(elsewhere.requests.length, 0);
+});
+
+// Round 3, Medium 12: text a reader of the ticket does not see (an element hidden by its class, its
+// hidden attribute, its style, or a <template>) is dropped with everything inside it. A small scanner
+// counts the depth of the same tag name, so a nested element does not end the hidden part early.
+test('stripHiddenElements drops an element hidden by a class, the hidden attribute, a style or a template, with everything inside it', () => {
+  const hidden = [
+    '<p class="d-none">x</p>', '<p class="a  o_hidden b">x</p>', '<p class="sr-only">x</p>', '<p class="visually-hidden">x</p>', '<p class="D-None">x</p>',
+    '<p hidden>x</p>', '<p HIDDEN="">x</p>', '<p hidden="hidden">x</p>', '<p class=d-none>x</p>',
+    '<p style="display:none">x</p>', '<p style="display : none !important">x</p>', '<p style="DISPLAY:NONE">x</p>', '<p style="color:red;display:none;">x</p>',
+    '<p style="visibility:hidden">x</p>', '<p style="font-size:0">x</p>', '<p style="font-size: 0px">x</p>', '<p style="font-size:0.0em">x</p>', '<p style="font-size:0%">x</p>',
+    '<p style="opacity:0">x</p>', '<p style="opacity: 0.0">x</p>', '<p style=display:none>x</p>', '<p style="display&#58;none">x</p>', '<p style="display/**/:none">x</p>',
+    '<template><p>x</p></template>', '<SPAN HIDDEN>x</SPAN>', '<p title="a>b" hidden>x</p>',
+  ];
+  for (const html of hidden) assert.deepEqual(stripHiddenElements(`<b>a</b>${html}<i>b</i>`), { text: '<b>a</b><i>b</i>', count: 1 }, html);
+});
+
+test('stripHiddenElements keeps an element that is shown, whatever its look-alike class or style', () => {
+  const shown = [
+    '<p class="d-md-none">x</p>', '<p class="nod-none">x</p>', '<p class="hidden-xs">x</p>', '<p class="o_hidden_not">x</p>',
+    '<p style="display:block">x</p>', '<p style="display:inline-block">x</p>', '<p style="font-size:10px">x</p>', '<p style="font-size:0.5em">x</p>',
+    '<p style="font-size:100px">x</p>', '<p style="opacity:0.5">x</p>', '<p style="opacity:1">x</p>', '<p style="visibility:visible">x</p>',
+    '<p title="hidden">x</p>', '<p data-x="display:none">x</p>', '<p>display:none hidden d-none</p>',
+  ];
+  for (const html of shown) assert.deepEqual(stripHiddenElements(html), { text: html, count: 0 }, html);
+});
+
+test('stripHiddenElements counts the depth of the same tag, so a nested element does not end the hidden part early', () => {
+  assert.deepEqual(stripHiddenElements('a<span hidden>b<span>c</span>d<span>e</span>f</span>g'), { text: 'ag', count: 1 });
+  assert.deepEqual(stripHiddenElements('a<div hidden>b<div><div>c</div></div>d</div>e<div>f</div>'), { text: 'ae<div>f</div>', count: 1 });
+  assert.deepEqual(stripHiddenElements('a<div><div hidden>b</div>c</div>'), { text: 'a<div>c</div>', count: 1 });
+  assert.deepEqual(stripHiddenElements('a<div hidden><p hidden>b</p>c</div>d'), { text: 'ad', count: 1 });
+  assert.deepEqual(stripHiddenElements('a<div hidden>b</div>c<div hidden>d</div>e'), { text: 'ace', count: 2 });
+  assert.deepEqual(stripHiddenElements('a<div hidden><span>b</span><div>c</div>d'), { text: 'a', count: 1 }, 'an element never closed runs to the end');
+  assert.deepEqual(stripHiddenElements('a<span hidden>b<span/>c</span>d'), { text: 'ad', count: 1 }, 'a self-closing tag inside does not add a level');
+});
+
+test('stripHiddenElements ends a void or self-closing element at its own tag', () => {
+  assert.deepEqual(stripHiddenElements('a<img hidden src="x.png">b'), { text: 'ab', count: 1 });
+  assert.deepEqual(stripHiddenElements('a<br hidden>b<input hidden>c<hr style="display:none">d'), { text: 'abcd', count: 3 });
+  assert.deepEqual(stripHiddenElements('a<span hidden/>b</span>c'), { text: 'ab</span>c', count: 1 });
+  assert.deepEqual(stripHiddenElements('a<p>b</p>'), { text: 'a<p>b</p>', count: 0 });
+  assert.deepEqual(stripHiddenElements(''), { text: '', count: 0 });
 });

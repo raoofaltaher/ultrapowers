@@ -115,6 +115,76 @@ function decodeEntities(text) {
   });
 }
 
+// The elements a reader of the ticket does not see: one with a hiding class (Odoo's or Bootstrap's), the
+// hidden attribute or a style that hides (display, visibility, a font size or an opacity of nothing), and
+// a <template>. Each is dropped with everything inside it. A tag scanner, not one pattern: it counts the
+// depth of the same tag name, so a nested element does not end the hidden part early. A void or
+// self-closing element ends at its own tag; one never closed runs to the end of the text.
+const HIDDEN_CLASSES = new Set(['d-none', 'o_hidden', 'sr-only', 'visually-hidden']);
+const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
+const TAG = /<(\/?)([A-Za-z][^\s/>]*)((?:"[^"]*"|'[^']*'|[^>"'])*)>/g;
+const ATTRIBUTE = /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+const selfClosing = (attributes) => /\/\s*$/.test(attributes);
+
+function hidingStyle(style) {
+  return style.replace(/\/\*[\s\S]*?\*\//g, '').split(';').some((declaration) => {
+    const colon = declaration.indexOf(':');
+    const name = declaration.slice(0, colon).trim().toLowerCase();
+    const value = declaration.slice(colon + 1).replace(/!\s*important/i, '').trim().toLowerCase();
+    return colon >= 0 && (
+      (name === 'display' && value === 'none')
+      || (name === 'visibility' && (value === 'hidden' || value === 'collapse'))
+      || (name === 'font-size' && /^0*\.?0+[a-z%]*$/.test(value))
+      || (name === 'opacity' && /^0*\.?0+%?$/.test(value)));
+  });
+}
+
+function hiddenElement(name, attributes) {
+  if (name.toLowerCase() === 'template') return true;
+  for (const [, key, double, single, bare] of attributes.matchAll(ATTRIBUTE)) {
+    const attribute = key.toLowerCase();
+    const value = decodeEntities(double ?? single ?? bare ?? '');
+    if (attribute === 'hidden') return true;
+    if (attribute === 'class' && value.toLowerCase().split(/\s+/).some((c) => HIDDEN_CLASSES.has(c))) return true;
+    if (attribute === 'style' && hidingStyle(value)) return true;
+  }
+  return false;
+}
+
+// Where the element opened by the tag match `open` ends: after its closing tag, at the same depth.
+function elementEnd(text, open) {
+  const start = open.index + open[0].length;
+  const name = open[2].toLowerCase();
+  if (VOID_TAGS.has(name) || selfClosing(open[3])) return start;
+  const tags = new RegExp(TAG.source, 'g');
+  tags.lastIndex = start;
+  let depth = 1;
+  for (let m = tags.exec(text); m; m = tags.exec(text)) {
+    if (m[2].toLowerCase() !== name) continue;
+    if (m[1]) depth -= 1;
+    else if (!selfClosing(m[3])) depth += 1;
+    if (depth === 0) return m.index + m[0].length;
+  }
+  return text.length;
+}
+
+// The HTML without its hidden elements, and how many it dropped: { text, count }.
+export function stripHiddenElements(html) {
+  const text = String(html ?? '');
+  const tags = new RegExp(TAG.source, 'g');
+  let out = '';
+  let from = 0;
+  let count = 0;
+  for (let m = tags.exec(text); m; m = tags.exec(text)) {
+    if (m[1] || !hiddenElement(m[2], m[3])) continue;
+    out += text.slice(from, m.index);
+    from = elementEnd(text, m);
+    tags.lastIndex = from;
+    count += 1;
+  }
+  return { text: out + text.slice(from), count };
+}
+
 // HTML from a description or a chatter message as plain text: block tags become line breaks,
 // scripts, styles, every other tag and every data: URI are dropped, entities decoded.
 export function htmlToText(html) {

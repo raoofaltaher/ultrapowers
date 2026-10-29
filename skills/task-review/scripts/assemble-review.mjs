@@ -26,9 +26,14 @@
 // Carve-out: with no QA report and a project whose `qa` config is blank (as autopilot's qaConfigured),
 // the verdict comes from the code review and the hunt alone and the report says "QA: not configured for this project".
 //
-// Exit codes: 0 written; 2 usage or unreadable findings or hunt; 3 no project root; 4 invalid ticket.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+// Every file it reads (the findings, the QA report, the hunt file and the hunt's report) and the one it writes
+// are regular files of the project: a symbolic link or junction, a folder in a file's place, or a reviews or
+// reviews/<ticket> that links out of the project is refused (exit 2), never followed.
+//
+// Exit codes: 0 written; 2 usage, unreadable findings or hunt, or a refused link; 3 no project root; 4 invalid ticket.
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
+import { regularFileProblem, reviewFolderProblem } from '../../autopilot/scripts/autopilot-lib.mjs';
 import { DEFAULT_TICKET_PATTERN, findRoot } from '../../qa-specialist/scripts/qa-preflight.mjs';
 
 const SEVERITIES = ['Critical', 'Important', 'Minor'];
@@ -552,17 +557,31 @@ function main(argv) {
     process.stderr.write(`ERROR: ticket ${JSON.stringify(id)} is not a plain folder name matching ticketPattern ${pattern}\n`);
     return 4;
   }
+  // The review folder is a real folder of the project before anything in it is read or written: neither reviews
+  // nor reviews/<ticket> may be a link out of it.
+  const folderProblem = lstatSync(join(root, 'reviews'), { throwIfNoEntry: false })?.isSymbolicLink()
+    ? 'reviews is a symbolic link or junction, not a folder of the project'
+    : reviewFolderProblem(root, id);
+  if (folderProblem) return usage(`ERROR: ${folderProblem}; nothing was read or written`);
+  const refused = (file, label) => {
+    const problem = regularFileProblem(file, label);
+    return problem ? usage(`ERROR: ${problem}; nothing was written`) : 0;
+  };
   let findings;
+  const findingsFile = resolve(cwd, findingsPath);
+  if (regularFileProblem(findingsFile, findingsPath)) return refused(findingsFile, findingsPath);
   try {
-    findings = JSON.parse(readFileSync(resolve(cwd, findingsPath), 'utf8').replace(/^﻿/, ''));
+    findings = JSON.parse(readFileSync(findingsFile, 'utf8').replace(/^﻿/, ''));
   } catch (error) {
     return usage(`ERROR: cannot read the findings file ${findingsPath}: ${error.message}`);
   }
   const qaFile = resolve(cwd, qaArg || join('reviews', id, 'QA-REPORT.md'));
+  if (regularFileProblem(qaFile, qaArg || `reviews/${id}/QA-REPORT.md`)) return refused(qaFile, qaArg || `reviews/${id}/QA-REPORT.md`);
   const qaText = existsSync(qaFile) ? readFileSync(qaFile, 'utf8') : null;
   // A named hunt file must exist; the default one is read when it exists and must then be valid.
   const securityFile = resolve(cwd, securityArg || join('reviews', id, 'security-findings.json'));
   let securityFindings = null;
+  if (regularFileProblem(securityFile, securityArg || `reviews/${id}/security-findings.json`)) return refused(securityFile, securityArg || `reviews/${id}/security-findings.json`);
   if (securityArg || existsSync(securityFile)) {
     try {
       securityFindings = JSON.parse(readFileSync(securityFile, 'utf8').replace(/^﻿/, ''));
@@ -572,6 +591,7 @@ function main(argv) {
   }
   // The hunt's own report is read only to quote its verdict line beside the one computed here.
   const securityReportFile = join(root, 'reviews', id, 'SECURITY-REPORT.md');
+  if (securityFindings !== null && regularFileProblem(securityReportFile, `reviews/${id}/SECURITY-REPORT.md`)) return refused(securityReportFile, `reviews/${id}/SECURITY-REPORT.md`);
   const securityText = securityFindings !== null && existsSync(securityReportFile) ? readFileSync(securityReportFile, 'utf8') : null;
   let result;
   try {
@@ -580,6 +600,7 @@ function main(argv) {
     return usage(`ERROR: ${error.message}`);
   }
   const target = join(root, 'reviews', id, 'TASK-REVIEW.md');
+  if (regularFileProblem(target, `reviews/${id}/TASK-REVIEW.md`)) return refused(target, `reviews/${id}/TASK-REVIEW.md`);
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, result.markdown);
   process.stdout.write(`Verdict: ${result.verdict} — ${result.sentence}.\nwrote reviews/${id}/TASK-REVIEW.md\n`);

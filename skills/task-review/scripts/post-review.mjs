@@ -35,7 +35,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { AutopilotError, loadSecretsFile, pushAllowed, reviewFolderProblem } from '../../autopilot/scripts/autopilot-lib.mjs';
+import { AutopilotError, defangRemoteImages, loadSecretsFile, pushAllowed, regularFileProblem, reviewFolderProblem } from '../../autopilot/scripts/autopilot-lib.mjs';
 import { trackerFor } from '../../autopilot/scripts/tracker.mjs';
 import { commitPaths, forgeFor, git, push } from '../../autopilot/scripts/repos.mjs';
 import { resolveTicket, TicketError } from '../../new-task/scripts/ticket-sources.mjs';
@@ -197,6 +197,25 @@ export function splitParts(text, limit) {
   return parts;
 }
 
+// A report file is read as a regular file of the project, never through a link (the agent that wrote it, or
+// the branch under review, may have committed a link to a file that holds secrets).
+function reportFile(root, id, name) {
+  const file = path.join(root, 'reviews', id, name);
+  const problem = regularFileProblem(file, `reviews/${id}/${name}`);
+  if (problem) throw new AutopilotError('bad-artifact', `${problem}; nothing was posted`);
+  return file;
+}
+
+// Every screenshot a report links is checked the same way, before anything is committed or pushed.
+function assertArtifactFiles(root, id, documents) {
+  for (const doc of documents) {
+    for (const file of rewriteLinks(doc.text, { id, mode: 'raw', base: '' }).files) {
+      const problem = regularFileProblem(path.resolve(root, 'reviews', id, 'artifacts', file.name), `reviews/${id}/artifacts/${file.name}`);
+      if (problem) throw new AutopilotError('bad-artifact', `${problem}; nothing was posted`);
+    }
+  }
+}
+
 function numbered(name, parts) {
   return parts.map((part, i) => `**${name}**${parts.length > 1 ? ` (part ${i + 1} of ${parts.length})` : ''}\n\n${part}`);
 }
@@ -208,13 +227,16 @@ function numbered(name, parts) {
 // falls back to the raw URL.
 async function commentsFor(documents, { id, mode, base, limit, root, imageQuery = '', tracker = null, notes = [] }) {
   const out = [];
+  // A report is agent-written: a remote image in it would be fetched by whoever opens the comment, and its
+  // address carries data out. The images this function adds afterwards (the branch's, the tracker's) stay.
+  documents = documents.map((doc) => ({ ...doc, text: defangRemoteImages(doc.text) }));
   const artifactsDir = path.resolve(root, 'reviews', id, 'artifacts');
   // The real path must sit under the real artifacts folder: a symlink inside it is not followed out.
   // The folder itself must be the project's own reviews/<ID>/artifacts, not a link out of it.
   const artifactPath = (name) => {
     const file = path.resolve(artifactsDir, name);
     if (!insideArtifacts(name) || !file.startsWith(`${artifactsDir}${path.sep}`)) throw new AutopilotError('bad-artifact', `artifacts/${name} is not inside reviews/${id}/artifacts/`);
-    const folder = reviewFolderProblem(root, id, 'artifacts');
+    const folder = reviewFolderProblem(root, id, 'artifacts') ?? regularFileProblem(file, `reviews/${id}/artifacts/${name}`);
     if (folder) throw new AutopilotError('bad-artifact', folder);
     let realDir;
     let realFile;
@@ -299,23 +321,24 @@ export async function postReview({ id, root, marker, resolution, draftPr = false
   // refused before anything is read, committed or pushed.
   const folder = reviewFolderProblem(root, id) ?? reviewFolderProblem(root, id, 'artifacts');
   if (folder) throw new AutopilotError('bad-artifact', `${folder}; nothing was posted`);
-  const securityFile = path.join(root, 'reviews', id, 'SECURITY-REPORT.md');
+  const securityFile = reportFile(root, id, 'SECURITY-REPORT.md');
   const hasSecurity = fs.existsSync(securityFile);
   const documents = [];
   if (securityOnly) {
     if (!hasSecurity) throw new AutopilotError('no-security-report', `reviews/${id}/SECURITY-REPORT.md does not exist; run the vulnerability hunt before posting it`);
     documents.push({ name: 'SECURITY-REPORT.md', text: fs.readFileSync(securityFile, 'utf8') });
   } else {
-    const reviewFile = path.join(root, 'reviews', id, 'TASK-REVIEW.md');
+    const reviewFile = reportFile(root, id, 'TASK-REVIEW.md');
     if (!fs.existsSync(reviewFile)) {
       throw new AutopilotError('no-review', `reviews/${id}/TASK-REVIEW.md does not exist; run the review before posting it`);
     }
     documents.push({ name: 'TASK-REVIEW.md', text: fs.readFileSync(reviewFile, 'utf8') });
-    const qaFile = path.join(root, 'reviews', id, 'QA-REPORT.md');
+    const qaFile = reportFile(root, id, 'QA-REPORT.md');
     if (fs.existsSync(qaFile)) documents.push({ name: 'QA-REPORT.md', text: fs.readFileSync(qaFile, 'utf8') });
     // The vulnerability hunt's report (Step 3b) is the third part, only when the hunt wrote one.
     if (hasSecurity) documents.push({ name: 'SECURITY-REPORT.md', text: fs.readFileSync(securityFile, 'utf8') });
   }
+  assertArtifactFiles(root, id, documents);
 
   const docsBranch = deps.currentBranch(root);
   if (!docsBranch.startsWith(`${id}-`)) {
@@ -394,11 +417,12 @@ export async function postReview({ id, root, marker, resolution, draftPr = false
 export async function postAudit({ id, root, marker, env = process.env }, deps = defaultDeps) {
   const folder = reviewFolderProblem(root, id) ?? reviewFolderProblem(root, id, 'artifacts');
   if (folder) throw new AutopilotError('bad-artifact', `${folder}; nothing was posted`);
-  const securityFile = path.join(root, 'reviews', id, 'SECURITY-REPORT.md');
+  const securityFile = reportFile(root, id, 'SECURITY-REPORT.md');
   if (!fs.existsSync(securityFile)) {
     throw new AutopilotError('no-security-report', `reviews/${id}/SECURITY-REPORT.md does not exist; run the vulnerability hunt before posting it`);
   }
   const documents = [{ name: 'SECURITY-REPORT.md', text: fs.readFileSync(securityFile, 'utf8') }];
+  assertArtifactFiles(root, id, documents);
   const branch = deps.currentBranch(root);
   if (!branch) throw new AutopilotError('no-open-pr', `the project at ${root} is on a detached HEAD: there is no branch whose open pull request could take the report`);
   const forge = deps.forgeFor(root, {});

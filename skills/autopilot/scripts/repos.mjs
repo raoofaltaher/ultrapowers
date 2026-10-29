@@ -326,6 +326,38 @@ export function baseAhead(dir, base) {
   return r.ok ? r.stdout.split('\n').map((s) => s.trim()).filter(Boolean) : [];
 }
 
+// The paths `branch` changes since it left `base` that lie outside `allowed` (each a `folder/` prefix, or an
+// exact path), sorted; [] when it changes only those. The start is the common commit with origin/<base>, and
+// with the local base only when the repository has no such ref: a stage can move the local base onto the
+// branch's tip (`git checkout -B main HEAD`), which would leave nothing to compare. Null when it cannot be
+// told (no such base or branch, no common commit, an option in place of a name): a caller that guards
+// something refuses on null.
+export function pathsOutside(dir, branch, base, allowed) {
+  if ([branch, base].some((name) => typeof name !== 'string' || !name || name.startsWith('-'))) return null;
+  const head = `refs/heads/${branch}`;
+  if (!git(dir, ['rev-parse', '--verify', '--quiet', head]).ok) return null;
+  // The nearest of the local base and origin's: an unpushed base commit of the owner is not the ticket's
+  // change. A stage cannot move the base onto its own tip: the guardrail refuses git checkout -B, switch -C,
+  // branch -f and update-ref in an autopilot stage.
+  let start = null;
+  let nearest = Infinity;
+  for (const ref of [`refs/heads/${base}`, `refs/remotes/origin/${base}`]) {
+    if (!git(dir, ['rev-parse', '--verify', '--quiet', ref]).ok) continue;
+    const common = git(dir, ['merge-base', head, ref]);
+    if (!common.ok) continue;
+    const sha = common.stdout.trim();
+    const count = git(dir, ['rev-list', '--count', `${sha}..${head}`]);
+    if (count.ok && Number(count.stdout.trim()) < nearest) {
+      nearest = Number(count.stdout.trim());
+      start = sha;
+    }
+  }
+  if (!start) return null;
+  const changed = git(dir, ['diff', '--name-only', '-z', '--no-renames', start, head, '--']);
+  if (!changed.ok) return null;
+  return changed.stdout.split('\0').filter(Boolean).filter((p) => !allowed.some((a) => (a.endsWith('/') ? p.startsWith(a) : p === a))).sort();
+}
+
 // True when any of `paths` differs between the two revisions; an unreadable revision counts as changed.
 export function pathsChanged(dir, from, to, paths) {
   // The revisions can come from the state file, which a stage can write: never an option of git.

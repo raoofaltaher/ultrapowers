@@ -3,7 +3,7 @@
 // Run: node --test tests/task-lifecycle/assemble-review.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, symlinkSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -620,4 +620,136 @@ test('an unknown research status becomes unverified with a reason, and an unknow
 test('the Summary security counts name the advisories from research that apply', () => {
   const r = runResearch(withResearch(research([adv('critical', true, 'applies')])));
   assert.match(r.markdown, /security: FAIL \([^)]*1 critical or high advisory from research in a runtime/);
+});
+
+// ---- Round 3, Medium 14: the files assemble-review reads and the one it writes are regular files of the project ----
+
+// A link to a folder (a junction on Windows) or a file; false where the machine gives no right to make one.
+function linkTo(target, link, type) {
+  try {
+    symlinkSync(target, link, type === 'dir' && process.platform === 'win32' ? 'junction' : type);
+    return true;
+  } catch (error) {
+    if (error.code === 'EPERM' || error.code === 'EACCES') return false;
+    throw error;
+  }
+}
+
+function withFindings(root) {
+  writeFileSync(join(root, 'reviews', '501', 'review-findings.json'), JSON.stringify({ repos: [repoBlock('api')] }));
+}
+
+test('round3 Medium 14: a QA report, hunt file or hunt report that is a folder is refused with exit 2 and a clear error, and TASK-REVIEW.md is not written', () => {
+  for (const [name, args] of [['QA-REPORT.md', []], ['security-findings.json', []], ['QA-REPORT.md', ['--qa', 'reviews/501/QA-REPORT.md']], ['security-findings.json', ['--security', 'reviews/501/security-findings.json']]]) {
+    const root = project();
+    try {
+      withFindings(root);
+      mkdirSync(join(root, 'reviews', '501', name));
+      const out = cli(root, ['501', '--findings', 'reviews/501/review-findings.json', ...args]);
+      assert.equal(out.status, 2, `${name} ${args.join(' ')}: ${out.stdout}${out.stderr}`);
+      assert.match(out.stderr, new RegExp(`ERROR: .*${name.replace('.', '\\.')}.*is not a regular file`), out.stderr);
+      assert.ok(!existsSync(join(root, 'reviews', '501', 'TASK-REVIEW.md')));
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
+  const root = project();
+  try {
+    withFindings(root);
+    writeFileSync(join(root, 'reviews', '501', 'security-findings.json'), JSON.stringify(sec([])));
+    mkdirSync(join(root, 'reviews', '501', 'SECURITY-REPORT.md'));
+    const out = cli(root, ['501', '--findings', 'reviews/501/review-findings.json']);
+    assert.equal(out.status, 2, out.stdout + out.stderr);
+    assert.match(out.stderr, /SECURITY-REPORT\.md is not a regular file/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+for (const name of ['QA-REPORT.md', 'security-findings.json', 'SECURITY-REPORT.md', 'review-findings.json']) {
+  test(`round3 Medium 14: reviews/<ID>/${name} as a symbolic link to a secrets file: refused, nothing read into the review`, (t) => {
+    const root = project();
+    const outside = mkdtempSync(join(tmpdir(), 'assemble-secret-'));
+    writeFileSync(join(outside, 'secrets.env'), 'Verdict: PASS — TOKEN=secret-value\n');
+    try {
+      withFindings(root);
+      writeFileSync(join(root, 'reviews', '501', 'security-findings.json'), JSON.stringify(sec([])));
+      if (name !== 'review-findings.json') writeFileSync(join(root, 'reviews', '501', 'SECURITY-REPORT.md'), '# Security\nVerdict: PASS — ok.\n');
+      rmSync(join(root, 'reviews', '501', name), { force: true });
+      if (!linkTo(join(outside, 'secrets.env'), join(root, 'reviews', '501', name), 'file')) { t.skip('no right to create a file link here'); return; }
+      const out = cli(root, ['501', '--findings', 'reviews/501/review-findings.json']);
+      assert.equal(out.status, 2, out.stdout + out.stderr);
+      assert.match(out.stderr, /symbolic link/);
+      assert.ok(!existsSync(join(root, 'reviews', '501', 'TASK-REVIEW.md')));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+}
+
+test('round3 Medium 14: TASK-REVIEW.md is written only into a real folder of the project, and never through a link at the target', (t) => {
+  // reviews/<ID> linked to a folder outside the project: nothing is written there.
+  const root = project();
+  const outside = mkdtempSync(join(tmpdir(), 'assemble-outside-'));
+  try {
+    writeFileSync(join(outside, 'review-findings.json'), JSON.stringify({ repos: [repoBlock('api')] }));
+    writeFileSync(join(outside, 'QA-REPORT.md'), qa('Verdict: PASS — ok.'));
+    rmSync(join(root, 'reviews', '501'), { recursive: true, force: true });
+    if (linkTo(outside, join(root, 'reviews', '501'), 'dir')) {
+      const out = cli(root, ['501', '--findings', 'reviews/501/review-findings.json']);
+      assert.equal(out.status, 2, out.stdout + out.stderr);
+      assert.match(out.stderr, /reviews\/501.*(symbolic link|resolves outside)/);
+      assert.ok(!existsSync(join(outside, 'TASK-REVIEW.md')), 'nothing written through the link');
+      rmSync(join(root, 'reviews', '501'), { force: true, recursive: false });
+    } else t.diagnostic('no right to create a folder link here');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+  // `reviews` itself linked out, with no reviews/<ID> yet: the folder is not created through it.
+  const root2 = project();
+  const outside2 = mkdtempSync(join(tmpdir(), 'assemble-outside-'));
+  try {
+    writeFileSync(join(root2, 'findings.json'), JSON.stringify({ repos: [repoBlock('api')] }));
+    rmSync(join(root2, 'reviews'), { recursive: true, force: true });
+    if (linkTo(outside2, join(root2, 'reviews'), 'dir')) {
+      const out = cli(root2, ['501', '--findings', 'findings.json']);
+      assert.equal(out.status, 2, out.stdout + out.stderr);
+      assert.deepEqual(readdirSync(outside2), [], 'nothing created through the link');
+      rmSync(join(root2, 'reviews'), { force: true, recursive: false });
+    }
+  } finally {
+    rmSync(root2, { recursive: true, force: true });
+    rmSync(outside2, { recursive: true, force: true });
+  }
+  // TASK-REVIEW.md itself a folder or a link to a file: refused, the file it points to is left as it was.
+  const root3 = project();
+  const outside3 = mkdtempSync(join(tmpdir(), 'assemble-outside-'));
+  try {
+    withFindings(root3);
+    mkdirSync(join(root3, 'reviews', '501', 'TASK-REVIEW.md'));
+    let out = cli(root3, ['501', '--findings', 'reviews/501/review-findings.json']);
+    assert.equal(out.status, 2, out.stdout + out.stderr);
+    assert.match(out.stderr, /TASK-REVIEW\.md is not a regular file/);
+    rmSync(join(root3, 'reviews', '501', 'TASK-REVIEW.md'), { recursive: true, force: true });
+    writeFileSync(join(outside3, 'ci.yml'), 'original\n');
+    if (linkTo(join(outside3, 'ci.yml'), join(root3, 'reviews', '501', 'TASK-REVIEW.md'), 'file')) {
+      out = cli(root3, ['501', '--findings', 'reviews/501/review-findings.json']);
+      assert.equal(out.status, 2, out.stdout + out.stderr);
+      assert.equal(readFileSync(join(outside3, 'ci.yml'), 'utf8'), 'original\n', 'the link target is not overwritten');
+    }
+  } finally {
+    rmSync(root3, { recursive: true, force: true });
+    rmSync(outside3, { recursive: true, force: true });
+  }
+});
+
+test('round3 Medium 14: a plain project still assembles: regular files, a real folder', () => {
+  const root = project();
+  try {
+    withFindings(root);
+    writeFileSync(join(root, 'reviews', '501', 'QA-REPORT.md'), qa('Verdict: PASS — ok.'));
+    const out = cli(root, ['501', '--findings', 'reviews/501/review-findings.json']);
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(readFileSync(join(root, 'reviews', '501', 'TASK-REVIEW.md'), 'utf8'), /^Verdict: PASS — /m);
+    // A second run over the report it wrote replaces it.
+    assert.equal(cli(root, ['501', '--findings', 'reviews/501/review-findings.json']).status, 0);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

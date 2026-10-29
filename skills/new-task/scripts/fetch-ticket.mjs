@@ -18,7 +18,7 @@ import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolveTool, childEnv } from '../../../hooks/lib/resolve-tool.mjs';
 import { resolveTicket, TicketError } from './ticket-sources.mjs';
-import { createOdooClient, discoverDb, htmlToText, odooIso } from '../../autopilot/scripts/odoo.mjs';
+import { createOdooClient, discoverDb, htmlToText, stripHiddenElements, odooIso } from '../../autopilot/scripts/odoo.mjs';
 import { loadSecretsFile, AutopilotError, activeMarkerPath, effectiveAutopilot } from '../../autopilot/scripts/autopilot-lib.mjs';
 import { trackerFor } from '../../autopilot/scripts/tracker.mjs';
 
@@ -318,16 +318,17 @@ async function collaboratorMessages(root, marker, resolution, messages) {
 }
 
 // Every HTML comment, closed or not (an unclosed one runs to the end of the text), with the number
-// removed. Browsers end a comment at "-->" or "--!>"; the pass repeats so that removing one cannot
-// join the pieces around it into another. Each pass costs the length of the text and a crafted body
-// needs one pass per layer, so the passes are capped: a text that has not settled by then is withheld
-// whole and counted as one.
+// removed, and every declaration (`<!x ...>`, `<![CDATA[ ...>`) and processing instruction (`<?x ...>`):
+// a browser reads them as comments that end at the first ">", and the reader sees none of them. Browsers
+// end a comment at "-->" or "--!>"; the pass repeats so that removing one cannot join the pieces around
+// it into another. Each pass costs the length of the text and a crafted body needs one pass per layer,
+// so the passes are capped: a text that has not settled by then is withheld whole and counted as one.
 const MAX_STRIP_PASSES = 50;
 export function stripHtmlComments(text) {
   let out = String(text ?? '');
   let count = 0;
   for (let pass = 0; pass <= MAX_STRIP_PASSES; pass += 1) {
-    const next = out.replace(/<!--[\s\S]*?(?:--!?>|$)/g, () => {
+    const next = out.replace(/<!--[\s\S]*?(?:--!?>|$)|<!(?:[A-Za-z]|\[CDATA\[)[^>]*(?:>|$)|<\?[^>]*(?:>|$)/g, () => {
       count += 1;
       return '';
     });
@@ -337,33 +338,138 @@ export function stripHtmlComments(text) {
   return { text: '(body withheld: unbalanced HTML comments)', count: 1 };
 }
 
-// In the autopilot form the person who added the ready label sees the rendered ticket, where an HTML
-// comment is invisible: what they approved does not include it, so it never reaches an unattended
-// stage. A plain line at the end of the body says how many were removed. strip(text) is the filter
-// for one text; the count of a comment is kept on its message (`hidden`) so that a comment filtered
-// out later is not counted.
-function commentStripper(ctx) {
-  if (!ctx || !inAutopilotForm(ctx.root)) return null;
-  return (text) => stripHtmlComments(text);
+// Two more things the approver cannot see in the rendered ticket: characters that draw nothing (the
+// zero-width, bidirectional-control and tag characters, and the byte-order mark) and the Markdown link
+// reference definitions, which render as nothing (`[//]: # (text)`). A definition labelled `//`, `_` or
+// `comment`, or whose destination is `#`, `<>` or empty, is dropped; any other keeps its label and
+// destination and loses its title, which is at most a tooltip. A run of invisible characters counts once;
+// a definition counts once, with a title that opens on the line of its destination (or the next) and
+// runs on to its closer or a blank line.
+const INVISIBLE_RUN = new RegExp('[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\u{E0000}-\u{E007F}]+', 'gu');
+const DEFINITION = /^ {0,3}\[([^\]\n]*)\][ \t]*:/;
+const HIDDEN_LABEL = /^(?:\/\/|_|comment)$/i;
+const NO_DESTINATION = new Set(['', '#', '<>']);
+const TITLE_OPENER = /^[ \t]{0,3}["'(]/;
+const TITLE_CLOSERS = new Map([['"', '"'], ["'", "'"], ['(', ')']]);
+
+function stripInvisible(text) {
+  let count = 0;
+  const out = String(text ?? '').replace(INVISIBLE_RUN, () => {
+    count += 1;
+    return '';
+  });
+  return { text: out, count };
 }
 
-// stripped: the caller removed the comments from the HTML before it became text (Odoo), so the text is
-// not stripped again; a comment the approver can read as text is not a hidden one.
-function hideComments(ctx, ticket, messages, bodyCount = 0, stripped = false) {
-  const strip = stripped && commentStripper(ctx) ? (text) => ({ text, count: 0 }) : commentStripper(ctx);
-  if (!strip) return messages;
-  let removed = bodyCount;
+// One definition from the end of its label: the destination (on the line or the next), then the title.
+// `last` is the last line it covers; `valid` is false when text that is no title follows the destination
+// (a paragraph, whose lines are all visible).
+function readDefinition(lines, i, from) {
+  let last = i;
+  let rest = lines[i].slice(from).trim();
+  if (!rest && i + 1 < lines.length && lines[i + 1].trim() !== '' && !TITLE_OPENER.test(lines[i + 1])) {
+    last += 1;
+    rest = lines[last].trim();
+  }
+  const [, destination = '', after = ''] = /^(<[^<>]*>|\S+)([\s\S]*)$/.exec(rest) ?? [];
+  let tail = after.trim();
+  if (!tail && last + 1 < lines.length && TITLE_OPENER.test(lines[last + 1])) {
+    last += 1;
+    tail = lines[last].trim();
+  }
+  if (!tail) return { destination, last, titled: false, valid: true };
+  const closer = TITLE_CLOSERS.get(tail[0]);
+  if (!closer) return { destination, last: i, titled: false, valid: false };
+  let open = tail.slice(1);
+  while (!open.includes(closer) && last + 1 < lines.length && lines[last + 1].trim() !== '') {
+    last += 1;
+    open = lines[last];
+  }
+  return { destination, last, titled: true, valid: true };
+}
+
+function stripHiddenDefinitions(text) {
+  const lines = String(text ?? '').split('\n');
+  const kept = [];
+  let count = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    const head = DEFINITION.exec(lines[i]);
+    // A footnote (`[^1]: text`) is visible text, not a definition.
+    if (!head || head[1].startsWith('^')) {
+      kept.push(lines[i]);
+      continue;
+    }
+    const def = readDefinition(lines, i, head[0].length);
+    if (HIDDEN_LABEL.test(head[1]) || (def.valid && NO_DESTINATION.has(def.destination))) {
+      count += 1;
+      i = def.last;
+    } else if (def.valid && def.titled) {
+      count += 1;
+      kept.push(`${head[0]} ${def.destination}`);
+      i = def.last;
+    } else {
+      kept.push(...lines.slice(i, def.last + 1));
+      i = def.last;
+    }
+  }
+  return { text: kept.join('\n'), count };
+}
+
+// The invisible characters and the hidden definitions of a text, with the number removed. Not the HTML
+// comments: stripHtmlComments does those (Odoo's are removed from the HTML, before the tags).
+export function stripHiddenText(text) {
+  const a = stripInvisible(text);
+  const b = stripHiddenDefinitions(a.text);
+  return { text: b.text, count: a.count + b.count };
+}
+
+// In the autopilot form the person who added the ready label sees the rendered ticket, where an HTML
+// comment, an invisible character and a hidden link definition are invisible: what they approved does not
+// include them, so they never reach an unattended stage. A plain line at the end of the body says how
+// many were removed. strip(text) is the filter for one text, { text, count, other } (count: HTML comments,
+// other: the rest); the count of a comment is kept on its message (`hidden`) so that a comment filtered
+// out later is not counted. The order matters: an invisible character removed can complete a comment
+// opener, and a comment removed can complete a definition label.
+function commentStripper(ctx) {
+  if (!ctx || !inAutopilotForm(ctx.root)) return null;
+  return (text) => {
+    const a = stripInvisible(text);
+    const b = stripHtmlComments(a.text);
+    const c = stripHiddenDefinitions(b.text);
+    return { text: c.text, count: b.count, other: a.count + c.count };
+  };
+}
+
+// stripped: the caller removed the comments and the hidden elements from the HTML before it became text
+// (Odoo), { count, other } for the body, so the text keeps only the filter for the rest; a comment the
+// approver can read as text is not a hidden one.
+function hideComments(ctx, ticket, messages, stripped = null) {
+  const full = commentStripper(ctx);
+  if (!full) return messages;
+  const strip = stripped ? (text) => { const h = stripHiddenText(text); return { text: h.text, count: 0, other: h.count }; } : full;
+  let removed = stripped?.count ?? 0;
+  let other = stripped?.other ?? 0;
+  if (typeof ticket.title === 'string') {
+    const title = stripInvisible(ticket.title);
+    ticket.title = title.text;
+    other += title.count;
+  }
   const body = strip(ticket.body);
   ticket.body = body.text;
   removed += body.count;
+  other += body.other;
   const kept = messages.map((m) => {
-    const { hidden = 0, ...rest } = m;
+    const { hidden = 0, hiddenOther = 0, ...rest } = m;
     const b = strip(m.body);
     removed += hidden + b.count;
+    other += hiddenOther + b.other;
     return { ...rest, body: b.text };
   });
-  if (removed > 0) {
-    ticket.body = `${ticket.body}${ticket.body ? '\n\n' : ''}(${removed} hidden HTML comment(s) removed: not visible to the person who approved the ticket.)`;
+  const parts = [];
+  if (removed > 0) parts.push(`${removed} hidden HTML comment(s)`);
+  if (other > 0) parts.push(`${other} invisible character(s) or hidden link definition(s)`);
+  if (parts.length > 0) {
+    ticket.body = `${ticket.body}${ticket.body ? '\n\n' : ''}(${parts.join(' and ')} removed: not visible to the person who approved the ticket.)`;
   }
   return kept;
 }
@@ -438,19 +544,26 @@ async function fetchOdoo(resolution, ctx) {
     };
     const rows = await c.call('mail.message', 'search_read', [[['model', '=', 'project.task'], ['res_id', '=', n], ['message_type', '=', 'comment']]], { fields: ['id', 'date', 'author_id', 'body'], order: 'date asc' });
     const messages = [];
-    // In the autopilot form a comment of the HTML is removed before the tags are, so that its text
-    // cannot survive the conversion to plain text (the count rides on the message until it is kept).
+    // In the autopilot form a comment of the HTML and an element it hides are removed before the tags
+    // are, so that their text cannot survive the conversion to plain text (the counts ride on the
+    // message until it is kept).
     const auto = Boolean(ctx) && inAutopilotForm(ctx.root);
+    const visibleHtml = (raw) => {
+      if (!auto) return { text: raw, count: 0, other: 0 };
+      const comments = stripHtmlComments(raw);
+      const elements = stripHiddenElements(comments.text);
+      return { text: elements.text, count: comments.count, other: elements.count };
+    };
     for (const m of rows) {
-      const html = auto ? stripHtmlComments(m.body) : { text: m.body, count: 0 };
-      messages.push({ author: await loginOf(m.author_id?.[0]), at: odooIso(m.date), body: htmlToText(html.text), hidden: html.count });
+      const html = visibleHtml(m.body);
+      messages.push({ author: await loginOf(m.author_id?.[0]), at: odooIso(m.date), body: htmlToText(html.text), hidden: html.count, hiddenOther: html.other });
     }
     const files = await c.call('ir.attachment', 'search_read', [[['res_model', '=', 'project.task'], ['res_id', '=', n]]], { fields: ['id', 'name', 'mimetype', 'file_size', 'type', 'url'] });
     // A file kept outside Odoo (a URL attachment, a cloud storage module) is listed at its own
     // address: /web/content would only redirect there, and its bytes are not in the database.
     const addressOf = (f) => (EXTERNAL_ATTACHMENT_TYPES.has(f.type) && typeof f.url === 'string' && f.url ? f.url : `${resolution.url}/web/content/${f.id}?download=true`);
     const author = task.create_uid?.[0] ? (await c.call('res.users', 'read', [[task.create_uid[0]]], { fields: ['login'] }))[0]?.login ?? null : null;
-    const description = auto ? stripHtmlComments(task.description) : { text: task.description, count: 0 };
+    const description = visibleHtml(task.description);
     const ticket = {
       title: task.name ?? '',
       body: htmlToText(description.text),
@@ -461,7 +574,7 @@ async function fetchOdoo(resolution, ctx) {
       via: 'rpc',
       attachments: files.map((f) => ({ id: f.id, name: f.name, mimetype: f.mimetype ?? null, size: f.file_size ?? null, url: addressOf(f) })),
     };
-    return withReads(ticket, hideComments(ctx, ticket, await filterMessages(ctx, resolution, messages), description.count, true));
+    return withReads(ticket, hideComments(ctx, ticket, await filterMessages(ctx, resolution, messages), description));
   } catch (err) {
     throw fetchErrorFrom(err);
   }

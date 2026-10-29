@@ -41,6 +41,80 @@ export function reviewFolderProblem(root, id, sub = '') {
   return null;
 }
 
+// A report file the review tools read, post or overwrite (QA-REPORT.md, SECURITY-REPORT.md, the findings,
+// a screenshot, TASK-REVIEW.md) is a regular file of the project: a symbolic link (or a junction) would
+// make the tool read or write wherever it points, and a folder or a device is no report. Returns null
+// when it is a regular file or does not exist; otherwise a sentence naming it.
+export function regularFileProblem(file, label = file) {
+  const stat = fs.lstatSync(file, { throwIfNoEntry: false });
+  if (!stat) return null;
+  if (stat.isSymbolicLink()) return `${label} is a symbolic link or junction, not a file of the project`;
+  if (!stat.isFile()) return `${label} is not a regular file`;
+  return null;
+}
+
+// Text a stage wrote reaches the tracker as a comment, a report or a pull request body, and whoever
+// opens it (or the forge's own proxy) fetches every remote image in it: the address carries data out
+// past the host rules the stage ran under. A remote image becomes a link the reader clicks, written
+// `[image: alt](<url>)`; a relative path, a data URL and an image the caller adds afterwards (a file the
+// tracker hosts, uploaded by the engine) are not touched. The address is read the way a renderer reads
+// it: entities decoded, backslash escapes removed, tabs and line breaks dropped.
+const NAMED_ENTITIES = { colon: ':', sol: '/', amp: '&', quest: '?', num: '#', equals: '=', period: '.', Tab: '', NewLine: '' };
+function normalizedUrl(raw) {
+  return String(raw)
+    .replace(/&#x([0-9a-f]+);?/gi, (m, h) => String.fromCodePoint(Math.min(parseInt(h, 16), 0x10ffff)))
+    .replace(/&#(\d+);?/g, (m, d) => String.fromCodePoint(Math.min(Number(d), 0x10ffff)))
+    .replace(/&([A-Za-z]+);/g, (m, name) => (Object.hasOwn(NAMED_ENTITIES, name) ? NAMED_ENTITIES[name] : m))
+    .replace(/\\([!-/:-@[-`{-~])/g, '$1')
+    .replace(/[\t\n\r]/g, '')
+    .trim();
+}
+const REMOTE_URL = /^(?:https?:)?\/\//i;
+function asLink(kind, alt, url) {
+  const label = String(alt ?? '').replace(/\\([[\]])/g, '$1').replace(/[[\]]/g, '').replace(/\s*[\r\n]+\s*/g, ' ').trim();
+  return `[${kind}${label ? `: ${label}` : ''}](<${url.replace(/[<>\s]/g, (c) => encodeURIComponent(c))}>)`;
+}
+// The alt text may hold escaped and nested brackets; a destination holds balanced parentheses (three deep).
+const ALT = String.raw`((?:\\.|[^\[\]\\]|\[(?:\\.|[^\]\\])*\])*)`;
+const BARE = String.raw`(?:[^\s()]|\((?:[^\s()]|\((?:[^\s()]|\([^\s()]*\))*\))*\))*`;
+const MD_IMAGE = new RegExp(String.raw`!\[${ALT}\]\(\s*(<[^>\n]*>|${BARE})(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)`, 'g');
+const MD_INLINE_REST = new RegExp(String.raw`!\[${ALT}\]\((?=([\s\S]{0,300}))`, 'g');
+const MD_REFERENCE_IMAGE = new RegExp(String.raw`!\[${ALT}\](?!\()`, 'g');
+const HTML_TAG = /<([A-Za-z][^\s/>]*)((?:"[^"]*"|'[^']*'|[^>"'])*)>/g;
+const HTML_ALT = /\balt\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
+const HTML_ATTRIBUTE = /([^\s"'<>/=]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g;
+// What a renderer fetches on its own, on any tag: media, a poster, an object's data, a background, and the
+// address of a stylesheet or a base (`<link href>`, `<base href>`). `<a href>` is a click, not a request.
+const FETCHED_ATTRIBUTES = new Set(['src', 'srcset', 'data-src', 'poster', 'data', 'background']);
+const FETCHED_HREF_TAGS = new Set(['link', 'base']);
+
+export function defangRemoteImages(md) {
+  let text = String(md ?? '');
+  text = text.replace(MD_IMAGE, (whole, alt, dest) => {
+    const url = normalizedUrl(dest.startsWith('<') ? dest.slice(1, -1) : dest);
+    return REMOTE_URL.test(url) ? asLink('image', alt, url) : whole;
+  });
+  // An inline image the pass above could not parse to its end, whose address still starts like a remote
+  // one, stops being an image: the `!` goes, the renderer reads what follows as it likes.
+  text = text.replace(MD_INLINE_REST, (whole, alt, rest) => (REMOTE_URL.test(normalizedUrl(rest.replace(/^\s*<?/, ''))) ? `[image: ${alt}](` : whole));
+  // `![alt][ref]` and `![alt]` take their address from a definition: they become plain link text.
+  text = text.replace(MD_REFERENCE_IMAGE, (whole, alt) => `[image: ${alt}]`);
+  return text.replace(HTML_TAG, (whole, tag, attrs) => {
+    const name = tag.toLowerCase();
+    for (const m of attrs.matchAll(HTML_ATTRIBUTE)) {
+      const attribute = m[1].toLowerCase();
+      if (!FETCHED_ATTRIBUTES.has(attribute) && !(attribute === 'href' && FETCHED_HREF_TAGS.has(name))) continue;
+      const value = normalizedUrl(m[2] ?? m[3] ?? m[4] ?? '');
+      // A srcset lists candidates, any of which may be the remote one.
+      const url = attribute === 'srcset' ? value.split(',').map((c) => c.trim().split(/\s+/)[0]).find((u) => REMOTE_URL.test(u)) ?? '' : value;
+      if (!REMOTE_URL.test(url)) continue;
+      const alt = HTML_ALT.exec(attrs);
+      return asLink(['img', 'source'].includes(name) ? 'image' : name, alt ? (alt[1] ?? alt[2] ?? alt[3]) : '', url);
+    }
+    return whole;
+  });
+}
+
 export const STAGES = ['scaffold', 'spec', 'plan', 'gate', 'changes', 'execute', 'qa', 'pr', 'done'];
 export const MODES = ['off', 'gated', 'full'];
 export const EXECUTIONS = ['subagent', 'inline'];
