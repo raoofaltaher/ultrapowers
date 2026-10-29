@@ -146,17 +146,17 @@ test('2c. the delegating entry points (guardrail-cli.mjs, the Pi extension) impo
 
 // --- 3. Order of the run walk -----------------------------------------------------------------
 
-test('3. every run walk tests the run records (QA before hunt) and then the autopilot marker', () => {
+test('3. every run walk tests the run records (a hunt before QA) and then the autopilot marker', () => {
   // The hook names the autopilot marker earlier, in the deny text, so its walk starts at find_root_r.
   const hook = code(HOOK, { hashes: true });
   const walk = hook.slice(hook.indexOf('find_root_r() {'));
   assert.ok(walk.length < hook.length, 'hooks/qa-guardrail has no find_root_r() walk');
   assertSequence(walk, HOOK, ['.ultrapowers/runs', 'pick_run_r', '.ultrapowers/autopilot-active', '.agents/ultrapowers.json']);
-  // which record of a project guards a call: a corrupt one, then QA, then hunt (the hook asks run-records.mjs)
+  // which record of a project guards a call: a corrupt one, then hunt, then QA (the hook asks run-records.mjs)
   const pick = code('hooks/lib/run-records.mjs', { slashes: true });
-  assertSequence(pick.slice(pick.indexOf('export function pickRun')), 'run-records.mjs pickRun', ['r.corrupt', "r.profile === 'qa'", "r.profile === 'hunt'"]);
+  assertSequence(pick.slice(pick.indexOf('export function pickRun')), 'run-records.mjs pickRun', ['r.corrupt', "r.profile === 'hunt'", "r.profile === 'qa'"]);
   const bridge = code(BRIDGE, { slashes: true });
-  assertSequence(bridge.slice(bridge.indexOf('function runAt')), BRIDGE, ['applicableRuns', 'r.corrupt', "r.profile === 'qa'", 'autopilot-active', 'ultrapowers.json']);
+  assertSequence(bridge.slice(bridge.indexOf('function runAt')), BRIDGE, ['applicableRuns', 'r.corrupt', "r.profile === 'hunt'", 'autopilot-active', 'ultrapowers.json']);
   const walkOf = (rel, opts) => { const t = code(rel, opts); return t.slice(t.indexOf(WALK_START[rel])); };
   assertSequence(walkOf(OPENCODE, { slashes: true }), OPENCODE, ['QA-GUARDRAIL', 'autopilot-active', 'ultrapowers.json']);
   assertSequence(walkOf(HERMES, { hashes: true }), HERMES, ['QA-GUARDRAIL', 'autopilot-active', 'ultrapowers.json']);
@@ -201,7 +201,7 @@ function projectWith(profiles) {
   return dir;
 }
 
-test('5. markerPrefix returns the prefix of the run, and the first of qa, hunt, autopilot when several exist', () => {
+test('5. markerPrefix returns the prefix of the run, and the first of hunt, qa, autopilot when several exist', () => {
   const made = [];
   try {
     const at = (profiles) => {
@@ -210,9 +210,9 @@ test('5. markerPrefix returns the prefix of the run, and the first of qa, hunt, 
       return path.join(dir, 'sub', 'deeper');
     };
     for (const m of MARKERS) assert.equal(markerPrefix(at([m])), `${PREFIX_OF[m]}-GUARDRAIL`, `a lone ${m} run`);
-    assert.equal(markerPrefix(at(['qa', 'hunt'])), 'QA-GUARDRAIL');
+    assert.equal(markerPrefix(at(['qa', 'hunt'])), 'HUNT-GUARDRAIL');
     assert.equal(markerPrefix(at(['hunt', 'autopilot'])), 'HUNT-GUARDRAIL');
-    assert.equal(markerPrefix(at(['qa', 'hunt', 'autopilot'])), 'QA-GUARDRAIL');
+    assert.equal(markerPrefix(at(['qa', 'hunt', 'autopilot'])), 'HUNT-GUARDRAIL');
     assert.equal(markerPrefix(at(['qa', 'autopilot'])), 'QA-GUARDRAIL');
     assert.equal(markerPrefix(at([])), null);
   } finally {
@@ -316,7 +316,7 @@ test('6g. the hook script sets agree: Muse equals hooks/hooks.json; Cursor is th
 
 test('7. the OpenCode plugin registers guardTool on the V1 tool.execute.before hook and in the V2 setup()', () => {
   const src = read(OPENCODE);
-  assert.match(src, /export const guardTool = \(directory\) => async \(input, output\) =>/, 'guardTool is no longer exported with its (input, output) shape');
+  assert.match(src, /export const guardTool = \(directory(?:, candidates = \(\) => \[\])?\) => async \(input, output\) =>/, 'guardTool is no longer exported with its (input, output) shape');
   // V1: the object UltrapowersPlugin returns.
   const v1 = src.slice(src.indexOf('export const UltrapowersPlugin'), src.indexOf('async function setup(ctx)'));
   assert.ok(v1.length > 0 && src.indexOf('async function setup(ctx)') > src.indexOf('export const UltrapowersPlugin'), 'could not isolate the V1 plugin body');
@@ -327,9 +327,9 @@ test('7. the OpenCode plugin registers guardTool on the V1 tool.execute.before h
   assert.ok(v2.length > 0, 'could not isolate setup()');
   // V2 wraps the same guardTool in a function that reads the event's `input` (or `args`): the
   // wrapper must be built on guardTool, and setup() must register the wrapper.
-  const wrapper = /const guardV2Tool = \(directory\) => \{[\s\S]*?\n\};/.exec(src);
+  const wrapper = /const guardV2Tool = \((?:directory|ctx)\) => \{[\s\S]*?\n\};/.exec(src);
   assert.ok(wrapper, 'the V2 wrapper guardV2Tool is gone; if V2 registers something else, pin it here');
-  assert.match(wrapper[0], /guardTool\(directory\)/, 'guardV2Tool is not built on guardTool');
+  assert.match(wrapper[0], /guardTool\(/, 'guardV2Tool is not built on guardTool');
   assert.match(v2, /ctx\.tool\.hook\(\s*['"]execute\.before['"],\s*guardV2Tool\(/, "V2 setup() does not register guardV2Tool through ctx.tool.hook('execute.before')");
   assert.match(src, /export default \{[^}]*\bsetup\b[^}]*\}/, 'the default export no longer carries setup');
 });

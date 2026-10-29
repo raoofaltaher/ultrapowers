@@ -20,21 +20,18 @@ const PROFILE_PREFIX = { qa: 'QA-GUARDRAIL', hunt: 'HUNT-GUARDRAIL' };
 // The run that guards a call made from `startDir`, the way the hook finds it: { dir, prefix } or null.
 // A run record counts only up to the nearest project root (.agents/ultrapowers.json), and only when it
 // is bound to no session (the calls these harnesses send name none; a record of a Claude Code session
-// guards that session alone); a corrupt record counts for every call. QA before hunt, a record before
-// the autopilot marker, which counts at any height.
+// guards that session alone); a corrupt record counts for every call. A hunt before QA (the stricter
+// profile), a record before the autopilot marker, which counts at any height.
 function runAt(startDir) {
-  let dir;
-  try {
-    dir = fs.realpathSync.native(path.resolve(startDir));
-  } catch {
-    return null;
-  }
+  // A folder that does not exist yet (a file about to be written in a new subfolder) is judged from
+  // its nearest existing ancestor, never skipped: a candidate can add a run, never hide one.
+  let dir = realish(startDir);
   let pastProject = false;
   for (;;) {
     if (!pastProject) {
       const runs = applicableRuns(dir, null);
       if (runs.length) {
-        const pick = runs.find((r) => r.corrupt) ?? runs.find((r) => r.profile === 'qa') ?? runs[0];
+        const pick = runs.find((r) => r.corrupt) ?? runs.find((r) => r.profile === 'hunt') ?? runs[0];
         return { dir, prefix: PROFILE_PREFIX[pick.profile] ?? 'QA-GUARDRAIL' };
       }
     }
@@ -42,6 +39,19 @@ function runAt(startDir) {
     if (fs.existsSync(path.join(dir, '.agents', 'ultrapowers.json'))) pastProject = true;
     const parent = path.dirname(dir);
     if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+// `p` itself when it is a directory, else its nearest ancestor that is one: the folder the hook can
+// start its root scan from when a candidate (a file about to be created in a new subfolder) is not
+// there yet.
+function existingDir(p) {
+  let dir = path.resolve(p);
+  for (;;) {
+    try { if (fs.statSync(dir).isDirectory()) return dir; } catch { /* not there */ }
+    const parent = path.dirname(dir);
+    if (parent === dir) return dir;
     dir = parent;
   }
 }
@@ -86,7 +96,7 @@ export function activeRun(sessionDir, dirs = []) {
   const list = [sessionDir, ...dirs].filter((d) => typeof d === 'string' && d !== '');
   for (const d of list) {
     const root = markerRoot(d);
-    if (root) return { prefix: markerPrefix(d), root, dir: d };
+    if (root) return { prefix: markerPrefix(d), root, dir: existingDir(d) };
   }
   if (!insideFlag()) return null;
   const root = sessionDir ? projectRoot(sessionDir) : null;
@@ -95,6 +105,46 @@ export function activeRun(sessionDir, dirs = []) {
 
 // The text every harness shows for a deny: the profile's prefix, then the reason.
 export const denyText = (verdict) => `${verdict.prefix || 'QA-GUARDRAIL'} DENY: ${verdict.reason}`;
+
+// The MCP servers of an autopilot stage: the keys of the ticket's snapshot of .mcp.json
+// (.ultrapowers/autopilot/mcp.json), spelled the way the hook compares them (lowercase, every
+// character outside [a-z0-9] as `_`). Unreadable or missing: none, so every MCP tool is refused.
+const flat = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '_');
+export function snapshotServers(root) {
+  try {
+    const snap = JSON.parse(fs.readFileSync(path.join(root, '.ultrapowers', 'autopilot', 'mcp.json'), 'utf8').replace(/^\uFEFF/, ''));
+    return Object.keys(snap?.mcpServers && typeof snap.mcpServers === 'object' ? snap.mcpServers : {}).map(flat);
+  } catch {
+    return [];
+  }
+}
+
+// The hook judges an autopilot stage's MCP call by the server of mcp__<server>__<tool>. OpenCode
+// spells it <server>_<tool> and Hermes mcp_<server>_<tool> (neither event carries the server on its
+// own, and a server name may hold `_`), so the name is split against the servers of the snapshot:
+// a name that starts with `<server>_` of a listed server becomes mcp__<server>__<tool> (the longest
+// server wins); any other name keeps its first segment as the server, which the hook then refuses as
+// outside the snapshot; a name with no server or no tool part is mcp__unreadable__<name>, refused in
+// every run. Names that are not MCP tools pass unchanged: everything on another harness, a Hermes
+// name without the mcp_ prefix, and an OpenCode name without `_` or one of its built-ins that has one.
+const OPENCODE_UNDERSCORE_BUILTINS = new Set(['apply_patch', 'plan_enter', 'plan_exit']);
+export function mcpToolName(toolName, harness, servers = []) {
+  const name = String(toolName ?? '');
+  let rest;
+  if (harness === 'hermes') {
+    if (!/^mcp_/i.test(name)) return name;
+    rest = flat(name.slice(4));
+  } else if (harness === 'opencode') {
+    if (!name.includes('_') || OPENCODE_UNDERSCORE_BUILTINS.has(name)) return name;
+    rest = flat(name);
+  } else {
+    return name;
+  }
+  const known = [...servers].sort((a, b) => b.length - a.length).find((srv) => srv !== '' && rest.startsWith(`${srv}_`) && rest.length > srv.length + 1);
+  if (known) return `mcp__${known}__${rest.slice(known.length + 1)}`;
+  const m = /^([a-z0-9]+)_+([a-z0-9_]*[a-z0-9])_*$/.exec(rest);
+  return m ? `mcp__${m[1]}__${m[2]}` : `mcp__unreadable__${flat(name).replace(/^_+|_+$/g, '') || 'call'}`;
+}
 
 // The per-call working directory a tool input carries, in any harness's spelling, or undefined:
 // `workdir` (OpenCode bash, Hermes terminal, Codex shell), `working_directory` (Cursor), `Cwd`
@@ -210,7 +260,8 @@ export function bashBinary({ env = process.env, cwd = process.cwd(), project = n
 // candidate, the session cwd and the process cwd included, and the first marker found wins: a
 // candidate can add a run, never hide one. A call's own working directory outside the project
 // root is denied here: the hook resolves paths against the event, not against that directory.
-export function runGuardrail({ toolName, input, cwd, dirs = [], hookDir = HOOK_DIR, timeoutMs = 15000 }) {
+// `mcp` ('opencode' or 'hermes') names the spelling of an MCP tool name the caller's harness uses.
+export function runGuardrail({ toolName, input, cwd, dirs = [], hookDir = HOOK_DIR, timeoutMs = 15000, mcp = null }) {
   const givenCwd = cwd && String(cwd) ? String(cwd) : '';
   const startDir = givenCwd || process.cwd();
   const event = guardrailEvent({ toolName, input, cwd: givenCwd });
@@ -245,6 +296,9 @@ export function runGuardrail({ toolName, input, cwd, dirs = [], hookDir = HOOK_D
       return { deny: true, prefix, reason: `the call names two different targets (${spellings.join(', ')}); one call writes one file` };
     }
   }
+  // `mcp` names the harness whose MCP tool spelling the call carries ('opencode', 'hermes'); an
+  // autopilot stage's server list is judged on the mcp__<server>__<tool> form (mcpToolName).
+  if (mcp && prefix === 'AUTOPILOT-GUARDRAIL') event.tool_name = mcpToolName(event.tool_name, mcp, snapshotServers(run.root));
   // The marker was found from the session cwd; the command itself runs in the call's directory, so
   // the hook resolves a relative target there (a bare autopilot.json inside tasks/<ID> is the state file).
   if (callAbs) event.cwd = realish(callAbs);

@@ -100,12 +100,13 @@ lower_r() {
   REPLY="$s"
 }
 
-# The run record that guards this call in the project root $1, picked by hooks/lib/run-records.mjs
-# from the records there and the event's top-level session_id. Sets PROFILE (qa, hunt or corrupt),
-# RUN_ID, RUN_FILE and RUN_STARTED; fails when no record guards the call. Records exist, so a run of
-# this project is active: without node the call cannot be judged, and it is refused.
+# The run record that guards this call in the folder $1, picked by hooks/lib/run-records.mjs
+# from the records there and the event's top-level session_id; with $2 = --session-only (a folder
+# above the call's nearest project root), only a record bound to this very session. Sets PROFILE
+# (qa, hunt or corrupt), RUN_ID, RUN_FILE and RUN_STARTED; fails when no record guards the call.
+# Records exist, so a run is active: without node the call cannot be judged, and it is refused.
 pick_run_r() {
-  local d="$1" rr_src rr_js d_node picked rest
+  local d="$1" only="${2:-}" rr_src rr_js d_node picked rest
   command -v node >/dev/null 2>&1 || deny "node is required to read the run records of $d/.ultrapowers/runs/ and is not on PATH"
   rr_src="${BASH_SOURCE[0]}"
   rr_src="${rr_src//\\//}"
@@ -115,7 +116,7 @@ pick_run_r() {
     rr_js="$(cygpath -m "$rr_js" 2>/dev/null || printf '%s' "$rr_js")"
     d_node="$(cygpath -m "$d" 2>/dev/null || printf '%s' "$d")"
   fi
-  picked="$(printf '%s' "$event" | node "$rr_js" pick --root "$d_node" 2>/dev/null)" \
+  picked="$(printf '%s' "$event" | node "$rr_js" pick --root "$d_node" ${only:+"$only"} 2>/dev/null)" \
     || deny "the run records of $d/.ultrapowers/runs/ could not be read; every call of this project is refused while they cannot"
   [ -n "$picked" ] || return 1
   PROFILE="${picked%%$'\t'*}"; rest="${picked#*$'\t'}"
@@ -126,19 +127,22 @@ pick_run_r() {
 }
 
 # Walk up from $1 looking for a run; REPLY is the directory and PROFILE is `qa`, `hunt`, `corrupt`
-# or `autopilot`. Run records count only up to the nearest project root (the first folder with
-# .agents/ultrapowers.json), and only the one that guards this call; the autopilot marker counts at
-# any height, after a record of the same folder.
+# or `autopilot`. Run records count up to the nearest project root (the first folder with
+# .agents/ultrapowers.json), and only the one that guards this call; above it, only a record bound
+# to this call's own session (a run guards its session in a nested project or worktree too). The
+# autopilot marker counts at any height, after a record of the same folder.
 PROFILE=""; RUN_ID=""; RUN_FILE=""; RUN_STARTED=""
 find_root_r() {
   local d="$1" past_project="" f
   REPLY=""
   [ -n "$d" ] || return 1
   while :; do
-    if [ -z "$past_project" ] && [ -d "$d/.ultrapowers/runs" ]; then
+    if [ -d "$d/.ultrapowers/runs" ]; then
       for f in "$d/.ultrapowers/runs/"*.json; do
         [ -e "$f" ] || break
-        if pick_run_r "$d"; then REPLY="$d"; return 0; fi
+        if [ -z "$past_project" ]; then
+          if pick_run_r "$d"; then REPLY="$d"; return 0; fi
+        elif pick_run_r "$d" --session-only; then REPLY="$d"; return 0; fi
         break
       done
     fi
@@ -533,7 +537,7 @@ import(require("node:url").pathToFileURL(path.join(process.argv[2], "lib", "guar
   }
   process.stdout.write([
     "ok", toolName, command, writeRaw,
-    [...new Set([inp.url, inp.uri, inp.link].concat(Array.isArray(inp.urls) ? inp.urls : [inp.urls]).map(str).concat(urlValues).filter(Boolean))].join(" "), str(ev.cwd), allowed.join(","), norm(hosts.forbidden).join(","), ticket,
+    [...new Set([inp.url, inp.uri, inp.link].concat(Array.isArray(inp.urls) ? inp.urls : [inp.urls]).map((u) => str(u).trim().replace(/\s+/g, "\\")).concat(urlValues).filter(Boolean))].join(" "), str(ev.cwd), allowed.join(","), norm(hosts.forbidden).join(","), ticket,
     pathFields.join("\n"), trackerHosts.join(","), ignoreCase ? "1" : "0",
     w.real, w.rel, keyReal.join("\n"), patchRecs.join("\n"), roleVars.join(","),
     str((qa.db && typeof qa.db === "object" ? qa.db : {}).roRole).trim() || "qa_agent_ro",
@@ -601,12 +605,22 @@ esac
 
 # Key material: never read, searched, uploaded or written by any tool during a run. A
 # `.env.example` file is the documented template and stays readable.
-KEY_RE='(^|/)\.ssh(/|$)|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws(/|$)|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|/)\.env($|\.)|\.git-credentials|(^|/)\.netrc$|(^|/)\.npmrc$|(^|/)\.config/(gh|glab-cli)(/|$)|(^|/)\.docker/config\.json|(^|/)\.kube(/|$)|(^|/)\.gnupg(/|$)'
+KEY_RE='(^|/)\.ssh(/|$)|authorized_keys|id_rsa|id_ed25519|id_ecdsa|(^|/)\.aws(/|$)|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|/)\.env($|\.)|\.git-credentials|(^|/)\.netrc$|(^|/)\.npmrc$|(^|/)\.config/(gh|glab-cli)(/|$)|(^|/)\.docker/config\.json|(^|/)\.kube(/|$)|(^|/)\.gnupg(/|$)|(^|/)\.pypirc$|(^|/)\.cargo/credentials(\.toml)?$|(^|/)\.config/gcloud(/|$)|(^|/)\.azure(/|$)|(^|/)\.pgpass$|(^|/)\.vault-token$|(^|/)\.gem/credentials$|(^|/)[A-Za-z0-9_][^]/[|]*\.(pem|key|pfx|p12)(\.(bak|old|orig))?$'
+# A process folder of /proc holds that process's environment and command line: no file tool reads or
+# searches one, nor /proc as a whole (the shell has its own rules for the same paths).
+PROC_RE='^/proc/?$|^/proc/([0-9]+|self|thread-self|[^/]*[*?[][^/]*)(/|$)|^/proc/.*environ'
+proc_check_r() {
+  local p="$1"
+  while [[ "$p" == */./* ]]; do p="${p//\/.\//\/}"; done
+  [[ "$p" =~ $PROC_RE ]] && deny "reading a process environment or a process folder of /proc ($2) is blocked during $run_kind; check a variable with \${NAME:+set} instead"
+  return 0
+}
 if [ -n "$keypaths" ]; then
   while IFS= read -r kp; do
     [ -n "$kp" ] || continue
     norm_path_r "$kp"; lower_r "$REPLY"; kl="${REPLY//.env.example/}"
     [[ "$kl" =~ $KEY_RE ]] && deny "key material ($kp) is never read, searched, uploaded or written during $run_kind"
+    proc_check_r "$kl" "$kp"
   done <<< "$keypaths"
 fi
 # The same paths again in their real spelling: an 8.3 short name or a symlink names the key file
@@ -616,6 +630,7 @@ if [ -n "$keypaths_real" ]; then
     [ -n "$kp" ] || continue
     lower_r "$kp"; kl="${REPLY//.env.example/}"
     [[ "$kl" =~ $KEY_RE ]] && deny "key material ($kp) is never read, searched, uploaded or written during $run_kind"
+    proc_check_r "$kl" "$kp"
   done <<< "$keypaths_real"
 fi
 
@@ -627,11 +642,11 @@ fi
 # the loop where the agent edits the guardrail, the config, CI, harness settings or key material).
 # Named targets, not folder names: `src/hooks/` of a React app and `appsettings.json` of a .NET
 # app are ordinary implementation files. The ticket's state files are the gate's record.
-PROTECTED_RE='(^|/)\.ssh(/|$)|authorized_keys|id_rsa|id_ed25519|(^|/)\.aws(/|$)|mcp-secrets\.env|\.local\.(sh|env|json)$|hooks/qa-guardrail|\.agents/ultrapowers\.json|(^|/)\.claude/|(^|/)\.git/|(^|/)\.git$|(^|/)\.githooks/|(^|/)\.[a-z0-9_-]+/settings(\.local)?\.json$|(^|/)tasks/[^/]+/(autopilot\.json|stage-log\.jsonl|changes-comments\.md)$|(^|/)\.ultrapowers/(autopilot-active|autopilot-stop)$|(^|/)\.ultrapowers/autopilot(/|$)|(^|/)\.ultrapowers$'
+PROTECTED_RE='(^|/)\.ssh(/|$)|authorized_keys|id_rsa|id_ed25519|id_ecdsa|(^|/)\.aws(/|$)|mcp-secrets\.env|\.local\.(sh|env|json)$|hooks/qa-guardrail|\.agents/ultrapowers\.json|(^|/)\.claude/|(^|/)\.git/|(^|/)\.git$|(^|/)\.githooks/|(^|/)\.[a-z0-9_-]+/settings(\.local)?\.json$|(^|/)tasks/[^/]+/(autopilot\.json|stage-log\.jsonl|changes-comments\.md)$|(^|/)\.ultrapowers/(autopilot-active|autopilot-stop)$|(^|/)\.ultrapowers/autopilot(/|$)|(^|/)\.ultrapowers$'
 # The autopilot envelope also keeps the agent out of CI, the plugin hooks, the repository's commit
 # hooks (they run inside the engine's own commit and push) and the env file: a stage that
 # rewrites the workflow or the hooks rewrites its own brakes.
-AUTOPILOT_PROTECTED_RE='(^|/)\.github/|(^|/)\.gitlab-ci\.yml$|(^|/)hooks/(qa-guardrail|session-start|team-memory-[a-z]+|lib/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|/)\.gemini/hooks/|(^|/)\.husky/|(^|/)\.pre-commit-config\.ya?ml$|(^|/)lefthook\.ya?ml$|(^|/)\.env($|\.)|(^|/)qa/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|/)\.ultrapowers/(autopilot-active|autopilot-stop)$|(^|/)\.ultrapowers/runs(/|$)|(^|/)\.mcp\.json$|(^|/)\.cursor/(mcp\.json|cli\.json|rules/)|(^|/)\.vscode/|(^|/)\.codex/|(^|/)\.kimi/|(^|/)\.factory/|(^|/)\.gemini/|(^|/)\.qwen/|(^|/)opencode\.jsonc?$|(^|/)\.hermes/'
+AUTOPILOT_PROTECTED_RE='(^|/)\.github/|(^|/)\.gitlab-ci\.yml$|(^|/)hooks/(qa-guardrail|session-start|team-memory-[a-z]+|lib/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|/)\.gemini/hooks/|(^|/)\.husky/|(^|/)\.pre-commit-config\.ya?ml$|(^|/)lefthook\.ya?ml$|(^|/)\.env($|\.)|(^|/)qa/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|/)\.ultrapowers/(autopilot-active|autopilot-stop)$|(^|/)\.ultrapowers/runs(/|$)|(^|/)\.mcp\.json$|(^|/)\.cursor/(mcp\.json|cli\.json|environment\.json|worktrees\.json|rules/|hooks/)|(^|/)\.devcontainer(/|\.json$)|(^|/)\.vscode/|(^|/)\.codex/|(^|/)\.kimi/|(^|/)\.factory/|(^|/)\.gemini/|(^|/)\.qwen/|(^|/)opencode\.jsonc?$|(^|/)\.hermes/|(^|/)\.opencode/|(^|/)\.cursor/hooks\.json$|(^|/)\.pi/|(^|/)\.claude-plugin/|(^|/)hooks\.json$'
 # The QA baseline (known-issues) and the instruction files every later session obeys are the gate's
 # record and the agents' rules: a stage that edits its own baseline hides a failure from the QA
 # gate. The baseline's path is qa.knownIssues (default qa/known-issues.md, matched above).
@@ -663,8 +678,22 @@ if [ -n "$PROFILE" ]; then
   object_re='(^|_)(issue|issues|pull_request|pull_requests|merge_request|merge_requests|pr|mr|comment|comments|label|labels|milestone|discussion|work_item|workitem|ticket)(_|$)'
   if [[ "$tool_norm" =~ $tracker_re ]] || { [ "$tool_server_less" -eq 1 ] && [[ "$tool_norm" =~ $object_re ]]; }; then
     read_re='(^|_)(get|list|search|read|view|fetch|show|describe|find|query|resolve)(_|$)'
-    write_re='(create|update|edit|add|remove|delete|merge|comment|note|label|close|reopen|post|save|accept|push|fork|assign|transfer|lock|approve|submit|publish|manage|link|call|execute|write|unlink|method|send|reply|chat)'
-    if ! [[ "$tool_norm" =~ $read_re ]] && [[ "$tool_norm" =~ $write_re ]]; then
+    write_re='(create|update|edit|add|remove|delete|merge|comment|note|label|close|reopen|post|save|accept|push|fork|assign|transfer|lock|approve|submit|publish|manage|link|call|execute|write|unlink|method|send|reply|chat|cancel|transition|trigger|dispatch|(^|_)(run|rerun|retry|play|start|invoke|restart)(_|$))'
+    # The verbs are read from the name with its camel-case words split (rerunWorkflow is rerun_workflow, RunWorkflow run_workflow); a
+    # name with no capital reads as it did. The tracker word above is read from the name unsplit (GitHub stays github).
+    tool_words="$tool"
+    camel_re='([[:lower:][:digit:]])([[:upper:]])'
+    while [[ "$tool_words" =~ $camel_re ]]; do
+      cw_pair="${BASH_REMATCH[0]}"; cw_new="${BASH_REMATCH[1]}_${BASH_REMATCH[2]}"
+      tool_words="${tool_words/$cw_pair/$cw_new}"
+    done
+    lower_r "$tool_words"; tool_words="$REPLY"
+    tool_words="${tool_words//-/_}"; tool_words="${tool_words//:/_}"; tool_words="${tool_words//./_}"
+    tool_words="${tool_words// /_}"; tool_words="${tool_words//\//_}"
+    case "$tool_words" in mcp_*) tool_words="${tool_words#mcp}" ;; esac
+    while [[ "$tool_words" == *__* ]]; do tool_words="${tool_words//__/_}"; done
+    while [[ "$tool_words" == _* ]]; do tool_words="${tool_words#_}"; done
+    if ! [[ "$tool_words" =~ $read_re ]] && { [[ "$tool_norm" =~ $write_re ]] || [[ "$tool_words" =~ $write_re ]]; }; then
       if [ "$PROFILE" = "autopilot" ]; then
         deny "tracker writes through MCP tools are never run by an autopilot stage; the engine writes back between stages"
       else
@@ -682,6 +711,11 @@ if [ -n "$PROFILE" ]; then
     mcp_srv="${tool_lc#mcp__}"; mcp_srv="${mcp_srv%%__*}"; mcp_srv="${mcp_srv//[^a-z0-9]/_}"
     [[ ",$mcp_servers," == *",$mcp_srv,"* ]] \
       || deny "the MCP server '$mcp_srv' is not in the ticket's snapshot of .mcp.json; an autopilot stage reaches only the servers the project lists"
+  fi
+  # Cursor's MCP:<tool> carries no server name, so the snapshot cannot judge it: refused in an autopilot
+  # stage (OpenCode's and Hermes' spellings are turned into mcp__<server>__<tool> by their adapters).
+  if [ "$PROFILE" = "autopilot" ] && [ "$tool_server_less" -eq 1 ]; then
+    deny "the MCP server of this call cannot be read (Cursor's MCP:<tool> names no server); an autopilot stage reaches only the servers the project lists"
   fi
   git_mcp_re='(^|_)git_git_(push|reset)|^git_(push|reset)'
   if [ "$PROFILE" = "autopilot" ] && [[ "$tool_norm" =~ $git_mcp_re ]]; then
@@ -858,8 +892,16 @@ esac
 # The host of a URL in REPLY: scheme, userinfo, path and port removed, lowercase. Builtins only, so
 # a call carrying hundreds of URLs costs no process per URL.
 host_of_r() {
-  local s="$1" a
+  local s="$1" a auth
   if [[ "$s" =~ ^[a-zA-Z][a-zA-Z0-9+.-]*:// ]]; then s="${s#*://}"; fi
+  # The authority is what stands before the first `/` or `?`. A URL parser reads a backslash as a slash, a `#` as the
+  # start of the fragment and the text after the LAST `@` as the host, so `http://127.0.0.1\@example.com/` and
+  # `http://127.0.0.1#@example.com/` reach 127.0.0.1 while the userinfo strip below would judge example.com. A URL
+  # with any of them, whitespace, or a second `@` in its authority is refused rather than judged.
+  auth="${s%%[/?]*}"
+  case "$auth" in
+    *\\*|*'#'*|*[[:space:]]*|*@*@*) deny "the URL '$1' has a backslash, a #, whitespace or a second @ in its authority part; a URL parser reads it as another host than this guard does, so it is refused (write scheme://host/path)" ;;
+  esac
   if [[ "$s" =~ ^[^/?@]*@ ]]; then s="${s#*@}"; fi
   a="${s%%[/?]*}"
   if [[ "$a" =~ :[0-9]+$ ]]; then a="${a%:*}"; fi
@@ -1069,7 +1111,7 @@ key_lc="${lc//.env.example/}"
 # The canonical spelling: `~/.config//gh` and `~/.config/./gh` open the same file as `~/.config/gh`.
 while [[ "$key_lc" == *//* ]]; do key_lc="${key_lc//\/\//\/}"; done
 while [[ "$key_lc" == */./* ]]; do key_lc="${key_lc//\/.\//\/}"; done
-printf '%s' "$key_lc" | grep -Eq '(^|/)\.ssh([^a-z0-9_.-]|$)|authorized_keys|id_rsa|id_ed25519|\.aws/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|[/[:space:]@"'"'"'=])\.env([^a-z0-9_]|$)|\.git-credentials|(^|[/[:space:]@"'"'"'=])\.(netrc|npmrc)([^a-z0-9_]|$)|\.config/(gh|glab-cli)(/|[^a-z0-9_.-]|$)|\.docker/config\.json|(^|[/[:space:]@"'"'"'=])\.(kube|gnupg)(/|[^a-z0-9_.-]|$)' \
+printf '%s' "$key_lc" | grep -Eq '(^|/)\.ssh([^a-z0-9_.-]|$)|authorized_keys|id_rsa|id_ed25519|id_ecdsa|\.aws/credentials|\.gem/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|[/[:space:]@"'"'"'=])\.env([^a-z0-9_]|$)|\.git-credentials|(^|[/[:space:]@"'"'"'=])\.(netrc|npmrc)([^a-z0-9_]|$)|\.config/(gh|glab-cli)(/|[^a-z0-9_.-]|$)|\.docker/config\.json|(^|[/[:space:]@"'"'"'=])\.(kube|gnupg)(/|[^a-z0-9_.-]|$)|(^|[/[:space:]@"'"'"'=])\.(pypirc|pgpass|vault-token)([^a-z0-9_]|$)|\.cargo/credentials|\.config/gcloud(/|[^a-z0-9_.-]|$)|(^|[/[:space:]@"'"'"'=])\.azure(/|[^a-z0-9_.-]|$)' \
   && deny "reading or transferring key material is blocked"
 printf '%s' "$lc" | grep -Eq "${B}(printenv|env)[[:space:]]*(\$|[;&|])" \
   && deny "dumping the environment is blocked; check a variable with \${NAME:+set} instead"

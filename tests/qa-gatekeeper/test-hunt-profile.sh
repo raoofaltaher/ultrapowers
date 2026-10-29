@@ -63,10 +63,11 @@ MARKER="$ROOT/.ultrapowers/runs/hunt-audit-2026-10-11-0a1b2c3d.json"
 DECOY="$TEST_ROOT/decoy"
 ELSEWHERE="${ELSEWHERE:-$TEST_ROOT/elsewhere}"
 mkdir -p "$DECOY/.agents" "$DECOY/.ultrapowers" "$ELSEWHERE"
-# A script outside the project runs only when it is a regular file: allow_node_script_outside_project names this one.
+# Copies of the plugin's own scripts outside the plugin: the hunt refuses them (deny_node_script_outside_plugin).
 mkdir -p "$ELSEWHERE/plugin/skills/vulnerability-hunt/scripts"
 : > "$ELSEWHERE/plugin/skills/vulnerability-hunt/scripts/hunt-preflight.mjs"
-# The plugin's own run-records script, outside the audited project: allow_node_run_records_end_outside_project.
+# A copy of run-records.mjs outside the plugin: deny_node_run_records_copy_outside_plugin. The real one runs from the plugin.
+PLUGIN_M="$(cygpath -m "$REPO_ROOT" 2>/dev/null || printf %s "$REPO_ROOT")"
 mkdir -p "$ELSEWHERE/plugin/hooks/lib"
 : > "$ELSEWHERE/plugin/hooks/lib/run-records.mjs"
 printf '%s' '{"name":"decoy","pluginVersion":"1.0.0","qa":{"hosts":{"allowed":[],"forbidden":[]}}}' > "$DECOY/.agents/ultrapowers.json"
@@ -184,10 +185,10 @@ echo "hunt profile: precedence between the records and the autopilot marker"
 write_run "$ROOT" qa GH-16
 result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' "$ROOT")"
 err="${result#*|}"; err="${err%%|*}"
-if [[ "${result%%|*}" -eq 2 ]] && printf '%s' "$err" | grep -q '^QA-GUARDRAIL DENY: '; then
-  pass "with a QA record and a hunt record the QA profile applies"
+if [[ "${result%%|*}" -eq 2 ]] && printf '%s' "$err" | grep -q '^HUNT-GUARDRAIL DENY: '; then
+  pass "with a QA record and a hunt record the hunt profile applies (the stricter one)"
 else
-  fail "with a QA record and a hunt record the QA profile applies (got $result)"
+  fail "with a QA record and a hunt record the hunt profile applies (got $result)"
 fi
 rm -f "$QA_MARKER"
 printf '%s' '{"ticket":"GH-16","branch":"GH-16-x","scope":["repo-a"]}' > "$AP_MARKER"
@@ -209,7 +210,7 @@ result="$(run_hook "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$MA
 if [[ "${result%%|*}" -eq 2 && "$result" == *"is a run record; no call of a run writes, moves or removes one"* ]]; then pass "a write of the record during the hunt is refused"; else fail "a write of the record during the hunt is refused (got $result)"; fi
 result="$(run_hook '{"tool_name":"Bash","tool_input":{"command":"rm .ultrapowers/runs/hunt-audit-2026-10-11-0a1b2c3d.json"}}' "$ROOT")"
 if [[ "${result%%|*}" -eq 2 && "$result" == *"the run ends itself through"*"run-records.mjs end once its report holds its Verdict line"* ]]; then pass "a sole rm of the record is refused; the run ends itself through run-records.mjs end"; else fail "a sole rm of the record is refused; the run ends itself through run-records.mjs end (got $result)"; fi
-result="$(run_hook "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"node $ELSEWHERE/plugin/hooks/lib/run-records.mjs end --root $ROOT --run hunt-audit-2026-10-11-0a1b2c3d\"},\"session_id\":\"h-none\"}" "$ROOT")"
+result="$(run_hook "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"node $PLUGIN_M/hooks/lib/run-records.mjs end --root $ROOT --run hunt-audit-2026-10-11-0a1b2c3d\"},\"session_id\":\"h-none\"}" "$ROOT")"
 if [[ "${result%%|*}" -eq 0 ]]; then pass "the hunt runs the plugin's own run-records.mjs end"; else fail "the hunt runs the plugin's own run-records.mjs end (got $result)"; fi
 
 echo "hunt profile: a record whose id would widen the write area, or that cannot be read, refuses every call"

@@ -4,7 +4,9 @@
 // event JSON on stdin, runs hooks/qa-guardrail through the bridge, and answers the way every
 // harness understands: exit 2 with the reason on stderr for a deny, exit 0 for an allow. With
 // --antigravity the event is Antigravity's ({ toolCall: { name, args }, workspacePaths }) and the
-// answer is its JSON ({ decision, reason }) on stdout. Node built-ins only.
+// answer is its JSON ({ decision, reason }) on stdout. With --hermes an MCP tool name is Hermes'
+// (mcp_<server>_<tool>), which the bridge reads against an autopilot stage's server list. Node
+// built-ins only.
 import { denyText, runGuardrail } from './guardrail-bridge.mjs';
 
 import fs from 'node:fs';
@@ -24,7 +26,7 @@ function antigravityToolName(name, args) {
   return server && tool ? `mcp__${server}__${tool}` : 'mcp__unreadable__call_mcp_tool';
 }
 
-export function eventFrom(text, { antigravity: ag = false } = {}) {
+export function eventFrom(text, { antigravity: ag = false, hermes = false } = {}) {
   let ev;
   try {
     ev = JSON.parse(text.replace(/\0+$/, ''));
@@ -52,18 +54,19 @@ export function eventFrom(text, { antigravity: ag = false } = {}) {
     const dirs = [...workspaces, process.cwd(), ...(typeof argsIn.Cwd === 'string' && argsIn.Cwd ? [argsIn.Cwd] : [])];
     return { toolName: antigravityToolName(name, argsIn), input, cwd, dirs };
   }
-  return { toolName: ev.tool_name ?? ev.toolName ?? '', input: ev.tool_input ?? ev.toolArgs ?? ev.input, cwd: ev.cwd ?? process.cwd() };
+  return { toolName: ev.tool_name ?? ev.toolName ?? '', input: ev.tool_input ?? ev.toolArgs ?? ev.input, cwd: ev.cwd ?? process.cwd(), ...(hermes ? { mcp: 'hermes' } : {}) };
 }
 
 if (process.argv[1] && /guardrail-cli\.mjs$/.test(process.argv[1].replace(/\\/g, '/'))) {
   const antigravity = process.argv.slice(2).includes('--antigravity');
+  const hermes = process.argv.slice(2).includes('--hermes');
   let raw = '';
   try {
     raw = fs.readFileSync(0, 'utf8');
   } catch {
     raw = '';
   }
-  const ev = eventFrom(raw, { antigravity });
+  const ev = eventFrom(raw, { antigravity, hermes });
   // An event that cannot be read is refused only while a run is active; the bridge decides that.
   // (an event that is not JSON reaches the hook as a call with no tool name, which it refuses)
   const verdict = ev ? runGuardrail(ev) : runGuardrail({ toolName: '', input: {}, cwd: process.cwd() });

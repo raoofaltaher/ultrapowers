@@ -213,4 +213,78 @@ for (const hook of [() => { throw new Error('boom'); }, async () => { throw new 
 }
 assert.equal(skillsRegistered, 2, 'setup registered the skills before the guard and went on');
 
+// V2 hands setup() no `ctx.directory`: the project is `ctx.location.directory` (High 4 of the
+// 2026-10-23 hunt). The guard looks for a run from every directory the context and the call carry,
+// so a run is found whichever of them the host fills, and the service's own cwd is only one more
+// candidate. (The test process's cwd is this repository, which holds no run.)
+const v2Guard = async (ctx) => {
+  await mod.default.setup({ ...v2Ctx(undefined), ...ctx });
+  return v2Hooks.get('execute.before');
+};
+const push = { command: 'git push origin x' };
+for (const [label, ctx] of [
+  ['ctx.location.directory', { location: { directory: hunt } }],
+  ['ctx.worktree', { worktree: hunt }],
+  ['ctx.project.directory', { project: { directory: hunt } }],
+]) {
+  const guard = await v2Guard(ctx);
+  await assert.rejects(guard({ tool: 'shell', sessionID: 's8', id: 'v-dir', input: push }), /HUNT-GUARDRAIL DENY: /, `V2: a run is found from ${label}`);
+  await assert.rejects(guard({ tool: 'shell', sessionID: 's8', id: 'v-noargs' }), /^Error: HUNT-GUARDRAIL DENY: the V2 tool event carried no arguments/, `V2: no arguments during a run is refused from ${label}`);
+}
+// a context with several directories: the project can be any of them
+await assert.rejects(
+  (await v2Guard({ directory: os.tmpdir(), location: { directory: hunt } }))({ tool: 'shell', sessionID: 's8', id: 'v-two', input: push }),
+  /HUNT-GUARDRAIL DENY: /,
+  'V2: a run is found from the second directory the context carries',
+);
+// a context with no directory at all: the call's own absolute directory or file finds the run
+const bare = await v2Guard({});
+await assert.rejects(bare({ tool: 'shell', sessionID: 's8', id: 'v-wd', input: { ...push, workdir: hunt } }), /HUNT-GUARDRAIL DENY: /, 'V2: a workdir inside the project finds the run');
+await assert.rejects(bare({ tool: 'shell', sessionID: 's8', id: 'v-cwd', input: { ...push, cwd: path.join(hunt, 'repo-a') } }), /HUNT-GUARDRAIL DENY: /, 'V2: a cwd inside the project finds the run');
+await assert.rejects(
+  bare({ tool: 'write', sessionID: 's8', id: 'v-fp', input: { filePath: path.join(hunt, 'repo-a', 'src', 'x.ts'), content: 'x' } }),
+  /HUNT-GUARDRAIL DENY: /,
+  'V2: the directory of an absolute filePath finds the run',
+);
+await assert.rejects(
+  bare({ tool: 'write', sessionID: 's8', id: 'v-fp2', input: { filePath: path.join(hunt, 'new-folder', 'deeper', 'x.ts'), content: 'x' } }),
+  /HUNT-GUARDRAIL DENY: /,
+  'V2: a file in a folder that does not exist yet is judged from its nearest existing folder',
+);
+// a relative filePath names no directory, and a path outside every run is not guarded
+await bare({ tool: 'write', sessionID: 's8', id: 'v-out', input: { filePath: path.join(idle, 'x.ts'), content: 'x' } });
+await bare({ tool: 'shell', sessionID: 's8', id: 'v-out2', input: { command: 'git push origin main', workdir: idle } });
+// a run in the process cwd's own project still guards a context that names none (the V1 fallback)
+const cwdBefore = process.cwd();
+process.chdir(hunt);
+try {
+  await assert.rejects(bare({ tool: 'shell', sessionID: 's8', id: 'v-cwd2', input: push }), /HUNT-GUARDRAIL DENY: /, 'V2: the process cwd stays a candidate');
+} finally {
+  process.chdir(cwdBefore);
+}
+
+// An autopilot stage reaches only the MCP servers of the ticket's snapshot. OpenCode spells a tool
+// <server>_<tool>; the guard reads it as mcp__<server>__<tool> against that list (Medium 19).
+const snapProject = project(true);
+fs.mkdirSync(path.join(snapProject, '.ultrapowers', 'autopilot'), { recursive: true });
+fs.writeFileSync(path.join(snapProject, '.ultrapowers', 'autopilot', 'mcp.json'), JSON.stringify({ mcpServers: { context7: { command: 'x' }, 'my-docs': { command: 'y' } } }));
+const snapHooks = await mod.UltrapowersPlugin({ client: null, directory: snapProject });
+await assert.rejects(
+  snapHooks['tool.execute.before']({ tool: 'postgres_query', sessionID: 's9', callID: 'm1' }, { args: { query: 'select 1' } }),
+  /AUTOPILOT-GUARDRAIL DENY: the MCP server 'postgres' is not in the ticket's snapshot of \.mcp\.json/,
+  'V1: an MCP tool of a server outside the snapshot is refused',
+);
+await snapHooks['tool.execute.before']({ tool: 'context7_query-docs', sessionID: 's9', callID: 'm2' }, { args: { query: 'x' } });
+await snapHooks['tool.execute.before']({ tool: 'my-docs_search', sessionID: 's9', callID: 'm3' }, { args: { query: 'x' } });
+await snapHooks['tool.execute.before']({ tool: 'read', sessionID: 's9', callID: 'm4' }, { args: { filePath: path.join(snapProject, 'README.md') } });
+const snapV2 = await v2Guard({ location: { directory: snapProject } });
+await assert.rejects(
+  snapV2({ tool: 'postgres_query', sessionID: 's9', id: 'm5', input: { query: 'select 1' } }),
+  /AUTOPILOT-GUARDRAIL DENY: the MCP server 'postgres' is not in the ticket's snapshot/,
+  'V2: an MCP tool of a server outside the snapshot is refused',
+);
+await snapV2({ tool: 'context7_query-docs', sessionID: 's9', id: 'm6', input: { query: 'x' } });
+// a QA run keeps no server list: the tool name is judged as it came
+await (await v2Guard({ location: { directory: parent } }))({ tool: 'postgres_query', sessionID: 's9', id: 'm7', input: { query: 'select 1' } });
+
 console.log('opencode guardrail: PASS');

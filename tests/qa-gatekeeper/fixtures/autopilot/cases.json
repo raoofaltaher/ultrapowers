@@ -70,7 +70,8 @@
   {"name":"deny_git_unknown_alias","event":{"tool_name":"Bash","tool_input":{"command":"git pub"}}},
   {"name":"deny_git_pull","event":{"tool_name":"Bash","tool_input":{"command":"git pull origin main"}}},
   {"name":"allow_git_switch_create","event":{"tool_name":"Bash","tool_input":{"command":"git switch -c GH-16-x"}}},
-  {"name":"allow_git_stash_push","event":{"tool_name":"Bash","tool_input":{"command":"git stash push -u -m wip"}}},
+  {"name":"allow_git_stash_push","event":{"tool_name":"Bash","tool_input":{"command":"git stash push -m wip"}}},
+  {"name":"deny_git_stash_push_untracked","reason":"an autopilot stage uses plain git stash push","event":{"tool_name":"Bash","tool_input":{"command":"git stash push -u -m wip"}}},
   {"name":"allow_git_rev_parse","event":{"tool_name":"Bash","tool_input":{"command":"git rev-parse HEAD"}}},
   {"name":"deny_git_fetch_upload_pack","event":{"tool_name":"Bash","tool_input":{"command":"git fetch --upload-pack='sh -c id' origin main"}}},
   {"name":"deny_git_fetch_ext_remote","event":{"tool_name":"Bash","tool_input":{"command":"git fetch 'ext::sh -c id' main"}}},
@@ -239,7 +240,8 @@
   {"name":"deny_cursor_mcp_git_push","event":{"tool_name":"MCP:git_push","tool_input":{"remote":"origin"}}},
   {"name":"allow_opencode_github_get_issue","event":{"tool_name":"github_get_issue","tool_input":{"issue_number":16}}},
   {"name":"allow_hermes_mcp_gitlab_list_issues","event":{"tool_name":"mcp_gitlab_list_issues","tool_input":{}}},
-  {"name":"allow_cursor_mcp_get_issue","event":{"tool_name":"MCP:get_issue","tool_input":{"issue_number":16}}},
+  {"name":"deny_cursor_mcp_get_issue_server_unreadable","reason":"cannot be read","event":{"tool_name":"MCP:get_issue","tool_input":{"issue_number":16}}},
+  {"name":"deny_cursor_mcp_query_server_unreadable","reason":"cannot be read","event":{"tool_name":"MCP:postgres_query","tool_input":{"query":"select 1"}}},
   {"name":"allow_hermes_mcp_git_git_commit","event":{"tool_name":"mcp_git_git_commit","tool_input":{"message":"x"}}},
   {"name":"deny_edit_file_Path_workflow","event":{"tool_name":"edit_file","tool_input":{"Path":"{{ROOT}}/.github/workflows/ci.yml","content":"x"}}},
   {"name":"deny_unlisted_tool_absolute_path_marker","event":{"tool_name":"save_buffer","tool_input":{"absolute_path":"{{ROOT}}/.ultrapowers/autopilot-active","content":"x"}}},
@@ -591,5 +593,7 @@
   {"name":"deny_research_cgnat_spec","stage":"spec","reason":"reads public hosts only","event":{"tool_name":"WebFetch","tool_input":{"url":"http://{{IP_CGNAT}}/latest/meta-data/","prompt":"x"}}},
   {"name":"deny_research_hex_loopback_spec","stage":"spec","reason":"reads public hosts only","event":{"tool_name":"WebFetch","tool_input":{"url":"http://0x7f.0.0.1/x","prompt":"x"}}},
   {"name":"deny_research_integer_host_spec","stage":"plan","reason":"reads public hosts only","event":{"tool_name":"WebFetch","tool_input":{"url":"http://2130706433/x","prompt":"x"}}},
-  {"name":"deny_research_octal_segment_spec","stage":"spec","reason":"reads public hosts only","event":{"tool_name":"WebFetch","tool_input":{"url":"http://{{IP_OCTAL_LOOPBACK}}/x","prompt":"x"}}}
+  {"name":"deny_research_octal_segment_spec","stage":"spec","reason":"reads public hosts only","event":{"tool_name":"WebFetch","tool_input":{"url":"http://{{IP_OCTAL_LOOPBACK}}/x","prompt":"x"}}},
+  {"name":"deny_write_opencode_plugin","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.opencode/plugins/x.js","content":"x"}}},
+  {"name":"deny_write_cursor_hooks_json","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.cursor/hooks.json","content":"x"}}}
 ]

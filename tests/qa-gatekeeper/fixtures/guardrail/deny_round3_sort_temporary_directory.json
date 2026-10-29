@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"sort -T /tmp reviews/1234/p.txt"},"reason":"temporary files"}

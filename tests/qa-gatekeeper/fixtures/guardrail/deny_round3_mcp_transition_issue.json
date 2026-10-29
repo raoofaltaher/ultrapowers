@@ -1,0 +1,1 @@
+{"tool_name":"mcp__jira__transition_issue","tool_input":{"issue":"X-1","transition":"Done"},"reason":"writes through MCP tools are never run during"}

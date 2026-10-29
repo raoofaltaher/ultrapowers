@@ -36,8 +36,10 @@ const loadBridge = () => {
 // bridge is missing): a run record (a *.json file in .ultrapowers/runs/) counts up to the nearest
 // project root, the first folder holding .agents/ultrapowers.json (whose session the record is bound to
 // is the hook's to judge); .ultrapowers/autopilot-active counts at any height. A record's prefix is read
-// from its file name (qa-<id>-<hex>.json, hunt-<id>-<hex>.json): QA unless every record is a hunt's.
+// from its file name (qa-<id>-<hex>.json, hunt-<id>-<hex>.json): HUNT when any record is a hunt's.
 // With ULTRAPOWERS_AUTOPILOT_INSIDE=1 (a headless stage) the run is active without the marker too.
+// `startDirs` is one directory or a list of candidates: the first run found from any of them counts
+// (a candidate can add a run, never hide one).
 const runRecordPrefix = (dir) => {
   let names = [];
   try {
@@ -46,9 +48,9 @@ const runRecordPrefix = (dir) => {
     return null;
   }
   if (!names.length) return null;
-  return names.every((n) => n.startsWith('hunt-')) ? 'HUNT-GUARDRAIL' : 'QA-GUARDRAIL';
+  return names.some((n) => n.startsWith('hunt-')) ? 'HUNT-GUARDRAIL' : 'QA-GUARDRAIL';
 };
-const runPrefix = (startDir) => {
+const runPrefixFrom = (startDir) => {
   let dir = path.resolve(startDir || process.cwd());
   let pastProject = false;
   for (;;) {
@@ -61,31 +63,68 @@ const runPrefix = (startDir) => {
     dir = parent;
   }
 };
-export const guardTool = (directory) => async (input, output) => {
+const runPrefix = (startDirs) => {
+  const list = (Array.isArray(startDirs) ? startDirs : [startDirs]).filter((d) => typeof d === 'string' && d !== '');
+  for (const d of list.length ? list : [process.cwd()]) {
+    const prefix = runPrefixFrom(d);
+    if (prefix) return prefix;
+  }
+  return null;
+};
+// `directory` is the session directory (the event's cwd); `candidates(input, output)` returns further
+// directories to look for a run from (V2 passes every directory its context and the call carry).
+// `mcp: 'opencode'` tells the bridge this harness spells an MCP tool <server>_<tool>, which it reads
+// as mcp__<server>__<tool> against an autopilot stage's server list.
+export const guardTool = (directory, candidates = () => []) => async (input, output) => {
   const bridge = await loadBridge();
+  const dirs = candidates(input, output);
   if (!bridge) {
-    const prefix = runPrefix(directory);
+    const prefix = runPrefix([directory, ...dirs, process.cwd()]);
     if (prefix) throw new Error(prefix + ' DENY: the guardrail bridge (hooks/lib/guardrail-bridge.mjs) is missing from this install; a tool call during a run is refused without it');
     return;
   }
-  const verdict = bridge.runGuardrail({ toolName: input?.tool, input: output?.args, cwd: directory });
+  const verdict = bridge.runGuardrail({ toolName: input?.tool, input: output?.args, cwd: directory, dirs, mcp: 'opencode' });
   if (verdict.deny) throw new Error(bridge.denyText(verdict));
 };
 
 // The V2 spelling of the same guard. V2's before-execute event carries the call's arguments as
 // `input` (`args` is accepted too); a plain object is judged like V1's output.args. During a run
 // an event with no such object cannot be judged and is refused; with no run it passes, as in V1.
-// A `directory` that is not a string falls back to the process cwd in the bridge, and a call's own
-// workdir is still checked there.
+// V2 has no `ctx.directory`: the service is shared by every project, its `process.cwd()` is not a
+// project, and the session's folder is `ctx.location.directory`. So the run is looked for from every
+// directory the context could carry (`ctx.location.directory`, `ctx.directory`, `ctx.worktree`,
+// `ctx.project.directory`) and every one the call carries (the event's own directory fields, an
+// absolute `workdir` or `cwd`, the folder of an absolute `filePath`), then the process cwd; the first
+// of the context's is the session directory. A candidate can add a run, never hide one.
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
-const guardV2Tool = (directory) => {
-  const guard = guardTool(directory);
+const dirString = (v) => (typeof v === 'string' && v !== '' ? v : null);
+const v2ContextDirs = (ctx) => [ctx?.location?.directory, ctx?.directory, ctx?.worktree, ctx?.project?.directory].map(dirString).filter(Boolean);
+const v2CallDirs = (event, args) => {
+  const out = [event?.location?.directory, event?.directory, event?.worktree].map(dirString);
+  if (args) {
+    for (const key of ['workdir', 'cwd', 'working_directory']) {
+      const v = dirString(args[key]);
+      if (v && path.isAbsolute(v)) out.push(v);
+    }
+    for (const key of ['filePath', 'file_path', 'path']) {
+      const v = dirString(args[key]);
+      if (v && path.isAbsolute(v)) out.push(path.dirname(v));
+    }
+  }
+  return out.filter(Boolean);
+};
+const guardV2Tool = (ctx) => {
+  const context = v2ContextDirs(ctx);
+  const session = context[0] ?? null;
+  const argsOf = (event) => (isPlainObject(event?.input) ? event.input : isPlainObject(event?.args) ? event.args : null);
+  const guard = guardTool(session, (input, output) => [...context.slice(1), ...v2CallDirs(input?.event, output?.args)]);
   return async (event) => {
-    const args = isPlainObject(event?.input) ? event.input : isPlainObject(event?.args) ? event.args : null;
-    if (args) return guard({ tool: event?.tool, sessionID: event?.sessionID, callID: event?.id }, { args });
+    const args = argsOf(event);
+    if (args) return guard({ tool: event?.tool, sessionID: event?.sessionID, callID: event?.id, event }, { args });
     const bridge = await loadBridge();
-    const run = bridge ? bridge.activeRun(directory || process.cwd(), [process.cwd()]) : null;
-    const prefix = bridge ? run?.prefix : runPrefix(directory);
+    const dirs = [...context, ...v2CallDirs(event, null)];
+    const run = bridge ? bridge.activeRun(dirs[0] ?? process.cwd(), [...dirs.slice(1), process.cwd()]) : null;
+    const prefix = bridge ? run?.prefix : runPrefix([...dirs, process.cwd()]);
     if (prefix) throw new Error(prefix + ' DENY: the V2 tool event carried no arguments; refused during a run');
   };
 };
@@ -642,7 +681,7 @@ async function setup(ctx) {
   // without the hook leaves a run unguarded, so that is logged.
   try {
     if (ctx.tool && typeof ctx.tool.hook === 'function') {
-      await ctx.tool.hook('execute.before', guardV2Tool(projectDir));
+      await ctx.tool.hook('execute.before', guardV2Tool(ctx));
     } else {
       console.error("[ultrapowers] the run guardrail is not registered on this host: ctx.tool.hook('execute.before') is unavailable, so a QA run, a vulnerability hunt or an autopilot stage runs without it");
     }

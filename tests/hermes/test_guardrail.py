@@ -156,12 +156,12 @@ def test_the_plugins_own_fail_closed_denies_carry_the_profile_prefix(tmp_path, m
     verdict = lambda: plugin._guardrail_verdict(str(root), "terminal", {"command": "git status"}, str(root))
 
     # The node binary or the hook is missing.
-    monkeypatch.setattr(plugin, "_node_binary", lambda cwd: None)
+    monkeypatch.setattr(plugin, "_node_binary", lambda cwd, *a, **k: None)
     missing = verdict()
     assert missing["action"] == "block" and missing["message"].startswith(prefix), missing
 
     # The hook cannot be spawned, and it exits with something other than 0 or 2.
-    monkeypatch.setattr(plugin, "_node_binary", lambda cwd: "node")
+    monkeypatch.setattr(plugin, "_node_binary", lambda cwd, *a, **k: "node")
     monkeypatch.setattr(plugin, "_guardrail_cli", lambda skills_dir: "guardrail-cli.mjs")
 
     def spawn_fails(*args, **kwargs):
@@ -177,15 +177,15 @@ def test_the_plugins_own_fail_closed_denies_carry_the_profile_prefix(tmp_path, m
     assert "exit 1" in crashed["message"]
 
 
-def test_the_order_is_a_qa_record_then_a_hunt_record_then_the_autopilot_marker(tmp_path):
+def test_the_order_is_a_hunt_record_then_a_qa_record_then_the_autopilot_marker(tmp_path):
     plugin = _load_plugin()
     root = _project(tmp_path)
     _record(root, "hunt", "audit-2026-10-11")
     _record(root, "qa", "GH-16")
-    assert plugin._run_active(str(root)) == "QA-GUARDRAIL"
-    (root / ".ultrapowers" / "runs" / "qa-GH-16-0a1b2c3d.json").unlink()
     assert plugin._run_active(str(root)) == "HUNT-GUARDRAIL"
     (root / ".ultrapowers" / "runs" / "hunt-audit-2026-10-11-0a1b2c3d.json").unlink()
+    assert plugin._run_active(str(root)) == "QA-GUARDRAIL"
+    (root / ".ultrapowers" / "runs" / "qa-GH-16-0a1b2c3d.json").unlink()
     assert plugin._run_active(str(root)) == "AUTOPILOT-GUARDRAIL"
     (root / ".ultrapowers" / "autopilot-active").unlink()
     assert plugin._run_active(str(root)) is None
@@ -250,3 +250,175 @@ def test_a_node_planted_in_the_project_is_never_run(tmp_path, monkeypatch):
     assert "git push is never allowed" in verdict.get("message", ""), verdict
     found = plugin._node_binary(str(root))
     assert found and os.path.isabs(found) and os.path.dirname(os.path.realpath(found)) != os.path.realpath(str(root)), found
+
+
+# ---- the 2026-10-23 hunt: Medium 17 and 18 (paths), Low 7 (node lookup), Medium 19 (MCP names) ----
+
+RELATIVE = "a relative path cannot be verified on Hermes; use an absolute path"
+
+
+def _blocked(verdict, text):
+    assert verdict and verdict.get("action") == "block", verdict
+    assert text in verdict.get("message", ""), verdict
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is needed to run the guardrail")
+def test_a_relative_path_is_refused_during_a_run_because_hermes_resolves_it_in_the_session_directory(hook, tmp_path, monkeypatch):
+    """Hermes runs a file tool and a command in the directory a previous `cd` left the session in, which the
+    hook payload does not carry: the guard would judge `ultrapowers.json` at the project root while Hermes
+    writes `.agents/ultrapowers.json`. A relative path is refused; an absolute one is judged."""
+    root = _project(tmp_path)
+    monkeypatch.chdir(root)
+    for tool, args in [
+        ("write_file", {"path": "ultrapowers.json", "content": "{}"}),
+        ("write_file", {"path": "./ultrapowers.json", "content": "{}"}),
+        ("read_file", {"path": "README.md"}),
+        ("search_files", {"pattern": "x", "path": "."}),
+        ("terminal", {"command": "echo x > ./config"}),
+        ("terminal", {"command": "cat src/a.ts"}),
+        ("terminal", {"command": "git add ."}),
+        ("terminal", {"command": "git status", "workdir": ".agents"}),
+    ]:
+        _blocked(hook(tool, args, "t20"), RELATIVE)
+    # a directory change of the persisted terminal session cannot be followed
+    for command in ("cd .agents", "git status && cd /tmp", "pushd /tmp", "(cd src; ls)"):
+        _blocked(hook("terminal", {"command": command}, "t21"), "a directory change")
+    # absolute paths, and commands with no path, are judged by the guard as before
+    assert hook("read_file", {"path": str(root / "README.md")}, "t22") is None
+    assert hook("terminal", {"command": "git status"}, "t23") is None
+    assert hook("terminal", {"command": 'cat "' + str(root / "src" / "a.ts") + '"'}, "t24") is None
+    _blocked(hook("write_file", {"path": str(root / ".agents" / "ultrapowers.json"), "content": "{}"}, "t25"), "protected path")
+    # an absolute workdir fixes the directory the command runs in, so its relative paths are judged against it
+    assert hook("terminal", {"command": "cat src/a.ts", "workdir": str(root)}, "t26") is None
+    _blocked(hook("terminal", {"command": "echo x > ultrapowers.json", "workdir": str(root / ".agents")}, "t27"), "protected path")
+
+
+def test_without_a_run_a_relative_path_is_not_checked(hook, tmp_path, monkeypatch):
+    root = _project(tmp_path, active=False)
+    monkeypatch.chdir(root)
+    assert hook("write_file", {"path": "ultrapowers.json", "content": "{}"}, "t28") is None
+    assert hook("terminal", {"command": "cd .agents && ls"}, "t29") is None
+
+# The verification of Medium 17: the directory-change refusal read the command's text, so a quote, a backslash
+# or an expansion hid the word `cd`. Quotes and backslashes are removed as the shell removes them, and `eval`
+# and an expansion used as the program are refused too (they can build a `cd` the text never shows).
+HIDDEN_DIRECTORY_CHANGES = [
+    "'cd' src", '"cd" src', r"\cd src", r"c\d src", 'c""d src', "eval 'c''d src'", "eval cd src", 'eval "$X"', "builtin eval x",
+    "C=cd; $C src", "$C src", "${C} src", "$'cd' src", "A=1 $C src", "A='x y' $C src", "builtin $C src", "true && $C src", "if true; then $C src; fi",
+    "c${E}d src", "c$(true)d src", "c`true`d src", "c{d,} src", "$(echo cd) src", "`echo cd` src",
+]
+
+
+def test_a_directory_change_hidden_by_quotes_eval_or_an_expansion_is_refused_during_a_run(hook, tmp_path, monkeypatch):
+    root = _project(tmp_path)
+    monkeypatch.chdir(root)
+    for i, command in enumerate(HIDDEN_DIRECTORY_CHANGES):
+        _blocked(hook("terminal", {"command": command}, f"t40-{i}"), "a directory change")
+    # the same commands with an absolute workdir are refused too: the session still moves
+    _blocked(hook("terminal", {"command": "'cd' src", "workdir": str(root)}, "t41"), "a directory change")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is needed to run the guardrail")
+def test_a_quoted_word_that_is_no_command_and_an_expansion_in_an_argument_are_not_a_directory_change(hook, tmp_path, monkeypatch):
+    root = _project(tmp_path)
+    monkeypatch.chdir(root)
+    for i, command in enumerate([
+        "echo 'cd src'", 'echo "cd src"', 'echo "a;cd b"', "echo eval", "echo $HOME", 'echo "$HOME"', "X=$(git status)", "X=$(git status) echo done",
+        "git status && echo $?", "echo ${HOME}", r"echo \$HOME",
+    ]):
+        assert hook("terminal", {"command": command}, f"t42-{i}") is None, command
+
+
+def test_without_a_run_a_hidden_directory_change_is_not_checked(hook, tmp_path, monkeypatch):
+    root = _project(tmp_path, active=False)
+    monkeypatch.chdir(root)
+    for i, command in enumerate(HIDDEN_DIRECTORY_CHANGES):
+        assert hook("terminal", {"command": command}, f"t43-{i}") is None, command
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is needed to run the guardrail")
+def test_a_home_path_is_expanded_before_the_guard_reads_it_and_an_unresolved_one_is_refused(hook, tmp_path, monkeypatch):
+    """Hermes expands `~`; the guard reads `~/.bashrc` as the project-relative `<root>/~/.bashrc`. The adapter
+    expands it first, so the guard judges the file Hermes writes; a `~` that does not resolve is refused."""
+    (tmp_path / "proj").mkdir()
+    root = _project(tmp_path / "proj")
+    monkeypatch.chdir(root)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    outside = hook("write_file", {"path": "~/.bashrc", "content": "x"}, "t30")
+    assert outside and outside.get("action") == "block", outside
+    assert RELATIVE not in outside.get("message", ""), "the path is absolute once expanded"
+    _blocked(hook("terminal", {"command": "git status", "workdir": "~"}, "t31"), "outside the project root")
+    # the same file under the project, spelled with ~, is the file the guard now judges
+    monkeypatch.setenv("HOME", str(root))
+    monkeypatch.setenv("USERPROFILE", str(root))
+    _blocked(hook("write_file", {"path": "~/.agents/ultrapowers.json", "content": "{}"}, "t32"), "protected path")
+    # a user the adapter cannot resolve stays a `~` path and is refused
+    monkeypatch.setattr(os.path, "expanduser", lambda p: p)
+    for tool, args in [("write_file", {"path": "~otheruser/x", "content": "x"}), ("read_file", {"path": "~"}), ("terminal", {"command": "git status", "workdir": "~root"})]:
+        _blocked(hook(tool, args, "t33"), "cannot be resolved")
+
+
+def test_the_adapter_expands_a_home_path_in_every_path_argument(tmp_path, monkeypatch):
+    plugin = _load_plugin()
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    args, problem = plugin._checked_args({"path": "~/a", "file_path": "~/b", "workdir": "~", "command": "ls", "content": "~/not-a-path"})
+    assert problem is None
+    assert os.path.normcase(args["path"]) == os.path.normcase(os.path.expanduser("~/a"))
+    assert os.path.isabs(args["file_path"]) and os.path.isabs(args["workdir"])
+    assert args["content"] == "~/not-a-path", "only path arguments are expanded"
+    assert args["command"] == "ls"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is needed to run the guardrail")
+def test_a_node_on_an_absolute_path_entry_inside_the_project_is_never_run(tmp_path, monkeypatch):
+    """The lookup skipped only the working directory: an absolute PATH entry inside the project (a
+    node_modules/.bin that npm run adds, a tools folder) was accepted when the session ran elsewhere."""
+    plugin = _load_plugin()
+    (tmp_path / "proj").mkdir()
+    root = _project(tmp_path / "proj")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    tools = root / "tools"
+    tools.mkdir()
+    sentinel = root / "decoy-ran.txt"
+    if os.name == "nt":
+        (tools / "node.cmd").write_text(f'@echo off\r\necho ran> "{sentinel}"\r\nexit /b 0\r\n', encoding="utf-8")
+    else:
+        decoy = tools / "node"
+        decoy.write_text(f'#!/bin/sh\necho ran > "{sentinel}"\nexit 0\n', encoding="utf-8")
+        decoy.chmod(0o755)
+    monkeypatch.chdir(outside)
+    monkeypatch.setenv("PATH", os.pathsep.join([str(tools), os.environ.get("PATH", "")]))
+    found = plugin._node_binary(str(outside), [str(root)])
+    assert found and not os.path.realpath(found).startswith(os.path.realpath(str(root))), found
+    # through a call: the run is found from the call's workdir, and the project is that run's
+    verdict = plugin._guardrail_verdict(plugin._skills_dir(), "terminal", {"command": "git push origin GH-16-x", "workdir": str(root)}, str(outside))
+    assert not sentinel.exists(), "the decoy node inside the project ran"
+    assert verdict and verdict.get("action") == "block", verdict
+    assert "git push is never allowed" in verdict.get("message", ""), verdict
+
+
+def _snapshot(root, *servers):
+    folder = root / ".ultrapowers" / "autopilot"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "mcp.json").write_text(json.dumps({"mcpServers": {name: {"command": "x"} for name in servers}}), encoding="utf-8")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is needed to run the guardrail")
+def test_an_mcp_tool_of_a_server_outside_the_snapshot_is_refused_in_an_autopilot_stage(hook, tmp_path, monkeypatch):
+    """Hermes names an MCP tool mcp_<server>_<tool>; the stage's server list judges mcp__<server>__<tool>."""
+    root = _project(tmp_path)
+    _snapshot(root, "context7", "my-docs")
+    monkeypatch.chdir(root)
+    for name in ("mcp_postgres_query", "mcp_Postgres-Admin_drop_table"):
+        _blocked(hook(name, {"query": "select 1"}, "t34"), "the MCP server 'postgres")
+    assert hook("mcp_context7_query-docs", {"query": "x"}, "t35") is None
+    assert hook("mcp_my_docs_search", {"query": "x"}, "t36") is None
+    assert hook("read_file", {"path": str(root / "README.md")}, "t37") is None
+    _blocked(hook("mcp_", {"query": "x"}, "t38"), "cannot be read")

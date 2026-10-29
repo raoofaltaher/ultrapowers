@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shlex
 from pathlib import Path
 
 BOOTSTRAP_MARKER = "ultrapowers:using-ultrapowers bootstrap for hermes"
@@ -247,8 +248,8 @@ def _run_active(start_dir):
     the first folder holding .agents/ultrapowers.json; .ultrapowers/autopilot-active counts at any
     height. This is only the fast path that decides whether the hook is spawned, and it may be
     conservative (a record of another session passes it); the hook decides whose run it is. The
-    prefix of a record is read from its file name (qa-<id>-<hex>.json, hunt-<id>-<hex>.json): QA
-    unless every record is a hunt's, as the hook picks QA before hunt. A headless watcher stage
+    prefix of a record is read from its file name (qa-<id>-<hex>.json, hunt-<id>-<hex>.json): HUNT
+    when any record is a hunt's, as the hook picks a hunt before QA. A headless watcher stage
     carries ULTRAPOWERS_AUTOPILOT_INSIDE=1: without a marker the run is then an autopilot stage, and
     the hook decides (outside any project it denies), as in the hook.
     """
@@ -262,7 +263,7 @@ def _run_active(start_dir):
             except OSError:
                 records = []
             if records:
-                return "HUNT-GUARDRAIL" if all(n.startswith("hunt-") for n in records) else "QA-GUARDRAIL"
+                return "HUNT-GUARDRAIL" if any(n.startswith("hunt-") for n in records) else "QA-GUARDRAIL"
         if os.path.isfile(os.path.join(base, "autopilot-active")):
             return "AUTOPILOT-GUARDRAIL"
         if os.path.isfile(os.path.join(current, ".agents", "ultrapowers.json")):
@@ -273,15 +274,25 @@ def _run_active(start_dir):
         current = parent
 
 
-def _node_binary(cwd):
+def _under(path, root):
+    """True when path is root or inside it (symlinks resolved, case folded on Windows)."""
+    path = os.path.normcase(os.path.realpath(path))
+    root = os.path.normcase(os.path.realpath(root))
+    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
+
+
+def _node_binary(cwd, projects=()):
     """The node executable from the absolute PATH entries, or None.
 
-    Never the project's: a relative entry (`.`, `bin`) and an entry that is the working directory
-    are skipped, so a node or node.cmd planted in the project is not run. shutil.which is not used:
-    on Windows it searches the current directory first unless NoDefaultCurrentDirectoryInExePath is
-    set in this process's environment.
+    Never the project's: a relative entry (`.`, `bin`), an entry that is the working directory and
+    every entry at or under a project root in `projects` (a node_modules/.bin that npm run adds, a
+    tools folder of the repository) are skipped, as hooks/lib/resolve-tool.mjs skips them, so a node
+    or node.cmd planted in the project is not run. shutil.which is not used: on Windows it searches
+    the current directory first unless NoDefaultCurrentDirectoryInExePath is set in this process's
+    environment.
     """
     here = os.path.normcase(os.path.realpath(cwd)) if cwd else None
+    roots = [p for p in projects if p]
     if os.name == "nt":
         exts = [e for e in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";") if e]
     else:
@@ -292,11 +303,136 @@ def _node_binary(cwd):
             continue
         if here and os.path.normcase(os.path.realpath(entry)) == here:
             continue
+        if any(_under(entry, root) for root in roots):
+            continue
         for ext in exts:
             cand = os.path.join(entry, "node" + ext)
             if os.path.isfile(cand) and os.access(cand, os.X_OK):
                 return cand
     return None
+
+
+# The arguments of a Hermes tool that name a file or a directory (read_file, write_file, patch and
+# search_files take `path`; terminal takes `workdir`; the others are the spellings the guard reads).
+_PATH_ARGS = ("path", "file_path", "filePath", "notebook_path", "file", "workdir", "working_directory", "Cwd", "dir_path")
+_DIR_ARGS = ("workdir", "working_directory", "Cwd", "dir_path")
+_DIR_CHANGE = re.compile(r"(?:^|[\s;&|(){}`])(?:cd|pushd|popd|chdir)(?=$|[\s;&|(){}`])", re.IGNORECASE)
+# A shell removes quotes and backslashes before it runs a word, so `'cd' src`, `c\d src` and `c""d src` change
+# the directory; `eval`, or an expansion used as the program (`C=cd; $C src`), can build a `cd` the text never shows.
+_PROTECTED = " \t\r\n;&|()<>{}"
+_PROTECTED_SINGLE = _PROTECTED + "$`"
+_SKIPPED_WORD = re.compile(r"^(?:\w+=.*|\d*[<>].*|!|\{|\}|then|do|else|elif|if|while|until|builtin|command|time|exec)$")
+_OPERATORS = re.compile(r"[;&|()<>`=]+")
+RELATIVE_PATH = "a relative path cannot be verified on Hermes; use an absolute path"
+
+
+def _is_absolute(path):
+    # On Windows a rooted path with no drive (/tmp/x) names one place on the current drive; the guard reads it so too.
+    return os.path.isabs(path) or (os.name == "nt" and path[:1] in ("/", "\\"))
+
+
+def _unquoted(command):
+    """The command as the shell reads it once its quotes and backslashes are removed. What a quote or a
+    backslash protects (a space, an operator; in single quotes an expansion too) becomes `_`, so a quoted
+    string stays one word and what it holds is no command."""
+    out = []
+    quote = ""
+    i = 0
+    while i < len(command):
+        ch = command[i]
+        i += 1
+        if quote and ch == quote:
+            quote = ""
+        elif quote == '"' and ch == "\\" and i < len(command):
+            ch = command[i]
+            i += 1
+            out.append("_" if ch in _PROTECTED_SINGLE else ch)
+        elif quote:
+            out.append("_" if ch in (_PROTECTED_SINGLE if quote == "'" else _PROTECTED) else ch)
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "\\" and i < len(command):
+            ch = command[i]
+            i += 1
+            if ch != "\n":
+                out.append("_" if ch in _PROTECTED else ch)
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def _hides_directory_change(command):
+    """True when the command changes the directory of the terminal session, or can without saying so: a
+    `cd`, `pushd`, `popd` or `chdir` word however it is quoted, `eval`, and a program word that holds an
+    expansion or a brace list."""
+    text = _unquoted(command)
+    if _DIR_CHANGE.search(text):
+        return True
+    for segment in re.split(r"[;&|()\n]", text):
+        words = [w for w in segment.split() if not _SKIPPED_WORD.match(w)]
+        if words and (words[0] == "eval" or re.search(r"[$`{}]", words[0])):
+            return True
+    return False
+
+
+def _command_words(command):
+    """The words of a shell command, quotes removed (a quoted path with a space is one word), split again
+    at the operators and redirections that can touch a word. A command that does not parse is not
+    guessed at: it returns None, and the caller treats it as holding a relative path."""
+    try:
+        tokens = shlex.split(command, posix=False)
+    except ValueError:
+        return None
+    return [w for token in tokens for w in _OPERATORS.split(token.strip("\"'")) if w]
+
+
+def _relative_word(word):
+    """True for a command word that is lexically a relative path: it has a separator or starts with a dot."""
+    if not word or word[0] in "/\\~$-@%!#{}[]*?" or "://" in word:
+        return False
+    if re.match(r"^[A-Za-z]:[\\/]", word):
+        return False
+    return "/" in word or "\\" in word or word[0] == "."
+
+
+def _checked_args(args):
+    """The call's arguments with every `~` expanded, or (None, reason) when the call cannot be judged.
+
+    Hermes expands `~` and resolves a relative path in the directory its terminal session was left in
+    by an earlier `cd`; neither is in the hook payload, and the guard reads `~/x` as `<project>/~/x` and
+    a relative path against the process cwd. So a leading `~` is expanded here (one that does not
+    resolve is refused), a relative path is refused, and so is a directory change in a command, which
+    moves the session for every later call. A command is judged against its own workdir when that is
+    absolute, as the guard does: its relative paths are then known.
+    """
+    if not isinstance(args, dict):
+        return args, None
+    out = dict(args)
+    relative = False
+    absolute_workdir = False
+    for key in _PATH_ARGS:
+        value = out.get(key)
+        if not isinstance(value, str) or not value:
+            continue
+        expanded = os.path.expanduser(value)
+        if expanded.startswith("~"):
+            return None, f"the path {value!r} starts with ~ and cannot be resolved; use an absolute path"
+        out[key] = expanded
+        if not _is_absolute(expanded):
+            relative = True
+        elif key in _DIR_ARGS:
+            absolute_workdir = True
+    command = next((out[k] for k in ("command", "cmd") if isinstance(out.get(k), str)), None)
+    if command is not None:
+        if _hides_directory_change(command):
+            return None, "a directory change cannot be tracked on Hermes (its terminal keeps it for every later call), and eval or an expansion used as the program can hide one; name absolute paths and the program itself instead"
+        if not absolute_workdir:
+            words = _command_words(command)
+            if words is None or any(_relative_word(w) for w in words):
+                relative = True
+    if relative:
+        return None, RELATIVE_PATH + " (or give the call an absolute workdir)"
+    return out, None
 
 
 def _guardrail_verdict(skills_dir, tool_name, args, cwd):
@@ -310,22 +446,31 @@ def _guardrail_verdict(skills_dir, tool_name, args, cwd):
     candidates = [cwd]
     workdir = args.get("workdir") if isinstance(args, dict) else None
     if isinstance(workdir, str) and workdir:
-        candidates.append(os.path.join(cwd, workdir))
+        candidates.append(os.path.join(cwd, os.path.expanduser(workdir)))
     prefix = next((p for p in (_run_active(c) for c in candidates) if p), None)
     if not prefix:
         return None
     import subprocess
 
+    args, problem = _checked_args(args)
+    if problem:
+        return {"action": "block", "message": f"{prefix} DENY: {problem}"}
+    projects = []
+    for c in candidates:
+        marker = _find_marker(c)
+        if marker:
+            projects.append(os.path.dirname(os.path.dirname(marker)))
     cli = _guardrail_cli(skills_dir)
-    node = _node_binary(cwd)
+    node = _node_binary(cwd, projects)
     if not cli or not node:
         return {"action": "block", "message": f"{prefix} DENY: the ultrapowers guardrail could not run (node or the hook is missing); a tool call during a run is refused without it"}
     event = json.dumps({"hook_event_name": "PreToolUse", "tool_name": tool_name, "tool_input": {} if args is None else args, "cwd": cwd})
     # The child runs from the plugin's folder (the event carries the session cwd), and on Windows it
-    # does not search its current directory for the programs it starts.
+    # does not search its current directory for the programs it starts. --hermes: an MCP tool is
+    # named mcp_<server>_<tool>, which the guard reads against an autopilot stage's server list.
     env = dict(os.environ, NoDefaultCurrentDirectoryInExePath="1")
     try:
-        proc = subprocess.run([node, cli], input=event, capture_output=True, text=True, timeout=20, cwd=os.path.dirname(os.path.abspath(__file__)), env=env)
+        proc = subprocess.run([node, cli, "--hermes"], input=event, capture_output=True, text=True, timeout=20, cwd=os.path.dirname(os.path.abspath(__file__)), env=env)
     except (OSError, subprocess.SubprocessError) as exc:
         return {"action": "block", "message": f"{prefix} DENY: the ultrapowers guardrail could not run ({exc}); a tool call during a run is refused without it"}
     if proc.returncode == 0:

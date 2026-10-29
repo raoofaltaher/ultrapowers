@@ -13,7 +13,7 @@
 // fails closed on what it cannot resolve (a target built from an unknown variable or a
 // command substitution). A regex hook cannot contain a determined adversary; this closes the
 // ordinary spellings of a write.
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync, statSync, lstatSync } from 'node:fs';
 import { posix, resolve as resolvePath, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inside, realCanonical, rel, keyGlobReaches } from './guard-paths.mjs';
@@ -24,6 +24,17 @@ const PLUGIN_ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), '..', '
 
 const DEVICES = new Set(['/dev/null', '/dev/stdout', '/dev/stderr', '/dev/tty', 'nul', '/dev/fd/1', '/dev/fd/2']);
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'ash', 'mksh', 'rbash', 'fish', 'csh', 'tcsh']);
+// Launchers that run a command of their own, and are unwrapped like a wrapper (see the loop in simple()). unbuffer is a wrapper below.
+const LAUNCHERS = new Set(['task-done', 'watch', 'parallel', 'strace', 'ltrace', 'script', 'chronic', 'faketime', 'proxychains', 'proxychains4', 'torsocks']);
+// The options of the launchers that take a value, by program: the short letters, and the long names (given as --name=VALUE or --name VALUE).
+const LAUNCHER_OPTS = {
+  strace: { short: 'abeEIoOpPsSuUX', long: ['--attach', '--output', '--env', '--trace', '--signal', '--status', '--string-limit', '--summary-sort-by', '--trace-path', '--user', '--inject', '--fault', '--columns', '--syscall-limit', '--detach-on'] },
+  ltrace: { short: 'aADeFlnoOpsuwx', long: ['--output', '--library', '--align', '--config'] },
+  script: { short: 'cEBIOTmo', long: ['--command', '--echo', '--log-io', '--log-in', '--log-out', '--log-timing', '--logging-format', '--output-limit'] },
+  proxychains: { short: 'f', long: [] },
+  proxychains4: { short: 'f', long: [] },
+  torsocks: { short: 'upaP', long: ['--user', '--pass', '--address', '--port'] },
+};
 const WRAPPERS = new Set(['nohup', 'command', 'exec', 'time', 'sudo', 'nice', 'stdbuf', 'setsid', 'busybox', 'builtin', 'unbuffer', 'ionice', 'doas', 'flock', 'taskset', 'chrt']);
 // Options of a wrapper that take a value, so the word after them is not the program.
 const WRAPPER_VALUE_OPTS = new Set(['-n', '--adjustment', '-o', '-e', '-i']);
@@ -62,7 +73,7 @@ const progName = (v) => String(v || '').replace(/\\/g, '/').split('/').pop().toL
 const GIT_READ_ONLY = new Set(['status', 'diff', 'log', 'show', 'rev-parse', 'ls-files', 'ls-tree', 'rev-list', 'cat-file',
   'blame', 'describe', 'grep', 'shortlog', 'merge-base', 'for-each-ref', 'name-rev', 'show-ref', 'help', 'version', 'whatchanged']);
 const GIT_GLOBAL_WITH_ARG = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path']);
-const WRITE_PROGRAMS = new Set(['rm', 'unlink', 'mv', 'cp', 'tee', 'sed', 'perl', 'truncate', 'install', 'ln', 'dd', 'shred']);
+const WRITE_PROGRAMS = new Set(['rm', 'unlink', 'mv', 'cp', 'tee', 'sed', 'perl', 'truncate', 'install', 'ln', 'link', 'dd', 'shred']);
 
 // ---------- tokenizer ----------
 // A word is a list of parts: { t: 'lit', v } | { t: 'var', v: NAME } | { t: 'dyn' }.
@@ -71,6 +82,9 @@ const WRITE_PROGRAMS = new Set(['rm', 'unlink', 'mv', 'cp', 'tee', 'sed', 'perl'
 // here-document body): { kind: 'cmd', src } when its inner text was cut out, { kind: 'proc' } for
 // <( ) and >( ), and { kind: 'opaque' } when the inner text cannot be cut out reliably.
 const SUB_RE = /\$\(|`/;
+// ${!NAME}, and ${!1}, ${!@}, ${!*}, ${!#}, ${!-}, ${!?}, ${!$}, ${!!} too: the value of the parameter is the name of the variable read
+// (set -- GH_TOKEN; echo ${!1}).
+const INDIRECT_RE = /^!(?:[A-Za-z_]|[0-9]|[@*#?$!-])/;
 // The variables an unquoted here-document line reads, as the parts a word would carry (readVar's judgement):
 // $NAME and ${NAME} are { t: 'var' }; ${NAME<op>WORD} reads NAME and the $X inside WORD (a :+ or + presence
 // check and a #NAME length read none); ${!NAME} is an indirection. A backslash-escaped $ is text.
@@ -85,7 +99,7 @@ function heredocExpansions(line) {
       if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) parts.push({ t: 'var', v: name });
       else {
         const m = /^([!#]?)([A-Za-z_][A-Za-z0-9_]*)(.*)$/s.exec(name);
-        if (m && m[1] === '!') parts.push({ t: 'dyn', indirect: true });
+        if (INDIRECT_RE.test(name)) parts.push({ t: 'dyn', indirect: true });
         else {
           const reads = [...name.matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)/g)].map((x) => x[1]);
           if (m && !(m[1] === '#' && m[3] === '') && !/^:?\+/.test(m[3])) reads.unshift(m[2]);
@@ -137,9 +151,10 @@ function tokenize(src) {
       // ${#NAME} prints a length; ${!NAME} reads a variable whose name is a value: an indirection.
       const reads = [...name.matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)/g)].map((m) => m[1]);
       const m = /^([!#]?)([A-Za-z_][A-Za-z0-9_]*)(.*)$/s.exec(name);
-      if (m && m[1] === '!') { push({ t: 'dyn', indirect: true }); return; }
+      if (INDIRECT_RE.test(name)) { push({ t: 'dyn', indirect: true }); return; }
       if (m && !(m[1] === '#' && m[3] === '') && !/^:?\+/.test(m[3])) reads.unshift(m[2]);
-      push({ t: 'dyn', reads });
+      // `text` is what stood between the braces: the default or alternate WORD of ${X:-WORD} is part of the value.
+      push({ t: 'dyn', reads, text: name });
       return;
     }
     // $'...' (ANSI-C quoting: \x2e\x2e is `..`) and $"..." (a translated string) are expanded by the
@@ -254,15 +269,18 @@ function normPath(p) {
 // The autopilot marker, the kill switch and the engine's lock folder are the envelope's own
 // switches, written by the engine outside the stage. The run records of a QA run or a hunt
 // (.ultrapowers/runs/) are refused to every call of a run (MARKER_RE) and to an autopilot stage.
-const PROTECTED_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|(^|\/)\.aws(\/|$)|mcp-secrets\.env|\.local\.(sh|env|json)$|hooks\/qa-guardrail|\.agents\/ultrapowers\.json|(^|\/)\.claude\/|(^|\/)\.git\/|(^|\/)\.git$|(^|\/)\.githooks\/|(^|\/)\.[a-z0-9_-]+\/settings(\.local)?\.json$|(^|\/)tasks\/[^/]+\/(autopilot\.json|stage-log\.jsonl|changes-comments\.md)$|(^|\/)\.ultrapowers\/(autopilot-active|autopilot-stop)$|(^|\/)\.ultrapowers\/autopilot(\/|$)|(^|\/)\.ultrapowers$/;
+const PROTECTED_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|id_ecdsa|(^|\/)\.aws(\/|$)|mcp-secrets\.env|\.local\.(sh|env|json)$|hooks\/qa-guardrail|\.agents\/ultrapowers\.json|(^|\/)\.claude\/|(^|\/)\.git\/|(^|\/)\.git$|(^|\/)\.githooks\/|(^|\/)\.[a-z0-9_-]+\/settings(\.local)?\.json$|(^|\/)tasks\/[^/]+\/(autopilot\.json|stage-log\.jsonl|changes-comments\.md)$|(^|\/)\.ultrapowers\/(autopilot-active|autopilot-stop)$|(^|\/)\.ultrapowers\/autopilot(\/|$)|(^|\/)\.ultrapowers$/;
 // Key material no stage may read through a shell (the same list as the hook's shell rule). The
 // hook tests the typed command; an 8.3 short name (MCP-SE~1.ENV) hides the name from it, so any
 // word with an alias-shaped segment is resolved here and its real name is tested.
-const KEY_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|\.aws\/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|\/)\.env($|\.)|\.git-credentials|(^|\/)\.netrc$|(^|\/)\.npmrc$|(^|\/)\.config\/(gh|glab-cli)(\/|$)|(^|\/)\.docker\/config\.json|(^|\/)\.kube(\/|$)|(^|\/)\.gnupg(\/|$)/;
+const KEY_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|id_ecdsa|\.aws\/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|\/)\.env($|\.)|\.git-credentials|(^|\/)\.netrc$|(^|\/)\.npmrc$|(^|\/)\.config\/(gh|glab-cli)(\/|$)|(^|\/)\.docker\/config\.json|(^|\/)\.kube(\/|$)|(^|\/)\.gnupg(\/|$)|(^|\/)\.pypirc$|(^|\/)\.cargo\/credentials(\.toml)?$|(^|\/)\.config\/gcloud(\/|$)|(^|\/)\.azure(\/|$)|(^|\/)\.pgpass$|(^|\/)\.vault-token$|(^|\/)\.gem\/credentials$|(^|\/)[A-Za-z0-9_][^/[\]|]*\.(pem|key|pfx|p12)(\.(bak|old|orig))?$/;
 const SHORT_SEG = /[^\\/]~[0-9]/;
 // A process environment as a file: /proc/<pid>/environ and /proc/<pid>/task/<tid>/environ.
 const ENVIRON_RE = /^\/proc\/(.+\/)?environ$/;
-const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)hooks\/(qa-guardrail|session-start|team-memory-[a-z]+|lib\/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|\/)\.gemini\/hooks\/|(^|\/)\.husky\/|(^|\/)\.pre-commit-config\.ya?ml$|(^|\/)lefthook\.ya?ml$|(^|\/)\.env($|\.)|(^|\/)qa\/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|\/)\.ultrapowers\/(autopilot-active|autopilot-stop)$|(^|\/)\.ultrapowers\/runs(\/|$)|(^|\/)\.mcp\.json$|(^|\/)\.cursor\/(mcp\.json|cli\.json|rules\/)|(^|\/)\.vscode\/|(^|\/)\.codex\/|(^|\/)\.kimi\/|(^|\/)\.factory\/|(^|\/)\.gemini\/|(^|\/)\.qwen\/|(^|\/)opencode\.jsonc?$|(^|\/)\.hermes\//;
+// A process folder of /proc as a whole (/proc/self, /proc/thread-self, /proc/<pid>, their task folders): whatever reads
+// the folder (grep -r, rg, find) reads the environ file of every process under it.
+const PROC_DIR_RE = /^\/proc\/(self|thread-self|[0-9]+)(\/task(\/[0-9]+)?)?\/?$/;
+const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)hooks\/(qa-guardrail|session-start|team-memory-[a-z]+|lib\/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|\/)\.gemini\/hooks\/|(^|\/)\.husky\/|(^|\/)\.pre-commit-config\.ya?ml$|(^|\/)lefthook\.ya?ml$|(^|\/)\.env($|\.)|(^|\/)qa\/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|\/)\.ultrapowers\/(autopilot-active|autopilot-stop)$|(^|\/)\.ultrapowers\/runs(\/|$)|(^|\/)\.mcp\.json$|(^|\/)\.cursor\/(mcp\.json|cli\.json|environment\.json|worktrees\.json|rules\/|hooks\/)|(^|\/)\.devcontainer(\/|\.json$)|(^|\/)\.vscode\/|(^|\/)\.codex\/|(^|\/)\.kimi\/|(^|\/)\.factory\/|(^|\/)\.gemini\/|(^|\/)\.qwen\/|(^|\/)opencode\.jsonc?$|(^|\/)\.hermes\/|(^|\/)\.opencode\/|(^|\/)\.cursor\/hooks\.json$|(^|\/)\.pi\/|(^|\/)\.claude-plugin\/|(^|\/)hooks\.json$/;
 // Git subcommands an autopilot stage may run: the read-only set plus the commands that build the
 // ticket branch. Pushing and integrating belong to the engine; nothing discards work; `config` and
 // the `-c` global option are refused because an alias resolves to any command at all.
@@ -1136,7 +1154,7 @@ function huntProgramWhy(prog, args, interpKind, { dir, rootC, ignoreCase, inArea
   if (HUNT_PROGRAMS.has(prog)) {
     const text = vals.filter((v) => v !== null);
     if (prog === 'rg' && text.some((v) => /^--(pre|hostname-bin)(=|$)/.test(v))) return 'the hunt reads; rg --pre and --hostname-bin run a program';
-    if (prog === 'yq' && text.some((v) => /^-[A-Za-z]*[is]$/.test(v) || /^--(inplace|split-exp)(=|$)/.test(v))) return 'the hunt reads; yq -i and -s write files';
+    if (prog === 'yq' && text.some((v) => /^-[A-Za-z]*[is]$/.test(v) || /^--(in-?place|split-exp)(=|$)/.test(v))) return 'the hunt reads; yq -i and -s write files';
     if (prog === 'yq' && text.some((v) => /(^|[^A-Za-z0-9_])(str)?env(subst)?\s*\(|(^|[^A-Za-z0-9_])(load|eval)(_str|_xml|_base64|_props|_csv|_json|_yaml)?\s*\(/.test(v))) return 'the hunt reads; a yq expression that reads the environment or loads a file cannot be verified';
     if (prog === 'jq' && text.some((v) => /\$ENV\b|(^|[\s|(;,])env([\s|)\];,]|$)/.test(v))) return 'the hunt reads; a jq expression that reads the environment cannot be verified';
     if (prog === 'file' && text.some((v) => /^-[A-Za-z]*C/.test(v) || v === '--compile')) return 'the hunt reads; file -C writes a compiled magic file';
@@ -1160,21 +1178,124 @@ function huntProgramWhy(prog, args, interpKind, { dir, rootC, ignoreCase, inArea
     if (p.split('/').includes('..')) return `the hunt reads; ${prog} ${script.v} has a parent-folder segment and cannot be verified`;
     if (stdinScript(p)) return STDIN_FILE_WHY;
     const real = realCanonical(p, rootC);
-    if (rel(real, rootC, ignoreCase) === null) {
-      // Outside the project only a regular file runs: a device, a fifo or a missing name is code nobody read first.
+    // The hunt runs the plugin's own scripts and nothing else: the preflight, the review assembler and the
+    // run-record script, each a regular file under the plugin root this analyzer runs from, outside the report
+    // area. Any other script, inside the project or outside it (a package manager's entry script, another
+    // harness's CLI), is code the hunt does not run; a copy of an own script shipped by the audited code is its code.
+    if (HUNT_OWN_SCRIPTS_RE.test(real.replace(/\\/g, '/')) && !inArea(real) && inside(real, realCanonical(PLUGIN_ROOT, PLUGIN_ROOT), ignoreCase)) {
       try { if (statSync(real).isFile()) return ''; } catch { /* missing */ }
-      return `the hunt reads; ${prog} ${script.v} is not a regular file outside the project (a device, a pipe or a missing file runs code nobody read)`;
+      return `the hunt reads; ${prog} ${script.v} is not a regular file (a device, a pipe or a missing file runs code nobody read)`;
     }
-    // A script of that name inside the audited project counts only when the project is the plugin itself (its
-    // real path is under the plugin root this analyzer runs from); a copy shipped by the audited code is its code.
-    if (HUNT_OWN_SCRIPTS_RE.test(real.replace(/\\/g, '/')) && !inArea(real) && inside(real, realCanonical(PLUGIN_ROOT, PLUGIN_ROOT), ignoreCase)) return '';
-    return `the hunt reads; ${prog} ${script.v} is not on its list (${prog} runs only the hunt's own preflight script or a script outside the project, never a file of the project or of the report area)`;
+    return `the hunt reads; ${prog} ${script.v} is not on its list (${prog} runs only the plugin's own hunt scripts: the preflight, the review assembler and run-records.mjs)`;
   }
   return HUNT_NOT_LISTED(prog);
 }
 
+// ---------- words the shell or a program expands ----------
+const GLOB_CHARS = /[*?[\]{}]/;
+// The names a brace list makes before the program runs ({a,b}, {/dev/null,.env}, {~/.ss,x}h/id_rsa): the innermost
+// list first, so a nested one comes out too. At most `max` names (BRACE_MAX); `over` is true when more were made.
+const BRACE_MAX = 32;
+function braceAlternatives(word, max = BRACE_MAX) {
+  let out = [word];
+  for (let round = 0; round < 8; round++) {
+    const next = [];
+    let changed = false;
+    for (const s of out) {
+      const m = /\{([^{}]*,[^{}]*)\}/.exec(s);
+      if (!m) { next.push(s); continue; }
+      changed = true;
+      for (const alt of m[1].split(',')) next.push(s.slice(0, m.index) + alt + s.slice(m.index + m[0].length));
+      if (next.length > max) return { list: next.slice(0, max), over: true };
+    }
+    out = next;
+    if (!changed) break;
+  }
+  return { list: out, over: false };
+}
+// The WORD of ${NAME:-WORD}, ${NAME:+WORD}, ${NAME:=WORD} and ${NAME:?WORD} (also without the colon): the text the
+// expansion puts into the word when the shell takes the default or the alternate.
+const expansionWord = (text) => { const m = /^[A-Za-z_][A-Za-z0-9_]*:?[-=?+]([\s\S]*)$/.exec(String(text)); return m ? m[1] : ''; };
+// ${X:-${Y:-.env}}: the tokenizer ends the expansion at its first `}`, so the inner expansion stands in the text with its own
+// braces. Each one is replaced by its WORD, innermost first, to a fixed point (at most NESTED_MAX rounds).
+const NESTED_MAX = 8;
+const NESTED_DEFAULT_RE = /\$\{[A-Za-z_][A-Za-z0-9_]*:?[-=?+]([^${}]*)\}/g;
+function resolveNestedDefaults(text) {
+  let s = text;
+  for (let round = 0; round < NESTED_MAX; round++) {
+    const next = s.replace(NESTED_DEFAULT_RE, '$1');
+    if (next === s) break;
+    s = next;
+  }
+  return s;
+}
+// The text of a word that holds an expansion: its literal parts, and with `withDefaults` the WORD of each ${X:-WORD} too
+// (a nested default resolved to the text it puts in).
+const literalText = (w, withDefaults) => {
+  const text = w.parts.map((p) => (p.t === 'lit' ? p.v : p.t === 'dyn' && withDefaults && p.text !== undefined ? expansionWord(p.text) : '')).join('');
+  return withDefaults ? resolveNestedDefaults(text) : text;
+};
+// One glob segment as a regular expression that says whether it MAY match a name (a leading dot is matchable: the
+// callers ask about names the shell's own rule would not have reached).
+function globSegRe(seg) {
+  let out = '';
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i];
+    if (c === '*') out += '.*';
+    else if (c === '?') out += '.';
+    else if (c === '[') {
+      const end = seg.indexOf(']', i + 2);
+      if (end === -1) { out += '\\['; continue; }
+      let body = seg.slice(i + 1, end);
+      if (body[0] === '!' || body[0] === '^') body = `^${body.slice(1)}`;
+      out += `[${body.replace(/\\/g, '\\\\')}]`;
+      i = end;
+    } else out += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  }
+  try { return new RegExp(`^${out}$`, 'i'); } catch { return null; }
+}
+const globMayMatch = (seg, name) => { const re = globSegRe(seg); return re !== null && re.test(name); };
+// True when a glob word can name /proc/<pid>/environ: its literal directory part is under /proc (the folder it is
+// applied in is, for a relative word: `dir`, undefined when not known), or its first segment can be `proc` and its
+// last `environ` (/pro?/self/environ), or, in a folder the command moved to through a variable (`dir` null), its last
+// segment can be `environ`.
+function procGlobReaches(text, dir) {
+  const s = normPath(text);
+  if (s.startsWith('~') || /^[[\]{}]{1,2}$/.test(s)) return false;
+  let abs = s;
+  if (!s.startsWith('/')) {
+    if (dir === undefined) return false;
+    if (dir === null) return globMayMatch(s.split('/').pop(), 'environ');
+    abs = `${dir}/${s.replace(/^\.\//, '')}`;
+  }
+  const segs = posix.normalize(abs).split('/').filter(Boolean);
+  let lit = 0;
+  while (lit < segs.length && !GLOB_CHARS.test(segs[lit])) lit++;
+  if (segs[0] === 'proc' && lit >= 1) return true;
+  return segs.length >= 3 && globMayMatch(segs[0], 'proc') && globMayMatch(segs[segs.length - 1], 'environ');
+}
+// A pattern that find (-name, -path), grep (--include) and rg (-g) match with their own rules: there `*` and `?`
+// match a leading dot, which the shell's glob does not, so the pattern is judged as written and with a dot allowed
+// for the wildcard that opens a segment (`?env` and `*rc` reach `.env` and `.npmrc`). keyGlobReaches knows the names.
+// A brace list in the pattern is expanded first (the shell does it before grep sees --include={.en?,x}, and rg's glob reads
+// {a,b} itself): each name is judged, and a list of more than PROGRAM_BRACE_MAX names cannot be and is refused.
+const PROGRAM_BRACE_MAX = 64;
+function programGlobReachesKey(pattern) {
+  const s = String(pattern).replace(/\.env\.example/gi, '').replace(/\\/g, '/');
+  if (s.startsWith('!')) return false;
+  const { list, over } = braceAlternatives(s, PROGRAM_BRACE_MAX);
+  if (over) return true;
+  return [s, ...list].some((alt) => {
+    // A name with no wildcard (--include=.env) is the key file itself; a pattern is matched against the key names.
+    if (!/[*?[\]{}]/.test(alt)) return KEY_RE.test(alt.toLowerCase());
+    if (keyGlobReaches(alt)) return true;
+    const dotted = alt.split('/').map((seg) => (/[^*?]/.test(seg) ? seg.replace(/^\*/, '{.,}*').replace(/^\?/, '[.?]') : seg)).join('/');
+    return dotted !== alt && keyGlobReaches(dotted);
+  });
+}
+
 // ---------- analysis ----------
-const ENV_DUMP = 'dumping the environment is blocked; check a variable with ${NAME:+set} instead';
+const ENV_DUMP ='dumping the environment is blocked; check a variable with ${NAME:+set} instead';
 const DESTRUCTIVE_WHY = 'recursive or forced delete is blocked';
 const SUBST_WHY = 'a command substitution cannot be analysed; spell the command out (run the inner command as its own call)';
 const SUBST_DEPTH = 3;
@@ -1212,6 +1333,15 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     ? [rootC]
     : [realCanonical(ticket ? `${rootC}/reviews/${ticket}` : `${rootC}/reviews`, rootC), realCanonical(`${rootC}/.ultrapowers`, rootC)];
   const areaText = autopilot ? 'the workspace' : `reviews/${ticket || '<id>'}/ and .ultrapowers/`;
+  // A write-area folder that is itself a link leads wherever it points (realCanonical follows it, so a committed
+  // reviews/<id> -> .. would make the whole project the area): no write is judged against such an area.
+  let areaLink = '';
+  if (!autopilot) {
+    for (const folder of ['reviews', ticket ? `reviews/${ticket}` : '', '.ultrapowers']) {
+      if (!folder) continue;
+      try { if (lstatSync(`${rootC}/${folder}`).isSymbolicLink()) { areaLink = folder; break; } } catch { /* not there (yet) */ }
+    }
+  }
   const runKind = autopilot ? 'an autopilot stage' : hunt ? 'a vulnerability hunt' : 'a QA run';
   const vars = new Map();
   // Names given to `export`, `declare` or `typeset` earlier in the command: they reach every later program.
@@ -1270,6 +1400,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     if (raw === null) return deny(`${what} is built from a variable or command substitution and cannot be verified; write to a literal path under ${areaText}`);
     if (DEVICES.has(raw) || DEVICES.has(raw.toLowerCase()) || /^&?[0-9-]$/.test(raw)) return;
     if (container) return deny(`a write inside a container (${raw}) changes the stack; the stack stays as found`);
+    if (areaLink) return deny(`${what} (${raw}) cannot be judged: ${areaLink} is a symbolic link, so the write area is wherever it leads; your human partner replaces it with a folder`);
     // An autopilot stage: a pattern or a brace list expands to names the text rule never sees (.gi[t]/config).
     if (autopilot && /[*?[{]/.test(raw)) return deny(`${what} (${raw}): a glob or brace target cannot be checked against the protected paths during an autopilot stage; spell the path out`);
     let p = normPath(raw);
@@ -1316,24 +1447,48 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
   const checkAlias = (w, dir) => {
     const raw = resolveWord(w);
     const keyWhy = (what) => deny(`key material (${what}) is never read, searched, uploaded or written during ${runKind}`);
-    const environWhy = () => deny(`reading a process environment (${raw ?? w.parts.filter((p) => p.t === 'lit').map((p) => p.v).join('')}) is blocked during ${runKind}; check a variable with \${NAME:+set} instead`);
+    const environWhy = (what) => deny(`reading a process environment (${what}) is blocked during ${runKind}; check a variable with \${NAME:+set} instead`);
+    const procDirWhy = (what) => deny(`a process folder (${what}) holds the process environment (/proc/<pid>/environ) and is blocked as a whole during ${runKind}; name the file you need (/proc/self/status)`);
+    // The names a word can make: itself, and each name its brace lists expand to ({/dev/null,.env}, {~/.ss,x}h/id_rsa).
+    // A list that makes more than BRACE_MAX names of a path-shaped word cannot be checked, so the word is refused.
+    const alternatives = (text) => {
+      if (/\s/.test(text) || !/\{[^{}]*,[^{}]*\}/.test(text)) return [text];
+      const { list, over } = braceAlternatives(text);
+      if (over && !/["':=]/.test(text)) deny(`a brace list that makes more than ${BRACE_MAX} names (${text.slice(0, 40)}) cannot be checked against key material; name the files`);
+      return [text, ...list];
+    };
+    // The text rules for one spelling. `partial`: the word holds an expansion, so only its text is judged (and a
+    // relative glob has no folder to be judged in).
+    const judgeText = (text, partial) => {
+      if (!text) return;
+      const t = keyText(text);
+      if (KEY_RE.test(t)) return keyWhy(text);
+      // The same text in its canonical form: `~/.config//gh`, `/proc/self/./environ` and `a/../.ssh` name the
+      // file the shell opens, whatever the spelling (and /proc/$$/envi""ron is /proc//environ).
+      const flat = posix.normalize(t);
+      if (KEY_RE.test(flat)) return keyWhy(text);
+      if (ENVIRON_RE.test(flat)) return environWhy(text);
+      if (PROC_DIR_RE.test(flat)) return procDirWhy(text);
+      // A glob under /proc, or one that can name /proc/<pid>/environ, reads the process environment through a name
+      // the text rule never sees (/proc/self/envir?n, cd /proc/self && cat envir*).
+      if (GLOB_CHARS.test(t) && procGlobReaches(t, partial ? undefined : dir)) return deny(`a glob (${text}) under /proc can name a process environment (/proc/<pid>/environ), which is blocked during ${runKind}; check a variable with \${NAME:+set} instead`);
+      if (partial) return;
+      // A bare `environ` after `cd /proc/self` (or after a cd whose target is built from a variable, where the
+      // folder is unknown) names the same file: the word is judged under the folder it resolves in.
+      if (!text.startsWith('/') && !text.startsWith('-') && !text.startsWith('~') && /^\/proc(\/|$)/.test(dir === null ? '/proc/_' : dir) && ENVIRON_RE.test(posix.normalize(`${dir === null ? '/proc/_' : dir}/${t}`))) return environWhy(text);
+      // The same for a process folder named relative to /proc (cd /proc; grep -r . self/).
+      if (typeof dir === 'string' && !text.startsWith('/') && !text.startsWith('-') && !text.startsWith('~') && PROC_DIR_RE.test(posix.normalize(`${dir}/${t}`))) return procDirWhy(text);
+      if (GLOB_CHARS.test(text) && keyGlobReaches(text.replace(/\.env\.example/gi, ''))) return deny(`a glob (${text}) can expand to key material, which is never read, searched, uploaded or written during ${runKind}; name the file`);
+    };
     if (raw === null) {
-      const lit = w.parts.filter((p) => p.t === 'lit').map((p) => p.v).join('');
-      if (lit && KEY_RE.test(keyText(lit))) keyWhy(lit);
-      // The literal text around an expansion, in its canonical form: /proc/$$/envi""ron is /proc//environ.
-      if (lit && ENVIRON_RE.test(posix.normalize(keyText(lit)))) environWhy();
+      // A process folder named by an expansion (/proc/$$, /proc/$PID/): /proc/ and the expansion, nothing else but a slash.
+      if (w.parts.length >= 2 && w.parts[0].t === 'lit' && /^\/+proc\/+$/i.test(w.parts[0].v) && w.parts.slice(1).every((p, i, a) => p.t !== 'lit' || (i === a.length - 1 && /^\/+$/.test(p.v)))) return procDirWhy('/proc/<built from an expansion>');
+      // The literal text around an expansion, and with the WORD of each ${X:-WORD} put in (${X:-.env} is `.env`
+      // when X is unset, ${HOME:+.env} when it is set).
+      for (const text of new Set([literalText(w, false), literalText(w, true)])) for (const alt of alternatives(text)) judgeText(alt, true);
       return;
     }
-    if (KEY_RE.test(keyText(raw))) return keyWhy(raw);
-    // The same text in its canonical form: `~/.config//gh`, `/proc/self/./environ` and `a/../.ssh` name the
-    // file the shell opens, whatever the spelling.
-    const flat = posix.normalize(keyText(raw));
-    if (KEY_RE.test(flat)) return keyWhy(raw);
-    if (ENVIRON_RE.test(flat)) return environWhy();
-    // A bare `environ` after `cd /proc/self` (or after a cd whose target is built from a variable, where the
-    // folder is unknown) names the same file: the word is judged under the folder it resolves in.
-    if (!raw.startsWith('/') && !raw.startsWith('-') && !raw.startsWith('~') && /^\/proc(\/|$)/.test(dir === null ? '/proc/_' : dir) && ENVIRON_RE.test(posix.normalize(`${dir === null ? '/proc/_' : dir}/${keyText(raw)}`))) return environWhy();
-    if (/[*?[\]{}]/.test(raw) && keyGlobReaches(raw.replace(/\.env\.example/gi, ''))) return deny(`a glob (${raw}) can expand to key material, which is never read, searched, uploaded or written during ${runKind}; name the file`);
+    for (const alt of alternatives(raw)) judgeText(alt, false);
     // A path-shaped word is resolved to its real spelling (a symlink in the project, an 8.3 alias) and the real
     // name is tested too. An option, a URL and a home path are text only (the rules above read them).
     const pathy = !raw.startsWith('-') && !raw.includes('://') && !raw.startsWith('~') && !/[*?[\]{}=\s]/.test(raw) && (/[\\/]/.test(raw) || raw.startsWith('.') || SHORT_SEG.test(raw));
@@ -1524,7 +1679,10 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         if (opts.some((v) => /^-[A-Za-z]*n/.test(v))) {
           for (const x of named) {
             const target = x.v === null ? null : x.v.includes('=') ? x.v.slice(x.v.indexOf('=') + 1) : '';
-            if (target === null || (target !== '' && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(target))) return deny(`a name reference (${declWord} -n) to a variable built at run time cannot be verified during ${runKind}`);
+            // No target at all (`declare -n r`) is the first half of `r=GH_TOKEN; echo $r`: the later assignment
+            // would aim the reference at a credential, so a reference is declared with its literal target.
+            if (target === '') return deny(`a name reference (${declWord} -n ${x.v}) with no target cannot be verified during ${runKind}: a later assignment would aim it at a credential; give it its target, ${declWord} -n NAME=TARGET`);
+            if (target === null || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(target)) return deny(`a name reference (${declWord} -n) to a variable built at run time cannot be verified during ${runKind}`);
             if (target && credential(target)) return deny(`a name reference (${declWord} -n) to ${target} would read a credential or secret; ${runKind} never reads one out`);
           }
         }
@@ -1578,7 +1736,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       // True once a package runner (npx, npm exec, uvx, pipx run ...) has been skipped to reach the program:
       // the program may then have been downloaded to run, which the hunt does not allow of an audit tool.
       let viaRunner = false;
-      while (WRAPPERS.has(prog) || prog === 'env' || prog === 'timeout' || prog === 'xargs' || isRunner()) {
+      while (WRAPPERS.has(prog) || LAUNCHERS.has(prog) || prog === 'env' || prog === 'timeout' || prog === 'xargs' || isRunner()) {
         if (isRunner()) {
           viaRunner = true;
           args = args.slice(runnerSkip());
@@ -1620,6 +1778,122 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
           const ip = tail.length ? progName(tail[0].v) : '';
           if (WRITE_PROGRAMS.has(ip)) deny(`xargs ${ip} writes to paths that cannot be seen before it runs`);
           if (ip === 'kill') deny('xargs kill signals pids that cannot be seen before it runs; kill takes a literal pid');
+          return redispatch(tail, true);
+        }
+        // Launchers that run a command of their own: the plugin's task-done (PLAN TASK BASE -- COMMAND...), watch and GNU
+        // parallel. Their tail is judged as a command, so the curl or wget it runs meets the same egress rule as a direct one.
+        // (The hunt is a program allow-list and runs none of them: the launcher itself is not on its list.)
+        if (hunt && LAUNCHERS.has(prog)) return deny(HUNT_NOT_LISTED(prog));
+        if (prog === 'task-done') {
+          const di = args.findIndex((x) => x.v === '--');
+          if (di === -1) return; // the script refuses a call without -- and runs nothing
+          return redispatch(args.slice(di + 1), true);
+        }
+        if (prog === 'watch') {
+          // watch [options] COMMAND: -n SECONDS (--interval) and -q CYCLES (--equexit) take a value, also in a short cluster
+          // (-dn 2); the words are run by `sh -c` as one string, or one by one with -x (--exec).
+          let k = 1;
+          let viaExec = false;
+          while (k < args.length && args[k].v !== null && args[k].v.startsWith('-') && args[k].v !== '-') {
+            const v = args[k].v;
+            if (v === '--') { k++; break; }
+            if (v.startsWith('--')) {
+              const name = v.split('=')[0];
+              if (name === '--exec') viaExec = true;
+              if (['--interval', '--equexit'].includes(name) && !v.includes('=')) k++;
+            } else {
+              for (let c = 1; c < v.length; c++) {
+                if (v[c] === 'x') viaExec = true;
+                if (v[c] === 'n' || v[c] === 'q') { if (c === v.length - 1) k++; break; }
+              }
+            }
+            k++;
+          }
+          const tail = args.slice(k);
+          if (!tail.length) return;
+          if (viaExec) return redispatch(tail, true);
+          if (tail.some((x) => x.v === null)) return deny('watch runs a command built from a variable or substitution; it cannot be verified');
+          const text = tail.map((x) => x.v).join(' ');
+          psqlCount.words += psqlTokens(text);
+          walkNested(text, dir, container, depth + 1, pgUser);
+          return;
+        }
+        if (prog === 'parallel') {
+          // parallel [options] COMMAND [::: ARGUMENTS...]: the command runs once per argument. Without a command it reads its
+          // commands from stdin, which cannot be inspected.
+          const PARALLEL_VALUED = new Set(['-j', '--jobs', '-P', '--procs', '-n', '--max-args', '-N', '-L', '--max-lines', '-a', '--arg-file', '-S', '--sshlogin', '--sshloginfile', '--slf', '-d', '--delimiter', '-C', '--colsep', '-I', '--replace', '-E', '--eof', '--results', '--joblog', '--timeout', '--retries', '--delay', '--workdir', '--wd', '--env', '--header', '--rpl']);
+          let k = 1;
+          while (k < args.length && args[k].v !== null && args[k].v.startsWith('-') && args[k].v !== '-') {
+            if (args[k].v === '--') { k++; break; }
+            k += PARALLEL_VALUED.has(args[k].v) ? 2 : 1;
+          }
+          let end = args.findIndex((x, i) => i >= k && x.v !== null && /^::::?\+?$/.test(x.v));
+          if (end === -1) end = args.length;
+          const tail = args.slice(k, end);
+          if (!tail.length) return autopilot ? deny('parallel with no command reads its commands from stdin, which cannot be inspected; spell the command out') : undefined;
+          if (tail.length === 1 && tail[0].v !== null && /\s/.test(tail[0].v)) {
+            psqlCount.words += psqlTokens(tail[0].v);
+            walkNested(tail[0].v, dir, container, depth + 1, pgUser);
+            return;
+          }
+          return redispatch(tail, true);
+        }
+        // Tracers and wrappers that run the command they are given (strace, ltrace, script, chronic, faketime, proxychains, torsocks). Their
+        // own options are skipped by their table, so the value of one is never taken for the program; the files they write (strace -o, the
+        // typescript and the logs of script) are writes; the tail is judged as a command, and script -c STRING as `sh -c STRING`.
+        if (['strace', 'ltrace', 'script', 'chronic', 'faketime', 'proxychains', 'proxychains4', 'torsocks'].includes(prog)) {
+          const spec = LAUNCHER_OPTS[prog] || { short: '', long: [] };
+          const literalWord = (text) => ({ k: 'w', parts: [{ t: 'lit', v: text }] });
+          const given = []; // [option, word] for each option that came with a value
+          let k = 1;
+          // faketime's own options are these flags only: its TIME may start with a dash (-15d), so the first other word is the TIME.
+          const FAKETIME_FLAGS = ['-m', '-f', '--exclude-monotonic', '-h', '--help', '--version', '--'];
+          while (k < args.length && args[k].v !== null && args[k].v.startsWith('-') && args[k].v !== '-' && (prog !== 'faketime' || FAKETIME_FLAGS.includes(args[k].v))) {
+            const v = args[k].v;
+            k++;
+            if (v === '--') break;
+            if (v.startsWith('--')) {
+              const eq = v.indexOf('=');
+              const name = eq === -1 ? v : v.slice(0, eq);
+              if (eq !== -1) given.push([name, literalWord(v.slice(eq + 1))]);
+              else if (spec.long.includes(name) && args[k]) { given.push([name, args[k].w]); k++; }
+              continue;
+            }
+            for (let c = 1; c < v.length; c++) {
+              // script -t[FILE] takes its value attached only.
+              if (prog === 'script' && v[c] === 't') { if (v.length > c + 1) given.push(['-t', literalWord(v.slice(c + 1))]); break; }
+              if (!spec.short.includes(v[c])) continue;
+              const attached = v.slice(c + 1);
+              if (attached) given.push([`-${v[c]}`, literalWord(attached)]);
+              else if (args[k]) { given.push([`-${v[c]}`, args[k].w]); k++; }
+              break;
+            }
+          }
+          const operands = args.slice(k);
+          const written = (names) => given.filter(([n]) => names.includes(n));
+          if (prog === 'strace' || prog === 'ltrace') for (const [n, w] of written(['-o', '--output'])) checkTarget(w, dir, `${prog} ${n}`, container);
+          if (prog === 'script') {
+            for (const [n, w] of written(['-I', '--log-in', '-O', '--log-out', '-B', '--log-io', '-T', '--log-timing', '-t', '--timing'])) checkTarget(w, dir, `script ${n}`, container);
+            // The typescript is the first operand, or `typescript` in the working directory.
+            checkTarget(operands[0] ? operands[0].w : literalWord('typescript'), dir, 'script typescript file', container);
+            const cmdOpt = given.find(([n]) => n === '-c' || n === '--command');
+            if (cmdOpt) {
+              const text = resolveWord(cmdOpt[1]);
+              if (text === null) return deny('script -c runs a command built from a variable; it cannot be verified');
+              psqlCount.words += psqlTokens(text);
+              walkNested(text, dir, container, depth + 1, pgUser);
+              return;
+            }
+            // BSD script takes the command after the file: script [-q] FILE COMMAND...
+            if (operands.length > 1) return redispatch(operands.slice(1), true);
+            return deny('script with no -c command opens a shell on its terminal, which cannot be inspected; give the command with -c');
+          }
+          // faketime takes its TIME before the command; torsocks on, off and show print an environment, shell opens a shell.
+          let tail = operands;
+          if (prog === 'faketime') tail = operands.slice(1);
+          if (prog === 'torsocks' && operands[0] && operands[0].v === 'shell') return deny('torsocks shell opens a shell that cannot be inspected; run the command with torsocks COMMAND');
+          if (prog === 'torsocks' && operands[0] && ['on', 'off', 'show'].includes(operands[0].v)) return;
+          if (!tail.length) return;
           return redispatch(tail, true);
         }
         if (prog === 'command' && args[1] && ['-v', '-V'].includes(args[1].v)) return;
@@ -1688,6 +1962,30 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
           args = skipOptions(args, new Set(['-c', '--class', '-n', '--classdata', '-p', '--pid', '-P', '--pgid', '-u', '--uid']));
         } else if (prog === 'doas') {
           args = skipOptions(args, new Set(['-u', '-C']));
+        } else if (prog === 'time') {
+          // GNU time: -f FORMAT (--format) and -o FILE (--output) take a value, attached or the next word; the FILE is written.
+          let k = 0;
+          while (k < args.length && args[k].v !== null && args[k].v.startsWith('-') && args[k].v !== '-') {
+            const v = args[k].v;
+            k++;
+            if (v === '--') break;
+            const long = /^--(format|output)(=([\s\S]*))?$/.exec(v);
+            const short = v.startsWith('--') ? null : /^-[A-Za-z]*?([fo])([\s\S]*)$/.exec(v);
+            const which = long ? long[1] : short ? (short[1] === 'f' ? 'format' : 'output') : null;
+            if (!which) continue;
+            const attached = long ? long[3] : short[2];
+            if (which === 'output') {
+              if (attached) checkTarget({ k: 'w', parts: [{ t: 'lit', v: attached }] }, dir, 'time -o', container);
+              else if (args[k]) checkTarget(args[k].w, dir, 'time -o', container);
+            }
+            if (!attached) k++;
+          }
+          args = args.slice(k);
+        } else if (prog === 'exec') {
+          // exec [-cl] [-a NAME] COMMAND: NAME is what the command is started as, never the command.
+          let k = 0;
+          while (k < args.length && args[k].v !== null && /^-[A-Za-z]+$/.test(args[k].v)) { if (args[k].v.includes('a')) k++; k++; }
+          args = args.slice(k);
         } else {
           args = skipOptions(args, WRAPPER_VALUE_OPTS);
         }
@@ -1717,13 +2015,21 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       // too) is refused whatever the interpreter and options in front of it. The one exception is the stage that is
       // the QA gate (qaGateStage): qa-specialist starts its own QA record there, and run-records.mjs start itself
       // refuses every other profile.
-      if (autopilot && !qaGateStage && interpreterKind(prog) === 'js') {
-        for (const x of rest) {
+      // A QA run and a hunt run it to end themselves (`end`) or to list the records (`list`), never to start
+      // another run: a second record applying to the session would change the profile that guards it (a hunt
+      // that starts a QA record leaves its program allow-list behind).
+      if ((!autopilot || !qaGateStage) && interpreterKind(prog) === 'js') {
+        for (let i = 0; i < rest.length; i += 1) {
+          const x = rest[i];
           if (x.v === null || x.v.startsWith('-')) continue;
           let p = normPath(x.v);
           if (!p.startsWith('/')) p = `${dir === null ? rootC : dir}/${p.replace(/^\.\//, '')}`;
           if (/(^|\/)hooks\/lib\/run-records\.mjs$/i.test(posix.normalize(p)) || /(^|\/)hooks\/lib\/run-records\.mjs$/i.test(realCanonical(p, rootC).replace(/\\/g, '/'))) {
-            return deny('an autopilot stage starts and ends no QA run or hunt; the engine owns the envelope');
+            if (autopilot) return deny('an autopilot stage starts and ends no QA run or hunt; the engine owns the envelope');
+            // The subcommand as run-records.mjs reads it: the first argument after the script, never a later word.
+            const sub = rest[i + 1]?.v;
+            if (sub !== 'end' && sub !== 'list') return deny(`${runKind} starts no other run: a second run record would change the profile that guards this session; the run only ends itself (run-records.mjs end) or lists the records`);
+            break;
           }
         }
       }
@@ -1810,6 +2116,9 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         if (target.v === null) { dir = null; return; }
         const p = normPath(target.v);
         dir = p.startsWith('/') ? p : (dir === null ? null : `${dir}/${p}`);
+        // A folder under /proc is a process's own (/proc/self, /proc/<pid>/task): every file the command reads there after the cd
+        // is judged by a name no rule sees as the process environment.
+        if (dir !== null && /^\/proc\/./i.test(posix.normalize(dir))) return deny(`${prog} into ${posix.normalize(dir)} puts every later name in a folder of /proc, where environ is the process environment; name the file by its full path (/proc/self/status)`);
         return;
       }
       if (prog === 'popd') { dir = null; return; }
@@ -2129,6 +2438,9 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
           }
           if (sub === 'checkout' || sub === 'switch') {
             if (subArgs.includes('--') || subArgs.some((x) => ['-f', '--force', '--discard-changes', '--detach', '--orphan'].includes(x))) return deny(`git ${sub} with --, -f or --orphan discards or detaches work; an autopilot stage never discards`);
+            // -B / -C reset an existing branch to a commit: a stage that moves the base branch onto its own tip
+            // would hide its changes from the gate's documents check. It creates branches with -b / -c only.
+            if (subArgs.some((x) => x === '-B' || x === '-C' || x === '--force-create' || /^-[a-zA-Z]*[BC][a-zA-Z]*$/.test(x))) return deny(`git ${sub} -B/-C moves an existing branch onto a commit; an autopilot stage creates a branch with -b or -c and moves none`);
             // git checkout <tree-ish> <path>...: every word after the first positional is a path it overwrites
             // from that tree (-b/-B/-c/-C NAME take a value first).
             if (sub === 'checkout') {
@@ -2148,7 +2460,36 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
             return;
           }
           if (sub === 'stash') {
-            if (subArgs.length === 0 || ['push', 'save', 'list', 'show', 'pop', 'apply'].includes(subArgs[0])) return;
+            if (subArgs.length === 0 || ['list', 'show', 'pop', 'apply'].includes(subArgs[0])) return;
+            if (subArgs[0] === 'push' || subArgs[0] === 'save') {
+              // --all and --include-untracked (-a, -u) carry the ignored and the untracked files out of the tree, the
+              // run marker of this very stage among them, and a pathspec names what is stored: the stage sets its
+              // work aside with plain `git stash push [-m MESSAGE]`.
+              const STASH_WHY = 'git stash push with --all, --include-untracked (-a, -u) or a pathspec stores the ignored files of the tree, the stage\'s own run marker among them; an autopilot stage uses plain git stash push [-m message]';
+              const stashWords = rest.slice(k + 2);
+              let pastDash = false;
+              for (let o = 0; o < stashWords.length; o++) {
+                const v = stashWords[o].v;
+                if (v === null) return deny('a git stash argument built from a variable or substitution cannot be verified; spell it out');
+                if (pastDash) return deny(STASH_WHY);
+                if (v === '--') { pastDash = true; continue; }
+                if (v.startsWith('--')) {
+                  if (longIs(v, 'all', 1) || longIs(v, 'include-untracked', 1) || longIs(v, 'pathspec-from-file', 11) || longIs(v, 'pathspec-file-nul', 11)) return deny(STASH_WHY);
+                  if (longIs(v, 'message', 1) && !v.includes('=')) o++;
+                  continue;
+                }
+                if (v.startsWith('-') && v !== '-') {
+                  for (let c = 1; c < v.length; c++) {
+                    if (v[c] === 'a' || v[c] === 'u') return deny(STASH_WHY);
+                    if (v[c] === 'm') { if (c === v.length - 1) o++; break; }
+                  }
+                  continue;
+                }
+                // `save` takes its message as a word; `push` takes only pathspecs.
+                if (subArgs[0] === 'push') return deny(STASH_WHY);
+              }
+              return;
+            }
             return deny(`git stash ${subArgs[0]} discards or rewrites work; an autopilot stage never discards`);
           }
           if (sub === 'worktree') {
@@ -2209,11 +2550,63 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         }
         return;
       }
-      // jq and yq read the environment too ($ENV, env, env(), strenv()): every profile, as the hunt did.
+      // envsubst expands every ${NAME} of its input from the environment: a credential prints through it. Every profile.
+      if (prog === 'envsubst') return deny(`envsubst prints the environment variables it expands; ${runKind} checks a variable with \${NAME:+set}`);
+      // jq and yq read the environment too ($ENV, env, env(), strenv(), envsubst): every profile, as the hunt did. The
+      // word `env` is refused as a whole identifier wherever it stands ([env], {a:env}, env.PATH, | envsubst); a field
+      // named environment or .envelope, a .env field access and a plain data file name (env.json) are not the builtin.
       if (prog === 'jq' || prog === 'yq') {
-        const text = rest.map((x) => x.v).filter((v) => v !== null);
-        if (prog === 'jq' && text.some((v) => /\$ENV\b|(^|[\s|(;,])env([\s|)\];,.]|$)/.test(v))) return deny(`a jq expression that reads the environment prints it; ${runKind} checks a variable with \${NAME:+set}`);
-        if (prog === 'yq' && text.some((v) => /(^|[^A-Za-z0-9_])(str)?env(subst)?\s*\(/.test(v))) return deny(`a yq expression that reads the environment prints it; ${runKind} checks a variable with \${NAME:+set}`);
+        // -f and --from-file take the program from a file, also in a short cluster (-nf): the rules below read inline programs
+        // only, and a file can hold env, $ENV or strenv. jq reads any single-dash word that holds an f as -f.
+        if (rest.some((x) => x.v !== null && (/^--from-file(=|$)/.test(x.v) || /^-[A-Za-z0-9]*f/.test(x.v)))) return deny(`a ${prog} -f or --from-file program comes from a file the guard does not read, and a program can read the environment (env, $ENV, strenv); give the program inline during ${runKind}`);
+        const ENV_TOKEN = /\$ENV\b|(^|[^A-Za-z0-9_$.])(str)?env(subst)?($|[^A-Za-z0-9_])/;
+        const DATA_FILE = /^[A-Za-z0-9_@~+/.-]+\.(json|ya?ml|toml|xml|csv|tsv|properties|ini|txt|md|lock)$/i;
+        // A double-quoted string literal is data unless it interpolates (\(env) runs code): select(.name=="env") is a read.
+        const unquoted = (v) => v.replace(/"(?:[^"\\]|\\.)*"/g, (m) => (m.includes('\\(') ? m : '""'));
+        const text = rest.map((x) => x.v).filter((v) => v !== null && !DATA_FILE.test(v)).map(unquoted);
+        if (text.some((v) => ENV_TOKEN.test(v))) return deny(`a ${prog} expression that reads the environment (env, $ENV, strenv, envsubst) prints it; ${runKind} checks a variable with \${NAME:+set}`);
+      }
+      // yq -i (--inplace, kislyuk's --in-place) rewrites its file operands and -s (--split-exp) writes the files its expression names, in any
+      // short cluster (-ie, -iP, -i=true, -s.a): a write, judged like sed -i. A QA run and a hunt make none; an
+      // autopilot stage holds each file operand to the protected paths, and writes no split files (their names are
+      // the value of an expression).
+      if (prog === 'yq') {
+        let inplace = false;
+        let split = false;
+        let fromFile = false;
+        const positional = [];
+        for (let k = 0; k < rest.length; k++) {
+          const v = rest[k].v;
+          if (v === null) { positional.push(rest[k]); continue; }
+          if (v === '--') { positional.push(...rest.slice(k + 1)); break; }
+          if (v.startsWith('--')) {
+            const name = v.split('=')[0];
+            if (name === '--inplace' || name === '--in-place') inplace = true;
+            else if (name === '--split-exp') { split = true; if (!v.includes('=')) k++; }
+            else if (name === '--from-file') { fromFile = true; if (!v.includes('=')) k++; }
+            else if (['--input-format', '--output-format', '--indent', '--expression'].includes(name) && !v.includes('=')) k++;
+            continue;
+          }
+          if (v.startsWith('-') && v !== '-') {
+            // i is in-place, s the split expression; p, o, I and f take a value (attached, or the next word).
+            for (let c = 1; c < v.length; c++) {
+              const ch = v[c];
+              if (ch === 'i') inplace = true;
+              else if (ch === 's') { split = true; if (c === v.length - 1) k++; break; }
+              else if ('poIf'.includes(ch)) { if (ch === 'f') fromFile = true; if (c === v.length - 1) k++; break; }
+              else if (ch === '=') break;
+            }
+            continue;
+          }
+          positional.push(rest[k]);
+        }
+        if (inplace || split) {
+          if (!autopilot) return deny(`yq ${split ? '-s (--split-exp)' : '-i (--inplace)'} writes files; the code under test is read-only during ${runKind}`);
+          if (split) return deny('yq -s (--split-exp) writes files named by its expression, which cannot be checked against the protected paths; during an autopilot stage use yq -i on a named file');
+          // yq [e|eval|ea|eval-all] EXPRESSION FILE...: with -f every operand is a file.
+          const first = positional[0] && positional[0].v !== null && ['e', 'eval', 'ea', 'eval-all'].includes(positional[0].v) ? 1 : 0;
+          for (const x of positional.slice(fromFile ? first : first + 1)) checkTarget(x.w, dir, 'yq -i target', container);
+        }
       }
       if (prog === 'sed') {
         // The w and e commands (and the w and e flags of s) write a file or run a command without -i.
@@ -2256,9 +2649,62 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         for (const x of plain) if (x.v && !/^-/.test(x.v) && !/^[0-9]+[kmg]?$/i.test(x.v)) checkTarget(x.w, dir, 'truncate target', container);
         return;
       }
+      // grep --include=GLOB (and rg -g, --glob, --iglob) picks the files whose content is searched: a pattern that can
+      // name key material reads it, with the dot rule of the program's own glob (see programGlobReachesKey).
+      if (['grep', 'egrep', 'fgrep', 'rgrep', 'rg'].includes(prog)) {
+        // A recursive search that starts at /proc reads the environ file of every process under it. The first word that is no
+        // option is the pattern (unless -e or -f gives it), so the operands are the ones after it.
+        const recursive = prog === 'rg' || prog === 'rgrep' || rest.some((x) => x.v !== null && (/^-[A-Za-z]*[rR][A-Za-z]*$/.test(x.v) || /^--(recursive|dereference-recursive|directories=recurse)$/.test(x.v)));
+        const hasPattern = rest.some((x) => x.v !== null && (/^-[A-Za-z]*[ef]$/.test(x.v) || /^--(regexp|file)(=|$)/.test(x.v)));
+        const operands = rest.filter((x) => x.v === null || !x.v.startsWith('-')).slice(hasPattern ? 0 : 1);
+        if (recursive && operands.some((x) => {
+          if (x.v === null) return false;
+          const p = normPath(x.v);
+          const abs = p.startsWith('/') ? p : p.startsWith('~') || dir === null ? '' : `${dir}/${p}`;
+          return /^\/proc$/i.test(posix.normalize(abs || '/'));
+        })) deny(`a recursive ${prog} that starts at /proc reads the environ file of every process under it, which is blocked during ${runKind}; name the file you need (/proc/self/status)`);
+        for (let k = 0; k < rest.length; k++) {
+          const v = rest[k].v;
+          if (v === null) continue;
+          let pat = null;
+          const longEq = /^--(include|glob|iglob)=([\s\S]*)$/.exec(v);
+          if (longEq) pat = longEq[2];
+          else if (['--include', '--glob', '--iglob'].includes(v) || (prog === 'rg' && v === '-g')) pat = rest[k + 1] ? rest[k + 1].v : null;
+          else if (prog === 'rg' && /^-g.+/.test(v)) pat = v.slice(2);
+          if (pat !== null && programGlobReachesKey(pat)) deny(`a ${prog} file pattern (${pat}) can name key material, which is never read, searched, uploaded or written during ${runKind}; name the file`);
+        }
+      }
       if (prog === 'find') {
         // -delete removes every match: refused in every profile, like a recursive rm.
         if (rest.some((x) => x.v === '-delete')) return deny(DESTRUCTIVE_WHY);
+        // -name, -iname, -path and -ipath patterns match a leading dot with * and ?: a pattern that can name key material
+        // lets -exec or -fprint read it (find . -name '?env' -exec cat {} +).
+        const NAME_TESTS = ['-name', '-iname', '-path', '-ipath', '-wholename', '-iwholename'];
+        const patterns = [];
+        for (let k = 0; k < rest.length - 1; k++) if (NAME_TESTS.includes(rest[k].v) && rest[k + 1].v !== null) patterns.push(rest[k + 1].v);
+        for (const pat of patterns) if (programGlobReachesKey(pat)) deny(`a find pattern (${pat}) can name key material, which is never read, searched, uploaded or written during ${runKind}; name the file`);
+        // The starting points are the words before the first expression word. /proc holds every process environment
+        // (/proc/<pid>/environ): a search that starts there, or one that starts at / or at an unknown folder and looks
+        // for a name that can be environ, finds and reads them.
+        let first = 0;
+        while (first < rest.length) {
+          const v = rest[first].v;
+          if (v === '-D') { first += 2; continue; }
+          if (v !== null && (v === '-H' || v === '-L' || v === '-P' || /^-O[0-3]$/.test(v))) { first++; continue; }
+          break;
+        }
+        const starts = [];
+        for (let k = first; k < rest.length; k++) {
+          const v = rest[k].v;
+          if (v !== null && (v.startsWith('-') || v === '(' || v === '!')) break;
+          starts.push(v === null ? null : normPath(v));
+        }
+        const absOf = (p) => (p === null ? null : p.startsWith('/') ? posix.normalize(p) : p.startsWith('~') ? p : dir === null ? null : posix.normalize(`${dir}/${p.replace(/^\.\//, '')}`));
+        const mayEnviron = patterns.some((pat) => globMayMatch(normPath(pat).split('/').pop(), 'environ'));
+        for (const p of (starts.length ? starts.map(absOf) : [dir])) {
+          if (p !== null && /^\/proc(\/|$)/i.test(p)) { deny(`find under /proc (${p}) can read a process environment (/proc/<pid>/environ), which is blocked during ${runKind}`); break; }
+          if ((p === null || p === '/') && mayEnviron) { deny(`find for a name that can be environ from ${p === null ? 'a folder that is not known' : '/'} reaches /proc/<pid>/environ, which is blocked during ${runKind}`); break; }
+        }
         // -fprint, -fprint0, -fprintf and -fls write the file named by the next word.
         for (let k = 0; k < rest.length - 1; k++) {
           if (['-fprint', '-fprint0', '-fprintf', '-fls'].includes(rest[k].v)) checkTarget(rest[k + 1].w, dir, `find ${rest[k].v}`, container);
@@ -2290,6 +2736,37 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
       if (['chmod', 'chown', 'chgrp', 'icacls', 'takeown', 'setfacl', 'attrib', 'cacls', 'xattr', 'chattr'].includes(prog)) {
         return deny('permission or ownership change is blocked');
       }
+      // The forge token is never read out, in any profile: `gh auth token` prints it, and `auth status` prints it with
+      // -t or --show-token, also inside a short cluster (-th, -ta) and through a quote split (--show-tok""en), which the
+      // hook's text rule cannot read. A word built at run time could be either, so it is refused too.
+      if (prog === 'gh' || prog === 'glab') {
+        let g = 0;
+        while (g < rest.length && rest[g].v !== null && rest[g].v.startsWith('-')) g += ['-R', '--repo', '--hostname'].includes(rest[g].v) ? 2 : 1;
+        if (rest[g] && rest[g].v === 'auth') {
+          const authWords = rest.slice(g + 1);
+          const verb = authWords.find((x) => x.v === null || !x.v.startsWith('-'));
+          if (verb && verb.v === null) return deny(`the ${prog} auth verb is built from a variable or substitution and cannot be verified; spell it out`);
+          if (verb && verb.v === 'token') return deny(`reading the tracker token is never allowed during ${runKind}`);
+          if (verb && verb.v === 'status') {
+            for (const x of authWords) {
+              if (x.v === null) return deny(`${prog} auth status with an argument built from a variable or substitution cannot be verified (-t and --show-token print the token); spell it out`);
+              if (x.v === '--show-token' || x.v.startsWith('--show-token=') || (!x.v.startsWith('--') && /^-[A-Za-z]*t/.test(x.v))) return deny(`reading the tracker token is never allowed during ${runKind}`);
+            }
+          }
+        }
+        // config get prints a configuration value: glab config get token (also --host H) and gh config get oauth_token are the token.
+        if (rest[g] && rest[g].v === 'config') {
+          const cfgWords = rest.slice(g + 1);
+          const verbAt = cfgWords.findIndex((x) => x.v === null || !x.v.startsWith('-'));
+          if (verbAt !== -1 && cfgWords[verbAt].v === null) return deny(`the ${prog} config verb is built from a variable or substitution and cannot be verified; spell it out`);
+          if (verbAt !== -1 && cfgWords[verbAt].v === 'get') {
+            for (const x of cfgWords.slice(verbAt + 1)) {
+              if (x.v === null) return deny(`${prog} config get with a key built from a variable or substitution cannot be verified (a token key prints the token); spell it out`);
+              if (/token|secret|password|credential/i.test(x.v)) return deny(`reading the tracker token is never allowed during ${runKind}`);
+            }
+          }
+        }
+      }
       if ((autopilot || hunt) && (prog === 'gh' || prog === 'glab')) {
         const listName = autopilot ? 'autopilot' : 'hunt';
         const trackerWhy = autopilot ? 'the engine writes back between stages' : 'the hunt reports in its own files and never writes to a tracker';
@@ -2298,16 +2775,41 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         // CLI does (quoting undone), and an unknown group or verb (alias set, extension install, run
         // rerun, gist create ...) is refused rather than judged by a deny-list.
         const READ = hunt ? HUNT_TRACKER_READ[prog] : prog === 'gh'
-          ? { issue: ['view', 'list', 'status'], pr: ['view', 'list', 'status', 'diff', 'checks'], repo: ['view', 'list', 'clone'], run: ['view', 'list', 'watch', 'download'], workflow: ['view', 'list'], release: ['view', 'list', 'download'], label: ['list'], gist: ['view', 'list'], project: ['view', 'list', 'field-list', 'item-list'], cache: ['list'], secret: ['list'], variable: ['list', 'get'], ruleset: ['list', 'view', 'check'], config: ['get', 'list'], alias: ['list'], extension: ['list', 'search', 'browse'], auth: ['status'], 'ssh-key': ['list'], 'gpg-key': ['list'], org: ['list'], api: '*', search: '*', status: '*', browse: '*', help: '*', version: '*', completion: '*' }
-          : { issue: ['view', 'list'], mr: ['view', 'list', 'diff'], ci: ['status', 'view', 'list', 'trace', 'lint', 'get'], repo: ['view', 'list', 'clone'], release: ['view', 'list'], label: ['list'], variable: ['list', 'get'], auth: ['status'], api: '*', help: '*', version: '*', completion: '*' };
-        // The hunt calls the host the CLI is signed in to: another host would carry the call, and anything in its
-        // path or query, to a server the hunt did not choose.
-        if (hunt && rest.some((x) => x.v !== null && /^--hostname(=|$)/.test(x.v))) return deny(`${prog} --hostname names another host for the call; the hunt's api calls are a path on the host ${prog} is signed in to`);
+          ? { issue: ['view', 'list', 'status'], pr: ['view', 'list', 'status', 'diff', 'checks'], repo: ['view', 'list'], run: ['view', 'list', 'watch'], workflow: ['view', 'list'], release: ['view', 'list'], label: ['list'], gist: ['view', 'list'], project: ['view', 'list', 'field-list', 'item-list'], cache: ['list'], secret: ['list'], variable: ['list', 'get'], ruleset: ['list', 'view', 'check'], config: ['get', 'list'], alias: ['list'], extension: ['list', 'search', 'browse'], auth: ['status'], 'ssh-key': ['list'], 'gpg-key': ['list'], org: ['list'], api: '*', search: '*', status: '*', browse: '*', help: '*', version: '*', completion: '*' }
+          : { issue: ['view', 'list'], mr: ['view', 'list', 'diff'], ci: ['status', 'view', 'list', 'trace', 'lint', 'get'], repo: ['view', 'list'], release: ['view', 'list'], label: ['list'], variable: ['list', 'get'], auth: ['status'], api: '*', help: '*', version: '*', completion: '*' };
+        // A stage calls the host the CLI is signed in to: another host would carry the call, and anything in its path
+        // or query, to a server no host list names (--hostname, GH_HOST, GLAB_HOST, a URL given to api). The hunt refuses
+        // --hostname on every call; an autopilot stage only on api (gh auth status --hostname H names the host to ask about).
+        const hostnameOpt = rest.some((x) => x.v !== null && /^--hostname(=|$)/.test(x.v));
+        if (hunt && hostnameOpt) return deny(`${prog} --hostname names another host for the call; the hunt's api calls are a path on the host ${prog} is signed in to`);
+        const hostEnv = [...shellEnvNames, ...exportedNames].find((n) => /^(GH_HOST|GLAB_HOST|GITLAB_HOST|GITLAB_URI|GITLAB_API_HOST|GL_HOST|GITHUB_API_URL)$/i.test(n));
+        if (hostEnv) return deny(`${hostEnv} names another host for the ${prog} call; ${listName} api calls are a path on the host ${prog} is signed in to`);
+        // GH_REPO and GLAB_REPO name the repository of every call, and with a HOST/ part the host: refused like the host variables.
+        const repoEnv = [...shellEnvNames, ...exportedNames].find((n) => /^(GH_REPO|GLAB_REPO)$/i.test(n));
+        if (repoEnv) return deny(`${repoEnv} names the repository (and a HOST/ part, the host) for the ${prog} call; ${listName} calls reach the repository ${prog} resolves from the checkout, on the host it is signed in to`);
+        // A URL given as an argument (gh issue view URL, --repo URL, -RURL) names its own host: reached only when qa.hosts.allowed lists it
+        // (an autopilot stage), never in a hunt, as the URL of a gh api call is refused below.
+        for (const x of rest) {
+          const m = x.v === null ? null : /^(?:-[A-Za-z]|--[a-z-]+=)?(https?:\/\/.*)$/i.exec(x.v);
+          if (!m) continue;
+          const urlHostName = urlHost(m[1]);
+          if (urlHostName === null || !(autopilot && allowedHosts.includes(urlHostName))) return deny(`${prog} with a URL (${m[1].slice(0, 40)}) names its own host${autopilot ? ', which qa.hosts.allowed does not list' : ''}; ${listName} calls reach the host ${prog} is signed in to (give the number or OWNER/REPO${autopilot ? ', or list the host in qa.hosts.allowed' : ''})`);
+        }
+        if (prog === 'gh') {
+          // gh -R [HOST/]OWNER/REPO: a repository with three parts names the host too. (glab's three parts are a subgroup.)
+          for (let k = 0; k < rest.length; k++) {
+            const v = rest[k].v;
+            if (v === null) continue;
+            const val = v === '-R' || v === '--repo' ? (rest[k + 1] ? rest[k + 1].v : null) : v.startsWith('--repo=') ? v.slice('--repo='.length) : /^-R./.test(v) ? v.slice(2) : null;
+            if (val && val.split('/').length >= 3) return deny(`gh -R ${val} names another host for the call (HOST/OWNER/REPO); ${listName} calls reach the host gh is signed in to`);
+          }
+        }
         let g = 0;
         while (g < rest.length && rest[g].v !== null && rest[g].v.startsWith('-')) g += ['-R', '--repo', '--hostname'].includes(rest[g].v) ? 2 : 1;
         const group = rest[g];
         if (!group) return; // only flags: --version, --help
         if (group.v === null) return deny(`the ${prog} command is built from a variable or substitution and cannot be verified; spell it out`);
+        if (hostnameOpt && group.v === 'api') return deny(`${prog} api --hostname names another host for the call; ${listName} api calls are a path on the host ${prog} is signed in to`);
         const spec = Object.prototype.hasOwnProperty.call(READ, group.v) ? READ[group.v] : undefined;
         if (spec === undefined) return deny(`${prog} ${group.v} is not on the ${listName} read allow-list; ${trackerWhy}`);
         if (group.v === 'api') {
@@ -2318,7 +2820,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
           for (let k = 0; k < apiWords.length; k++) {
             const v = apiWords[k].v;
             if (v === null) return deny(`${prog} api with an argument built from a variable or substitution cannot be verified; spell it out`);
-            if (hunt && v.includes('://')) return deny(`${prog} api with a URL (${v.slice(0, 40)}) can reach a host no list sees and carry data in its query; the hunt's api calls are a path on the host ${prog} is signed in to`);
+            if (v.includes('://')) return deny(`${prog} api with a URL (${v.slice(0, 40)}) can reach a host no list sees and carry data in its query; ${listName} api calls are a path on the host ${prog} is signed in to`);
             const m = /^(?:-X|--method|--request)(?:=(.*))?$/i.exec(v) || (/^-X(.+)$/.exec(v) ? [v, /^-X(.+)$/.exec(v)[1]] : null);
             if (m) {
               const methodWord = m[1] !== undefined ? m[1] : (apiWords[k + 1] ? apiWords[k + 1].v : null);
@@ -2338,6 +2840,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         const verbWord = rest.slice(g + 1).find((x) => x.v === null || !x.v.startsWith('-'));
         if (!verbWord) return;
         if (verbWord.v === null) return deny(`the ${prog} ${group.v} verb is built from a variable or substitution and cannot be verified; spell it out`);
+        if (autopilot && ['download', 'clone'].includes(verbWord.v)) return deny(`${prog} ${group.v} ${verbWord.v} writes files into the working tree that no rule can check against the protected paths; an autopilot stage reads the tracker and never downloads or clones`);
         if (!spec.includes(verbWord.v)) return deny(`${prog} ${group.v} ${verbWord.v} is not on the ${listName} read allow-list; ${trackerWhy}`);
         return;
       }
@@ -2421,6 +2924,24 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
           if (v === null) continue;
           if (v === '--output') { if (rest[k + 1]) { checkTarget(rest[k + 1].w, dir, 'sort --output', container); k++; } continue; }
           if (v.startsWith('--output=')) { checkTarget({ k: 'w', parts: [{ t: 'lit', v: v.slice('--output='.length) }] }, dir, 'sort --output', container); continue; }
+          // --compress-program names a program sort runs on its temporary files (any unambiguous prefix of the option
+          // counts, --compress=sh): refused in every profile. -T and --temporary-directory name where those files go:
+          // a write location, refused in a QA run and a hunt and held to the workspace in an autopilot stage.
+          const longName = v.startsWith('--') ? v.split('=')[0] : '';
+          if (longName.length >= 4 && '--compress-program'.startsWith(longName)) return deny(`sort ${longName} runs a program on its temporary files; ${runKind} runs none`);
+          if (longName.length >= 3 && '--temporary-directory'.startsWith(longName)) {
+            if (!autopilot) return deny(`sort --temporary-directory names a folder sort writes its temporary files to; ${runKind} writes to ${areaText} only, through a redirect`);
+            if (v.includes('=')) checkTarget({ k: 'w', parts: [{ t: 'lit', v: v.slice(v.indexOf('=') + 1) }] }, dir, 'sort --temporary-directory', container);
+            else if (rest[k + 1]) { checkTarget(rest[k + 1].w, dir, 'sort --temporary-directory', container); k++; }
+            continue;
+          }
+          const tm = /^-[bdfghiMnrRsuVzc]*T(.*)$/.exec(v);
+          if (tm && !v.startsWith('--')) {
+            if (!autopilot) return deny(`sort -T names a folder sort writes its temporary files to; ${runKind} writes to ${areaText} only, through a redirect`);
+            if (tm[1]) checkTarget({ k: 'w', parts: [{ t: 'lit', v: tm[1] }] }, dir, 'sort -T', container);
+            else if (rest[k + 1]) { checkTarget(rest[k + 1].w, dir, 'sort -T', container); k++; }
+            continue;
+          }
           const m = /^-[bdfghiMnrRsuVzc]*o(.*)$/.exec(v);
           if (m && !v.startsWith('--')) {
             if (m[1]) checkTarget({ k: 'w', parts: [{ t: 'lit', v: m[1] }] }, dir, 'sort -o', container);
@@ -2509,12 +3030,18 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
         if (ops[1]) checkTarget(ops[1].w, linkDirOf(ops[0] && ops[0].w), 'mklink link target', container);
         return;
       }
-      if (prog === 'cp' || prog === 'mv' || prog === 'install' || prog === 'ln') {
+      if (prog === 'cp' || prog === 'mv' || prog === 'install' || prog === 'ln' || prog === 'link') {
         const ops = plain.filter((y) => y.v !== '--');
         const ti = rest.findIndex((x) => x.v === '-t' || x.v === '--target-directory');
         const tEq = rest.find((x) => x.v && x.v.startsWith('--target-directory='));
         const symbolic = (prog === 'ln' || prog === 'cp') && rest.some((x) => x.v !== null && (/^-[A-Za-z]*s[A-Za-z]*$/.test(x.v) || x.v === (prog === 'ln' ? '--symbolic' : '--symbolic-link')));
         if (symbolic && !autopilot) return deny(SYMLINK_WHY);
+        // A hard link (ln, link SRC DST, cp -l, cp --link[=...]) is a second name for the same file: a later write through the new name edits
+        // the source, and the destination is all the checks below read. Every operand, the source too, is held to the write
+        // area (a QA run and a hunt: reviews/<id>/ and .ultrapowers/; an autopilot stage: the workspace, nothing protected).
+        // cp takes any unambiguous prefix of --link (--lin) and the long options accept =VALUE.
+        const hard = prog === 'ln' || prog === 'link' ? !symbolic : prog === 'cp' && rest.some((x) => x.v !== null && (/^-[A-Za-z]*l[A-Za-z]*$/.test(x.v) || (x.v.startsWith('--l') && '--link'.startsWith(x.v.split('=')[0]))));
+        if (hard) for (const x of ops) checkTarget(x.w, dir, `${prog} operand (a hard link)`, container);
         let dest;
         if (tEq) dest = { k: 'w', parts: [{ t: 'lit', v: tEq.v.slice('--target-directory='.length) }] };
         else if (ti !== -1 && rest[ti + 1]) dest = rest[ti + 1].w;

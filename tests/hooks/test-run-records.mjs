@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { startRun, endRun, readRuns, applicableRuns, projectRoot, sessionFromEnv, RUN_TTL_MS } from '../../hooks/lib/run-records.mjs';
+import { startRun, endRun, readRuns, applicableRuns, pickRun, projectRoot, sessionFromEnv, RUN_TTL_MS } from '../../hooks/lib/run-records.mjs';
 
 const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'hooks', 'lib', 'run-records.mjs');
 
@@ -184,4 +184,65 @@ test('the CLI starts, lists and ends a run, binding the session from the environ
   report(root, 'T-1', 'QA-REPORT.md', '# QA\n\nVerdict: PASS\n');
   const end = spawnSync(process.execPath, [CLI, 'end', '--root', root, '--run', rec.run], { encoding: 'utf8', env });
   assert.equal(end.status, 0, end.stderr);
+});
+
+test('a session that a run guards starts no second run; a record of no session guards every session of its folder', () => {
+  const root = project();
+  startRun(root, { profile: 'hunt', id: 'GH-1', session: 's1' });
+  assert.throws(() => startRun(root, { profile: 'qa', id: 'GH-2', session: 's1' }), { code: 'session-guarded' });
+  startRun(root, { profile: 'qa', id: 'GH-2', session: 's2' });
+  const folder = startRun(root, { profile: 'qa', id: 'GH-3', session: null });
+  assert.throws(() => startRun(root, { profile: 'hunt', id: 'GH-4', session: 's3' }), { code: 'session-guarded' });
+  assert.throws(() => startRun(root, { profile: 'hunt', id: 'GH-4', session: null }), { code: 'session-guarded' });
+  report(root, 'GH-3', 'QA-REPORT.md', 'Verdict: PASS\n');
+  endRun(root, folder.run, { session: null });
+  assert.equal(startRun(root, { profile: 'hunt', id: 'GH-4', session: 's3' }).id, 'GH-4');
+});
+
+test('a session that a run guards from a parent project starts no run in a nested project either', () => {
+  const outer = project();
+  const inner = path.join(outer, 'vendor', 'x');
+  fs.mkdirSync(path.join(inner, '.agents'), { recursive: true });
+  fs.writeFileSync(path.join(inner, '.agents', 'ultrapowers.json'), '{}');
+  startRun(outer, { profile: 'hunt', id: 'GH-1', session: 's1' });
+  assert.throws(() => startRun(inner, { profile: 'qa', id: 'GH-2', session: 's1' }), { code: 'session-guarded' });
+  assert.equal(startRun(inner, { profile: 'qa', id: 'GH-2', session: 's2' }).id, 'GH-2', 'another session is not guarded by it');
+});
+
+test('the CLI reads its command from the first argument only: an option before it is no command', () => {
+  const root = project();
+  const r = spawnSync(process.execPath, [CLI, '--session-only', 'start', 'end', '--root', root, '--profile', 'qa', '--id', 'y'], { encoding: 'utf8' });
+  assert.notEqual(r.status, 0, r.stdout);
+  assert.equal(readRuns(root).length, 0, 'no record was written');
+});
+
+test('a record dated in the future guards nothing: a planted startedAt cannot outlive the 24-hour expiry', () => {
+  const root = project();
+  fs.mkdirSync(path.join(root, '.ultrapowers', 'runs'), { recursive: true });
+  const ahead = new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString();
+  fs.writeFileSync(path.join(root, '.ultrapowers', 'runs', 'qa-GH-1-0a1b2c3d.json'), JSON.stringify({ run: 'qa-GH-1-0a1b2c3d', profile: 'qa', id: 'GH-1', session: null, startedAt: ahead }));
+  assert.deepEqual(applicableRuns(root, null), []);
+  // a clock a little ahead is no expiry
+  const soon = new Date(Date.now() + 60 * 1000).toISOString();
+  fs.writeFileSync(path.join(root, '.ultrapowers', 'runs', 'qa-GH-2-0a1b2c3e.json'), JSON.stringify({ run: 'qa-GH-2-0a1b2c3e', profile: 'qa', id: 'GH-2', session: null, startedAt: soon }));
+  assert.deepEqual(applicableRuns(root, null).map((r) => r.id), ['GH-2']);
+});
+
+test('pick: a corrupt record first, then a hunt before QA; --session-only counts only a record of the event\'s session', () => {
+  const root = project();
+  const ev = (s) => JSON.stringify({ session_id: s, tool_name: 'Bash' });
+  startRun(root, { profile: 'qa', id: 'GH-1', session: null });
+  fs.writeFileSync(path.join(root, '.ultrapowers', 'runs', 'hunt-A-0a1b2c3d.json'), JSON.stringify({ run: 'hunt-A-0a1b2c3d', profile: 'hunt', id: 'A', session: 's1', startedAt: new Date().toISOString() }));
+  assert.equal(pickRun(root, ev('s1')).profile, 'hunt');
+  assert.equal(pickRun(root, ev('s2')).profile, 'qa');
+  assert.equal(pickRun(root, ev('s1'), Date.now(), { sessionOnly: true }).profile, 'hunt');
+  assert.equal(pickRun(root, ev('s2'), Date.now(), { sessionOnly: true }), null, 'a record of no session counts in its own project only');
+  assert.equal(pickRun(root, '{}', Date.now(), { sessionOnly: true }), null);
+  const cli = (s, extra) => spawnSync(process.execPath, [CLI, 'pick', '--root', root, ...extra], { input: ev(s), encoding: 'utf8' }).stdout.split('\t')[0].trim();
+  assert.equal(cli('s2', []), 'qa');
+  assert.equal(cli('s2', ['--session-only']), '');
+  assert.equal(cli('s1', ['--session-only']), 'hunt');
+  fs.writeFileSync(path.join(root, '.ultrapowers', 'runs', 'qa-x-0000000a.json'), '{not json');
+  assert.equal(cli('s2', []), 'corrupt');
+  assert.equal(cli('s2', ['--session-only']), '', 'a corrupt record cannot say it belongs to this session');
 });

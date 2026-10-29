@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"jq '.environment' reviews/1234/artifacts/x.json"}}

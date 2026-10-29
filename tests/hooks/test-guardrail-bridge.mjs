@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -51,14 +51,15 @@ test('inside a vulnerability hunt a push is denied with the HUNT prefix, an audi
   assert.equal(src.prefix, 'HUNT-GUARDRAIL');
 });
 
-test('the order is a QA record, then a hunt record, then the autopilot marker', () => {
+test('the order is a hunt record, then a QA record, then the autopilot marker', () => {
   const root = project({ marker: 'autopilot' });
   const at = path.join(root, 'repo-a');
   assert.equal(markerPrefix(at), 'AUTOPILOT-GUARDRAIL');
-  runRecord(root, 'hunt', 'audit-2026-10-11');
-  assert.equal(markerPrefix(at), 'HUNT-GUARDRAIL');
   runRecord(root, 'qa', 'GH-16');
   assert.equal(markerPrefix(at), 'QA-GUARDRAIL');
+  // the hunt is the stricter profile: with both records it judges the call
+  runRecord(root, 'hunt', 'audit-2026-10-11');
+  assert.equal(markerPrefix(at), 'HUNT-GUARDRAIL');
 });
 
 test('a run record in a parent project does not guard a nested project of its own', () => {
@@ -524,4 +525,85 @@ test('a bash planted under the project on an absolute PATH entry never runs', as
     process.env.PATH = prev;
   }
   assert.equal(fs.existsSync(sentinel), false, 'the planted bash ran');
+});
+
+// ---- the 2026-10-23 hunt: High 4 (the V2 candidates) and Medium 19 (MCP spellings) ----
+
+test('a call made from a folder that does not exist yet is guarded by the run of its nearest existing ancestor', () => {
+  const root = project({ marker: 'hunt' });
+  const ghost = path.join(root, 'repo-a', 'not', 'created', 'yet');
+  assert.equal(markerRoot(ghost), fs.realpathSync.native(root));
+  assert.equal(markerPrefix(ghost), 'HUNT-GUARDRAIL');
+  // a session directory outside every project, the call's folder a candidate that is not there yet
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-elsewhere-'));
+  const r = runGuardrail({ toolName: 'bash', input: { command: 'git push origin x' }, cwd: elsewhere, dirs: [ghost] });
+  assert.equal(r.deny, true, JSON.stringify(r));
+  assert.equal(r.prefix, 'HUNT-GUARDRAIL');
+});
+
+// The ticket's snapshot of .mcp.json, taken at `begin`: the servers an autopilot stage reaches.
+function snapshot(root, ...servers) {
+  fs.mkdirSync(path.join(root, '.ultrapowers', 'autopilot'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.ultrapowers', 'autopilot', 'mcp.json'), JSON.stringify({ mcpServers: Object.fromEntries(servers.map((s) => [s, { command: 'x' }])) }));
+}
+
+test('mcpToolName turns an OpenCode or Hermes spelling into mcp__<server>__<tool>, by the servers of the snapshot', async () => {
+  const { mcpToolName } = await import(pathToFileURL(BRIDGE).href);
+  assert.equal(mcpToolName('context7_query-docs', 'opencode', ['context7']), 'mcp__context7__query_docs');
+  assert.equal(mcpToolName('my-docs_search', 'opencode', ['my_docs', 'my']), 'mcp__my_docs__search', 'the longest server name wins');
+  assert.equal(mcpToolName('mcp_context7_resolve-library-id', 'hermes', ['context7']), 'mcp__context7__resolve_library_id');
+  assert.equal(mcpToolName('mcp_My-Docs_search', 'hermes', ['my_docs']), 'mcp__my_docs__search');
+  // a server outside the snapshot keeps the first segment as its server: the hook refuses it by name
+  assert.equal(mcpToolName('postgres_query_rows', 'opencode', ['context7']), 'mcp__postgres__query_rows');
+  assert.equal(mcpToolName('mcp_postgres_query', 'hermes', []), 'mcp__postgres__query');
+  // no tool part, or no server part: the call cannot be read
+  for (const [name, harness] of [['mcp_', 'hermes'], ['mcp_postgres', 'hermes'], ['x_', 'opencode'], ['_x', 'opencode']]) {
+    assert.match(mcpToolName(name, harness, []), /^mcp__unreadable__/, `${harness} ${name}`);
+  }
+  // names that are not MCP tools stay as they are
+  for (const [name, harness] of [['bash', 'opencode'], ['read', 'opencode'], ['apply_patch', 'opencode'], ['read_file', 'hermes'], ['terminal', 'hermes'], ['mcp__a__b', 'antigravity'], ['postgres_query', undefined]]) {
+    assert.equal(mcpToolName(name, harness, ['context7']), name, `${harness} ${name}`);
+  }
+});
+
+test('in an autopilot stage an OpenCode or Hermes MCP tool of a server outside the snapshot is denied, one inside passes', () => {
+  const root = project();
+  snapshot(root, 'context7', 'my-docs');
+  const call = (toolName, mcp, input = { q: 'x' }) => runGuardrail({ toolName, input, cwd: root, mcp });
+  for (const [mcp, name] of [['opencode', 'postgres_query'], ['hermes', 'mcp_postgres_query'], ['hermes', 'mcp_Postgres-Admin_drop']]) {
+    const r = call(mcp === 'hermes' ? name : name, mcp);
+    assert.equal(r.deny, true, `${mcp} ${name}: ${JSON.stringify(r)}`);
+    assert.equal(r.prefix, 'AUTOPILOT-GUARDRAIL');
+    assert.match(r.reason, /the MCP server 'postgres[a-z_]*' is not in the ticket's snapshot of \.mcp\.json/, `${mcp} ${name}`);
+  }
+  for (const [mcp, name] of [['opencode', 'context7_query-docs'], ['opencode', 'my-docs_search'], ['hermes', 'mcp_context7_query-docs'], ['hermes', 'mcp_my_docs_search']]) {
+    assert.deepEqual(call(name, mcp), { deny: false }, `${mcp} ${name}`);
+  }
+  // a name that cannot be read is refused in every run
+  assert.match(call('mcp_', 'hermes').reason, /server or tool name cannot be read/);
+  // built-in tools are not MCP tools
+  assert.deepEqual(call('read', 'opencode', { filePath: path.join(root, 'README.md') }), { deny: false });
+  assert.deepEqual(call('read_file', 'hermes', { path: path.join(root, 'README.md') }), { deny: false });
+  // a tracker write through an allowed server is still a tracker write
+  snapshot(root, 'github');
+  assert.match(call('github_create_issue', 'opencode', { title: 'x' }).reason, /tracker writes through MCP tools/);
+});
+
+test('without a harness spelling, or outside an autopilot stage, the tool name is judged as it came', () => {
+  const root = project();
+  snapshot(root, 'context7');
+  assert.deepEqual(runGuardrail({ toolName: 'postgres_query', input: { q: 'x' }, cwd: root }), { deny: false }, 'Pi and the other entry points name no spelling');
+  const qa = project({ marker: 'qa' });
+  assert.deepEqual(runGuardrail({ toolName: 'postgres_query', input: { q: 'x' }, cwd: qa, mcp: 'opencode' }), { deny: false }, 'a QA run has no server list');
+});
+
+test('guardrail-cli --hermes judges an mcp_<server>_<tool> name by the snapshot, as OpenCode does', () => {
+  const root = project();
+  snapshot(root, 'context7');
+  const deny = runCli({ hook_event_name: 'PreToolUse', tool_name: 'mcp_postgres_query', tool_input: { q: 'x' }, cwd: root }, ['--hermes']);
+  assert.equal(deny.status, 2, deny.stderr);
+  assert.match(deny.stderr, /^AUTOPILOT-GUARDRAIL DENY: the MCP server 'postgres' is not in the ticket's snapshot/);
+  assert.equal(runCli({ hook_event_name: 'PreToolUse', tool_name: 'mcp_context7_query-docs', tool_input: { q: 'x' }, cwd: root }, ['--hermes']).status, 0);
+  // the other entry points (Kimi, the Gemini project hook) read the name as it comes
+  assert.equal(runCli({ hook_event_name: 'PreToolUse', tool_name: 'mcp_postgres_query', tool_input: { q: 'x' }, cwd: root }).status, 0);
 });

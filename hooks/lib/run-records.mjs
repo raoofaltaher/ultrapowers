@@ -15,7 +15,9 @@
 // CLI: node run-records.mjs start --root <dir> --profile qa|hunt --id <ticket or audit id>
 //      node run-records.mjs end --root <dir> --run <run id> [--force]   (--force: a terminal that names no session)
 //      node run-records.mjs list --root <dir>
-//      node run-records.mjs pick --root <dir>  < event.json   (the hook's: the record guarding a call)
+//      node run-records.mjs pick --root <dir> [--session-only]  < event.json   (the hook's: the record guarding a call;
+//                                   --session-only: only a record bound to the event's session, for a folder above
+//                                   the call's nearest project root)
 // Each prints one JSON line (pick: one tab-separated line); exit 0 on success, 2 on a usage or
 // state error (message on stderr).
 import fs from 'node:fs';
@@ -23,6 +25,8 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 
 export const RUN_TTL_MS = 24 * 60 * 60 * 1000;
+// Clock skew a fresh record may carry before it counts as dated in the future.
+const FUTURE_SKEW_MS = 5 * 60 * 1000;
 export const PROFILES = Object.freeze(['qa', 'hunt']);
 export const REPORTS = Object.freeze({ qa: 'QA-REPORT.md', hunt: 'SECURITY-REPORT.md' });
 // A ticket or audit id names the folder reviews/<id>/: no separator and no parent segment.
@@ -74,7 +78,9 @@ export function readRuns(root, now = Date.now()) {
       && (rec.session === null || (typeof rec.session === 'string' && rec.session !== ''))
       && Number.isFinite(Date.parse(rec.startedAt));
     if (!ok) { out.push({ file, run: name.replace(/\.json$/, ''), corrupt: true }); continue; }
-    out.push({ file, run: name.replace(/\.json$/, ''), profile: rec.profile, id: rec.id, session: rec.session, startedAt: rec.startedAt, expired: now - Date.parse(rec.startedAt) > RUN_TTL_MS, corrupt: false });
+    // A record dated in the future (a planted or copied file) would never expire: it counts as past its run.
+    const age = now - Date.parse(rec.startedAt);
+    out.push({ file, run: name.replace(/\.json$/, ''), profile: rec.profile, id: rec.id, session: rec.session, startedAt: rec.startedAt, expired: age > RUN_TTL_MS || age < -FUTURE_SKEW_MS, corrupt: false });
   }
   return out;
 }
@@ -127,6 +133,18 @@ export function startRun(root, { profile, id, session = sessionFromEnv(), now = 
       throw new RunError('run-active', `a ${profile === 'qa' ? 'QA run' : 'hunt'} of ${id} is already active (${path.relative(root, r.file).replace(/\\/g, '/')}, started ${r.startedAt}); both would write reviews/${id}/. Wait for it to end, or let your human partner remove that record if its run is gone`);
     }
   }
+  // A session that a run already guards starts no second run: the second record would change the profile
+  // that judges the session's calls. Records of other sessions never count; a record bound to no session
+  // guards every call of its folder, this one's included.
+  // A record of this session in a parent project guards it here too (the hook reads it past the nearest root).
+  let guarding = applicableRuns(root, session ?? null, now).find((r) => !r.corrupt);
+  for (let d = root; !guarding && session && path.dirname(d) !== d;) {
+    d = path.dirname(d);
+    guarding = readRuns(d, now).find((r) => !r.corrupt && !r.expired && r.session === session);
+  }
+  if (guarding) {
+    throw new RunError('session-guarded', `this session is already guarded by the ${guarding.profile === 'qa' ? 'QA run' : 'hunt'} ${guarding.run} (started ${guarding.startedAt}); end that run before you start another`);
+  }
   const run = `${profile}-${id}-${randomBytes(4).toString('hex')}`;
   const record = { run, profile, id, session: session ?? null, startedAt: new Date(now).toISOString() };
   fs.writeFileSync(path.join(dir, `${run}.json`), `${JSON.stringify(record, null, 2)}\n`, { flag: 'wx' });
@@ -157,16 +175,19 @@ export function endRun(root, run, { now = Date.now(), session = sessionFromEnv()
 }
 
 // The record that guards one tool call, for hooks/qa-guardrail: the event JSON on stdin gives the
-// call's session (its top-level session_id; nested keys never count). The first applicable record
-// by profile, QA before hunt as the markers were; a corrupt one first of all. Null when none applies.
-export function pickRun(root, eventText, now = Date.now()) {
+// call's session (its top-level session_id; nested keys never count). A corrupt record first of all,
+// then a hunt before a QA run. Null when none applies.
+export function pickRun(root, eventText, now = Date.now(), { sessionOnly = false } = {}) {
   let session = null;
   try {
     const ev = JSON.parse(String(eventText ?? '').replace(/\0+$/, ''));
     if (ev && typeof ev === 'object' && !Array.isArray(ev) && typeof ev.session_id === 'string' && ev.session_id) session = ev.session_id;
   } catch { session = null; }
-  const runs = applicableRuns(root, session, now);
-  return runs.find((r) => r.corrupt) ?? runs.find((r) => r.profile === 'qa') ?? runs.find((r) => r.profile === 'hunt') ?? null;
+  // Past the nearest project root (a parent folder of the call's project) only a record bound to this very
+  // session counts: it guards that session wherever it goes, and guards nothing of anyone else.
+  const runs = applicableRuns(root, session, now).filter((r) => !sessionOnly || (!r.corrupt && r.session && r.session === session));
+  // The hunt is the QA rules plus its own: when both apply, the stricter one judges the call.
+  return runs.find((r) => r.corrupt) ?? runs.find((r) => r.profile === 'hunt') ?? runs.find((r) => r.profile === 'qa') ?? null;
 }
 
 function args(argv) {
@@ -174,14 +195,17 @@ function args(argv) {
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--force') o.force = true;
+    else if (a === '--session-only') o['session-only'] = true;
     else if (a.startsWith('--')) { o[a.slice(2)] = argv[i + 1]; i += 1; } else o._.push(a);
   }
   return o;
 }
 
+// The command is the first argument and nothing else: the guardrail reads it there too, so no option
+// before it can make the two read different commands.
 function main(argv) {
-  const o = args(argv);
-  const cmd = o._[0];
+  const cmd = argv[0];
+  const o = args(argv.slice(1));
   const root = path.resolve(o.root ?? process.cwd());
   try {
     let out;
@@ -193,7 +217,7 @@ function main(argv) {
       // record), or an empty line when no record guards this call.
       let text = '';
       try { text = fs.readFileSync(0, 'utf8'); } catch { text = ''; }
-      const r = pickRun(root, text);
+      const r = pickRun(root, text, Date.now(), { sessionOnly: o['session-only'] === true });
       process.stdout.write(r ? `${r.corrupt ? 'corrupt' : r.profile}\t${r.id ?? ''}\t${r.run}\t${r.startedAt ?? ''}\t${r.file}\n` : '\n');
       return 0;
     }

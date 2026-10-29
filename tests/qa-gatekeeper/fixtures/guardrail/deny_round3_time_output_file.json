@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"time -o ../t.txt echo hi"},"reason":"parent-directory"}

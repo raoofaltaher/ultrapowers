@@ -1,1 +1,1 @@
-{"tool_name":"Bash","tool_input":{"command":"openssl x509 -in reviews/1234/artifacts/cert.pem -noout -dates"}}
+{"tool_name":"Bash","tool_input":{"command":"openssl x509 -in reviews/1234/artifacts/cert.crt -noout -dates"}}

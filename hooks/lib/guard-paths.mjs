@@ -120,7 +120,9 @@ export function rel(target, root, ignoreCase) {
 // (.config/gh/hosts.yml) is reached only by a glob that covers the folder too (so `*.json` is not `.docker/config.json`).
 const KEY_GLOB_NAMES = ['.env', '.env.local', '.env.production', '.env.development', '.env.test', '.ssh/id_rsa', '.ssh/id_ed25519', '.ssh/authorized_keys', '.aws/credentials',
   '.git-credentials', '.netrc', '.npmrc', '.config/gh/hosts.yml', '.config/glab-cli/config.yml', '.docker/config.json', '.kube/config', '.gnupg/private-keys-v1.d',
-  'mcp-secrets.env', 'secrets.local', 'id_rsa', 'id_ed25519', 'authorized_keys'];
+  'mcp-secrets.env', 'secrets.local', 'id_rsa', 'id_ed25519', 'id_ecdsa', 'authorized_keys', '.ssh/id_ecdsa',
+  '.pypirc', '.pgpass', '.vault-token', '.cargo/credentials', '.cargo/credentials.toml', '.config/gcloud/application_default_credentials.json',
+  '.azure/msal_token_cache.json', '.gem/credentials', 'private.pem', 'private.key', 'private.pfx', 'private.p12'];
 function globSegmentRegExp(seg) {
   let out = '';
   for (let i = 0; i < seg.length; i++) {

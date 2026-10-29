@@ -370,8 +370,12 @@ test('analyze counts the psql invocations it inspected, so the hook can refuse o
   assert.equal(analyze("psql -U qa_agent_ro -c \"select * from pg_stat_activity where application_name='psql'\"", c), '');
   assert.equal(analyze('psql -U qa_agent_ro -c "select 1 from psql"', c), '', 'a table named psql inside an inspected statement');
   // A psql inside a command string for another program is a psql the walk did not inspect.
-  assert.match(analyze('watch "psql -U postgres -c \'drop table t\'"', c), /did not inspect/);
-  assert.match(analyze('parallel "psql -U postgres -c \'drop table t\'" ::: 1', c), /did not inspect/);
+  // (strace names a program, not a string, so a quoted string after it is no psql call; script -c, watch and parallel run the
+  // string they are given and are unwrapped now, so the psql they run is inspected: audit-2026-10-23.test.mjs, round3 Medium 10
+  // and R4 Medium 10.)
+  assert.match(analyze('strace "psql -U postgres -c \'drop table t\'"', c), /did not inspect/);
+  assert.match(analyze('script -qc "psql -U postgres -c \'drop table t\'" /dev/null', c), /superuser/);
+  assert.match(analyze('watch "psql -U postgres -c \'drop table t\'"', c), /superuser/);
   assert.match(analyze('echo "checked via psql" > reviews/1234/x.txt', c), /did not inspect/);
   assert.match(analyze('docker run --rm db sh -c "psql -U postgres -c \'drop table t\'"', c), /superuser/);
   assert.match(analyze('docker run --rm db sh -lc "psql -U postgres -c \'drop table t\'"', c), /superuser/);
@@ -438,7 +442,7 @@ test('an autopilot stage never prints a credential through a variable; a presenc
 
 test('a path-qualified or quoted psql inside a command string is counted', () => {
   const c = { cwd: '/p', root: '/p', ticket: '1234', profile: 'qa', ignoreCase: false, roRole: 'qa_agent_ro' };
-  for (const cmd of ['watch "/usr/bin/psql -U postgres -c \'drop table t\'"', "watch \"'psql' -U postgres -c 'drop table t'\"", 'watch "C:\\\\pg\\\\bin\\\\psql.exe -U postgres -c \'drop table t\'"']) {
+  for (const cmd of ['strace "/usr/bin/psql -U postgres -c \'drop table t\'"', "strace \"'psql' -U postgres -c 'drop table t'\"", 'strace "C:\\\\pg\\\\bin\\\\psql.exe -U postgres -c \'drop table t\'"']) {
     assert.match(analyze(cmd, c), /did not inspect/, cmd);
   }
   assert.equal(analyze('sh -c "/usr/bin/psql -U qa_agent_ro -c \'select 1\'"', c), '');
@@ -500,12 +504,14 @@ test('the hunt is a program allow-list', () => {
   for (const cmd of ['node reviews/audit-1/x.mjs', 'python /p/reviews/audit-1/x.py', 'bash repo-a/run.sh', './repo-a/run', 'make build', 'awk -f p.awk in', 'sqlite3 db', 'curl http://localhost/', 'eval ls', 'node --require x /tmp/y.js']) {
     assert.notEqual(analyze(cmd, h), '', cmd);
   }
-  // A script outside the project runs only when it is a regular file (audit-2026-10-23 H1).
+  // A script outside the project is refused too, a regular file included: npm or pip would run as one
+  // (re-hunt of dev 386b837, High 2). Only the plugin's own scripts run.
   const outside = mkdtempSync(join(tmpdir(), 'hunt-script-'));
   writeFileSync(join(outside, 'x.mjs'), '');
   const outsideScript = join(outside, 'x.mjs').replace(/\\/g, '/');
   assert.notEqual(analyze('node /elsewhere/plugin/missing.mjs', h), '');
-  for (const cmd of ['cat repo-a/src/app.ts', 'git log --oneline', 'sh -c "ls repo-a"', `node ${outsideScript}`, 'jq . reviews/audit-1/security-findings.json']) {
+  assert.notEqual(analyze(`node ${outsideScript}`, h), '');
+  for (const cmd of ['cat repo-a/src/app.ts', 'git log --oneline', 'sh -c "ls repo-a"', 'jq . reviews/audit-1/security-findings.json']) {
     assert.equal(analyze(cmd, h), '', cmd);
   }
   // The plugin's own preflight runs when the audited project is the plugin itself; a copy of it inside any other
