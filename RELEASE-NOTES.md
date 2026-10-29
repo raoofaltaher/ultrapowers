@@ -1,6 +1,6 @@
 # Ultrapowers Release Notes
 
-## v2.3.0 (2026-10-23)
+## v2.3.0 (2026-10-30)
 
 The fixes for the 2026-10-23 vulnerability hunt of this repository, for the findings of a hunt of a project `init` scaffolded that trace back to the plugin, and for a second hunt of the release candidate (the reports are not committed).
 
