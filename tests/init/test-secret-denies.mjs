@@ -360,7 +360,8 @@ test('a git.exe or git planted in the project, and a relative PATH entry, are ne
   const report = scaffold(root, [], env, root, 'join');
   assert.equal(fs.existsSync(path.join(root, 'planted-git-ran')), false, 'the planted git did not run');
   assert.equal(report.hooksPath, 'set', 'the real git set core.hooksPath');
-  assert.equal(git(root, 'config', '--local', '--get', 'core.hooksPath'), '.githooks');
+  // Read the file, not `git config` by bare name: with cwd = root, Node on Windows would start the planted git.exe.
+  assert.match(fs.readFileSync(path.join(root, '.git', 'config'), 'utf8'), /^\s*hooksPath\s*=\s*\.githooks\s*$/m);
 });
 
 test('with no git on PATH, init reports the hooks path as failed instead of throwing', () => {
