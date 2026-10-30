@@ -305,7 +305,7 @@ test('fold CLI writes the three files, prints the SUMMARY JSON, exits 1 on findi
 - Modify: `hunt-records.mjs`, `check-hunt.mjs`, `hunt-records.test.mjs`
 
 **Interfaces:**
-- Produces: `refToId(block) -> Map<ref, findingId>` (every candidate, lead and hardening `ref` of a hunter block to its `findingId`); `foldFindings({ root, id, preflight, blocks, ledger, research }) -> { findings: SecurityFindings, findings: Finding[], duplicates, unjudged, pending }` with these rules:
+- Produces: `refToId(block) -> Map<ref, findingId>` (every candidate, lead and hardening `ref` of a hunter block to its `findingId`); `foldFindings({ root, id, preflight, blocks, ledger, research }) -> { record: SecurityFindings, findings: Finding[], duplicates, unjudged, pending }` (`record` is what `fold` writes as `security-findings.json`; `findings` are the check results, as everywhere else in this plan) with these rules:
   - candidates, leads and hardening notes from every hunter block are keyed by `findingId`; the same id in two blocks is one item with `lanes` = both lanes, keeping the first block's record and the highest `confidence`; a `merge-<k>.json` moves `drop`'s lanes into `keep` and removes `drop`; two items with the same `repo:file:symbol` and different categories are `duplicates` (reported, not merged);
   - `verify-<k>.json` applies to the candidate of its `findingId` (a missing id is a finding); `decision` → `state`; `severity: 'Medium'` lowers a High; `newLead` becomes a new candidate (its own `findingId`, `lanes: ['verifier']`) pending verification; two `declined` blocks for one id → `unjudged` with reason `verifier declined twice`;
   - `batch-<lane>-<k>.json` applies to leads and hardening of that lane; `kept` is valid for hardening only; `promoted` turns the item into a candidate (its `candidate` record, same `findingId`) pending verification; a lead or hardening with no batch decision after `loopEnded` is pending in `pending.batches` (chunks of 25 by lane, in id order); two `declined` batches for a lane → every item `unjudged` with reason `batch verifier declined twice`;
@@ -510,7 +510,7 @@ test('no hunt file leaves the verdict unchanged and says there was no vulnerabil
 - [ ] **Step 1: Write the tests**:
 
 ```js
-test('no live file holds a removed identifier or word', ...);           // except the word plausible inside "not plausible"? no: zero occurrences
+test('no live file holds a removed identifier or word', ...);           // zero occurrences, no exception list
 test('every named import of each MODULE is used at least once outside its import line', ...);   // regex over `import { a, b } from`
 test('every export of hunt-records.mjs, check-hunt.mjs, hunt-preflight.mjs and assemble-review.mjs is imported by another module or a test', ...);
 test('hunt-records.mjs and check-hunt.mjs import only node: modules and repository files', ...);
