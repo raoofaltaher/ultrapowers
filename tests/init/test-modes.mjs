@@ -1117,3 +1117,15 @@ test('scaffold with --sources and --autopilot applies the same approver rule bef
   assert.equal(report.error.code, 'bad-tickets');
   assert.deepEqual(changedFiles(before, snapshot(root)), []);
 });
+
+test('upgrade keeps the project itself out of the ignore block when the marker records it as path "."', () => {
+  const root = scaffolded();
+  const data = marker(root);
+  data.repos = [{ name: 'WS', path: '.', defaultBranch: 'main' }, { name: 'api', path: 'api', defaultBranch: 'main' }];
+  data.pluginVersion = '0.0.1';
+  fs.writeFileSync(path.join(root, '.agents', 'ultrapowers.json'), `${JSON.stringify(data, null, 2)}\n`);
+  run(['upgrade', '--root', root, '--apply', '.gitignore']);
+  const block = fs.readFileSync(path.join(root, '.gitignore'), 'utf8').split(/\r?\n/);
+  assert.ok(!block.includes('/./'), 'the ignore block lists the project itself');
+  assert.ok(block.includes('/api/'), 'the nested clone stays ignored');
+});

@@ -797,16 +797,18 @@ export function checkName(name) {
 
 export function buildVars(opts, repos, harnesses, written) {
   const version = pluginVersion();
-  const topology = repos.length ? 'nested' : 'root';
+  // A marker may record the project itself as path "."; it is not a nested clone.
+  const nested = repos.filter((r) => r.path !== '.');
+  const topology = nested.length ? 'nested' : 'root';
   return {
     name: checkName(opts.name ?? path.basename(opts.root)),
     pluginVersion: version,
     date: opts.date,
     topology,
-    repos: repos.length ? repos.map((r) => r.name).join(', ') : 'none',
-    repoIgnoreLines: repos.map((r) => `/${r.path}/`).join('\n'),
-    repoGuideLines: repos.length
-      ? repos.map((r) => `- \`${r.path}/\` (default branch \`${r.defaultBranch}\`): nested clone, gitignored`).join('\n')
+    repos: nested.length ? nested.map((r) => r.name).join(', ') : 'none',
+    repoIgnoreLines: nested.map((r) => `/${r.path}/`).join('\n'),
+    repoGuideLines: nested.length
+      ? nested.map((r) => `- \`${r.path}/\` (default branch \`${r.defaultBranch}\`): nested clone, gitignored`).join('\n')
       : 'No nested clones detected at scaffold time.',
     harnesses: harnesses.join(', '),
     reposJson: JSON.stringify(repos),
