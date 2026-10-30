@@ -1,6 +1,6 @@
 {
   "name": "ultrapowers",
-  "pluginVersion": "2.0.1",
+  "pluginVersion": "2.3.0",
   "scaffoldedAt": "2026-10-02",
   "topology": "root",
   "commitTrailer": "",
@@ -140,6 +140,7 @@
     "reviews/README.md",
     "specs/.gitkeep",
     "specs/README.md",
+    "specs/_template/Spec.md",
     "tasks/.gitkeep",
     "tasks/README.md"
   ],
