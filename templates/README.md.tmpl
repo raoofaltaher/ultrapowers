@@ -24,7 +24,7 @@ Scaffolded by ultrapowers {{pluginVersion}} on {{date}} (topology: {{topology}})
 
 Each knowledge base folder has a `README.md` that states what belongs there and how files are named.
 
-The optional `hunt` block of `.agents/ultrapowers.json` holds the vulnerability hunt's settings: `maxHuntersPerLane` (default 8) is the most hunters one lane runs in parallel; lower it to spend less.
+The optional `hunt` block of `.agents/ultrapowers.json` holds the vulnerability hunt's settings. `hunt.depth` sets the audit profile: `quick`, `standard` or `deep`. `ticket` (default `quick`) applies to a ticket's hunt and `full` (default `standard`) to a full audit; the `--depth` flag overrides both. The defaults, written out: `"depth": { "ticket": "quick", "full": "standard" }`. `hunt.sandbox` is opt-in: with it, a hunt may run a bounded check of project code inside a Docker container that has no network, a read-only root and read-only repository, and limits on CPU, memory, processes and time. Without it, nothing runs and a candidate that needs a run stays `needs_validation`. Example: `"sandbox": { "images": { "default": "node:22-bookworm-slim@sha256:<digest>" }, "limits": { "seconds": 120 } }`. The image must be pinned by digest and already pulled. Read its digest with `docker images --digests <image>`; `docs/vulnerability-hunt.md` in the plugin shows the exact `docker image inspect` form.
 
 ## Nested clones
 
