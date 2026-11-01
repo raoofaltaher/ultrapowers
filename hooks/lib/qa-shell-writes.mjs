@@ -276,7 +276,7 @@ const ENVIRON_RE = /^\/proc\/(.+\/)?environ$/;
 // A process folder of /proc as a whole (/proc/self, /proc/thread-self, /proc/<pid>, their task folders): whatever reads
 // the folder (grep -r, rg, find) reads the environ file of every process under it.
 const PROC_DIR_RE = /^\/proc\/(self|thread-self|[0-9]+)(\/task(\/[0-9]+)?)?\/?$/;
-const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)hooks\/(qa-guardrail|session-start|team-memory-[a-z]+|lib\/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|\/)\.gemini\/hooks\/|(^|\/)\.husky\/|(^|\/)\.pre-commit-config\.ya?ml$|(^|\/)lefthook\.ya?ml$|(^|\/)\.env($|\.)|(^|\/)qa\/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|\/)\.ultrapowers\/(autopilot-active|autopilot-stop)$|(^|\/)\.ultrapowers\/runs(\/|$)|(^|\/)\.mcp\.json$|(^|\/)\.cursor\/(mcp\.json|cli\.json|environment\.json|worktrees\.json|rules\/|hooks\/)|(^|\/)\.devcontainer(\/|\.json$)|(^|\/)\.vscode\/|(^|\/)\.codex\/|(^|\/)\.kimi\/|(^|\/)\.factory\/|(^|\/)\.gemini\/|(^|\/)\.qwen\/|(^|\/)opencode\.jsonc?$|(^|\/)\.hermes\/|(^|\/)\.opencode\/|(^|\/)\.cursor\/hooks\.json$|(^|\/)\.pi\/|(^|\/)\.claude-plugin\/|(^|\/)hooks\.json$/;
+const AUTOPILOT_PROTECTED_RE = /(^|\/)\.github\/|(^|\/)\.gitlab-ci\.yml$|(^|\/)hooks\/(qa-guardrail|session-start|team-memory-[a-z]+|lib\/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|\/)\.gemini\/hooks\/|(^|\/)\.husky\/|(^|\/)\.pre-commit-config\.ya?ml$|(^|\/)lefthook\.ya?ml$|(^|\/)\.env($|\.)|(^|\/)qa\/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|\/)\.ultrapowers\/(autopilot-active|autopilot-stop)$|(^|\/)\.ultrapowers\/(runs|sandbox)(\/|$)|(^|\/)\.mcp\.json$|(^|\/)\.cursor\/(mcp\.json|cli\.json|environment\.json|worktrees\.json|rules\/|hooks\/)|(^|\/)\.devcontainer(\/|\.json$)|(^|\/)\.vscode\/|(^|\/)\.codex\/|(^|\/)\.kimi\/|(^|\/)\.factory\/|(^|\/)\.gemini\/|(^|\/)\.qwen\/|(^|\/)opencode\.jsonc?$|(^|\/)\.hermes\/|(^|\/)\.opencode\/|(^|\/)\.cursor\/hooks\.json$|(^|\/)\.pi\/|(^|\/)\.claude-plugin\/|(^|\/)hooks\.json$/;
 // Git subcommands an autopilot stage may run: the read-only set plus the commands that build the
 // ticket branch. Pushing and integrating belong to the engine; nothing discards work; `config` and
 // the `-c` global option are refused because an alias resolves to any command at all.
@@ -606,7 +606,7 @@ const HUNT_TRACKER_READ = {
   gh: { api: '*', search: ['code'], auth: ['status'], help: '*', version: '*' },
   glab: { api: '*', auth: ['status'], help: '*', version: '*' },
 };
-const HUNT_AUDIT_TOOLS = new Set(['osv-scanner', 'pip-audit', 'cargo-audit']);
+const HUNT_AUDIT_TOOLS = new Set(['osv-scanner', 'pip-audit', 'cargo-audit', 'gitleaks']);
 // Programs that are a test run whatever their arguments.
 const HUNT_TEST_RUNNERS = new Set(['pytest', 'py.test', 'vitest', 'jest', 'mvn', 'gradle', 'gradlew', 'phpunit']);
 const HUNT_TEST_MODULES = new Set(['pytest', 'unittest', 'nose', 'nose2', 'tox']);
@@ -885,7 +885,76 @@ export function huntCheck(prog0, words, { viaRunner = false, interpreter = '' } 
     const files = inputPaths(parsed, ['-L', '--lockfile'], 'osv-scanner may run only as osv-scanner [--json] [--lockfile <file inside the project>]', 'file', refuse);
     return files.reason || allow(parsed.valued.filter(([name]) => name === '--output' || name === '--output-file').map(([, , v]) => v), files.out);
   }
+
+  if (prog === 'gitleaks') return huntGitleaks(words, refuse, allow, infoOnly);
   return null;
+}
+
+// gitleaks, in the forms the hunt runs: dir or git on one path of the project, always redacting, with a JSON
+// report only into the audit's folder. A secret value must never reach stdout, a report the hunt keeps or a
+// command line; everything else (stdin, a baseline, a template, a diagnostics folder, an ignore file, a
+// decoder depth, a rule switch) is refused by name.
+const GITLEAKS_FORM = 'gitleaks may run only as gitleaks dir|git <path inside the project> --redact [--no-banner] [--report-format json --report-path reviews/<id>/<file>] [--config <file>] [--log-opts <base>..<branch>]';
+const GITLEAKS_LOG_OPTS = /^[A-Za-z0-9][A-Za-z0-9._/-]*\.\.[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+const GITLEAKS_LEVELS = new Set(['trace', 'debug', 'info', 'warn', 'error', 'fatal']);
+function huntGitleaks(words, refuse, allow, infoOnly) {
+  const notAllowed = (word) => refuse(`${GITLEAKS_FORM} during the hunt; "${word}" is not allowed`);
+  if (words.length === 0) return notAllowed('a bare gitleaks');
+  // Only the version or help flags (gitleaks --help): they print and exit.
+  if (infoOnly(words)) return allow();
+  let redacted = false;
+  let attached = '';
+  // --redact=<n> (a whole number of percent, 1-100) is a flag with an attached value: judged here, then dropped
+  // from the words the option walk sees. 0 or anything else would print the secret.
+  const rest = [];
+  for (const v of words) {
+    const m = v !== null && /^--redact=(.*)$/.exec(v);
+    if (!m) { rest.push(v); continue; }
+    if (!/^(100|[1-9][0-9]?)$/.test(m[1])) return notAllowed(v);
+    redacted = true;
+    attached = v;
+  }
+  const spec = {
+    flags: new Set(['--no-banner', '--redact', '--no-color', '-v', '--verbose', '--help', '-h']),
+    valued: new Set(['--report-format', '-f', '--report-path', '-r', '--config', '-c', '--log-opts', '--log-level', '--max-target-megabytes', '--exit-code']),
+  };
+  const parsed = huntOptions(rest, spec);
+  if (parsed.bad !== undefined) return notAllowed(parsed.bad);
+  if (parsed.seen.has('--redact')) redacted = true;
+  const verb = parsed.positionals.length ? rest[parsed.positionals[0]] : undefined;
+  const helpFlag = ['--help', '-h'].find((f) => parsed.seen.has(f));
+  if (verb === undefined) return notAllowed(rest.find((v) => v.startsWith('-')) || 'a missing command');
+  if (verb === 'version' || verb === 'help') {
+    // Nothing else: no other flag, no value, no second word (gitleaks help dir); only --help or -h.
+    const extra = attached || rest.find((v, k) => k !== parsed.positionals[0] && v !== helpFlag);
+    return extra !== undefined || parsed.positionals.length > 1 ? notAllowed(extra === undefined ? rest[parsed.positionals[1]] : extra) : allow();
+  }
+  if (verb !== 'dir' && verb !== 'git') return notAllowed(verb);
+  if (helpFlag) return notAllowed(helpFlag);
+  if (parsed.positionals.length > 2) return notAllowed(rest[parsed.positionals[2]]);
+  if (parsed.positionals.length < 2) return refuse(`${GITLEAKS_FORM} during the hunt; the path to scan is missing`);
+  for (const [name, , v] of parsed.valued) {
+    const ok = name === '--report-format' || name === '-f' ? v === 'json'
+      : name === '--log-opts' ? GITLEAKS_LOG_OPTS.test(v)
+        : name === '--log-level' ? GITLEAKS_LEVELS.has(v)
+          : name === '--max-target-megabytes' || name === '--exit-code' ? /^[0-9]+$/.test(v)
+            : true; // the paths are judged below
+    if (!ok) return notAllowed(`${name} ${v}`);
+  }
+  if (!redacted) return refuse('gitleaks runs only with --redact during the hunt: a secret value would reach stdout');
+  const target = rest[parsed.positionals[1]];
+  const why = literalPathWhy(`gitleaks ${verb}`, target, 'path');
+  if (why) return refuse(`${GITLEAKS_FORM} during the hunt; ${why}`);
+  const files = inputPaths(parsed, ['--config', '-c'], GITLEAKS_FORM, 'file', refuse);
+  if (files.reason) return files.reason;
+  const reports = [];
+  for (const [name, , v] of parsed.valued) {
+    if (name !== '--report-path' && name !== '-r') continue;
+    const bad = literalPathWhy(name, v, 'file');
+    if (bad) return refuse(`${GITLEAKS_FORM} during the hunt; ${bad}`);
+    reports.push(v);
+  }
+  return allow(reports, [{ path: target, form: GITLEAKS_FORM, opt: `gitleaks ${verb}` }, ...files.out]);
 }
 
 // Finds the `-m` module of a python command the way the interpreter rule (inlineInterpreterReason) walks
@@ -1088,7 +1157,7 @@ const HUNT_PROGRAMS = new Set(['date', 'cat', 'ls', 'head', 'tail', 'wc', 'grep'
 const HUNT_NET_PROGRAMS = new Set(['curl', 'wget', 'iwr', 'irm', 'invoke-webrequest', 'invoke-restmethod', 'http', 'https', 'httpie', 'xh', 'nc', 'ncat', 'netcat', 'telnet', 'ssh', 'scp', 'sftp', 'rsync', 'socat', 'ftp', 'tftp', 'lftp']);
 const HUNT_BUILTINS = new Set(['cd', 'pushd', 'popd', 'set', 'unset', 'local', ':']);
 // The scripts of the plugin that a hunt (or a task review) runs by name when the audited project is the plugin itself.
-const HUNT_OWN_SCRIPTS_RE = /(^|\/)(skills\/(vulnerability-hunt\/scripts\/hunt-preflight|task-review\/scripts\/assemble-review)|hooks\/lib\/run-records)\.mjs$/;
+const HUNT_OWN_SCRIPTS_RE = /(^|\/)(skills\/(vulnerability-hunt\/scripts\/(hunt-preflight|hunt-sandbox|hunt-verdict)\.mjs|vulnerability-hunt\/cloudflare\/validate-(findings|coverage-ledger)\.cjs|task-review\/scripts\/assemble-review\.mjs)|hooks\/lib\/run-records\.mjs)$/;
 const HUNT_NOT_LISTED = (prog) => `the hunt reads; ${prog} is not on its list (the read verbs, git read commands, the audit tools and gh/glab api GET)`;
 // The reason the hunt refuses this program ('' when it is on the list). args: the words of the command from
 // the program on ({ w, v } with v === null for a word built from a variable); dir: the directory the command
@@ -1174,15 +1243,16 @@ function huntProgramWhy(prog, args, interpKind, { dir, rootC, ignoreCase, inArea
     if (p.split('/').includes('..')) return `the hunt reads; ${prog} ${script.v} has a parent-folder segment and cannot be verified`;
     if (stdinScript(p)) return STDIN_FILE_WHY;
     const real = realCanonical(p, rootC);
-    // The hunt runs the plugin's own scripts and nothing else: the preflight, the review assembler and the
-    // run-record script, each a regular file under the plugin root this analyzer runs from, outside the report
+    // The hunt runs the plugin's own scripts and nothing else: the preflight, the sandbox runner, the verdict,
+    // Cloudflare's validators, the review assembler and the run-record script, each a regular file under the
+    // plugin root this analyzer runs from, outside the report
     // area. Any other script, inside the project or outside it (a package manager's entry script, another
     // harness's CLI), is code the hunt does not run; a copy of an own script shipped by the audited code is its code.
     if (HUNT_OWN_SCRIPTS_RE.test(real.replace(/\\/g, '/')) && !inArea(real) && inside(real, realCanonical(PLUGIN_ROOT, PLUGIN_ROOT), ignoreCase)) {
       try { if (statSync(real).isFile()) return ''; } catch { /* missing */ }
       return `the hunt reads; ${prog} ${script.v} is not a regular file (a device, a pipe or a missing file runs code nobody read)`;
     }
-    return `the hunt reads; ${prog} ${script.v} is not on its list (${prog} runs only the plugin's own hunt scripts: the preflight, the review assembler and run-records.mjs)`;
+    return `the hunt reads; ${prog} ${script.v} is not on its list (${prog} runs only the plugin's own hunt scripts: the preflight, the sandbox runner, the verdict, Cloudflare's validators, the review assembler and run-records.mjs)`;
   }
   return HUNT_NOT_LISTED(prog);
 }
@@ -1296,8 +1366,9 @@ const DESTRUCTIVE_WHY = 'recursive or forced delete is blocked';
 const SUBST_WHY = 'a command substitution cannot be analysed; spell the command out (run the inner command as its own call)';
 const SUBST_DEPTH = 3;
 // The run records of the QA and hunt profiles (.ultrapowers/runs/): the guardrail's switches, never a call's to change.
-const MARKER_RE = /(^|\/)\.ultrapowers\/runs(\/|$)/;
-const MARKER_WHY = 'is a run record; no call of a run writes, moves or removes one: the run ends itself through hooks/lib/run-records.mjs end once its report holds its Verdict line';
+// The sandbox runner's log (.ultrapowers/sandbox/) is kept the same way: only hunt-sandbox.mjs writes it.
+const MARKER_RE = /(^|\/)\.ultrapowers\/(runs|sandbox)(\/|$)/;
+const MARKER_WHY = 'is a run record; no call of a run writes, moves or removes one, or the sandbox runner\'s log: the run ends itself through hooks/lib/run-records.mjs end once its report holds its Verdict line';
 // A stage reads no tracker credential and nothing named like a secret out of the environment.
 const TRACKER_VARS = /^(GH_TOKEN|GITHUB_TOKEN|GITLAB_TOKEN|GLAB_TOKEN|ODOO_API_KEY|ULTRAPOWERS_STAGE_.*)$/i;
 const SECRET_VARS = /TOKEN|KEY|SECRET|PASS|CREDENTIAL|AUTH|COOKIE|SESSION|PRIVATE/i;

@@ -153,6 +153,14 @@ test('M5: a run record is never a call of the run\'s to write, move or remove', 
   assert.match(analyze('rm .ultrapowers/runs/qa-1234-0a1b2c3d.json', qa), /is a run record; no call of a run writes, moves or removes one/);
 });
 
+test('the sandbox runner\'s log is written by the runner alone, in every profile, an autopilot stage included', () => {
+  all(denied, [
+    'echo x > .ultrapowers/sandbox/GH-1/run-1.jsonl',
+    'echo x >> /p/.ultrapowers/sandbox/audit-1/run-1.jsonl',
+    'rm -f .ultrapowers/sandbox/empty',
+  ]);
+});
+
 test('a role variable never stands for a tracker credential, and the hunt reads none', () => {
   assert.ok(denied('echo $GH_TOKEN', { ...qa, roleVars: ['GH_TOKEN'] }));
   assert.ok(denied('printenv GH_TOKEN', { ...qa, roleVars: ['GH_TOKEN'] }));
@@ -285,13 +293,14 @@ test('RR7: a read redirect from /dev/tcp or /dev/udp opens a connection; so do t
 
 test('RR9: the hunt runs the plugin\'s own scripts from the plugin, never a copy inside the audited project', () => {
   const own = { cwd: REPO, root: REPO, ticket: 'audit-1', profile: 'hunt' };
-  for (const script of ['hooks/lib/run-records.mjs', 'skills/vulnerability-hunt/scripts/hunt-preflight.mjs', 'skills/task-review/scripts/assemble-review.mjs']) {
+  const scripts = ['hooks/lib/run-records.mjs', 'skills/vulnerability-hunt/scripts/hunt-preflight.mjs', 'skills/vulnerability-hunt/scripts/hunt-sandbox.mjs', 'skills/vulnerability-hunt/scripts/hunt-verdict.mjs', 'skills/vulnerability-hunt/cloudflare/validate-findings.cjs', 'skills/task-review/scripts/assemble-review.mjs'];
+  for (const script of scripts) {
     // run-records.mjs: only its end and list (RH1)
     const cmd = `node ${REPO}/${script} ${script.endsWith('run-records.mjs') ? 'end' : 'x'}`;
     assert.ok(allowed(cmd, own), `${script}: ${analyze(cmd, own)}`);
   }
   const proj = fwd(mkdtempSync(join(tmpdir(), 'audit-rr9-')));
-  for (const script of ['hooks/lib/run-records.mjs', 'skills/vulnerability-hunt/scripts/hunt-preflight.mjs', 'skills/task-review/scripts/assemble-review.mjs']) {
+  for (const script of scripts) {
     mkdirSync(dirname(`${proj}/${script}`), { recursive: true });
     writeFileSync(`${proj}/${script}`, '');
     const ctx = { cwd: proj, root: proj, ticket: 'audit-1', profile: 'hunt' };
