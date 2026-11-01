@@ -1186,3 +1186,18 @@ test('R4 Low 7 (hook): a node planted in the project, on an absolute PATH entry 
   assert.equal(r.status, 2, r.stderr);
   assert.equal(existsSync(sentinel), false, 'the planted node ran');
 });
+
+test('gitleaks with partial redaction or a debug log level is refused', () => {
+  for (const cmd of [
+    'gitleaks git . --redact=1 -v',
+    'gitleaks git . --redact=1 --no-banner --verbose',
+    'gitleaks dir . --redact=10 --report-format json --report-path /dev/stdout',
+    'gitleaks dir . --redact --log-level debug',
+    'gitleaks dir . --redact --log-level=trace',
+  ]) {
+    assert.match(analyze(cmd, hunt), /gitleaks may run only/, `${cmd}: ${analyze(cmd, hunt)}`);
+  }
+  for (const cmd of ['gitleaks dir . --redact=100 --no-banner', 'gitleaks dir . --redact --log-level warn']) {
+    assert.ok(allowed(cmd, hunt), `${cmd}: ${analyze(cmd, hunt)}`);
+  }
+});

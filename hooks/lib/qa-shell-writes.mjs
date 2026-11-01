@@ -896,7 +896,8 @@ export function huntCheck(prog0, words, { viaRunner = false, interpreter = '' } 
 // decoder depth, a rule switch) is refused by name.
 const GITLEAKS_FORM = 'gitleaks may run only as gitleaks dir|git <path inside the project> --redact [--no-banner] [--report-format json --report-path reviews/<id>/<file>] [--config <file>] [--log-opts <base>..<branch>]';
 const GITLEAKS_LOG_OPTS = /^[A-Za-z0-9][A-Za-z0-9._/-]*\.\.[A-Za-z0-9][A-Za-z0-9._/-]*$/;
-const GITLEAKS_LEVELS = new Set(['trace', 'debug', 'info', 'warn', 'error', 'fatal']);
+// debug and trace may log matched values, so they are not on the list.
+const GITLEAKS_LEVELS = new Set(['info', 'warn', 'error', 'fatal']);
 function huntGitleaks(words, refuse, allow, infoOnly) {
   const notAllowed = (word) => refuse(`${GITLEAKS_FORM} during the hunt; "${word}" is not allowed`);
   if (words.length === 0) return notAllowed('a bare gitleaks');
@@ -904,13 +905,13 @@ function huntGitleaks(words, refuse, allow, infoOnly) {
   if (infoOnly(words)) return allow();
   let redacted = false;
   let attached = '';
-  // --redact=<n> (a whole number of percent, 1-100) is a flag with an attached value: judged here, then dropped
-  // from the words the option walk sees. 0 or anything else would print the secret.
+  // --redact=<n> is a flag with an attached value: judged here, then dropped from the words the option walk
+  // sees. Only 100 percent hides the whole secret; a smaller number prints most of it on stdout or in the report.
   const rest = [];
   for (const v of words) {
     const m = v !== null && /^--redact=(.*)$/.exec(v);
     if (!m) { rest.push(v); continue; }
-    if (!/^(100|[1-9][0-9]?)$/.test(m[1])) return notAllowed(v);
+    if (m[1] !== '100') return notAllowed(v);
     redacted = true;
     attached = v;
   }

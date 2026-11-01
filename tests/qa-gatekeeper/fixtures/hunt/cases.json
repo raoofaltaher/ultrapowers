@@ -560,5 +560,8 @@
   {"name":"deny_gitleaks_report_format_csv","reason":"gitleaks may run only","event":{"tool_name":"Bash","tool_input":{"command":"gitleaks dir repo-a --no-banner --redact --report-format csv --report-path reviews/audit-2026-10-11/run-1/repo-a/gitleaks-dir.csv"}}},
   {"name":"deny_gitleaks_stdin","reason":"gitleaks may run only","event":{"tool_name":"Bash","tool_input":{"command":"gitleaks stdin --no-banner --redact"}}},
   {"name":"deny_gitleaks_baseline","reason":"gitleaks may run only","event":{"tool_name":"Bash","tool_input":{"command":"gitleaks dir repo-a --no-banner --redact --baseline-path repo-a/base.json"}}},
+  {"name":"deny_gitleaks_partial_redact","reason":"gitleaks may run only","event":{"tool_name":"Bash","tool_input":{"command":"gitleaks git repo-a --redact=1 -v"}}},
+  {"name":"deny_gitleaks_log_level_debug","reason":"gitleaks may run only","event":{"tool_name":"Bash","tool_input":{"command":"gitleaks dir repo-a --no-banner --redact --log-level debug"}}},
+  {"name":"allow_gitleaks_redact_100","event":{"tool_name":"Bash","tool_input":{"command":"gitleaks dir repo-a --no-banner --redact=100"}}},
   {"name":"deny_npx_gitleaks","reason":"installs","event":{"tool_name":"Bash","tool_input":{"command":"npx gitleaks dir repo-a --no-banner --redact"}}}
 ]
