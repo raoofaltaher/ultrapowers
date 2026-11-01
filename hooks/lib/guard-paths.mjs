@@ -173,3 +173,9 @@ export function keyGlobReaches(word) {
   }
   return false;
 }
+
+// Key material no stage may read through a shell (the same list as the hook's shell rule). The
+// hook tests the typed command; an 8.3 short name (MCP-SE~1.ENV) hides the name from it, so any
+// word with an alias-shaped segment is resolved here and its real name is tested.
+const KEY_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|id_ecdsa|\.aws\/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|\/)\.env($|\.)|\.git-credentials|(^|\/)\.netrc$|(^|\/)\.npmrc$|(^|\/)\.config\/(gh|glab-cli)(\/|$)|(^|\/)\.docker\/config\.json|(^|\/)\.kube(\/|$)|(^|\/)\.gnupg(\/|$)|(^|\/)\.pypirc$|(^|\/)\.cargo\/credentials(\.toml)?$|(^|\/)\.config\/gcloud(\/|$)|(^|\/)\.azure(\/|$)|(^|\/)\.pgpass$|(^|\/)\.vault-token$|(^|\/)\.gem\/credentials$|(^|\/)[A-Za-z0-9_][^/[\]|]*\.(pem|key|pfx|p12)(\.(bak|old|orig))?$/;
+export function isKeyMaterial(p) { return KEY_RE.test(p); }

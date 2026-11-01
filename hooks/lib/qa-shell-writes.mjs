@@ -16,7 +16,7 @@
 import { readFileSync, statSync, lstatSync } from 'node:fs';
 import { posix, resolve as resolvePath, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { inside, realCanonical, rel, keyGlobReaches } from './guard-paths.mjs';
+import { inside, realCanonical, rel, keyGlobReaches, isKeyMaterial } from './guard-paths.mjs';
 
 // The plugin this analyzer runs from (hooks/lib/ is two folders below its root): the only place the hunt
 // trusts the plugin's own scripts from when the audited project holds a file of the same name.
@@ -270,10 +270,6 @@ function normPath(p) {
 // switches, written by the engine outside the stage. The run records of a QA run or a hunt
 // (.ultrapowers/runs/) are refused to every call of a run (MARKER_RE) and to an autopilot stage.
 const PROTECTED_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|id_ecdsa|(^|\/)\.aws(\/|$)|mcp-secrets\.env|\.local\.(sh|env|json)$|hooks\/qa-guardrail|\.agents\/ultrapowers\.json|(^|\/)\.claude\/|(^|\/)\.git\/|(^|\/)\.git$|(^|\/)\.githooks\/|(^|\/)\.[a-z0-9_-]+\/settings(\.local)?\.json$|(^|\/)tasks\/[^/]+\/(autopilot\.json|stage-log\.jsonl|changes-comments\.md)$|(^|\/)\.ultrapowers\/(autopilot-active|autopilot-stop)$|(^|\/)\.ultrapowers\/autopilot(\/|$)|(^|\/)\.ultrapowers$/;
-// Key material no stage may read through a shell (the same list as the hook's shell rule). The
-// hook tests the typed command; an 8.3 short name (MCP-SE~1.ENV) hides the name from it, so any
-// word with an alias-shaped segment is resolved here and its real name is tested.
-const KEY_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|id_ecdsa|\.aws\/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|\/)\.env($|\.)|\.git-credentials|(^|\/)\.netrc$|(^|\/)\.npmrc$|(^|\/)\.config\/(gh|glab-cli)(\/|$)|(^|\/)\.docker\/config\.json|(^|\/)\.kube(\/|$)|(^|\/)\.gnupg(\/|$)|(^|\/)\.pypirc$|(^|\/)\.cargo\/credentials(\.toml)?$|(^|\/)\.config\/gcloud(\/|$)|(^|\/)\.azure(\/|$)|(^|\/)\.pgpass$|(^|\/)\.vault-token$|(^|\/)\.gem\/credentials$|(^|\/)[A-Za-z0-9_][^/[\]|]*\.(pem|key|pfx|p12)(\.(bak|old|orig))?$/;
 const SHORT_SEG = /[^\\/]~[0-9]/;
 // A process environment as a file: /proc/<pid>/environ and /proc/<pid>/task/<tid>/environ.
 const ENVIRON_RE = /^\/proc\/(.+\/)?environ$/;
@@ -1287,7 +1283,7 @@ function programGlobReachesKey(pattern) {
   if (over) return true;
   return [s, ...list].some((alt) => {
     // A name with no wildcard (--include=.env) is the key file itself; a pattern is matched against the key names.
-    if (!/[*?[\]{}]/.test(alt)) return KEY_RE.test(alt.toLowerCase());
+    if (!/[*?[\]{}]/.test(alt)) return isKeyMaterial(alt.toLowerCase());
     if (keyGlobReaches(alt)) return true;
     const dotted = alt.split('/').map((seg) => (/[^*?]/.test(seg) ? seg.replace(/^\*/, '{.,}*').replace(/^\?/, '[.?]') : seg)).join('/');
     return dotted !== alt && keyGlobReaches(dotted);
@@ -1462,11 +1458,11 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     const judgeText = (text, partial) => {
       if (!text) return;
       const t = keyText(text);
-      if (KEY_RE.test(t)) return keyWhy(text);
+      if (isKeyMaterial(t)) return keyWhy(text);
       // The same text in its canonical form: `~/.config//gh`, `/proc/self/./environ` and `a/../.ssh` name the
       // file the shell opens, whatever the spelling (and /proc/$$/envi""ron is /proc//environ).
       const flat = posix.normalize(t);
-      if (KEY_RE.test(flat)) return keyWhy(text);
+      if (isKeyMaterial(flat)) return keyWhy(text);
       if (ENVIRON_RE.test(flat)) return environWhy(text);
       if (PROC_DIR_RE.test(flat)) return procDirWhy(text);
       // A glob under /proc, or one that can name /proc/<pid>/environ, reads the process environment through a name
@@ -1505,7 +1501,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
     const real = realCanonical(p, rootC);
     const inner = rel(real, rootC, ignoreCase);
     const l = (inner === null ? real : inner).toLowerCase().replace(/\.env\.example/g, '');
-    if (KEY_RE.test(l) || KEY_RE.test(real.toLowerCase().replace(/\.env\.example/g, ''))) deny(`key material (${raw}) is never read, searched, uploaded or written during ${runKind}`);
+    if (isKeyMaterial(l) || isKeyMaterial(real.toLowerCase().replace(/\.env\.example/g, ''))) deny(`key material (${raw}) is never read, searched, uploaded or written during ${runKind}`);
     else if (ENVIRON_RE.test(real.replace(/\\/g, '/'))) deny(`reading a process environment (${raw}) is blocked during ${runKind}; check a variable with \${NAME:+set} instead`);
   };
 
@@ -2217,7 +2213,7 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
           if (!p.split('/').includes('..')) {
             const real = realCanonical(p, rootC);
             const inner = rel(real, rootC, ignoreCase);
-            if (inner !== null && !KEY_RE.test(inner.toLowerCase())) return;
+            if (inner !== null && !isKeyMaterial(inner.toLowerCase())) return;
           }
         }
         return deny(CMD_MSG);
