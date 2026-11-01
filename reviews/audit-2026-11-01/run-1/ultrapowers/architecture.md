@@ -10,7 +10,7 @@ Protected resources: the developer's credentials (`~/.ssh`, `~/.aws`, gh/glab lo
 
 ## 2. Comparable baseline
 
-A fork of the upstream superpowers skills plugin (AGENTS.md:17); the hunt engine is Cloudflare's security-audit skill stored byte for byte (`skills/vulnerability-hunt/cloudflare/PROVENANCE.md`). A PreToolUse allow/deny hook is the same pattern as harness permission rules: a deny-list over a shell grammar is a known weak class (parser differentials between the checker and bash). Calibration only.
+A fork of the upstream <old-name> skills plugin (AGENTS.md:17); the hunt engine is Cloudflare's security-audit skill stored byte for byte (`skills/vulnerability-hunt/cloudflare/PROVENANCE.md`). A PreToolUse allow/deny hook is the same pattern as harness permission rules: a deny-list over a shell grammar is a known weak class (parser differentials between the checker and bash). Calibration only.
 
 ## 3. Stack, deployment paths, offline limits
 
