@@ -32,6 +32,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { basename, dirname, join, resolve } from 'node:path';
 import { regularFileProblem, reviewFolderProblem } from '../../autopilot/scripts/autopilot-lib.mjs';
 import { DEFAULT_TICKET_PATTERN, findRoot } from '../../qa-specialist/scripts/qa-preflight.mjs';
+import { plainId, plural, readProject } from '../../vulnerability-hunt/scripts/hunt-files.mjs';
 import { judgeRun, loadRun, renderReviewSection } from '../../vulnerability-hunt/scripts/hunt-verdict.mjs';
 
 const SEVERITIES = ['Critical', 'Important', 'Minor'];
@@ -84,11 +85,7 @@ function normalize(findings) {
   });
 }
 
-function plural(n, word) {
-  return `${n} ${word}${n === 1 ? '' : 's'}`;
-}
-
-// `security` is judgeRun's judgement of the hunt's run ({ verdict, sentence, counts }), or null when there is no run.
+// `security` is judgeRun's judgement of the hunt's run ({ verdict, sentence, counts, repos }), or null when there is no run.
 function decide(repos, qa, security, { qaConfigured = true } = {}) {
   const counts = { Critical: 0, Important: 0, Minor: 0 };
   for (const repo of repos) for (const f of repo.findings) counts[f.severity] += 1;
@@ -127,7 +124,7 @@ function decide(repos, qa, security, { qaConfigured = true } = {}) {
       : (counts.Minor > 0 ? `only ${plural(counts.Minor, 'Minor finding')} and a QA pass` : 'no findings and a QA pass');
   }
   if (qaSkipped) sentence += '; QA: not configured for this project';
-  return { verdict, sentence, counts };
+  return { verdict, sentence, counts, qaSkipped };
 }
 
 function securitySummary(sec) {
@@ -152,8 +149,7 @@ export function assemble({ id, findings, qaText, run = null, reportText = null, 
   const repos = normalize(findings);
   const sec = run ? judgeRun(run) : null;
   const qa = parseQaVerdict(qaText);
-  const { verdict, sentence, counts } = decide(repos, qa, sec, { qaConfigured });
-  const qaSkipped = !qa && !qaConfigured;
+  const { verdict, sentence, counts, qaSkipped } = decide(repos, qa, sec, { qaConfigured });
   const stamp = now.toISOString().slice(0, 16).replace('T', ' ');
   const out = [];
   out.push(`# Task review — ${id}`, '');
@@ -190,16 +186,24 @@ export function assemble({ id, findings, qaText, run = null, reportText = null, 
   } else {
     out.push(`> No QA report was found for ticket ${id}; the gate has not produced a verdict.`, '');
   }
-  return { verdict, sentence, counts, security: sec && { verdict: sec.verdict, counts: sec.counts, sentence: sec.sentence }, markdown: out.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\n*$/, '\n') };
+  return { verdict, sentence, counts, security: sec, markdown: out.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\n*$/, '\n') };
 }
 
 // Mirrors qaConfigured(marker) in skills/autopilot/scripts/autopilot.mjs.
 const qaConfiguredIn = (qa) => Boolean(qa && typeof qa === 'object' && qa.urls && Object.values(qa.urls).some((v) => typeof v === 'string' && v.trim()));
 
+const USAGE = 'usage: node assemble-review.mjs <ticket> --findings <json> [--qa <QA-REPORT.md>] [--cwd <dir>]';
+
+// A usage error: its ERROR line and the usage text, exit 2.
 function usage(message) {
-  if (message) process.stderr.write(`${message}\n`);
-  process.stderr.write('usage: node assemble-review.mjs <ticket> --findings <json> [--qa <QA-REPORT.md>] [--cwd <dir>]\n');
+  process.stderr.write(`ERROR: ${message}\n${USAGE}\n`);
   return 2;
+}
+
+// Any other refusal: its ERROR line alone, exit 2 unless `code` says otherwise.
+function fail(message, code = 2) {
+  process.stderr.write(`ERROR: ${message}\n`);
+  return code;
 }
 
 function main(argv) {
@@ -215,37 +219,32 @@ function main(argv) {
   const qaArg = take('--qa');
   const cwd = resolve(take('--cwd') ?? process.cwd());
   const id = args[0];
-  if (!id) return usage('ERROR: no ticket given');
-  if (!findingsPath) return usage('ERROR: --findings <json> is required');
+  if (!id) return usage('no ticket given');
+  if (!findingsPath) return usage('--findings <json> is required');
   const root = findRoot(cwd);
-  if (!root) {
-    process.stderr.write(`ERROR: no .agents/ultrapowers.json at or above ${cwd}; run /ultrapowers:init first\n`);
-    return 3;
-  }
+  if (!root) return fail(`no .agents/ultrapowers.json at or above ${cwd}; run /ultrapowers:init first`, 3);
   let pattern = DEFAULT_TICKET_PATTERN;
   let qaConfigured = true;
   try {
-    const config = JSON.parse(readFileSync(join(root, '.agents', 'ultrapowers.json'), 'utf8').replace(/^﻿/, ''));
+    const { config } = readProject(root);
     if (typeof config.ticketPattern === 'string' && config.ticketPattern.trim()) pattern = config.ticketPattern;
     qaConfigured = qaConfiguredIn(config.qa);
   } catch {
-    process.stderr.write('ERROR: .agents/ultrapowers.json is not valid JSON\n');
-    return 3;
+    return fail('.agents/ultrapowers.json is not valid JSON', 3);
   }
-  // A leading _ marks a template folder such as reviews/_template, as in ticket-lib.sh.
-  if (/^(\.|\.\.|[-_].*)$/.test(id) || /[/\\\s]/.test(id) || !new RegExp(pattern).test(id)) {
-    process.stderr.write(`ERROR: ticket ${JSON.stringify(id)} is not a plain folder name matching ticketPattern ${pattern}\n`);
-    return 4;
+  if (!plainId(id) || !new RegExp(pattern).test(id)) {
+    return fail(`ticket ${JSON.stringify(id)} is not a plain folder name matching ticketPattern ${pattern}`, 4);
   }
   // The review folder is a real folder of the project before anything in it is read or written: neither reviews
   // nor reviews/<ticket> may be a link out of it.
   const folderProblem = lstatSync(join(root, 'reviews'), { throwIfNoEntry: false })?.isSymbolicLink()
     ? 'reviews is a symbolic link or junction, not a folder of the project'
     : reviewFolderProblem(root, id);
-  if (folderProblem) return usage(`ERROR: ${folderProblem}; nothing was read or written`);
+  if (folderProblem) return fail(`${folderProblem}; nothing was read or written`);
+  // The refusal message of a file that is not a regular file of the project, or null.
   const refused = (file, label) => {
     const problem = regularFileProblem(file, label);
-    return problem ? usage(`ERROR: ${problem}; nothing was written`) : 0;
+    return problem ? `${problem}; nothing was written` : null;
   };
   // The hunt's latest run folder, read the way hunt-verdict.mjs reads it. The provenance check runs when the
   // runner's log folder .ultrapowers/sandbox/<ID>/ exists on this machine; that folder is not committed, so
@@ -255,35 +254,38 @@ function main(argv) {
   try {
     run = loadRun(root, id, logFolder?.isDirectory() ? { checkProvenance: true } : {});
   } catch (error) {
-    return usage(`ERROR: cannot read the vulnerability hunt's run folder: ${error.message}`);
+    return fail(`cannot read the vulnerability hunt's run folder: ${error.message}`);
   }
   if (!run && lstatSync(join(root, 'reviews', id, 'security-findings.json'), { throwIfNoEntry: false })?.isFile()) {
-    process.stderr.write('ERROR: the vulnerability hunt records are from before GH-63; run the hunt again\n');
-    return 2;
+    return fail('the vulnerability hunt records are from before GH-63; run the hunt again');
   }
-  let findings;
   const findingsFile = resolve(cwd, findingsPath);
-  if (regularFileProblem(findingsFile, findingsPath)) return refused(findingsFile, findingsPath);
+  const findingsRefusal = refused(findingsFile, findingsPath);
+  if (findingsRefusal) return fail(findingsRefusal);
+  let findings;
   try {
     findings = JSON.parse(readFileSync(findingsFile, 'utf8').replace(/^﻿/, ''));
   } catch (error) {
-    return usage(`ERROR: cannot read the findings file ${findingsPath}: ${error.message}`);
+    return fail(`cannot read the findings file ${findingsPath}: ${error.message}`);
   }
   const qaFile = resolve(cwd, qaArg || join('reviews', id, 'QA-REPORT.md'));
-  if (regularFileProblem(qaFile, qaArg || `reviews/${id}/QA-REPORT.md`)) return refused(qaFile, qaArg || `reviews/${id}/QA-REPORT.md`);
+  const qaRefusal = refused(qaFile, qaArg || `reviews/${id}/QA-REPORT.md`);
+  if (qaRefusal) return fail(qaRefusal);
   const qaText = existsSync(qaFile) ? readFileSync(qaFile, 'utf8') : null;
   // The hunt's own report is read only to quote its verdict line beside the one computed here.
   const reportFile = join(root, 'reviews', id, 'SECURITY-REPORT.md');
-  if (run && regularFileProblem(reportFile, `reviews/${id}/SECURITY-REPORT.md`)) return refused(reportFile, `reviews/${id}/SECURITY-REPORT.md`);
+  const reportRefusal = run ? refused(reportFile, `reviews/${id}/SECURITY-REPORT.md`) : null;
+  if (reportRefusal) return fail(reportRefusal);
   const reportText = run && existsSync(reportFile) ? readFileSync(reportFile, 'utf8') : null;
   let result;
   try {
     result = assemble({ id, findings, qaText, run, reportText, qaConfigured });
   } catch (error) {
-    return usage(`ERROR: ${error.message}`);
+    return fail(error.message);
   }
   const target = join(root, 'reviews', id, 'TASK-REVIEW.md');
-  if (regularFileProblem(target, `reviews/${id}/TASK-REVIEW.md`)) return refused(target, `reviews/${id}/TASK-REVIEW.md`);
+  const targetRefusal = refused(target, `reviews/${id}/TASK-REVIEW.md`);
+  if (targetRefusal) return fail(targetRefusal);
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, result.markdown);
   process.stdout.write(`Verdict: ${result.verdict} — ${result.sentence}.\nwrote reviews/${id}/TASK-REVIEW.md\n`);

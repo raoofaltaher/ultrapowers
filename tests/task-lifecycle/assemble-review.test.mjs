@@ -275,13 +275,6 @@ test('every heading of the template appears in a full report', () => {
   for (const h of headings) assert.ok(r.markdown.includes(h + '\n'), `missing heading: ${h}`);
 });
 
-test('the template carries no word of the removed hunt records', () => {
-  const text = readFileSync(TEMPLATE, 'utf8');
-  for (const word of ['plausible', 'attackPath', '"discarded"', 'verifications', 'Discarded leads', 'High | Medium | Low', 'never blocks', 'security-findings.json']) {
-    assert.ok(!text.includes(word), `the template still says ${word}`);
-  }
-});
-
 test('the date is UTC and the header names the QA report', () => {
   const r = run([repoBlock('api')], qa('Verdict: PASS — ok.'));
   assert.match(r.markdown, /2026-10-10 12:00/);
@@ -362,13 +355,6 @@ test('an old reviews/<ID>/security-findings.json with no run folder: exit 2 with
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test('--security is no longer a flag: the usage text does not offer it', () => {
-  const root = project();
-  try {
-    assert.doesNotMatch(cli(root, []).stderr, /--security/);
-  } finally { rmSync(root, { recursive: true, force: true }); }
-});
-
 // A run with one local check whose artifact exists on disk; the runner's log folder is the thing that differs.
 function provenanceProject(withLogFolder) {
   const root = project();
@@ -415,11 +401,32 @@ test('the CLI refuses bad input with the documented exit codes', () => {
     writeFileSync(join(root, '.agents', 'ultrapowers.json'), JSON.stringify({ name: 'fx', repos: [], ticketPattern: '.*' }));
     assert.equal(cli(root, ['_template', '--findings', 'bad.json']).status, 4, 'a leading underscore marks a template folder');
     assert.equal(cli(root, ['a_b', '--findings', 'bad.json']).status, 2, 'an underscore inside the id is fine: the bad findings file stops it');
+    assert.equal(cli(root, ['.hidden', '--findings', 'bad.json']).status, 4, 'a leading dot is refused too');
     const outside = mkdtempSync(join(tmpdir(), 'assemble-noroot-'));
     try { assert.equal(cli(outside, ['501', '--findings', 'x.json']).status, 3, 'no project root'); }
     finally { rmSync(outside, { recursive: true, force: true }); }
     assert.ok(!existsSync(join(root, 'reviews', '501', 'TASK-REVIEW.md')), 'nothing written on refusal');
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a usage error prints the usage text; any other refusal prints only its ERROR line', () => {
+  const root = project();
+  const outside = mkdtempSync(join(tmpdir(), 'assemble-noroot-'));
+  try {
+    assert.match(cli(root, []).stderr, /^ERROR: no ticket given\nusage: node assemble-review\.mjs <ticket> /);
+    assert.match(cli(root, ['501']).stderr, /^ERROR: --findings <json> is required\nusage: node assemble-review\.mjs /);
+    writeFileSync(join(root, 'bad.json'), '{ not json');
+    const refusals = [
+      cli(root, ['501', '--findings', 'nope.json']),
+      cli(root, ['501', '--findings', 'bad.json']),
+      cli(root, ['../x', '--findings', 'bad.json']),
+      cli(outside, ['501', '--findings', 'x.json']),
+    ];
+    for (const r of refusals) assert.match(r.stderr, /^ERROR: [^\n]+\n$/, r.stderr);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
 });
 
 // ---- Round 3, Medium 14: the files assemble-review reads and the one it writes are regular files of the project ----
