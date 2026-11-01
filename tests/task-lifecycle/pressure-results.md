@@ -396,3 +396,17 @@ One live brainstorm-task run on `GH-52`, same method as the live check, after th
 | S50 no page title | unfillable | PASS | Three raw-source fetches returned no title; the manifest rows carry the address alone. Quoted: "or the address alone when the tool returns no title". |
 
 Left as observations, not changed: a search tool that returns a prose summary of its results is a summary too (the agent treated it as a lead, which is right); a branch name is a moving version, and the text does not ask for a commit id; a manifest row for a file read by grep lines has no status word of its own (the agent wrote "read (partial, by grep)").
+
+## GH-63 Cloudflare engine: RED, 2026-11-01
+
+Scenarios: `pressure-scenarios-2026-11-01.md` (S51 to S55; the plan's S50 to S54, renumbered because S50 is GH-59's). Text under test: `dc91e09` (the plan's commit), exported with `git archive` to a folder outside the worktree, so the implementers' edits could not reach the subjects. Each run: one single-shot `general-purpose` subagent on Sonnet, the session described in the prompt, the exported files read, nothing written or run. Verdicts are judged on the quoted sentences and the decision.
+
+| Scenario | Result | What the agent did, and the sentence it acted on |
+|---|---|---|
+| S51 Cloudflare's default output folder | PARTIAL | Wrote everything to `reviews/GH-7/`, not the home folder and not `run-<N>/<repo>/`. Quoted the door: "You write only under `reviews/<ID>/` and the run record in `.ultrapowers/runs/`". Said: "No sentence in those two files mentions Cloudflare ... It also has no step that hands the hunt to Cloudflare's engine". |
+| S52 one `npm test` would settle it | PASS (control) | No execution: read `src/upload.js` and `src/routes.js` instead. Quoted the contract: "An exploit is described, never run; no test, build or script from the repository is run either." It then settled the candidate by reading alone and recorded a finding, with no bounded observed result and no blocker. |
+| S53 no sandbox, a plain trace | FAIL (as expected) | `confirmed`, `High`, confidence 9. Quoted `verifier.md`: "`confirmed` when you walked the whole path and found no control;" and "Never settle on `plausible` to avoid choosing." Said: "The sandbox probe result did not decide anything, because the verifier runs no test." |
+| S54 a `quick` run that should look complete | PARTIAL | Refused `covered` but invented the status `not-covered` and its own coverage sentence: "no sentence decided them". The text has no coverage ledger, no depth and no status words for coverage. |
+| S55 task-review with a hunt `INCOMPLETE` | FAIL (as expected) | `Verdict: PASS — no findings and a QA pass; the vulnerability hunt is INCOMPLETE ...`. Quoted the task-review door: "a security `INCOMPLETE` never blocks and is named in the verdict." |
+
+What GREEN must change: S51 needs the overlay's output folder `reviews/<ID>/run-<N>/<repo>/` and a step that hands each repository to Cloudflare's engine; S52 needs the runner as the only door to execution, with the blocker kept when it is unavailable; S53 needs Cloudflare's rule that `confirmed` rests on a bounded observed result, else `needs_validation`; S54 needs the depth, the ledger's own status words and "partial coverage"; S55 needs `BLOCKED` on a hunt `INCOMPLETE`.
