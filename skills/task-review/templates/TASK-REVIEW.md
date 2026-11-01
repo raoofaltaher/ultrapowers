@@ -3,7 +3,7 @@
 | Ticket | <ID> |
 |---|---|
 | Date (UTC) | <YYYY-MM-DD HH:MM> |
-| Repositories | <repo: branch against base at head sha, n files> |
+| Repositories | <repo: branch against base at head sha> |
 | QA report | [QA-REPORT.md](QA-REPORT.md) |
 
 Verdict: <PASS | PASS-WITH-ISSUES | FAIL | BLOCKED> — <one sentence naming the deciding finding, the QA verdict or a hunt that ended INCOMPLETE>
