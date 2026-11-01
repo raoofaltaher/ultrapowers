@@ -1,0 +1,114 @@
+{
+  "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "hunt-guardrail/audit-form-skips-program-path-check",
+    "title": "A path-named program runs on the host when its basename is an allowed hunt audit form",
+    "description": "The hunt guardrail judges the program by its basename. When the basename and arguments match an allowed audit form (date, npm audit, pip list, cargo audit, osv-scanner, pip-audit, and in this range gitleaks), the call is allowed and the rule that refuses a program named by a path inside the project is never run. A hunter steered by repository text can then run an executable file of the audited tree, or on Windows Git Bash a `#!` script it wrote into reviews/<id>/, under a name such as `./gitleaks` or `reviews/<id>/date`, directly on the host with the developer's credentials. This is outside the Docker sandbox, which AGENTS.md and the hunt contract make the only door to project code. A sibling control (`bash reviews/x.sh` is refused) shows the intent.",
+    "claimed_root_cause": "In simple(), huntCheck is called with the basename-only prog and returns at `if (h && h.allow) { ...; return; }` before huntProgramWhy, which is the only place that refuses a path-named program inside the project.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "hooks/lib/qa-shell-writes.mjs",
+        "line": 1725,
+        "scope": "simple()",
+        "description": "The program word, which may be a path such as ./gitleaks or reviews/<id>/date, becomes prog = progName(args[0].v)."
+      },
+      {
+        "kind": "propagation",
+        "file": "hooks/lib/qa-shell-writes.mjs",
+        "line": 72,
+        "scope": "progName",
+        "description": "progName keeps only the basename, lowercased, without .exe, so the directory part of the path is dropped."
+      },
+      {
+        "kind": "propagation",
+        "file": "hooks/lib/qa-shell-writes.mjs",
+        "line": 889,
+        "scope": "huntCheck",
+        "description": "gitleaks (and date at 798, osv-scanner at 874, the package managers) are judged by their arguments only and return allow() with no look at the path."
+      },
+      {
+        "kind": "propagation",
+        "file": "hooks/lib/qa-shell-writes.mjs",
+        "line": 1176,
+        "scope": "huntProgramWhy",
+        "description": "The refusal of a program that is a path inside the project exists only here, and it is reached only for programs huntCheck did not allow."
+      },
+      {
+        "kind": "sink",
+        "file": "hooks/lib/qa-shell-writes.mjs",
+        "line": 2133,
+        "scope": "simple()",
+        "description": "`if (h && h.allow) { ... return; }` ends the check, so the call passes and the shell starts the file at the given path."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "hooks/lib/qa-shell-writes.mjs",
+        "line": 2128,
+        "description": "huntCheck receives prog (the basename) and the argument values, never the original program word."
+      },
+      {
+        "file": "hooks/lib/qa-shell-writes.mjs",
+        "line": 2139,
+        "description": "huntProgramWhy is called after the huntCheck return, so an allowed audit form never reaches it."
+      },
+      {
+        "file": "hooks/lib/qa-shell-writes.mjs",
+        "line": 609,
+        "description": "gitleaks was added to HUNT_AUDIT_TOOLS in this range (diff dev..GH-63-cloudflare-engine); the huntCheck-before-huntProgramWhy order itself is unchanged and already existed for the other tools."
+      },
+      {
+        "file": "hooks/qa-guardrail",
+        "line": 767,
+        "description": "The bash layer adds no executable-path rule for the hunt; it only runs the same analyzer (:1166)."
+      }
+    ],
+    "blockers": [
+      "No sandbox for this run, so the analyzer cannot be executed to observe the allow decision",
+      "Whether an executable named like an allowed tool exists in the audited tree (Linux), or whether MSYS runs a `#!` file written into reviews/<id>/ without an exec bit (Windows), is a deployment fact outside source"
+    ],
+    "validation_plan": {
+      "local": "In a throwaway project with a hunt run record, feed hooks/qa-guardrail the PreToolUse event {tool_name: Bash, command: `./bin/gitleaks --version`} and then `reviews/<id>/date +%s` with a harmless shebang file there. Expect the analyzer to refuse a path-named program, as it does for `bash repo/script.sh`; an allow, or a run of the file, confirms the candidate.",
+      "deployment": "Owner check: on the machine that runs hunts, create reviews/<id>/gitleaks as a one-line `#!/bin/sh` script that only prints a marker, and see whether a hunter session is allowed to run `reviews/<id>/gitleaks --version`."
+    }
+  },
+  "linked_unit_checks": [
+    {
+      "coverage_id": "hooks%2Fqa-guardrail%23hunt%20profile%20tool%20call::hooks%2Flib%2Fqa-shell-writes.mjs%23hunt%20allow-list::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Access%20control",
+      "checks": [
+        {
+          "agent_id": "h1-guardrail",
+          "reviewed_paths": [
+            "hooks/lib/qa-shell-writes.mjs"
+          ],
+          "invariant": "every program a hunt shell command starts is on the allow-list, and a program named by a path inside the project is refused (huntProgramWhy :1165-1177)",
+          "method": "source",
+          "result": "The path-named-program refusal lives only in huntProgramWhy (:1169-1177). simple() takes progName(args[0].v), which is the basename (:72, :1725), calls huntCheck (:2128) and returns at :2130-2133 when huntCheck allows, before huntProgramWhy runs at :2139. Every program huntCheck allows is therefore started under whatever path the agent wrote: date, npm, pnpm, pip, dotnet, cargo, pip-audit, osv-scanner, and in this range gitleaks (:609, :889). No test covers a path-qualified audit tool (tests/qa-gatekeeper has no such case). Recorded as a candidate: hunt-guardrail/audit-form-skips-program-path-check.",
+          "artifact": null
+        },
+        {
+          "agent_id": "h1-guardrail",
+          "reviewed_paths": [
+            "hooks/lib/qa-shell-writes.mjs"
+          ],
+          "invariant": "the plugin's own scripts the hunt may run with node (HUNT_OWN_SCRIPTS_RE, extended in this range with hunt-sandbox, hunt-verdict and the two validators) are the plugin's files, not the audited tree's",
+          "method": "source",
+          "result": "huntProgramWhy (:1233-1256) requires the script to be the first word after node with no option, free of `..`, not stdin, matching the anchored regex on the real path, outside the report area, inside the real plugin root, and a regular file. The env gate (:2112-2116) refuses NODE_OPTIONS and the other loader variables before it. The arguments of these scripts are not judged by the guardrail, only by name for key material. The validators (validate-findings.cjs, validate-coverage-ledger.cjs) take one path, read it, and write nothing. The same-checkout case (plugin root equal to the audited project) trusts the audited tree by construction and is not a boundary here.",
+          "artifact": null
+        },
+        {
+          "agent_id": "h1-guardrail",
+          "reviewed_paths": [
+            "hooks/qa-guardrail"
+          ],
+          "invariant": "a tool the hunt does not use, a tool that carries a URL, and a tracker or mail tool that writes are all denied in the hunt profile",
+          "method": "source",
+          "result": "The hunt gate (:767-799) denies web fetch and search names, any non-reader tool with a URL, the write_stdin forms, and any tool not on hunt_write_re, hunt_shell_re or hunt_tools_re unless its MCP server is a tracker or mail word, so unknown MCP tools and other connectors (Drive, Calendar, Firecrawl, Canva) are denied. Tracker and mail tools pass as reads. The write-vs-read decision for them (:705-731) is a verb list in which `trash`, `mark`, `archive`, `request` and `apply` are missing, so Gmail trash_message, trash_thread, mark_message_spam and mark_thread_spam, and GitHub request_copilot_review, are classified as reads and pass (candidate hunt-guardrail/tracker-write-verb-denylist-misses-trash-mark).",
+          "artifact": null
+        }
+      ]
+    }
+  ],
+  "prior_records_same_fingerprint": []
+}

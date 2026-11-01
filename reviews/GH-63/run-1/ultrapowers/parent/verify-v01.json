@@ -1,0 +1,106 @@
+{
+  "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "hunt-contract:subagent-write-scope-reaches-verdict-inputs",
+    "title": "A delegated hunt agent can write the verdict's inputs, because the write confinement is per run and the per-agent write scope is prose only",
+    "description": "The hunt contract says subagents write almost nothing (a hunter only its own agents/<agent-id>/inputs/, the secrets lane only its gitleaks reports), and that the coordinator alone writes research.json, tool-lanes.json and the Cloudflare shared files. The guardrail enforces only the run's write area, reviews/<ID>/ plus .ultrapowers/ excluding runs and sandbox, for every tool call in the session, subagents included. The verdict script then reads the highest-numbered run-<N> folder and trusts findings.json, coverage-ledger.json, tool-lanes.json and research.json by shape, with no binding to the run record, the preflight's RUN folder or the file's author. A hunter or lane agent that reads the audited tree and is steered by text in it keeps a Write tool, and so holds authority over the files that decide SECURITY-REPORT.md and TASK-REVIEW.md. Examples are a higher run-N folder with forged records, or an overwritten tool-lanes.json that hides a secret or CVE row. The chain needs a prompt-injected delegated agent plus a forged set of records that Cloudflare's two validators accept. Injection alone is not the claim.",
+    "claimed_root_cause": "The delegation gives each hunter, lane and verifier agent the whole session toolset and the whole run write area, and narrows it only in prose: agents/vulnerability-hunter.md:38-44, the overlay's item 4 and the lane prompts. The deterministic check (hooks/qa-guardrail:904-912) cannot tell which agent wrote, and hunt-verdict.mjs trusts file shape instead of an owner or a binding to the live run.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "skills/vulnerability-hunt/prompts/cloudflare-overlay.md",
+        "line": 8,
+        "scope": "overlay item 4",
+        "description": "Hunters and lanes read the untrusted tree and are told only by prose to write nothing but their own inputs/ folder. They are dispatched with the session's tools, including Write."
+      },
+      {
+        "kind": "propagation",
+        "file": "hooks/qa-guardrail",
+        "line": 906,
+        "scope": "hunt write rule",
+        "description": "A Write or Edit by any call of the session is allowed for any path under reviews/<ID>/, so findings.json, tool-lanes.json, research.json and a new run-<N>/ folder are all permitted. Only the protected-path list and .ultrapowers/(runs|sandbox) are refused."
+      },
+      {
+        "kind": "propagation",
+        "file": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+        "line": 192,
+        "scope": "latestRun",
+        "description": "The run used for the verdict is the highest run-<N> directory under reviews/<ID>/, not the run the preflight announced or the run record names."
+      },
+      {
+        "kind": "sink",
+        "file": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+        "line": 254,
+        "scope": "loadRun",
+        "description": "findings, ledger, tool-lanes and research are accepted if they pass shape and Cloudflare's validator checks. No owner or origin is checked, so forged records reach the verdict, the front page and assemble-review."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "agents/vulnerability-hunter.md",
+        "line": 38,
+        "description": "Subagents write almost nothing: only the coordinator's own listed files and a hunter's own inputs/; no mechanism beyond the prose is named."
+      },
+      {
+        "file": "skills/vulnerability-hunt/prompts/lane-secrets.md",
+        "line": 25,
+        "description": "The reports under <RUN>/ are the only files this lane creates: a prompt-level rule."
+      },
+      {
+        "file": "hooks/qa-guardrail",
+        "line": 912,
+        "description": "The deny message names the limit as reviews/<id>/ and .ultrapowers/, which is the per-run scope, not a per-agent scope."
+      },
+      {
+        "file": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+        "line": 301,
+        "description": "tool-lanes.json is accepted when it is shaped as a lanes object; there is no author or provenance check for it, for findings or for research."
+      }
+    ],
+    "blockers": [
+      "The sandbox is unavailable for this run, and no target code or local check was run, so no forged run folder has been observed to be accepted by hunt-verdict.mjs.",
+      "Whether Cloudflare's validators accept a minimal forged ledger and findings set, and whether a harness delivers PreToolUse events for subagent calls, are facts observed at run time.",
+      "Whether the harness lets the coordinator's later writes overwrite a forged file is run-time ordering."
+    ],
+    "validation_plan": {
+      "local": "In a throwaway fixture repository with a dummy ticket, as a sandboxed or unit-test harness step: write a higher run-<N> folder holding a minimal valid run-metadata.json (run_status complete), coverage-ledger.json and findings.json through the hook's hunt profile as a subagent-origin event. Then run hunt-verdict.mjs verdict on it and check that it prints PASS for the forged run, not for the real run. The same hook-level case can be added to tests/qa-gatekeeper/fixtures/hunt/cases.json.",
+      "deployment": "The owner can observe on Claude Code whether a hunter subagent's Write call to reviews/<ID>/run-<N+1>/findings.json is delivered to the hunt hook and allowed. If it is, per-agent confinement is absent in practice."
+    }
+  },
+  "linked_unit_checks": [
+    {
+      "coverage_id": "agents%2Fvulnerability-hunter.md%23procedure::agents%2Fvulnerability-hunter.md%23Absolute%20rules::profile%2Fquick%2Fall-in-scope-subsystems::AI-AND-LLM.md%23Sub-agent%20and%20MCP%20trust%20inheritance",
+      "checks": [
+        {
+          "agent_id": "h5-contract",
+          "reviewed_paths": [
+            "agents/vulnerability-hunter.md",
+            "skills/vulnerability-hunt/SKILL.md",
+            "skills/vulnerability-hunt/prompts/cloudflare-overlay.md",
+            "skills/vulnerability-hunt/prompts/lane-secrets.md",
+            "hooks/qa-guardrail",
+            "skills/vulnerability-hunt/scripts/hunt-verdict.mjs"
+          ],
+          "invariant": "A delegated hunter or tool lane receives only the authority its contract grants (writes only its own agents/<agent-id>/inputs/ folder, or its own reports), and the verdict's inputs cannot be written by a delegated task.",
+          "method": "source",
+          "result": "The narrowing exists only as prose. The contract (agents/vulnerability-hunter.md:38-44), overlay item 4 and lane-secrets.md:25 say a subagent writes almost nothing. The hunt guardrail judges the write path against the session, not the agent. Any file tool call in the session may write anywhere under reviews/<ID>/ (hooks/qa-guardrail:904-912). Only .ultrapowers/(runs|sandbox) and the protected-path list are refused. hunt-verdict.mjs takes the highest run-<N> folder (:192-211) and trusts findings.json, coverage-ledger.json, tool-lanes.json and research.json by shape (:254-306). Nothing binds the loaded run to the run record or to the preflight's RUN folder. A prompt-injected delegated agent therefore holds write authority over the verdict's inputs. Recorded as candidate hunt-contract:subagent-write-scope-reaches-verdict-inputs. Fake sandbox artifacts are not reachable, because verify matches the protected sandbox log.",
+          "artifact": null
+        },
+        {
+          "agent_id": "h5-contract",
+          "reviewed_paths": [
+            "skills/vulnerability-hunt/prompts/lane-dependencies.md",
+            "skills/vulnerability-hunt/prompts/lane-osint.md",
+            "skills/vulnerability-hunt/prompts/advisory-verifier.md",
+            "skills/vulnerability-hunt/prompts/research.md"
+          ],
+          "invariant": "Tool-lane, verifier and research prompts treat tree, tool and web text as data and carry no secret or tracker authority beyond the contract's listed tools; the research step (unguarded, session tools) gets only sanitized rows.",
+          "method": "source",
+          "result": "Every prompt states that tree, page and tool text are data and that the lanes never dispatch subagents. The OSINT and secrets lanes forbid copying secret fields. The research step is given only the preflight's DECLARED rows (the code-side filter is h3's). research.md is unchanged in range. The advisory verifier receives the research row unchanged. That row carries web-derived free text in `conditions` and `reason`, but the verifier can only confirm or downgrade, and it runs under the guardrail. Nothing further to report beyond the hardening notes.",
+          "artifact": null
+        }
+      ]
+    }
+  ],
+  "prior_records_same_fingerprint": []
+}

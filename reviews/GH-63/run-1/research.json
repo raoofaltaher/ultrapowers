@@ -1,0 +1,9 @@
+{ "repos": [ { "repo": "ultrapowers", "research": {
+    "tools": ["Firecrawl search and scrape", "WebSearch", "WebFetch", "context7-http documentation", "DeepWiki"],
+    "status": "checked",
+    "reason": "Research tools were available. The only declared subject, ws, is an npm dependency, and npm is present in <TOOLS>, so its audit database is the source and it was not queried. No runtime or image row is declared, so no query was sent and no advisory was recorded.",
+    "notResearched": [
+      { "subject": "ws ^8.22.0 (tests/brainstorm-server/package.json:8)", "reason": "covered by the npm audit tool present in TOOLS; its database is the source, not a research query" },
+      { "subject": "runtimes and base images (Node engines, version files, Dockerfile FROM)", "reason": "not declared in a readable form" }
+    ],
+    "advisories": [] } } ] }

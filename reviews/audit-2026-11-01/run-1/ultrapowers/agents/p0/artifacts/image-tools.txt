@@ -1,0 +1,17 @@
+command: bash -c bash --version | head -1; node --version; command -v grep sed tr jq git; ls /target | head -5; id
+image: node@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da
+limits: cpus=1 memory=512m pids=128 fileSizeBytes=16777216 scratch=128m seconds=120
+env: none
+result: exit 0
+output (redacted, first 65536 bytes):
+GNU bash, version 5.2.15(1)-release (x86_64-pc-linux-gnu)
+v22.23.4
+/usr/bin/grep
+/usr/bin/sed
+/usr/bin/tr
+AGENTS.md
+CLAUDE.md
+CODE_OF_CONDUCT.md
+CONTRIBUTING.md
+GEMINI.md
+uid=65534(nobody) gid=65534(nogroup) groups=65534(nogroup)

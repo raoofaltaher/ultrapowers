@@ -1,0 +1,109 @@
+{
+  "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "hunt-verdict:loadRun:refused-records-demoted-below-issues-tier",
+    "title": "A refused tool-lanes.json drops its committed-credential rows, and the refusal is hidden behind PASS-WITH-ISSUES",
+    "description": "validLanes refuses the whole tool-lanes.json when one CVE row has a severity off the scale critical/high/moderate/low (medium maps to moderate; 'info', 'none' or 'unknown' do not). The secrets, alerts and notes of every lane in that file then count as zero, the only trace is a loadRun problem, and judgeRun uses problems only in its last tier. If the run has any needs_validation record, an OSINT alert in an unrefused file, or a confirmed medium finding, the verdict is PASS-WITH-ISSUES, not FAIL, the sentence does not mention the problem, and renderReviewSection does not print problems, so TASK-REVIEW.md shows neither the refusal nor the missing secrets. The same demotion hides an unredacted gitleaks report (a committed file) when another issue sets a higher tier.",
+    "claimed_root_cause": "Records the verdict cannot read are reported as a problem that only matters when nothing else is wrong, and the refusal is whole-file, so rows that were valid are lost with the invalid one.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+        "line": 242,
+        "scope": "validLanes",
+        "description": "Every CVE of every lane must have a severity on CVE_SCALE or the whole file is refused; the lanes share one file per repository."
+      },
+      {
+        "kind": "propagation",
+        "file": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+        "line": 304,
+        "scope": "loadRun",
+        "description": "On refusal toolLanes stays null and only the problem 'tool-lanes.json is not a lanes object' (a message that names no cause) is added."
+      },
+      {
+        "kind": "propagation",
+        "file": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+        "line": 390,
+        "scope": "analyze",
+        "description": "`lanes` becomes [] for that repository, so secrets, alerts, notes and cves are all empty and the FAIL condition on committed credentials (line 512) cannot hold."
+      },
+      {
+        "kind": "propagation",
+        "file": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+        "line": 518,
+        "scope": "judgeRun",
+        "description": "A needs_validation record or an alert gives PASS-WITH-ISSUES before the branch that reads run.problems (line 540)."
+      },
+      {
+        "kind": "sink",
+        "file": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+        "line": 710,
+        "scope": "renderReviewSection",
+        "description": "The section posted into TASK-REVIEW.md does not render run.problems; only the front page does (lines 702-703), so the refusal is not visible in the task-review report."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "skills/vulnerability-hunt/prompts/lane-dependencies.md",
+        "line": 29,
+        "description": "The lane agent gives the severity 'as the tool states it' and lists four words, so a tool that states another word produces a refused file; lane-osint.md:41 has the same rule for Dependabot rows."
+      },
+      {
+        "file": "agents/vulnerability-hunter.md",
+        "line": 159,
+        "description": "Every lane block goes into the one tool-lanes.json per repository, so one lane's off-scale row removes the other lanes' secrets."
+      },
+      {
+        "file": "tests/vulnerability-hunt/hunt-verdict.test.mjs",
+        "line": 174,
+        "description": "The tests make 'FAIL or PASS-WITH-ISSUES wins over INCOMPLETE' deliberate for run_status; nothing there covers a refused-record problem combined with a lower-tier issue."
+      },
+      {
+        "file": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+        "line": 313,
+        "description": "An unredacted gitleaks report is also only a problem (used in the last tier), though the file is committed under reviews/<ID>/."
+      }
+    ],
+    "blockers": [
+      "The sandbox is unavailable for this run, so judgeRun and loadRun were not executed on a refused tool-lanes.json plus a needs_validation record.",
+      "Whether a real audit tool emits a severity word off the four-word scale (for example `info` from npm audit, or an OSV row with no severity) is a fact about the installed tools, not visible in source."
+    ],
+    "validation_plan": {
+      "local": "Write tool-lanes.json with a secrets lane holding one credential row and a dependencies lane with one CVE of severity 'info', plus one needs_validation record in findings.json; run `hunt-verdict.mjs verdict` and expect FAIL or INCOMPLETE; today it should print PASS-WITH-ISSUES with no mention of the secret or the refusal. Suggested change: validate lane rows individually (or count the secrets of a refused file as an incomplete lane), and make any loadRun problem at least INCOMPLETE in the sentence and the review section whatever the other tier.",
+      "deployment": "Owner check: run the installed audit tools on a real lockfile and record the severity words in their output."
+    }
+  },
+  "linked_unit_checks": [
+    {
+      "coverage_id": "skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-verdict.mjs%23loadRun::skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-verdict.mjs%23verdict::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Business%20logic",
+      "checks": [
+        {
+          "agent_id": "h4-verdict",
+          "reviewed_paths": [
+            "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+            "skills/task-review/scripts/assemble-review.mjs",
+            "agents/vulnerability-hunter.md",
+            "tests/vulnerability-hunt/hunt-verdict.test.mjs"
+          ],
+          "invariant": "The verdict says PASS only when every repository the plan selected was hunted to completion in the run being judged, and it never says PASS for an empty, partial or superseded run",
+          "method": "source",
+          "result": "Fails. latestRun (192-211) takes the highest `run-N` folder and compares it to nothing. loadRun (270-277) builds its repository set from directories that hold a run-metadata.json and silently skips every other directory. The run folder and the repository folders are created before run-metadata.json is written (agents/vulnerability-hunter.md:129 and 137-148). judgeRun (527-545) reaches PASS when `repos` is empty, because the loop adds no part and `run.problems` is empty. In assemble-review.mjs only INCOMPLETE blocks (100, 110), so PASS passes through. The tests cover a missing repo-metadata field and a missing ledger, but no zero-repository run and no missing-repository run; the only mention is the renderReviewSection note at hunt-verdict.mjs:723, which does not change the verdict.",
+          "artifact": null
+        },
+        {
+          "agent_id": "h4-verdict",
+          "reviewed_paths": [
+            "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+            "skills/task-review/scripts/assemble-review.mjs",
+            "skills/vulnerability-hunt/prompts/lane-dependencies.md"
+          ],
+          "invariant": "A record the verdict refuses (tool-lanes.json, an unredacted gitleaks report) must not make rows vanish while a lower-severity result still produces a passing verdict, and the refusal must reach the reader",
+          "method": "source",
+          "result": "Fails. validLanes (234-244) refuses the whole tool-lanes.json when any single CVE severity is off the four-word scale. loadRun sets toolLanes to null and adds a problem (301-306). analyze then reads `lanes` as [] (390), so the secrets, alerts, notes and every other CVE row of that file are not counted. judgeRun uses `run.problems` only in the last tier (540). Any needs_validation record, OSINT alert or confirmed medium finding gives PASS-WITH-ISSUES first (518-526) and the problem appears in no sentence. renderReviewSection (710-726) never prints run.problems; only the front page does (702-703). The test at hunt-verdict.test.mjs:174-177 makes 'FAIL or PASS-WITH-ISSUES wins over INCOMPLETE' deliberate for run_status; nothing makes it deliberate for refused records. The dependencies lane prompt tells the agent to give the severity 'as the tool states it' in the words critical|high|moderate|low (lane-dependencies.md:29,42), and all lanes share the one tool-lanes.json (agents/vulnerability-hunter.md:159).",
+          "artifact": null
+        }
+      ]
+    }
+  ],
+  "prior_records_same_fingerprint": []
+}

@@ -1,0 +1,104 @@
+{
+  "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "hunt-guardrail/tracker-write-verb-denylist-misses-trash-mark",
+    "title": "The hunt lets mail and tracker tools with the verbs trash, mark, archive or request through as reads",
+    "description": "A hunt may call MCP tools of a tracker or mail server, and the hook tells a write from a read by a list of write words. The list has no `trash`, `mark`, `archive`, `request` or `apply`, so Gmail trash_message, trash_thread, mark_message_spam and mark_thread_spam (and their untrash/unmark pairs) and GitHub request_copilot_review are not recognised as writes and pass the hunt gate. Repository text that steers a hunter could trash or spam-mark the developer's mail or trigger a review request, in a run that is meant to read and never post.",
+    "claimed_root_cause": "The tracker/mail read-write decision (qa-guardrail:709-731) is a denylist of write verbs and passes any name that holds none of them; the hunt gate (:796-799) then treats every tracker-word server as a reader.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "hooks/qa-guardrail",
+        "line": 705,
+        "scope": "tracker rule",
+        "description": "A tool such as mcp__claude_ai_Gmail__trash_message is normalised and matches tracker_re (gmail)."
+      },
+      {
+        "kind": "propagation",
+        "file": "hooks/qa-guardrail",
+        "line": 710,
+        "scope": "write_re",
+        "description": "write_re lists create, update, delete, label, send, post and similar words, but not trash, mark, archive, request or apply, and read_re does not match either."
+      },
+      {
+        "kind": "propagation",
+        "file": "hooks/qa-guardrail",
+        "line": 725,
+        "scope": "tracker rule condition",
+        "description": "The deny fires only when write_re matches and read_re does not; a name matching neither falls through."
+      },
+      {
+        "kind": "propagation",
+        "file": "hooks/qa-guardrail",
+        "line": 796,
+        "scope": "hunt gate",
+        "description": "The tracker server word sets tracker_read=1, so the hunt gate at :797 does not deny the tool."
+      },
+      {
+        "kind": "sink",
+        "file": "hooks/qa-guardrail",
+        "line": 799,
+        "scope": "hunt gate end",
+        "description": "The call is allowed and the MCP server moves the message to Trash or marks it as spam."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "hooks/qa-guardrail",
+        "line": 729,
+        "description": "The deny message states the intent: tracker and mail writes through MCP tools are never run during a hunt; the run reads, it does not post."
+      },
+      {
+        "file": "hooks/qa-guardrail",
+        "line": 790,
+        "description": "The hunt's tracker word list includes gmail, outlook, slack and teams besides the code trackers."
+      }
+    ],
+    "blockers": [
+      "No sandbox for this run, so the hook was not executed on these tool names",
+      "Whether a Gmail, Slack or other mail/chat connector with such tool names is loaded and authorised in the session that runs a hunt is a harness and deployment fact"
+    ],
+    "validation_plan": {
+      "local": "Feed hooks/qa-guardrail, under a hunt run record in a throwaway project, the events {tool_name: mcp__claude_ai_Gmail__trash_message, tool_input: {}} and {tool_name: mcp__claude_ai_Gmail__mark_thread_spam, tool_input: {}}; both are expected to be allowed, while mcp__claude_ai_Gmail__create_draft is denied.",
+      "deployment": "Owner check: see whether the harness used for hunts exposes a mail or chat connector with trash, mark or archive tools; if it does, add those verbs (or switch to a read-verb allow-list) for the tracker rule."
+    }
+  },
+  "linked_unit_checks": [
+    {
+      "coverage_id": "hooks%2Fqa-guardrail%23hunt%20profile%20tool%20call::hooks%2Flib%2Fqa-shell-writes.mjs%23hunt%20allow-list::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Access%20control",
+      "checks": [
+        {
+          "agent_id": "h1-guardrail",
+          "reviewed_paths": [
+            "hooks/lib/qa-shell-writes.mjs"
+          ],
+          "invariant": "every program a hunt shell command starts is on the allow-list, and a program named by a path inside the project is refused (huntProgramWhy :1165-1177)",
+          "method": "source",
+          "result": "The path-named-program refusal lives only in huntProgramWhy (:1169-1177). simple() takes progName(args[0].v), which is the basename (:72, :1725), calls huntCheck (:2128) and returns at :2130-2133 when huntCheck allows, before huntProgramWhy runs at :2139. Every program huntCheck allows is therefore started under whatever path the agent wrote: date, npm, pnpm, pip, dotnet, cargo, pip-audit, osv-scanner, and in this range gitleaks (:609, :889). No test covers a path-qualified audit tool (tests/qa-gatekeeper has no such case). Recorded as a candidate: hunt-guardrail/audit-form-skips-program-path-check.",
+          "artifact": null
+        },
+        {
+          "agent_id": "h1-guardrail",
+          "reviewed_paths": [
+            "hooks/lib/qa-shell-writes.mjs"
+          ],
+          "invariant": "the plugin's own scripts the hunt may run with node (HUNT_OWN_SCRIPTS_RE, extended in this range with hunt-sandbox, hunt-verdict and the two validators) are the plugin's files, not the audited tree's",
+          "method": "source",
+          "result": "huntProgramWhy (:1233-1256) requires the script to be the first word after node with no option, free of `..`, not stdin, matching the anchored regex on the real path, outside the report area, inside the real plugin root, and a regular file. The env gate (:2112-2116) refuses NODE_OPTIONS and the other loader variables before it. The arguments of these scripts are not judged by the guardrail, only by name for key material. The validators (validate-findings.cjs, validate-coverage-ledger.cjs) take one path, read it, and write nothing. The same-checkout case (plugin root equal to the audited project) trusts the audited tree by construction and is not a boundary here.",
+          "artifact": null
+        },
+        {
+          "agent_id": "h1-guardrail",
+          "reviewed_paths": [
+            "hooks/qa-guardrail"
+          ],
+          "invariant": "a tool the hunt does not use, a tool that carries a URL, and a tracker or mail tool that writes are all denied in the hunt profile",
+          "method": "source",
+          "result": "The hunt gate (:767-799) denies web fetch and search names, any non-reader tool with a URL, the write_stdin forms, and any tool not on hunt_write_re, hunt_shell_re or hunt_tools_re unless its MCP server is a tracker or mail word, so unknown MCP tools and other connectors (Drive, Calendar, Firecrawl, Canva) are denied. Tracker and mail tools pass as reads. The write-vs-read decision for them (:705-731) is a verb list in which `trash`, `mark`, `archive`, `request` and `apply` are missing, so Gmail trash_message, trash_thread, mark_message_spam and mark_thread_spam, and GitHub request_copilot_review, are classified as reads and pass (candidate hunt-guardrail/tracker-write-verb-denylist-misses-trash-mark).",
+          "artifact": null
+        }
+      ]
+    }
+  ],
+  "prior_records_same_fingerprint": []
+}

@@ -1,0 +1,106 @@
+{
+  "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "hunt-verdict:loadRun:run-set-never-cross-checked-empty-or-partial-run-passes",
+    "title": "An empty or partial hunt run folder, or a newer empty run-N, yields Verdict PASS",
+    "description": "The verdict is computed from whatever repository directories hold a run-metadata.json inside the highest-numbered run-N folder. Nothing compares that set with the repositories the preflight selected, with the run number the preflight named, or with the head under review. A run-N folder with no repository directory (the run folder is created before any run-metadata.json exists), or a multi-repository run in which one repository's directory has no run-metadata.json, is judged only on the repositories that remain. With zero repositories judgeRun returns PASS with the sentence 'every repository's run is complete'. task-review treats a hunt PASS as no block, and the SKILL says a hunt that could not run is INCOMPLETE. A hunt that stopped early, or an agent that creates an empty higher-numbered run-N under reviews/<ID>/ (its permitted write area), can therefore turn a FAIL or INCOMPLETE hunt into a PASS in TASK-REVIEW.md.",
+    "claimed_root_cause": "latestRun and loadRun define the run and its repository set from the folder tree, and judgeRun treats 'no repository found' as 'nothing wrong' instead of 'nothing was judged', so the verdict has no expected-set check.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+        "line": 192,
+        "scope": "latestRun",
+        "description": "Picks the highest run-N folder under reviews/<ID>/ with no manifest, no preflight run number and no head or source_ref comparison."
+      },
+      {
+        "kind": "propagation",
+        "file": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+        "line": 276,
+        "scope": "loadRun",
+        "description": "Skips without comment any repository directory that has no run-metadata.json, so a repository that was never completed, or no repository at all, leaves run.repos shorter or empty and run.problems empty."
+      },
+      {
+        "kind": "propagation",
+        "file": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+        "line": 528,
+        "scope": "judgeRun",
+        "description": "The INCOMPLETE branch iterates only the loaded repositories; with none, parts stays empty and `verdict = parts.length ? 'INCOMPLETE' : 'PASS'` returns PASS (line 541) with the 'every repository's run is complete' sentence."
+      },
+      {
+        "kind": "sink",
+        "file": "skills/task-review/scripts/assemble-review.mjs",
+        "line": 100,
+        "scope": "decide",
+        "description": "Only securityValue === 'INCOMPLETE' blocks; PASS lets the review verdict reach PASS (line 124), and TASK-REVIEW.md (read by finishing-a-development-branch) shows a clean hunt."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+        "line": 203,
+        "description": "Any directory named run-<positive integer> counts; the highest wins, and a mkdir under reviews/<ID>/ is enough."
+      },
+      {
+        "file": "agents/vulnerability-hunter.md",
+        "line": 129,
+        "description": "The run-<N> folder is created in STEP 0b to hold research.json, and repository folders in STEP 1, before run-metadata.json is written, so a stopped hunt leaves exactly the shape that passes."
+      },
+      {
+        "file": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+        "line": 723,
+        "description": "renderReviewSection prints a note when the run lists no repository, but the verdict itself is not changed, so the strongest source-visible control is a text line."
+      },
+      {
+        "file": "tests/vulnerability-hunt/hunt-verdict.test.mjs",
+        "line": 232,
+        "description": "The tests assert highest-run-wins and the INCOMPLETE cases for a loaded repository; no test covers a run with zero or fewer repositories than planned."
+      },
+      {
+        "file": "skills/task-review/SKILL.md",
+        "line": 57,
+        "description": "The skill states 'A hunt that could not run is INCOMPLETE in the report', which the empty-run path contradicts."
+      }
+    ],
+    "blockers": [
+      "The sandbox is unavailable for this run, so judgeRun was not executed on an empty run folder; the PASS comes from reading the source, not from an observed result.",
+      "Whether a guarded hunt agent may create a higher-numbered reviews/<ID>/run-N is the guardrail's (unit h1-guardrail), and was not examined here."
+    ],
+    "validation_plan": {
+      "local": "In a temp project, create reviews/T-1/run-1/ with no repository directory, call loadRun then judgeRun, and expect Verdict INCOMPLETE; repeat with a two-repository plan where one repository directory lacks run-metadata.json. Run assemble-review with the empty run and a passing QA report and expect BLOCKED, not PASS. Suggested change: pass the expected repository names (the preflight's PLAN) into loadRun and add a problem for every missing one and for zero repositories."
+    }
+  },
+  "linked_unit_checks": [
+    {
+      "coverage_id": "skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-verdict.mjs%23loadRun::skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-verdict.mjs%23verdict::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Business%20logic",
+      "checks": [
+        {
+          "agent_id": "h4-verdict",
+          "reviewed_paths": [
+            "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+            "skills/task-review/scripts/assemble-review.mjs",
+            "agents/vulnerability-hunter.md",
+            "tests/vulnerability-hunt/hunt-verdict.test.mjs"
+          ],
+          "invariant": "The verdict says PASS only when every repository the plan selected was hunted to completion in the run being judged, and it never says PASS for an empty, partial or superseded run",
+          "method": "source",
+          "result": "Fails. latestRun (192-211) takes the highest `run-N` folder and compares it to nothing. loadRun (270-277) builds its repository set from directories that hold a run-metadata.json and silently skips every other directory. The run folder and the repository folders are created before run-metadata.json is written (agents/vulnerability-hunter.md:129 and 137-148). judgeRun (527-545) reaches PASS when `repos` is empty, because the loop adds no part and `run.problems` is empty. In assemble-review.mjs only INCOMPLETE blocks (100, 110), so PASS passes through. The tests cover a missing repo-metadata field and a missing ledger, but no zero-repository run and no missing-repository run; the only mention is the renderReviewSection note at hunt-verdict.mjs:723, which does not change the verdict.",
+          "artifact": null
+        },
+        {
+          "agent_id": "h4-verdict",
+          "reviewed_paths": [
+            "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+            "skills/task-review/scripts/assemble-review.mjs",
+            "skills/vulnerability-hunt/prompts/lane-dependencies.md"
+          ],
+          "invariant": "A record the verdict refuses (tool-lanes.json, an unredacted gitleaks report) must not make rows vanish while a lower-severity result still produces a passing verdict, and the refusal must reach the reader",
+          "method": "source",
+          "result": "Fails. validLanes (234-244) refuses the whole tool-lanes.json when any single CVE severity is off the four-word scale. loadRun sets toolLanes to null and adds a problem (301-306). analyze then reads `lanes` as [] (390), so the secrets, alerts, notes and every other CVE row of that file are not counted. judgeRun uses `run.problems` only in the last tier (540). Any needs_validation record, OSINT alert or confirmed medium finding gives PASS-WITH-ISSUES first (518-526) and the problem appears in no sentence. renderReviewSection (710-726) never prints run.problems; only the front page does (702-703). The test at hunt-verdict.test.mjs:174-177 makes 'FAIL or PASS-WITH-ISSUES wins over INCOMPLETE' deliberate for run_status; nothing makes it deliberate for refused records. The dependencies lane prompt tells the agent to give the severity 'as the tool states it' in the words critical|high|moderate|low (lane-dependencies.md:29,42), and all lanes share the one tool-lanes.json (agents/vulnerability-hunter.md:159).",
+          "artifact": null
+        }
+      ]
+    }
+  ],
+  "prior_records_same_fingerprint": []
+}
