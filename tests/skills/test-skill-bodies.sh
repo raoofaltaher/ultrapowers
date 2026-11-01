@@ -79,7 +79,7 @@ done
 echo ""
 echo "=== Test: the vulnerability hunt door states its rules (spec 2026-10-11) ==="
 expect skills/vulnerability-hunt/SKILL.md '^agent: vulnerability-hunter$' 'vulnerability-hunt forks into the vulnerability-hunter agent'
-expect skills/vulnerability-hunt/SKILL.md 'usage: /ultrapowers:vulnerability-hunt \[ticket\] \[repo\.\.\.\] \[--full-audit\] \[--post\]' 'vulnerability-hunt prints its usage line'
+expect skills/vulnerability-hunt/SKILL.md 'usage: /ultrapowers:vulnerability-hunt \[ticket\] \[repo\.\.\.\] \[--full-audit\] \[--depth quick\|standard\|deep\] \[--budget <n>\] \[--post\]' 'vulnerability-hunt prints its usage line'
 expect skills/vulnerability-hunt/SKILL.md 'Running the hunt contract inline: this harness does not fork' 'vulnerability-hunt announces the inline contract'
 expect skills/vulnerability-hunt/SKILL.md '[Tt]here is no network in this review' 'vulnerability-hunt has the Red Flags row for an assumed absent network'
 expect skills/vulnerability-hunt/SKILL.md 'CI already runs `npm audit`' 'vulnerability-hunt has the Red Flags row for a scanner elsewhere'
