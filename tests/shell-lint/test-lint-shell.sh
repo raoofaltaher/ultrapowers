@@ -83,7 +83,7 @@ make_fixture_repo() {
   git init -q -b main "$repo"
   configure_git_identity "$repo"
 
-  mkdir -p "$repo/hooks"
+  mkdir -p "$repo/hooks" "$repo/reviews/GH-1/run-1" "$repo/tasks/GH-1/attachments"
   cat >"$repo/tracked.sh" <<'EOF'
 #!/usr/bin/env bash
 echo "tracked"
@@ -103,12 +103,22 @@ EOF
 #!/usr/bin/env bash
 echo "untracked"
 EOF
+  # Records: a hunt agent's script kept with its run, and a ticket attachment.
+  cat >"$repo/reviews/GH-1/run-1/probe.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "a hunt agent's script"
+EOF
+  cat >"$repo/tasks/GH-1/attachments/fetch.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "a ticket attachment"
+EOF
 
-  git -C "$repo" add tracked.sh hooks/session-start README.md
+  git -C "$repo" add tracked.sh hooks/session-start README.md reviews/GH-1/run-1/probe.sh tasks/GH-1/attachments/fetch.sh
   git -C "$repo" commit -q -m "fixture"
 
   printf '\necho "changed"\n' >>"$repo/tracked.sh"
   printf '\necho "changed extensionless"\n' >>"$repo/hooks/session-start"
+  printf '\necho "changed record"\n' >>"$repo/reviews/GH-1/run-1/probe.sh"
 }
 
 run_lint_shell() {
@@ -154,6 +164,7 @@ assert_contains "$tool_log" "<hooks/session-start>" "includes changed extensionl
 assert_contains "$tool_log" "<tracked.sh>" "includes changed tracked .sh file"
 assert_contains "$tool_log" "<untracked.sh>" "includes untracked shell files by default"
 assert_not_contains "$tool_log" "README.md" "ignores Markdown with shell snippets"
+assert_not_contains "$tool_log" "reviews/" "skips a changed file of the record folders"
 
 : >"$log"
 if output="$(run_lint_shell "$fixture" "$fakebin" "$log" --all --format 2>&1)"; then
@@ -170,6 +181,19 @@ assert_contains "$tool_log" "<--severity=warning>" "keeps warning severity after
 assert_contains "$tool_log" "<hooks/session-start>" "--all includes tracked extensionless shell shebang file"
 assert_contains "$tool_log" "<tracked.sh>" "--all includes tracked .sh file"
 assert_not_contains "$tool_log" "untracked.sh" "--all ignores untracked shell files"
+assert_not_contains "$tool_log" "reviews/" "--all skips the record folder reviews/"
+assert_not_contains "$tool_log" "tasks/" "--all skips the record folder tasks/"
+
+: >"$log"
+if output="$(run_lint_shell "$fixture" "$fakebin" "$log" reviews/GH-1/run-1/probe.sh 2>&1)"; then
+  pass "lint-shell exits successfully on a named record file"
+else
+  fail "lint-shell exits successfully on a named record file"
+  printf '%s\n' "$output" | sed 's/^/      /'
+fi
+
+tool_log="$(cat "$log")"
+assert_contains "$tool_log" "<reviews/GH-1/run-1/probe.sh>" "lints a record file named on the command line"
 
 if [[ "$FAILURES" -eq 0 ]]; then
   echo "All shell lint script tests passed"
