@@ -21,6 +21,8 @@ skills/*/scripts/* text eol=lf
 *.js text eol=lf
 *.mjs text eol=lf
 *.ts text eol=lf
+# Cloudflare's security-audit skill, stored byte for byte
+skills/vulnerability-hunt/cloudflare/* -text
 
 # Explicitly mark binary files
 *.png binary
