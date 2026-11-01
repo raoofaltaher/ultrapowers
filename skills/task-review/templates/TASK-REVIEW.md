@@ -6,11 +6,11 @@
 | Repositories | <repo: branch against base at head sha, n files> |
 | QA report | [QA-REPORT.md](QA-REPORT.md) |
 
-Verdict: <PASS | PASS-WITH-ISSUES | FAIL | BLOCKED> — <one sentence naming the deciding finding or the QA verdict>
+Verdict: <PASS | PASS-WITH-ISSUES | FAIL | BLOCKED> — <one sentence naming the deciding finding, the QA verdict or a hunt that ended INCOMPLETE>
 
 ## Summary
 
-<counts of Critical, Important and Minor findings across the repositories; the QA verdict; "security: <PASS | PASS-WITH-ISSUES | FAIL | INCOMPLETE>" with the hunt's High, Medium and Low findings and its CVEs, those critical or high in a runtime dependency counted apart, or "security: no vulnerability hunt"; what decided the verdict>
+<counts of Critical, Important and Minor findings across the repositories; the QA verdict; "security: <PASS | PASS-WITH-ISSUES | FAIL | INCOMPLETE> (<c> confirmed critical or high, <m> confirmed medium, <v> needs_validation, <s> committed credentials; <n> CVEs, <r> critical or high in a runtime dependency)", or "security: no vulnerability hunt"; what decided the verdict>
 
 ## Code review
 
@@ -37,9 +37,48 @@ Verdict: <PASS | PASS-WITH-ISSUES | FAIL | BLOCKED> — <one sentence naming the
 
 ## Vulnerability hunt and audit
 
-<the vulnerability hunt's own verdict line quoted unchanged, with a note when it differs from the verdict computed from security-findings.json; then one block per hunted repository; when reviews/<ID>/security-findings.json does not exist, the one line "> No vulnerability hunt: ..." instead>
+> <the hunt's front page verdict line (SECURITY-REPORT.md), quoted unchanged>
+
+> Note: <printed only when the quoted verdict differs from the verdict computed from the run's records; the run records decide>
+
+<when reviews/<ID>/ holds no run folder, the one line "> No vulnerability hunt: ..." instead of the quoted line and the blocks below>
 
 ### <repo>
+
+Run status: <complete, or the run_status and its incomplete_reason>
+
+#### Confirmed findings
+
+##### critical
+
+1. **<title>** `<file>:<line>` — fingerprint `<fingerprint>`, confidence <low | medium | high>
+   - Root cause: <root_cause>
+   - Trace:
+     - <entrypoint | propagation | sink> <file>:<line> <description>
+   - Observed result: <execution.observed_result>
+   - Remediation: <remediation.strategy, described, not applied>
+
+##### high
+
+##### medium
+
+##### low
+
+##### informational
+
+#### Needs validation
+
+| Title | Trace | Blockers | Validation plan |
+|---|---|---|---|
+| <title> | <kind file:line → kind file:line> | <blockers> | <local: ...; deployment: ...> |
+
+#### Committed secrets
+
+| File | Line | Rule | Kind | Commit | Source |
+|---|---|---|---|---|---|
+| <file> | <line> | <rule> | <kind> | <commit> | <source> |
+
+#### CVEs
 
 | Package | Version | Advisory | Severity | Fixed in | Runtime |
 |---|---|---|---|---|---|
@@ -55,41 +94,25 @@ Verdict: <PASS | PASS-WITH-ISSUES | FAIL | BLOCKED> — <one sentence naming the
 
 <Not researched: <subject> (<reason>)>
 
-#### High
+#### OSINT alerts
 
-1. **<title>** `<file>:<line>` (confidence <6-10>, <confirmed | plausible | unverified>; <category>)
-   - Description: <what is vulnerable>
-   - Attack path: <the source, each hop, the sink>
-   - Exploit: <a concrete input, when the hunter gave one>
-   - Mitigation examined: <the checks on the way and why they do not stop it>
-   - Fix: <how to fix, described, not applied>
-   - Verification: <the filter's reason>
-
-#### Medium
-
-#### Low
-
-#### Skipped lanes
-
-<- lane: the hunter's reason, such as no manifest, or no model client library and no prompt template>
-
-#### Discarded leads
-
-<n leads below confidence 6; rejected by verification: m.>
-
-#### Files read
-
-<n files.>
-
-#### Tools used
-
-| Tool | Version | Exit |
+| Source | Id | Title |
 |---|---|---|
-| <name> | <version> | <exit code> |
+| <source> | <id> | <title> |
 
-#### Declined to judge
+#### Notes
 
-<- what the hunters declined to judge, one line each>
+<- file:line kind: the note, one line each>
+
+#### Tool lanes
+
+| Lane | Status | Tools (exit) |
+|---|---|---|
+| <dependencies, secrets or osint> | <status (reason)> | <name version (exit code)> |
+
+#### Cloudflare reports
+
+<- links to run-<N>/<repo>/REPORT.md, FINDINGS-DETAIL.md and NEEDS-VALIDATION.md>
 
 ## QA gate
 
