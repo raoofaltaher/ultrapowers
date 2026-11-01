@@ -1,0 +1,1283 @@
+[
+  {
+    "coverage_id": ".agents%2Fultrapowers.json%23repos%20and%20hunt::skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-files.mjs%23readProject::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Chained%20vulnerabilities%20and%20trust%20boundaries",
+    "canonical_refs": {
+      "surface": ".agents/ultrapowers.json#repos and hunt",
+      "boundary": "skills/vulnerability-hunt/scripts/hunt-files.mjs#readProject",
+      "subsystem": "profile/quick/all-in-scope-subsystems",
+      "attack_class": "ATTACK-CLASSES.md#Chained vulnerabilities and trust boundaries"
+    },
+    "surface": ".agents/ultrapowers.json#repos and hunt",
+    "boundary": "skills/vulnerability-hunt/scripts/hunt-files.mjs#readProject",
+    "subsystem": "all in-scope subsystems (quick profile)",
+    "attack_class": "ATTACK-CLASSES.md#Chained vulnerabilities and trust boundaries",
+    "starting_paths": [
+      "skills/vulnerability-hunt/scripts/hunt-files.mjs",
+      "skills/vulnerability-hunt/scripts/hunt-preflight.mjs",
+      "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs",
+      "templates/.agents/ultrapowers.json.tmpl"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Chained vulnerabilities and trust boundaries",
+    "selected_companion_blocks": [
+      "CLOUD-AND-DEPLOYMENT.md#Core discipline",
+      "CLOUD-AND-DEPLOYMENT.md#Security-control precedence drift",
+      "CLOUD-AND-DEPLOYMENT.md#Universal moves",
+      "CLOUD-AND-DEPLOYMENT.md#Validation rules"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "CLOUD-AND-DEPLOYMENT.md#Namespace and label trust confusion",
+        "reason": "no labels or namespaces select policy here"
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "candidate",
+    "agent_id": "h3-preflight",
+    "reviewed_paths": [
+      "skills/vulnerability-hunt/scripts/hunt-files.mjs",
+      "skills/vulnerability-hunt/scripts/hunt-preflight.mjs",
+      "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs",
+      "templates/.agents/ultrapowers.json.tmpl"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "h3-preflight",
+        "reviewed_paths": [
+          "skills/vulnerability-hunt/scripts/hunt-files.mjs",
+          "skills/vulnerability-hunt/scripts/hunt-preflight.mjs",
+          "templates/.agents/ultrapowers.json.tmpl"
+        ],
+        "invariant": "A repos[].path read from .agents/ultrapowers.json stays inside the project root before the preflight walks it, reads its manifests and hands it on as the repository folder",
+        "method": "source",
+        "result": "readProject keeps text(r.path) as written and checks only that name and path are non-empty (hunt-files.mjs:59). loadProject validates only the ticket (hunt-preflight.mjs:518-537). preflight() then runs resolve(root, repo.path) (:564), which accepts an absolute path or '..' segments, and the result goes to walk(), declaredFacts() and (full mode) the SCOPE tree: lines. The path is checked for existence only (:565). The template ships only a relative nested path. Nothing in the three files bounds it. Sibling control: repo names are validated (:553, hunt-sandbox.mjs:263), paths are not.",
+        "artifact": null
+      },
+      {
+        "agent_id": "h3-preflight",
+        "reviewed_paths": [
+          "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs"
+        ],
+        "invariant": "The sandbox's bind source, the sandbox image and the limits that come from the config are bounded before they reach docker run (h2 owns the docker argument internals; this check covers only the config-to-sink trust)",
+        "method": "source",
+        "result": "Image: PINNED digest, --pull=never and a local-cache check in probe (:99-104) bound hunt.sandbox.images, so the audited config cannot select an arbitrary image. Limits: LIMIT_RULES validators (:68-70) bound hunt.sandbox.limits. Mount source: runCheck sets repoDir = resolve(root, entry.path) (:325) with no containment check and dockerArgs binds it read-only as source=<repoDir> (:130). A path outside the project would therefore be mounted into the container that runs target code, and the key-material masks are computed only inside that directory (maskPaths(repoDir), :115-121). This is the one config value reaching a sink as trusted input.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [
+      "hunt-config/repos-path-unbounded-from-audited-config"
+    ],
+    "unresolved": [],
+    "parent_hardening": [
+      "Revision arguments reach git as `${base}...${branch}` with no `--` or --end-of-options (hunt-preflight.mjs:505; qa-preflight.mjs:224-237). A config defaultBranch starting with `--output=` is read as an option. The suffix `...<branch>` keeps the written file name useless, so the impact is nil, but the shape is wrong. Fix: validate refs with `git check-ref-format --branch` or pass `--end-of-options`.",
+      "ticketRanges aborts on any line containing 'ERROR' in review-preflight.sh output (hunt-preflight.mjs:483), including DOCS lines made of file names from the audited tree. A doc path containing the word stops the hunt. This fails closed, but it is a spurious denial a branch author can cause.",
+      "walk() skips folders named build, dist, node_modules and .git at any depth (hunt-files.mjs:10,28). In a full audit, hand-written code or manifests under a folder named build/ (build scripts are common) are outside the SCOPE tree: groups, the manifests and DECLARED. Ticket mode is unaffected because git decides the scope.",
+      "The public/private flag on a DECLARED row derives from tree data (a .npmrc registry line, lockfile resolved hosts, a git or URL spec). A branch author can mark a vulnerable dependency private so STEP 0b skips it. Dependencies with an installed audit tool are covered by that tool, which limits the impact.",
+      "ticketPattern from the config goes to new RegExp (hunt-preflight.mjs:533) and a configured pattern that is invalid throws an uncaught SyntaxError instead of a Failure. The input is the short ticket id, so there is no ReDoS concern worth a candidate.",
+      "declaredFacts reads every file of the tree up to 2 MiB (hunt-preflight.mjs:179) and re-reads sibling requirements files per file (:247). These are local same-user availability costs and are not reported."
+    ]
+  },
+  {
+    "coverage_id": "agents%2Fvulnerability-hunter.md%23procedure::agents%2Fvulnerability-hunter.md%23Absolute%20rules::profile%2Fquick%2Fall-in-scope-subsystems::AI-AND-LLM.md%23Sub-agent%20and%20MCP%20trust%20inheritance",
+    "canonical_refs": {
+      "surface": "agents/vulnerability-hunter.md#procedure",
+      "boundary": "agents/vulnerability-hunter.md#Absolute rules",
+      "subsystem": "profile/quick/all-in-scope-subsystems",
+      "attack_class": "AI-AND-LLM.md#Sub-agent and MCP trust inheritance"
+    },
+    "surface": "agents/vulnerability-hunter.md#procedure",
+    "boundary": "agents/vulnerability-hunter.md#Absolute rules",
+    "subsystem": "all in-scope subsystems (quick profile)",
+    "attack_class": "AI-AND-LLM.md#Sub-agent and MCP trust inheritance",
+    "starting_paths": [
+      "agents/vulnerability-hunter.md",
+      "skills/vulnerability-hunt/SKILL.md",
+      "skills/vulnerability-hunt/prompts/cloudflare-overlay.md",
+      "skills/vulnerability-hunt/prompts/lane-dependencies.md",
+      "skills/vulnerability-hunt/prompts/lane-osint.md",
+      "skills/vulnerability-hunt/prompts/lane-secrets.md",
+      "skills/vulnerability-hunt/prompts/advisory-verifier.md"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Chained vulnerabilities and trust boundaries",
+    "selected_companion_blocks": [
+      "AI-AND-LLM.md#Core discipline",
+      "AI-AND-LLM.md#Sub-agent and MCP trust inheritance",
+      "AI-AND-LLM.md#Action-confirmation and approval binding",
+      "AI-AND-LLM.md#Universal moves",
+      "AI-AND-LLM.md#Validation rules"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "AI-AND-LLM.md#Unbounded delegated action loops",
+        "reason": "agent spend is bounded by --budget and the profile; the effect is same-user cost only"
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "candidate",
+    "agent_id": "h5-contract",
+    "reviewed_paths": [
+      "agents/vulnerability-hunter.md",
+      "hooks/qa-guardrail",
+      "skills/vulnerability-hunt/SKILL.md",
+      "skills/vulnerability-hunt/prompts/advisory-verifier.md",
+      "skills/vulnerability-hunt/prompts/cloudflare-overlay.md",
+      "skills/vulnerability-hunt/prompts/lane-dependencies.md",
+      "skills/vulnerability-hunt/prompts/lane-osint.md",
+      "skills/vulnerability-hunt/prompts/lane-secrets.md",
+      "skills/vulnerability-hunt/prompts/research.md",
+      "skills/vulnerability-hunt/scripts/hunt-verdict.mjs"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "h5-contract",
+        "reviewed_paths": [
+          "agents/vulnerability-hunter.md",
+          "skills/vulnerability-hunt/SKILL.md",
+          "skills/vulnerability-hunt/prompts/cloudflare-overlay.md",
+          "skills/vulnerability-hunt/prompts/lane-secrets.md",
+          "hooks/qa-guardrail",
+          "skills/vulnerability-hunt/scripts/hunt-verdict.mjs"
+        ],
+        "invariant": "A delegated hunter or tool lane receives only the authority its contract grants (writes only its own agents/<agent-id>/inputs/ folder, or its own reports), and the verdict's inputs cannot be written by a delegated task.",
+        "method": "source",
+        "result": "The narrowing exists only as prose. The contract (agents/vulnerability-hunter.md:38-44), overlay item 4 and lane-secrets.md:25 say a subagent writes almost nothing. The hunt guardrail judges the write path against the session, not the agent. Any file tool call in the session may write anywhere under reviews/<ID>/ (hooks/qa-guardrail:904-912). Only .ultrapowers/(runs|sandbox) and the protected-path list are refused. hunt-verdict.mjs takes the highest run-<N> folder (:192-211) and trusts findings.json, coverage-ledger.json, tool-lanes.json and research.json by shape (:254-306). Nothing binds the loaded run to the run record or to the preflight's RUN folder. A prompt-injected delegated agent therefore holds write authority over the verdict's inputs. Recorded as candidate hunt-contract:subagent-write-scope-reaches-verdict-inputs. Fake sandbox artifacts are not reachable, because verify matches the protected sandbox log.",
+        "artifact": null
+      },
+      {
+        "agent_id": "h5-contract",
+        "reviewed_paths": [
+          "skills/vulnerability-hunt/prompts/lane-dependencies.md",
+          "skills/vulnerability-hunt/prompts/lane-osint.md",
+          "skills/vulnerability-hunt/prompts/advisory-verifier.md",
+          "skills/vulnerability-hunt/prompts/research.md"
+        ],
+        "invariant": "Tool-lane, verifier and research prompts treat tree, tool and web text as data and carry no secret or tracker authority beyond the contract's listed tools; the research step (unguarded, session tools) gets only sanitized rows.",
+        "method": "source",
+        "result": "Every prompt states that tree, page and tool text are data and that the lanes never dispatch subagents. The OSINT and secrets lanes forbid copying secret fields. The research step is given only the preflight's DECLARED rows (the code-side filter is h3's). research.md is unchanged in range. The advisory verifier receives the research row unchanged. That row carries web-derived free text in `conditions` and `reason`, but the verifier can only confirm or downgrade, and it runs under the guardrail. Nothing further to report beyond the hardening notes.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [
+      "hunt-contract:subagent-write-scope-reaches-verdict-inputs"
+    ],
+    "unresolved": [],
+    "parent_hardening": [
+      "Remediation direction for the candidate: have the coordinator pass the run folder to the verdict script and compare it with the run record, so latestRun cannot pick a folder an agent created. Or add a coordinator-written manifest of file hashes that the verdict checks. Deny hunter and lane writes to anything outside agents/<agent-id>/ and their gitleaks reports, if the harness gives the agent identity to the hook.",
+      "hooks/qa-guardrail:790-799: the hunt profile lets tracker and mail MCP reads pass (gmail, slack, outlook, teams, jira, linear, odoo and the like), while the contract says the hunt uses no third-party service. A prompt-injected hunter with such a connector installed could read it and write the result into the reviews/<ID>/ files that are committed or posted by --post. This block is unchanged in range (the same lines exist on dev) and the guardrail is h1's, so it is a note. Narrowing to the tracker the project configured would honor the contract.",
+      "Contract line 138-149 and the SKILL.md rule say a harness without a guardrail keeps every Absolute rule. Those rules are prose-only there, and hunters read untrusted trees with the whole session toolset. This is an accepted design limit; the report states `Guardrail: not active`.",
+      "STEP 0b (research.md, unchanged in range) runs before the run record with session tools and no guardrail, reading public pages. The only project input is the preflight's DECLARED rows (h3). Its returned rows are written to research.json as returned, and the advisory verifier receives a row with web-derived free text unchanged. The verifier can only confirm or downgrade, and it runs under the guardrail. Treating the `conditions` and `reason` fields as data in the verifier prompt is already stated.",
+      "Vendored provenance: PROVENANCE.md, the EXPECTED table in test-vendored.mjs and the files are changed together in one change, and nothing at run time re-checks the hash before hunt-verdict.mjs requires the validators in-process. The only check is the CI test, which compares the repository with itself. Upstream equality at c1c8a8c1471069fb0e188eeaff69b8e8db6564a8 could not be checked offline. When the plugin is run from a checkout of a branch that is itself under audit, as for this repository, an edit to a vendored validator would execute in the verdict script; CI catches it only if the test runs on that branch. Pinning the commit hash through a signed tag or a second, independent record would give an independent root of trust. This is not a source-grounded exploit.",
+      "Test fixtures contain secret-shaped strings (AKIAIOSFODNN7EXAMPLE, an RSA PRIVATE KEY marker, `s3cretvalue`). They are dummy and assembled or documented examples. A future gitleaks run over the whole tree will report them as rows unless the project's .gitleaks.toml allow-lists tests/vulnerability-hunt."
+    ]
+  },
+  {
+    "coverage_id": "dev..GH-63-cloudflare-engine%23changed%20files::repository%23committed%20content::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Obvious%20things",
+    "canonical_refs": {
+      "surface": "dev..GH-63-cloudflare-engine#changed files",
+      "boundary": "repository#committed content",
+      "subsystem": "profile/quick/all-in-scope-subsystems",
+      "attack_class": "ATTACK-CLASSES.md#Obvious things"
+    },
+    "surface": "dev..GH-63-cloudflare-engine#changed files",
+    "boundary": "repository#committed content",
+    "subsystem": "all in-scope subsystems (quick profile)",
+    "attack_class": "ATTACK-CLASSES.md#Obvious things",
+    "starting_paths": [
+      "templates/.agents/ultrapowers.json.tmpl",
+      "templates/README.md.tmpl",
+      "docs/vulnerability-hunt.md",
+      "tests/vulnerability-hunt/fixtures.mjs",
+      "tests/qa-gatekeeper/fixtures/hunt/cases.json"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Obvious things",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [
+      {
+        "block": "ATTACK-CLASSES.md#Wildcard",
+        "reason": "quick profile: the final critic decides whether a wildcard unit is needed"
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "h5-contract",
+    "reviewed_paths": [
+      ".gitattributes",
+      "docs/vulnerability-hunt.md",
+      "skills/vulnerability-hunt/cloudflare/validate-coverage-ledger.cjs",
+      "skills/vulnerability-hunt/cloudflare/validate-findings.cjs",
+      "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs",
+      "templates/.agents/ultrapowers.json.tmpl",
+      "templates/CHANGES.json",
+      "templates/README.md.tmpl",
+      "tests/qa-gatekeeper/fixtures/hunt/cases.json",
+      "tests/vulnerability-hunt/fixtures.mjs",
+      "tests/vulnerability-hunt/hunt-sandbox.test.mjs",
+      "tests/vulnerability-hunt/hunt-verdict.test.mjs"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "h5-contract",
+        "reviewed_paths": [
+          "templates/.agents/ultrapowers.json.tmpl",
+          "templates/README.md.tmpl",
+          "templates/CHANGES.json",
+          ".gitattributes",
+          "docs/vulnerability-hunt.md",
+          "tests/vulnerability-hunt/fixtures.mjs",
+          "tests/vulnerability-hunt/hunt-sandbox.test.mjs",
+          "tests/vulnerability-hunt/hunt-verdict.test.mjs",
+          "tests/qa-gatekeeper/fixtures/hunt/cases.json",
+          "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs",
+          "skills/vulnerability-hunt/cloudflare/validate-findings.cjs",
+          "skills/vulnerability-hunt/cloudflare/validate-coverage-ledger.cjs"
+        ],
+        "invariant": "The changed files hold no hardcoded credentials, security TODO/FIXME markers, ungated debug switches, seeded credentials, committed key files, dynamic-code sinks or permissive scaffold defaults.",
+        "method": "source",
+        "result": "I grepped the added lines of the full range, excluding the vendored folder. Hits for secret-shaped strings are all dummy test inputs for the redaction and gitleaks tests (AKIAIOSFODNN7EXAMPLE, runtime-assembled AKIA/ghp_/xoxb- strings, `s3cretvalue`, a fake RSA block, ghp_SECRETTOKEN in a preflight fixture). The hunt-guardrail cases use evil.example.net URLs as deny cases. No TODO, FIXME, HACK or XXX appears. No new process.env or ULTRAPOWERS_ debug switch appears in hooks or hunt scripts. No .env, .pem, .key or credential file is added; the added files are only docs, tests, scripts, prompts and the vendored folder. There is no HTTP, CORS, cookie or redirect surface. eval, new Function and dynamic import() do not occur. child_process use is spawn/spawnSync with argument arrays and no shell:true (hunt-sandbox.mjs, tests). The vendored validators require only fs, path and util, with no process.env, network or child_process. Template defaults changed to hunt.depth {ticket: quick, full: standard}, and the sandbox is opt-in with digest-pinned images. The package.json dependency set is unchanged (zero dependencies). The vendored folder is for the secrets lane (gitleaks found none) and the dependencies lane.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": []
+  },
+  {
+    "coverage_id": "hooks%2Flib%2Fqa-shell-writes.mjs%23huntGitleaks::hooks%2Flib%2Fqa-shell-writes.mjs%23gitleaks%20redact%20requirement::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Cryptography%20and%20secrets",
+    "canonical_refs": {
+      "surface": "hooks/lib/qa-shell-writes.mjs#huntGitleaks",
+      "boundary": "hooks/lib/qa-shell-writes.mjs#gitleaks redact requirement",
+      "subsystem": "profile/quick/all-in-scope-subsystems",
+      "attack_class": "ATTACK-CLASSES.md#Cryptography and secrets"
+    },
+    "surface": "hooks/lib/qa-shell-writes.mjs#huntGitleaks",
+    "boundary": "hooks/lib/qa-shell-writes.mjs#gitleaks redact requirement",
+    "subsystem": "all in-scope subsystems (quick profile)",
+    "attack_class": "ATTACK-CLASSES.md#Cryptography and secrets",
+    "starting_paths": [
+      "hooks/lib/qa-shell-writes.mjs",
+      "hooks/qa-guardrail"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Cryptography and secrets",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [
+      {
+        "block": "CLOUD-AND-DEPLOYMENT.md#Secret exposure across workload boundaries",
+        "reason": "gitleaks runs on the host under the guardrail, not in a deployed workload"
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "h1-guardrail",
+    "reviewed_paths": [
+      "hooks/lib/qa-shell-writes.mjs",
+      "hooks/qa-guardrail"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "h1-guardrail",
+        "reviewed_paths": [
+          "hooks/lib/qa-shell-writes.mjs"
+        ],
+        "invariant": "gitleaks runs in the hunt only as `dir|git <one literal path inside the project>` with a redaction flag, a JSON report written only under reviews/<id>/, and no flag that reads stdin, a baseline, an ignore file, a template, a diagnostics folder or follows symlinks",
+        "method": "source",
+        "result": "huntGitleaks (:900-958) walks every word through huntOptions (:652-678), which refuses a null word, `--`, an `=`-attached form of a plain flag and any flag not on the spec. A verb other than dir/git/version/help is refused, as is a third positional or a missing path. --report-format/-f must equal json, --log-opts must match the alnum-led `a..b` regex, so no option can be injected into git log. The scan path goes through literalPathWhy and then checkProjectDir (caller :2132), which resolves symlinks and 8.3 names and refuses a path outside the project. --config must be a literal path inside the project. Each --report-path goes through checkTarget (:2131), which holds it to reviews/<id>/ and .ultrapowers/ and keeps the run records protected. No redaction-free form is reachable: `--redact=0`, `--redact=abc`, `--redact false` and an absent flag are all refused. The only gap is that --redact=1..99 is accepted (partial redaction, hardening below); I found no way to print or record a secret value with a form the allow-list accepts that the agent could not already get from a recursive grep or git show.",
+        "artifact": null
+      },
+      {
+        "agent_id": "h1-guardrail",
+        "reviewed_paths": [
+          "hooks/qa-guardrail"
+        ],
+        "invariant": "gitleaks cannot be started through a package runner or a wrapper in a form the redaction rule never judged",
+        "method": "source",
+        "result": "The viaRunner refusal (qa-shell-writes.mjs:696) names HUNT_AUDIT_TOOLS, which now includes gitleaks (:609). env/timeout/command/xargs wrappers are walked and re-dispatched to the same huntCheck call, so the redaction rule applies to them. The bash layer (qa-guardrail:1166-1168) runs the same analyzer and fails closed when it cannot run. The one path that skips the form is a path-qualified program name, because huntCheck sees only the basename; that is the candidate recorded under the hunt allow-list unit, not a gitleaks-specific flaw.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": [],
+    "parent_hardening": [
+      "huntGitleaks accepts --redact=1..99 (qa-shell-writes.mjs:913). Per gitleaks' documented semantics a partial percent leaves (100-n)% of the secret visible, while hunt-verdict.mjs:246-252 treats only Secret '' or 'REDACTED' as redacted. Accept only bare --redact or --redact=100. It adds no capability beyond recursive grep today, because the key rule is name-based, so this is hardening.",
+      "huntGitleaks allows --log-level trace|debug and -v/--verbose (:899, :918). Whether gitleaks logs raw secret text at those levels with --redact is a gitleaks behaviour I could not observe; limit --log-level to info and above.",
+      "The key-material rule is name-based: a recursive grep -r or rg --hidden over the project, and gitleaks dir over it, read an in-tree .env without naming it (the /proc recursion check at qa-shell-writes.mjs:2726 is the only recursion rule).",
+      "The key list lacks .dev.vars (the project's own Claude settings deny it), .envrc, id_dsa, ~/.m2/settings.xml, ~/.gradle/gradle.properties, ~/.terraform.d/credentials.tfrc.json and ~/.config/pip; the shell, file-tool and bash-text copies (guard-paths.mjs:180, qa-guardrail:637, :1143) should be generated from one list.",
+      "The arguments of HUNT_OWN_SCRIPTS_RE scripts are not judged by the guardrail. hunt-verdict.mjs `validate` reads any path the agent names (key names are denied by word only), and its error output echoes validator or JSON parse text.",
+      "The tracker rule treats a name with any read word (get, list, search, resolve) as a read even when it also holds a write verb (a name such as get_or_create_x); a read-verb allow-list for tracker tools is stronger than the write denylist."
+    ]
+  },
+  {
+    "coverage_id": "hooks%2Flib%2Fresolve-tool.mjs%23childEnv::hooks%2Flib%2Fresolve-tool.mjs%23child%20environment::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Cryptography%20and%20secrets",
+    "canonical_refs": {
+      "surface": "hooks/lib/resolve-tool.mjs#childEnv",
+      "boundary": "hooks/lib/resolve-tool.mjs#child environment",
+      "subsystem": "profile/quick/all-in-scope-subsystems",
+      "attack_class": "ATTACK-CLASSES.md#Cryptography and secrets"
+    },
+    "surface": "hooks/lib/resolve-tool.mjs#childEnv",
+    "boundary": "hooks/lib/resolve-tool.mjs#child environment",
+    "subsystem": "all in-scope subsystems (quick profile)",
+    "attack_class": "ATTACK-CLASSES.md#Cryptography and secrets",
+    "starting_paths": [
+      "hooks/lib/resolve-tool.mjs"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Cryptography and secrets",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "out_of_scope",
+    "agent_id": null,
+    "reviewed_paths": [],
+    "local_checks": [],
+    "result_fingerprints": [],
+    "unresolved": [
+      "resolve-tool.mjs is unchanged in range; childEnv passes the full process.env to the docker client, so DOCKER_HOST and DOCKER_CONFIG apply (recon 1b)"
+    ]
+  },
+  {
+    "coverage_id": "hooks%2Flib%2Frun-records.mjs%23end::hooks%2Flib%2Frun-records.mjs%23Verdict%20line%20gate::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Business%20logic",
+    "canonical_refs": {
+      "surface": "hooks/lib/run-records.mjs#end",
+      "boundary": "hooks/lib/run-records.mjs#Verdict line gate",
+      "subsystem": "profile/quick/all-in-scope-subsystems",
+      "attack_class": "ATTACK-CLASSES.md#Business logic"
+    },
+    "surface": "hooks/lib/run-records.mjs#end",
+    "boundary": "hooks/lib/run-records.mjs#Verdict line gate",
+    "subsystem": "all in-scope subsystems (quick profile)",
+    "attack_class": "ATTACK-CLASSES.md#Business logic",
+    "starting_paths": [
+      "hooks/lib/run-records.mjs"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Business logic",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "out_of_scope",
+    "agent_id": null,
+    "reviewed_paths": [],
+    "local_checks": [],
+    "result_fingerprints": [],
+    "unresolved": [
+      "hooks/lib/run-records.mjs is unchanged in dev..GH-63-cloudflare-engine; recon 1b lead: the guarded agent can end its own run once it writes a Verdict: line (run-records.mjs:169)"
+    ]
+  },
+  {
+    "coverage_id": "hooks%2Fqa-guardrail%23hunt%20profile%20recursive%20read::hooks%2Flib%2Fqa-shell-writes.mjs%23key-material%20rule%20on%20directory%20operands::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Access%20control",
+    "canonical_refs": {
+      "surface": "hooks/qa-guardrail#hunt profile recursive read",
+      "boundary": "hooks/lib/qa-shell-writes.mjs#key-material rule on directory operands",
+      "subsystem": "profile/quick/all-in-scope-subsystems",
+      "attack_class": "ATTACK-CLASSES.md#Access control"
+    },
+    "surface": "hooks/qa-guardrail#hunt profile recursive read verbs over the project tree (grep -r, rg, gitleaks dir, hidden and no-ignore forms)",
+    "boundary": "hooks/lib/qa-shell-writes.mjs#key-material rule judged by typed word only, with no rule for a directory operand that recurses into an in-project key file",
+    "subsystem": "all in-scope subsystems (quick profile)",
+    "attack_class": "ATTACK-CLASSES.md#Access control",
+    "starting_paths": [
+      "hooks/lib/qa-shell-writes.mjs",
+      "hooks/lib/guard-paths.mjs",
+      "hooks/qa-guardrail"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Access control",
+    "selected_companion_blocks": [
+      "AI-AND-LLM.md#Core discipline",
+      "AI-AND-LLM.md#Sensitive context extraction",
+      "AI-AND-LLM.md#Universal moves",
+      "AI-AND-LLM.md#Validation rules"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "AI-AND-LLM.md#MCP server and tool identity confusion",
+        "reason": "no MCP routing is involved; the question is a shell recursion against a path-name rule"
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 2,
+    "status": "deferred",
+    "agent_id": null,
+    "reviewed_paths": [],
+    "local_checks": [],
+    "result_fingerprints": [],
+    "unresolved": [
+      "quick_profile_final_critic: Sensitive context extraction was excluded from the key-material unit in favour of the access-control unit, which did not select it; the gitleaks unit hardening states that a recursive grep or rg over the project reads an in-tree dotenv file without naming it, and the only recursion rule is the /proc check (qa-shell-writes.mjs about 2726-2736). Not hunted in this quick run."
+    ]
+  },
+  {
+    "coverage_id": "hooks%2Fqa-guardrail%23hunt%20profile%20tool%20call::hooks%2Flib%2Fguard-paths.mjs%23isKeyMaterial::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Resource%20and%20file%20handling",
+    "canonical_refs": {
+      "surface": "hooks/qa-guardrail#hunt profile tool call",
+      "boundary": "hooks/lib/guard-paths.mjs#isKeyMaterial",
+      "subsystem": "profile/quick/all-in-scope-subsystems",
+      "attack_class": "ATTACK-CLASSES.md#Resource and file handling"
+    },
+    "surface": "hooks/qa-guardrail#hunt profile tool call",
+    "boundary": "hooks/lib/guard-paths.mjs#isKeyMaterial",
+    "subsystem": "all in-scope subsystems (quick profile)",
+    "attack_class": "ATTACK-CLASSES.md#Resource and file handling",
+    "starting_paths": [
+      "hooks/lib/guard-paths.mjs",
+      "hooks/qa-guardrail",
+      "hooks/lib/qa-shell-writes.mjs"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Resource and file handling",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [
+      {
+        "block": "AI-AND-LLM.md#Sensitive context extraction",
+        "reason": "the key-material rule is a deterministic path control; the model-context angle is unit hooks/qa-guardrail access control"
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "candidate",
+    "agent_id": "h1-guardrail",
+    "reviewed_paths": [
+      "hooks/lib/guard-paths.mjs",
+      "hooks/lib/qa-shell-writes.mjs",
+      "hooks/qa-guardrail"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "h1-guardrail",
+        "reviewed_paths": [
+          "hooks/lib/guard-paths.mjs",
+          "hooks/lib/qa-shell-writes.mjs"
+        ],
+        "invariant": "isKeyMaterial is the same key list as the hook's file-tool rule, and its move out of qa-shell-writes.mjs changed no behaviour",
+        "method": "source",
+        "result": "git diff dev..GH-63-cloudflare-engine shows the KEY_RE removed from qa-shell-writes.mjs and added to guard-paths.mjs byte for byte, with every caller switched to isKeyMaterial (:1356, :1532, :1536, :1575, :2287), so the move is behaviour-neutral. The list is not the same as the file-tool rule in hooks/qa-guardrail:637, although the comment at guard-paths.mjs:177 claims it is: the file-tool regex denies the whole `.aws/` folder, the shell version only `.aws/credentials`. A read of `~/.aws/cli/cache/*.json` or `~/.aws/sso/cache/*.json` (cached temporary credentials and SSO bearer tokens) is therefore denied through the Read tool and allowed through `cat` (candidate hunt-guardrail/key-material-aws-cache-weaker-in-shell-rule). The 8.3 and symlink resolution in checkAlias (:1559-1576) is correct for in-project words, but a `~` word is judged by text only (`plain` is false).",
+        "artifact": null
+      },
+      {
+        "agent_id": "h1-guardrail",
+        "reviewed_paths": [
+          "hooks/qa-guardrail"
+        ],
+        "invariant": "a key-material path field or glob in any hunt tool call is denied before the hunt's tool gate and the write rules",
+        "method": "source",
+        "result": "The node block collects every path-shaped field and glob field (:471-490), and the bash block denies a KEY_RE match on the typed and the real spelling (:647-664) and on a glob that can expand to a key name (:666), before the hunt gate (:767) and the file-tool gate (:873). `.env.example` is stripped deliberately. A tool with an unreadable path or a twotargets call is denied (:550, :589-593). No bypass found for the tools the hunt gate lets through.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [
+      "hunt-guardrail/key-material-aws-cache-weaker-in-shell-rule"
+    ],
+    "unresolved": []
+  },
+  {
+    "coverage_id": "hooks%2Fqa-guardrail%23hunt%20profile%20tool%20call::hooks%2Flib%2Fqa-shell-writes.mjs%23hunt%20allow-list::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Access%20control",
+    "canonical_refs": {
+      "surface": "hooks/qa-guardrail#hunt profile tool call",
+      "boundary": "hooks/lib/qa-shell-writes.mjs#hunt allow-list",
+      "subsystem": "profile/quick/all-in-scope-subsystems",
+      "attack_class": "ATTACK-CLASSES.md#Access control"
+    },
+    "surface": "hooks/qa-guardrail#hunt profile tool call",
+    "boundary": "hooks/lib/qa-shell-writes.mjs#hunt allow-list",
+    "subsystem": "all in-scope subsystems (quick profile)",
+    "attack_class": "ATTACK-CLASSES.md#Access control",
+    "starting_paths": [
+      "hooks/qa-guardrail",
+      "hooks/lib/qa-shell-writes.mjs"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Access control",
+    "selected_companion_blocks": [
+      "AI-AND-LLM.md#Core discipline",
+      "AI-AND-LLM.md#Tool-argument injection into a downstream sink",
+      "AI-AND-LLM.md#Excessive agency and confused-deputy authority",
+      "AI-AND-LLM.md#Universal moves",
+      "AI-AND-LLM.md#Validation rules"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "AI-AND-LLM.md#MCP server and tool identity confusion",
+        "reason": "the hunt profile denies MCP tools other than local readers; no MCP routing code is in scope"
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "candidate",
+    "agent_id": "h1-guardrail",
+    "reviewed_paths": [
+      "hooks/lib/qa-shell-writes.mjs",
+      "hooks/qa-guardrail"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "h1-guardrail",
+        "reviewed_paths": [
+          "hooks/lib/qa-shell-writes.mjs"
+        ],
+        "invariant": "every program a hunt shell command starts is on the allow-list, and a program named by a path inside the project is refused (huntProgramWhy :1165-1177)",
+        "method": "source",
+        "result": "The path-named-program refusal lives only in huntProgramWhy (:1169-1177). simple() takes progName(args[0].v), which is the basename (:72, :1725), calls huntCheck (:2128) and returns at :2130-2133 when huntCheck allows, before huntProgramWhy runs at :2139. Every program huntCheck allows is therefore started under whatever path the agent wrote: date, npm, pnpm, pip, dotnet, cargo, pip-audit, osv-scanner, and in this range gitleaks (:609, :889). No test covers a path-qualified audit tool (tests/qa-gatekeeper has no such case). Recorded as a candidate: hunt-guardrail/audit-form-skips-program-path-check.",
+        "artifact": null
+      },
+      {
+        "agent_id": "h1-guardrail",
+        "reviewed_paths": [
+          "hooks/lib/qa-shell-writes.mjs"
+        ],
+        "invariant": "the plugin's own scripts the hunt may run with node (HUNT_OWN_SCRIPTS_RE, extended in this range with hunt-sandbox, hunt-verdict and the two validators) are the plugin's files, not the audited tree's",
+        "method": "source",
+        "result": "huntProgramWhy (:1233-1256) requires the script to be the first word after node with no option, free of `..`, not stdin, matching the anchored regex on the real path, outside the report area, inside the real plugin root, and a regular file. The env gate (:2112-2116) refuses NODE_OPTIONS and the other loader variables before it. The arguments of these scripts are not judged by the guardrail, only by name for key material. The validators (validate-findings.cjs, validate-coverage-ledger.cjs) take one path, read it, and write nothing. The same-checkout case (plugin root equal to the audited project) trusts the audited tree by construction and is not a boundary here.",
+        "artifact": null
+      },
+      {
+        "agent_id": "h1-guardrail",
+        "reviewed_paths": [
+          "hooks/qa-guardrail"
+        ],
+        "invariant": "a tool the hunt does not use, a tool that carries a URL, and a tracker or mail tool that writes are all denied in the hunt profile",
+        "method": "source",
+        "result": "The hunt gate (:767-799) denies web fetch and search names, any non-reader tool with a URL, the write_stdin forms, and any tool not on hunt_write_re, hunt_shell_re or hunt_tools_re unless its MCP server is a tracker or mail word, so unknown MCP tools and other connectors (Drive, Calendar, Firecrawl, Canva) are denied. Tracker and mail tools pass as reads. The write-vs-read decision for them (:705-731) is a verb list in which `trash`, `mark`, `archive`, `request` and `apply` are missing, so Gmail trash_message, trash_thread, mark_message_spam and mark_thread_spam, and GitHub request_copilot_review, are classified as reads and pass (candidate hunt-guardrail/tracker-write-verb-denylist-misses-trash-mark).",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [
+      "hunt-guardrail/audit-form-skips-program-path-check",
+      "hunt-guardrail/tracker-write-verb-denylist-misses-trash-mark"
+    ],
+    "unresolved": []
+  },
+  {
+    "coverage_id": "skills%2Ftask-review%2Fscripts%2Fassemble-review.mjs%23findings%20and%20QA%20files::skills%2Ftask-review%2Fscripts%2Fassemble-review.mjs%23TASK-REVIEW%20verdict::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Injection",
+    "canonical_refs": {
+      "surface": "skills/task-review/scripts/assemble-review.mjs#findings and QA files",
+      "boundary": "skills/task-review/scripts/assemble-review.mjs#TASK-REVIEW verdict",
+      "subsystem": "profile/quick/all-in-scope-subsystems",
+      "attack_class": "ATTACK-CLASSES.md#Injection"
+    },
+    "surface": "skills/task-review/scripts/assemble-review.mjs#findings and QA files",
+    "boundary": "skills/task-review/scripts/assemble-review.mjs#TASK-REVIEW verdict",
+    "subsystem": "all in-scope subsystems (quick profile)",
+    "attack_class": "ATTACK-CLASSES.md#Injection",
+    "starting_paths": [
+      "skills/task-review/scripts/assemble-review.mjs",
+      "skills/task-review/templates/TASK-REVIEW.md",
+      "skills/task-review/SKILL.md"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Injection",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [
+      {
+        "block": "AI-AND-LLM.md#Insecure output rendering",
+        "reason": "the renderer of TASK-REVIEW.md on the tracker is outside source; the in-repo assembly is judged under ordinary Injection"
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "h4-verdict",
+    "reviewed_paths": [
+      "skills/finishing-a-development-branch/SKILL.md",
+      "skills/task-review/scripts/assemble-review.mjs"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "h4-verdict",
+        "reviewed_paths": [
+          "skills/task-review/scripts/assemble-review.mjs",
+          "skills/finishing-a-development-branch/SKILL.md"
+        ],
+        "invariant": "A reviewer-written findings field, the QA report text or a hunt-record string cannot add a Verdict line before the computed one, add a heading or section, or reach a file path or process",
+        "method": "source",
+        "result": "The computed `Verdict:` line is written at assemble-review.mjs:163, after a table whose Repositories row holds repo/base/branch/head from the findings JSON. In normalize (61-85) those four fields are String() copies and are not made single-line. Finding title, problem, rootCause, fix, strengths, declined and tdd.notes are also unescaped (139-177). The only fields before the real Verdict line are repo, branch, base and head, and head is cut to 12 characters. The coordinator, not a subagent, supplies those four values; the only machine reader of the Verdict line is the agent step in finishing-a-development-branch/SKILL.md:37-49, which reads it as text. Everything the hunt contributes goes through renderReviewSection, which applies oneLine, so the hunt cannot inject structure. Embedded QA images match EMBED (40), which admits `..` inside `artifacts/`; post-review.mjs:99-136 and 233-244 re-check containment, and EMBED is unchanged from dev. The ticket id is validated (236) and the paths go through regularFileProblem/reviewFolderProblem (242-249, 264, 271, 275, 284). No shell or process is reached. The remaining risk is markup and line forgery from reviewer text, listed under hardening.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": [],
+    "parent_hardening": [
+      "Reviewer-written findings text (title, problem, fix, rootCause, strengths, declined, tdd.notes, and the repo/branch/base values in the Repositories row) is written to TASK-REVIEW.md unescaped (assemble-review.mjs:61-85, 139-177, 161). A value with a newline can add a `Verdict:` line or a section heading; the repo/branch/base values stand before the real Verdict line. Apply oneLine to the single-line fields and prefix each line of the free-text fields before posting.",
+      "Table cells use only a pipe and newline escape (hunt-verdict.mjs:42-45). File names from the audited tree, advisory text and package names can carry `[text](url)`, `![x](url)`, `<`, `*` and autolink text into the SECURITY-REPORT.md that --post sends to the tracker, which gives a tracking image or a link inside an authoritative comment. Escape or code-span those characters, or put them in a code span.",
+      "encodeURIComponent leaves `(`, `)`, `!`, `'` and `*` unescaped (hunt-verdict.mjs:667), so a repository directory name containing `)` breaks the Cloudflare-reports link; the repository-name pattern in the preflight keeps it from happening for names it creates.",
+      "judgeRun reads completeness only from the coordinator's own `run_status` (530-533); it never reads the coverage ledger's unit statuses (in_progress, unassigned) and never compares `source_ref` with the head under review, so a stale or half-covered run can be reported as a complete PASS.",
+      "In normalizeBlock (369), a research row whose advisory id is already in the CVE table is not counted ('also reported'). If the table records the advisory at a lower severity or as test-only and the research says critical and runtime, the higher claim is dropped. The sentence could keep the higher severity when merging.",
+      "Provenance of local checks is verified only in the verdict and front-page commands (hunt-verdict.mjs:776); assemble-review.mjs:254 reads without it. That is deliberate, but the TASK-REVIEW verdict can differ from the front page for a run whose artifact log is absent."
+    ]
+  },
+  {
+    "coverage_id": "skills%2Ftask-review%2Fscripts%2Fpost-review.mjs%23--post::skills%2Fautopilot%2Fscripts%2Fautopilot-lib.mjs%23tracker%20text::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Injection",
+    "canonical_refs": {
+      "surface": "skills/task-review/scripts/post-review.mjs#--post",
+      "boundary": "skills/autopilot/scripts/autopilot-lib.mjs#tracker text",
+      "subsystem": "profile/quick/all-in-scope-subsystems",
+      "attack_class": "ATTACK-CLASSES.md#Injection"
+    },
+    "surface": "skills/task-review/scripts/post-review.mjs#--post",
+    "boundary": "skills/autopilot/scripts/autopilot-lib.mjs#tracker text",
+    "subsystem": "all in-scope subsystems (quick profile)",
+    "attack_class": "ATTACK-CLASSES.md#Injection",
+    "starting_paths": [
+      "skills/task-review/scripts/post-review.mjs"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Injection",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "out_of_scope",
+    "agent_id": null,
+    "reviewed_paths": [],
+    "local_checks": [],
+    "result_fingerprints": [],
+    "unresolved": [
+      "post-review.mjs is unchanged in range; whether --post sanitizes SECURITY-REPORT.md and TASK-REVIEW.md text before a tracker write was not traced (recon 1b, 1c)"
+    ]
+  },
+  {
+    "coverage_id": "skills%2Ftask-review%2Fscripts%2Freview-preflight.sh%23RANGES::skills%2Ftask-review%2Fscripts%2Freview-preflight.sh%23ref%20names::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Injection",
+    "canonical_refs": {
+      "surface": "skills/task-review/scripts/review-preflight.sh#RANGES",
+      "boundary": "skills/task-review/scripts/review-preflight.sh#ref names",
+      "subsystem": "profile/quick/all-in-scope-subsystems",
+      "attack_class": "ATTACK-CLASSES.md#Injection"
+    },
+    "surface": "skills/task-review/scripts/review-preflight.sh#RANGES",
+    "boundary": "skills/task-review/scripts/review-preflight.sh#ref names",
+    "subsystem": "all in-scope subsystems (quick profile)",
+    "attack_class": "ATTACK-CLASSES.md#Injection",
+    "starting_paths": [
+      "skills/task-review/scripts/review-preflight.sh"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Injection",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "out_of_scope",
+    "agent_id": null,
+    "reviewed_paths": [],
+    "local_checks": [],
+    "result_fingerprints": [],
+    "unresolved": [
+      "review-preflight.sh is unchanged in range; it produces the base and branch names hunt-preflight.mjs passes to git diff"
+    ]
+  },
+  {
+    "coverage_id": "skills%2Fvulnerability-hunt%2Fcloudflare%23vendored%20files::skills%2Fvulnerability-hunt%2Fcloudflare%2FPROVENANCE.md%23file%20hashes::profile%2Fquick%2Fall-in-scope-subsystems::SUPPLY-CHAIN-AND-RELEASE.md%23Generated-source%20and%20codegen%20provenance%20gaps",
+    "canonical_refs": {
+      "surface": "skills/vulnerability-hunt/cloudflare#vendored files",
+      "boundary": "skills/vulnerability-hunt/cloudflare/PROVENANCE.md#file hashes",
+      "subsystem": "profile/quick/all-in-scope-subsystems",
+      "attack_class": "SUPPLY-CHAIN-AND-RELEASE.md#Generated-source and codegen provenance gaps"
+    },
+    "surface": "skills/vulnerability-hunt/cloudflare#vendored files",
+    "boundary": "skills/vulnerability-hunt/cloudflare/PROVENANCE.md#file hashes",
+    "subsystem": "all in-scope subsystems (quick profile)",
+    "attack_class": "SUPPLY-CHAIN-AND-RELEASE.md#Generated-source and codegen provenance gaps",
+    "starting_paths": [
+      "skills/vulnerability-hunt/cloudflare/PROVENANCE.md",
+      "skills/vulnerability-hunt/cloudflare/validate-findings.cjs",
+      "skills/vulnerability-hunt/cloudflare/validate-coverage-ledger.cjs",
+      "tests/vulnerability-hunt/test-vendored.mjs",
+      "skills/vulnerability-hunt/scripts/hunt-verdict.mjs"
+    ],
+    "ordinary_attack_class_block": null,
+    "selected_companion_blocks": [
+      "SUPPLY-CHAIN-AND-RELEASE.md#Core discipline",
+      "SUPPLY-CHAIN-AND-RELEASE.md#Generated-source and codegen provenance gaps",
+      "SUPPLY-CHAIN-AND-RELEASE.md#Universal moves",
+      "SUPPLY-CHAIN-AND-RELEASE.md#Validation rules"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "SUPPLY-CHAIN-AND-RELEASE.md#Untrusted code in a privileged workflow",
+        "reason": "no CI workflow file changed in range"
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "h5-contract",
+    "reviewed_paths": [
+      ".gitattributes",
+      "skills/vulnerability-hunt/cloudflare/PROVENANCE.md",
+      "skills/vulnerability-hunt/cloudflare/report-schema.json",
+      "skills/vulnerability-hunt/cloudflare/validate-coverage-ledger.cjs",
+      "skills/vulnerability-hunt/cloudflare/validate-findings.cjs",
+      "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+      "tests/vulnerability-hunt/run-tests.sh",
+      "tests/vulnerability-hunt/test-vendored.mjs"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "h5-contract",
+        "reviewed_paths": [
+          "skills/vulnerability-hunt/cloudflare/PROVENANCE.md",
+          "skills/vulnerability-hunt/cloudflare/validate-findings.cjs",
+          "skills/vulnerability-hunt/cloudflare/validate-coverage-ledger.cjs",
+          "skills/vulnerability-hunt/cloudflare/report-schema.json",
+          "tests/vulnerability-hunt/test-vendored.mjs",
+          "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+          "tests/vulnerability-hunt/run-tests.sh",
+          ".gitattributes"
+        ],
+        "invariant": "Each vendored Cloudflare file's committed bytes match the byte count and SHA-256 in PROVENANCE.md; the loaded validators are the vendored ones, with no line-ending rewrite and no extra or unlisted file.",
+        "method": "source",
+        "result": "I ran sha256sum and wc -c over all 21 vendored files in the working tree. Every hash and byte count equals its PROVENANCE.md row. I also hashed the committed blobs on the branch for the validators, report-schema.json, SECURITY-AUDIT.md and HUNTING.md, and they match too. The folder holds 22 tracked files (21 plus PROVENANCE.md), all regular mode 100644. .gitattributes pins the folder `-text`, so no EOL conversion alters the bytes. test-vendored.mjs asserts size and hash, the exact file set, the table rows and the absence of any second SKILL.md, and run-tests.sh runs it. hunt-verdict.mjs requires the two validators by a relative path inside the plugin (:27-28) and reads the schema from the same folder (:125). Both validators import only fs, path and util. I did not run the vendored validators or their tests. The upstream bytes at the commit named in PROVENANCE.md cannot be fetched offline, so equality with upstream is unverified. A hash table that changes in the same commit as the files it lists is a record, not an independent root of trust. See the hardening notes.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": []
+  },
+  {
+    "coverage_id": "skills%2Fvulnerability-hunt%2Fprompts%2Flane-secrets.md%23gitleaks%20config::skills%2Fvulnerability-hunt%2Fprompts%2Flane-secrets.md%23audited-tree%20detection%20config::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Chained%20vulnerabilities%20and%20trust%20boundaries",
+    "canonical_refs": {
+      "surface": "skills/vulnerability-hunt/prompts/lane-secrets.md#gitleaks config",
+      "boundary": "skills/vulnerability-hunt/prompts/lane-secrets.md#audited-tree detection config",
+      "subsystem": "profile/quick/all-in-scope-subsystems",
+      "attack_class": "ATTACK-CLASSES.md#Chained vulnerabilities and trust boundaries"
+    },
+    "surface": "skills/vulnerability-hunt/prompts/lane-secrets.md (--config of the gitleaks config file in REPO_PATH) and the DECLARED public/private flag of hunt-preflight.mjs",
+    "boundary": "audited tree content steering which secrets and dependencies the detection lanes look at",
+    "subsystem": "all in-scope subsystems (quick profile)",
+    "attack_class": "ATTACK-CLASSES.md#Chained vulnerabilities and trust boundaries",
+    "starting_paths": [
+      "skills/vulnerability-hunt/prompts/lane-secrets.md",
+      "hooks/lib/qa-shell-writes.mjs",
+      "skills/vulnerability-hunt/scripts/hunt-preflight.mjs",
+      "skills/vulnerability-hunt/scripts/hunt-verdict.mjs"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Chained vulnerabilities and trust boundaries",
+    "selected_companion_blocks": [
+      "AI-AND-LLM.md#Core discipline",
+      "AI-AND-LLM.md#Indirect injection through retrieved or ingested content",
+      "AI-AND-LLM.md#Universal moves",
+      "AI-AND-LLM.md#Validation rules"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "SUPPLY-CHAIN-AND-RELEASE.md#Mutable and unbound build inputs",
+        "reason": "the installed gitleaks version is a deployment fact outside source; this unit judges only what the audited tree can configure"
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 2,
+    "status": "deferred",
+    "agent_id": null,
+    "reviewed_paths": [],
+    "local_checks": [],
+    "result_fingerprints": [],
+    "unresolved": [
+      "quick_profile_final_critic: lane-secrets.md step 1 passes the gitleaks config file of the audited tree as --config when it exists, so the branch under audit picks the rules and allow-lists of its own secrets scan; no unit judged whether that makes a clean secrets result forgeable. Same pattern in the tree-derived DECLARED public/private flag. Not hunted in this quick run."
+    ]
+  },
+  {
+    "coverage_id": "skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-preflight.mjs%23DECLARED%20rows::skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-preflight.mjs%23safeCell::profile%2Fquick%2Fall-in-scope-subsystems::AI-AND-LLM.md%23Indirect%20injection%20through%20retrieved%20or%20ingested%20content",
+    "canonical_refs": {
+      "surface": "skills/vulnerability-hunt/scripts/hunt-preflight.mjs#DECLARED rows",
+      "boundary": "skills/vulnerability-hunt/scripts/hunt-preflight.mjs#safeCell",
+      "subsystem": "profile/quick/all-in-scope-subsystems",
+      "attack_class": "AI-AND-LLM.md#Indirect injection through retrieved or ingested content"
+    },
+    "surface": "skills/vulnerability-hunt/scripts/hunt-preflight.mjs#DECLARED rows",
+    "boundary": "skills/vulnerability-hunt/scripts/hunt-preflight.mjs#safeCell",
+    "subsystem": "all in-scope subsystems (quick profile)",
+    "attack_class": "AI-AND-LLM.md#Indirect injection through retrieved or ingested content",
+    "starting_paths": [
+      "skills/vulnerability-hunt/scripts/hunt-preflight.mjs",
+      "agents/vulnerability-hunter.md"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Injection",
+    "selected_companion_blocks": [
+      "AI-AND-LLM.md#Core discipline",
+      "AI-AND-LLM.md#Indirect injection through retrieved or ingested content",
+      "AI-AND-LLM.md#Sub-agent and MCP trust inheritance",
+      "AI-AND-LLM.md#Universal moves",
+      "AI-AND-LLM.md#Validation rules"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "AI-AND-LLM.md#Persistent memory poisoning",
+        "reason": "the hunt writes no agent memory; team memory is outside the changed files"
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "candidate",
+    "agent_id": "h3-preflight",
+    "reviewed_paths": [
+      "agents/vulnerability-hunter.md",
+      "skills/vulnerability-hunt/prompts/research.md",
+      "skills/vulnerability-hunt/scripts/hunt-files.mjs",
+      "skills/vulnerability-hunt/scripts/hunt-preflight.mjs",
+      "tests/vulnerability-hunt/hunt-preflight.test.mjs"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "h3-preflight",
+        "reviewed_paths": [
+          "skills/vulnerability-hunt/scripts/hunt-preflight.mjs",
+          "skills/vulnerability-hunt/scripts/hunt-files.mjs",
+          "tests/vulnerability-hunt/hunt-preflight.test.mjs"
+        ],
+        "invariant": "Every cell of a DECLARED row that comes from the audited tree is a plain name or version, so tree text never rides to the unguarded research subagent",
+        "method": "source",
+        "result": "The subject and version are filtered hard: safeCell on the raw strings, then PLAIN_SUBJECT and plainVersion on the stripUrl output (hunt-preflight.mjs:136-145,170). The file:line cell is not. `where` = `${file}:${line}` (:166) is checked only by safeCell(where) at :170, which rejects control characters, a backtick, `$(` and more than 200 characters. A file path may hold spaces, letters and most punctuation. walk() returns every real path (hunt-files.mjs:30-31) and render() prints the cell through printable(), which escapes only those same characters (:614-617,632). A row with a plain dependency such as good@1.0.0 in a package.json under a directory named like a sentence therefore prints the sentence as the file:line cell. The comment at :132-135 says a manifest string never rides in a row as text, but this cell does. The existing tests cover subject and version cells only and none cover the path cell (tests/vulnerability-hunt/hunt-preflight.test.mjs:669-790).",
+        "artifact": null
+      },
+      {
+        "agent_id": "h3-preflight",
+        "reviewed_paths": [
+          "skills/vulnerability-hunt/prompts/research.md",
+          "agents/vulnerability-hunter.md"
+        ],
+        "invariant": "The consumer of DECLARED has a deterministic control, not only a prompt, between tree text and its tools",
+        "method": "source",
+        "result": "research.md:22-27 and vulnerability-hunter.md:120-124 hand the rows to a subagent that has the session's tools and no guardrail, 'unchanged'. The only control on the file:line cell is the prompt sentence telling it to treat an instruction-like row as data. The agent file states the reason itself: 'the step has the session's tools and no guardrail'. A prompt is not a boundary. The deterministic filter the design relies on is the one that misses this cell.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [
+      "hunt-preflight/declared-where-cell-free-text-to-unguarded-research-agent"
+    ],
+    "unresolved": []
+  },
+  {
+    "coverage_id": "skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-preflight.mjs%23changedFiles::skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-preflight.mjs%23ticket%20scope::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Injection",
+    "canonical_refs": {
+      "surface": "skills/vulnerability-hunt/scripts/hunt-preflight.mjs#changedFiles",
+      "boundary": "skills/vulnerability-hunt/scripts/hunt-preflight.mjs#ticket scope",
+      "subsystem": "profile/quick/all-in-scope-subsystems",
+      "attack_class": "ATTACK-CLASSES.md#Injection"
+    },
+    "surface": "skills/vulnerability-hunt/scripts/hunt-preflight.mjs#changedFiles",
+    "boundary": "skills/vulnerability-hunt/scripts/hunt-preflight.mjs#ticket scope",
+    "subsystem": "all in-scope subsystems (quick profile)",
+    "attack_class": "ATTACK-CLASSES.md#Injection",
+    "starting_paths": [
+      "skills/vulnerability-hunt/scripts/hunt-preflight.mjs",
+      "skills/vulnerability-hunt/scripts/hunt-files.mjs"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Injection",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [
+      {
+        "block": "SUPPLY-CHAIN-AND-RELEASE.md#Workflow command and expression confusion",
+        "reason": "the preflight is not a CI workflow; ref names reach git argv, judged under ordinary Injection"
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "candidate",
+    "agent_id": "h3-preflight",
+    "reviewed_paths": [
+      "hooks/lib/resolve-tool.mjs",
+      "skills/qa-specialist/scripts/qa-preflight.mjs",
+      "skills/task-review/scripts/review-preflight.sh",
+      "skills/vulnerability-hunt/scripts/hunt-files.mjs",
+      "skills/vulnerability-hunt/scripts/hunt-preflight.mjs"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "h3-preflight",
+        "reviewed_paths": [
+          "skills/vulnerability-hunt/scripts/hunt-preflight.mjs",
+          "hooks/lib/resolve-tool.mjs"
+        ],
+        "invariant": "Every file the ticket's change set touches appears in the SCOPE file: lines, whatever the file is named",
+        "method": "source",
+        "result": "changedFiles runs `git diff --name-only --diff-filter=d <base><sep><branch>` with no -z and no -c core.quotepath=false (hunt-preflight.mjs:505). childEnv adds nothing git-related (resolve-tool.mjs:56-58). Git quotes such names by default: a path with a non-ASCII byte, a double quote, a backslash or a control character is printed as a double-quoted C-escaped string. The result is split on newlines (:506) and then filtered with existsSync(join(repoDir, f)) (:580). A quoted name is not a path on disk, so it is dropped with no note and no count. The rendered file: lines (:625), the SCOPE file count, the lane decision from `files.length` (:408-409) and the `scope_paths` of the Cloudflare run all omit that changed file. A ticket-scoped hunt (the default depth is quick) can then report on a change set that leaves out the file the author named in a non-ASCII way. Full-audit mode uses walk() and is not affected. Not observed: the sandbox is unavailable and the preflight was not run.",
+        "artifact": null
+      },
+      {
+        "agent_id": "h3-preflight",
+        "reviewed_paths": [
+          "skills/task-review/scripts/review-preflight.sh",
+          "skills/qa-specialist/scripts/qa-preflight.mjs",
+          "skills/vulnerability-hunt/scripts/hunt-files.mjs"
+        ],
+        "invariant": "A ref or branch name that reaches git argv, and the review-preflight output that carries ranges, cannot be read as an option or forge a range",
+        "method": "source",
+        "result": "The base is repos[].defaultBranch from the config (qa-preflight.mjs:266, default 'main'). It goes unvalidated into the argument `${base}...${branch}` with no `--` or --end-of-options (hunt-preflight.mjs:505; the same shape is in qa-preflight.mjs:224-237). A base starting with `--output=` would be taken as git's --output option and write the name list to a file whose name ends in `...<branch>`. The suffix keeps it from naming a useful file, so the impact is nil and this is hardening only. The branch half comes from rev-parse and is filtered by the ticket regex, and it is not in an option position. The ticket id passed to bash is validated (no leading '-', no whitespace, hunt-preflight.mjs:530). A forged RANGES section cannot come from DOCS: the awk filter in review-preflight.sh:36 prints only lines of the form `<n> bytes`. One side effect: ticketRanges aborts on any line containing 'ERROR' anywhere in review-preflight output (hunt-preflight.mjs:483), so a doc path containing that word stops the hunt. That is fail-closed.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [
+      "hunt-preflight/changed-files-quoted-path-dropped-from-ticket-scope"
+    ],
+    "unresolved": []
+  },
+  {
+    "coverage_id": "skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-sandbox.mjs%23run::skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-sandbox.mjs%23dockerArgs::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Injection",
+    "canonical_refs": {
+      "surface": "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs#run",
+      "boundary": "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs#dockerArgs",
+      "subsystem": "profile/quick/all-in-scope-subsystems",
+      "attack_class": "ATTACK-CLASSES.md#Injection"
+    },
+    "surface": "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs#run",
+    "boundary": "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs#dockerArgs",
+    "subsystem": "all in-scope subsystems (quick profile)",
+    "attack_class": "ATTACK-CLASSES.md#Injection",
+    "starting_paths": [
+      "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs",
+      "skills/vulnerability-hunt/scripts/hunt-files.mjs"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Injection",
+    "selected_companion_blocks": [
+      "CLOUD-AND-DEPLOYMENT.md#Core discipline",
+      "CLOUD-AND-DEPLOYMENT.md#Host or control-plane capability exposure",
+      "CLOUD-AND-DEPLOYMENT.md#Universal moves",
+      "CLOUD-AND-DEPLOYMENT.md#Validation rules"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "CLOUD-AND-DEPLOYMENT.md#Admission and policy path inconsistency",
+        "reason": "no orchestrator or admission controller; one local docker run"
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "candidate",
+    "agent_id": "h2-sandbox",
+    "reviewed_paths": [
+      "hooks/lib/qa-shell-writes.mjs",
+      "hooks/qa-guardrail",
+      "skills/vulnerability-hunt/scripts/hunt-files.mjs",
+      "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "h2-sandbox",
+        "reviewed_paths": [
+          "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs",
+          "skills/vulnerability-hunt/scripts/hunt-files.mjs"
+        ],
+        "invariant": "Every value placed in a docker run argument that a lower-trust party (the hunting agent, the audited tree) can influence stays one value: no separator, option or flag can be injected.",
+        "method": "source",
+        "result": "Argv-level injection is closed: spawn uses an argument array with no shell (spawnExec :190); name, agent and check are regex-pinned (:263,:270-271); env names are NAME-shaped with credential-looking names refused and values pushed as separate argv items (:274-279,:140); the image must match PINNED (:35,:102) and probe runs `docker image inspect <image>` first, so an image string that docker would read as a flag fails the probe; command words come after the image (:141). The three --mount strings (:130,:133,:134) are different: they are built by template with raw paths, and Docker splits --mount values at commas into key=value fields. The only escaping is none. inputsDir is the realpath of an agent-named folder, checked only by containment in agents/<agent>/inputs (:285-293). Mask file paths come straight from walk() over the audited tree (:117; hunt-files.mjs:25-31 filters nothing by character) and are placed after `target=/target/`. A folder or file name holding `,source=` followed by nested folders turns the rest of the path into a second source= field. Which later field Docker keeps cannot be observed here.",
+        "artifact": null
+      },
+      {
+        "agent_id": "h2-sandbox",
+        "reviewed_paths": [
+          "hooks/qa-guardrail",
+          "hooks/lib/qa-shell-writes.mjs"
+        ],
+        "invariant": "A control upstream of dockerArgs would stop a hunting agent from creating a comma-named inputs folder or passing it through --inputs.",
+        "method": "source",
+        "result": "None found. During a hunt, writes are allowed anywhere under reviews/<id>/ with no name rule (hooks/qa-guardrail:904-912), and the arguments of the plugin's own hunt scripts are not judged (hooks/lib/qa-shell-writes.mjs:1233-1256). Nothing in runCheck rejects ',' or '\"' in inputsDir (:283-294) or in mask paths (:327).",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [
+      "hunt-sandbox/mount-option-injection-comma-in-path"
+    ],
+    "unresolved": [
+      "Whether the installed Docker CLI keeps the later of two source= fields in one --mount value (outside source, needs a Docker engine)",
+      "The sandbox is unavailable for this run, so no docker command was run"
+    ],
+    "parent_hardening": [
+      "hunt-sandbox.mjs:158 ASSIGNMENT is an unanchored pattern with two adjacent open-ended character runs around the keyword alternation, run over up to 4 MiB of output the audited code controls (redact at :162, called at :348 before the cap). A long run of text like `key.key.key.` with no `=` should cause polynomial backtracking and hang the runner after the container has exited, so no artifact or log line is written. That is a local hunt stall, not a false pass, but the container's wall-clock limit does not cover it. Not run here. Fix: bound the name run (for example {0,64}) or scan line by line.",
+      "redact() misses JSON-style secrets (`\"password\": \"x\"`, `{\"token\":\"x\"}`), a private key block without its END line, quoted values with spaces, and any encoded form; it is defense in depth only and must not be the control for any content the container can reach beyond what the agent can already read.",
+      "The container mounts the whole repository including .git (MASK_SKIP, :40): .git/config can hold a remote URL with basic-auth credentials (`https://user:pass@host` is not redacted) and the full history. The agent can read the same files, so no new reader, but a clone with an embedded credential would reach the committed artifact. Consider masking .git/config.",
+      "KEY_RE does not match `.envrc`, `.htpasswd`, `credentials.json`, `*.tfvars` or `terraform.tfstate`, and the mask walk skips node_modules; the shared rule is peer-owned (h1-guardrail), noted here only because maskPaths depends on it.",
+      "--check names are not screened against Windows device names (RESERVED_AGENTS covers only --agent, :47,:270): `--check nul` writes nul.txt to the NUL device and verifyArtifact then refuses it as not a regular file. It fails closed, but the runner logs a hash for a file that was never stored.",
+      "hunt-sandbox.mjs verify and the ledger prove that the runner wrote an artifact, not that its text supports a claim; text printed by the audited code (including a spoofed `result:` or `--- stderr ---` line) lands in the artifact body after the header. Judges of the verdict should treat artifact bodies as hostile output.",
+      "The `image` string is passed to docker run as a bare argument (:141) and PINNED allows a leading `-` before the @sha256; the probe's `docker image inspect <image>` fails for such a value, which keeps it out, but only because the probe runs first; the config trust itself is peer-owned (h3-preflight)."
+    ]
+  },
+  {
+    "coverage_id": "skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-sandbox.mjs%23run::skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-sandbox.mjs%23maskPaths%20and%20redact::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Cryptography%20and%20secrets",
+    "canonical_refs": {
+      "surface": "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs#run",
+      "boundary": "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs#maskPaths and redact",
+      "subsystem": "profile/quick/all-in-scope-subsystems",
+      "attack_class": "ATTACK-CLASSES.md#Cryptography and secrets"
+    },
+    "surface": "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs#run",
+    "boundary": "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs#maskPaths and redact",
+    "subsystem": "all in-scope subsystems (quick profile)",
+    "attack_class": "ATTACK-CLASSES.md#Cryptography and secrets",
+    "starting_paths": [
+      "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs",
+      "hooks/lib/guard-paths.mjs"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Cryptography and secrets",
+    "selected_companion_blocks": [
+      "CLOUD-AND-DEPLOYMENT.md#Core discipline",
+      "CLOUD-AND-DEPLOYMENT.md#Secret exposure across workload boundaries",
+      "CLOUD-AND-DEPLOYMENT.md#Universal moves",
+      "CLOUD-AND-DEPLOYMENT.md#Validation rules"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "CLOUD-AND-DEPLOYMENT.md#Credential renewal and outage fallback",
+        "reason": "the container receives no credential to renew"
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "candidate",
+    "agent_id": "h2-sandbox",
+    "reviewed_paths": [
+      "hooks/lib/guard-paths.mjs",
+      "skills/vulnerability-hunt/scripts/hunt-files.mjs",
+      "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "h2-sandbox",
+        "reviewed_paths": [
+          "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs",
+          "hooks/lib/guard-paths.mjs",
+          "skills/vulnerability-hunt/scripts/hunt-files.mjs"
+        ],
+        "invariant": "The container sees none of the project's key material, MCP secrets file, run records or review folders, and nothing secret-shaped it prints reaches the artifact.",
+        "method": "source",
+        "result": "The mask set is sound for ordinary names: maskPaths masks reviews/ and .ultrapowers/ as read-only tmpfs, every file matching the shared KEY_RE (guard-paths.mjs:180, matched on the lowercased path, mounted by original-case name) plus .dev.vars, and .agents/mcp-secrets.env, each over an empty regular file the runner checks (:304-315). Symlinks are skipped by walk() but a container-side link cannot reach a host file. The container gets an empty environment, a credential-looking --env name is refused, and the redaction runs on the whole text before the 64 KiB cut (:345-348). The weakness is in the mask file path: it is the same unescaped `target=/target/${file}` text (:133) built from names the audited tree controls, so a hostile tree can inject a source= field and mount a host path over a decoy file. That is the same root cause as the inputs-folder variant and is consolidated under the one fingerprint. The redaction (:148-166) is the last layer and is weak in this setting: JSON-quoted `\"apiKey\": \"value\"` is not matched (the name must be followed directly by : or =); a private key printed without its END line is not matched; any encoding (base64, hex, reversal) passes. See hardening for the pathological-backtracking cost of the assignment pattern.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [
+      "hunt-sandbox/mount-option-injection-comma-in-path"
+    ],
+    "unresolved": [
+      "Same blocker as the linked candidate: no Docker run is possible in this run, and the readability of a mounted host file for uid 65534 on a given host is outside source"
+    ]
+  },
+  {
+    "coverage_id": "skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-sandbox.mjs%23verify::skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-sandbox.mjs%23artifact%20log::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Resource%20and%20file%20handling",
+    "canonical_refs": {
+      "surface": "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs#verify",
+      "boundary": "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs#artifact log",
+      "subsystem": "profile/quick/all-in-scope-subsystems",
+      "attack_class": "ATTACK-CLASSES.md#Resource and file handling"
+    },
+    "surface": "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs#verify",
+    "boundary": "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs#artifact log",
+    "subsystem": "all in-scope subsystems (quick profile)",
+    "attack_class": "ATTACK-CLASSES.md#Resource and file handling",
+    "starting_paths": [
+      "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs",
+      "skills/vulnerability-hunt/scripts/hunt-verdict.mjs"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Resource and file handling",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [
+      {
+        "block": "SUPPLY-CHAIN-AND-RELEASE.md#Cache, artifact, and workspace trust mixing",
+        "reason": "the artifact is a local evidence file, not a CI artifact consumed by a release job"
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "h2-sandbox",
+    "reviewed_paths": [
+      "skills/autopilot/scripts/autopilot-lib.mjs",
+      "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs",
+      "skills/vulnerability-hunt/scripts/hunt-verdict.mjs"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "h2-sandbox",
+        "reviewed_paths": [
+          "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs",
+          "skills/autopilot/scripts/autopilot-lib.mjs"
+        ],
+        "invariant": "An artifact the verifier accepts is a regular file the runner wrote, at the path and with the content it logged; no path, link or component can redirect a read or write outside the run folder.",
+        "method": "source",
+        "result": "The runner enforces this. parseRunRel restricts the run id and number (:232-240); reviewFolderProblem lstat-checks each step for links and compares realpaths (autopilot-lib.mjs:22-42); the artifacts folder is realpath-compared to the exact expected path before the container starts (:317-320); the artifact is created with flag wx, so an existing file or link is refused (:323,:360); the SHA-256 of the written bytes is appended to .ultrapowers/sandbox/<id>/run-<n>.jsonl, which the guardrail's MARKER_RE keeps from agents. verifyArtifact accepts only agents/<id>/artifacts/<name>.txt with plain repo and id (:381-383), refuses a link or non-regular file (regularFileProblem, autopilot-lib.mjs:48-54), takes the last log line for that (repo, artifact), and compares the current SHA-256 (:386-396). A forged log line, a rewritten artifact and a copy to another path each fail. A swap of the artifacts folder during the up-to-120-second container run needs a link, and the hunt's agents have only read verbs and a write tool that creates no link. hunt-verdict.mjs:316-327 calls verifyArtifact for every local check of every unit and attempt, and reports a failure as a problem.",
+        "artifact": null
+      },
+      {
+        "agent_id": "h2-sandbox",
+        "reviewed_paths": [
+          "skills/vulnerability-hunt/scripts/hunt-verdict.mjs"
+        ],
+        "invariant": "What verify proves is stated correctly: provenance of bytes, not truth of a claim.",
+        "method": "source",
+        "result": "verify binds an artifact to the runner's write only. The artifact holds whatever the audited (hostile) code printed, so a printed `exploit succeeded` line proves nothing about the vulnerability, and a ledger can cite any verified artifact of the run for any claim. That is a property of the design; the verdict's other checks (hunt-verdict.mjs, owned by h4-verdict) are where the claim is judged. Recorded as hardening, not a finding.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": []
+  },
+  {
+    "coverage_id": "skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-verdict.mjs%23front-page::skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-verdict.mjs%23cell::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Injection",
+    "canonical_refs": {
+      "surface": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs#front-page",
+      "boundary": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs#cell",
+      "subsystem": "profile/quick/all-in-scope-subsystems",
+      "attack_class": "ATTACK-CLASSES.md#Injection"
+    },
+    "surface": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs#front-page",
+    "boundary": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs#cell",
+    "subsystem": "all in-scope subsystems (quick profile)",
+    "attack_class": "ATTACK-CLASSES.md#Injection",
+    "starting_paths": [
+      "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+      "skills/vulnerability-hunt/templates/SECURITY-REPORT.md"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Injection",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [
+      {
+        "block": "AI-AND-LLM.md#Insecure output rendering",
+        "reason": "the markdown renderer is outside source; the in-repo escaping is judged under ordinary Injection"
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "h4-verdict",
+    "reviewed_paths": [
+      "skills/vulnerability-hunt/scripts/hunt-verdict.mjs"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "h4-verdict",
+        "reviewed_paths": [
+          "skills/vulnerability-hunt/scripts/hunt-verdict.mjs"
+        ],
+        "invariant": "Record or tool-lane text (file names from the audited tree, advisory text, finding strings) cannot break out of its table cell, line or heading in SECURITY-REPORT.md or in task-review's section, and cannot forge a Verdict line",
+        "method": "source",
+        "result": "Every record value passes oneLine (41), which removes \\r, \\n, U+2028 and U+2029, or cell (42-45), which also escapes `|`. The `|` escape cannot be undone by a trailing or embedded backslash: a pre-existing backslash gives `\\\\|` and the pipe stays escaped under GFM row splitting, and the template puts a space before each closing pipe. code() (46) swaps backticks for apostrophes. Every list-item and heading builder (findingBlock 558-568, researchLines 571-593, repoBlock 596-671, the front page 675-708) prefixes the value with literal text, so no value can start a block, a heading or a `Verdict:` line. renderReviewSection quotes only the first `Verdict:` line of SECURITY-REPORT.md and passes it through oneLine (712). The repository directory name used in the Cloudflare reports link has `[` and `]` removed in the label and encodeURIComponent in the target (666-668). The preflight accepts only `^[A-Za-z0-9._-]+$` repository names (hunt-preflight.mjs:553). Only inline markup remains: `[](), !, *, <` and autolinks inside a cell are not neutralised (see hardening). The report is written through regularFileProblem (786).",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": []
+  },
+  {
+    "coverage_id": "skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-verdict.mjs%23loadRun::skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-verdict.mjs%23verdict::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Business%20logic",
+    "canonical_refs": {
+      "surface": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs#loadRun",
+      "boundary": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs#verdict",
+      "subsystem": "profile/quick/all-in-scope-subsystems",
+      "attack_class": "ATTACK-CLASSES.md#Business logic"
+    },
+    "surface": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs#loadRun",
+    "boundary": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs#verdict",
+    "subsystem": "all in-scope subsystems (quick profile)",
+    "attack_class": "ATTACK-CLASSES.md#Business logic",
+    "starting_paths": [
+      "skills/vulnerability-hunt/scripts/hunt-verdict.mjs"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Business logic",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [
+      {
+        "block": "AI-AND-LLM.md#Action-confirmation and approval binding",
+        "reason": "the verdict is computed deterministically from files; the agent-side binding is unit agents/vulnerability-hunter.md"
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "candidate",
+    "agent_id": "h4-verdict",
+    "reviewed_paths": [
+      "agents/vulnerability-hunter.md",
+      "skills/task-review/scripts/assemble-review.mjs",
+      "skills/vulnerability-hunt/prompts/lane-dependencies.md",
+      "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+      "tests/vulnerability-hunt/hunt-verdict.test.mjs"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "h4-verdict",
+        "reviewed_paths": [
+          "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+          "skills/task-review/scripts/assemble-review.mjs",
+          "agents/vulnerability-hunter.md",
+          "tests/vulnerability-hunt/hunt-verdict.test.mjs"
+        ],
+        "invariant": "The verdict says PASS only when every repository the plan selected was hunted to completion in the run being judged, and it never says PASS for an empty, partial or superseded run",
+        "method": "source",
+        "result": "Fails. latestRun (192-211) takes the highest `run-N` folder and compares it to nothing. loadRun (270-277) builds its repository set from directories that hold a run-metadata.json and silently skips every other directory. The run folder and the repository folders are created before run-metadata.json is written (agents/vulnerability-hunter.md:129 and 137-148). judgeRun (527-545) reaches PASS when `repos` is empty, because the loop adds no part and `run.problems` is empty. In assemble-review.mjs only INCOMPLETE blocks (100, 110), so PASS passes through. The tests cover a missing repo-metadata field and a missing ledger, but no zero-repository run and no missing-repository run; the only mention is the renderReviewSection note at hunt-verdict.mjs:723, which does not change the verdict.",
+        "artifact": null
+      },
+      {
+        "agent_id": "h4-verdict",
+        "reviewed_paths": [
+          "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+          "skills/task-review/scripts/assemble-review.mjs",
+          "skills/vulnerability-hunt/prompts/lane-dependencies.md"
+        ],
+        "invariant": "A record the verdict refuses (tool-lanes.json, an unredacted gitleaks report) must not make rows vanish while a lower-severity result still produces a passing verdict, and the refusal must reach the reader",
+        "method": "source",
+        "result": "Fails. validLanes (234-244) refuses the whole tool-lanes.json when any single CVE severity is off the four-word scale. loadRun sets toolLanes to null and adds a problem (301-306). analyze then reads `lanes` as [] (390), so the secrets, alerts, notes and every other CVE row of that file are not counted. judgeRun uses `run.problems` only in the last tier (540). Any needs_validation record, OSINT alert or confirmed medium finding gives PASS-WITH-ISSUES first (518-526) and the problem appears in no sentence. renderReviewSection (710-726) never prints run.problems; only the front page does (702-703). The test at hunt-verdict.test.mjs:174-177 makes 'FAIL or PASS-WITH-ISSUES wins over INCOMPLETE' deliberate for run_status; nothing makes it deliberate for refused records. The dependencies lane prompt tells the agent to give the severity 'as the tool states it' in the words critical|high|moderate|low (lane-dependencies.md:29,42), and all lanes share the one tool-lanes.json (agents/vulnerability-hunter.md:159).",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [
+      "hunt-verdict:loadRun:run-set-never-cross-checked-empty-or-partial-run-passes",
+      "hunt-verdict:loadRun:refused-records-demoted-below-issues-tier"
+    ],
+    "unresolved": []
+  },
+  {
+    "coverage_id": "skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-verdict.mjs%23main::hooks%2Flib%2Fqa-shell-writes.mjs%23own-script%20arguments::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Resource%20and%20file%20handling",
+    "canonical_refs": {
+      "surface": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs#main",
+      "boundary": "hooks/lib/qa-shell-writes.mjs#own-script arguments",
+      "subsystem": "profile/quick/all-in-scope-subsystems",
+      "attack_class": "ATTACK-CLASSES.md#Resource and file handling"
+    },
+    "surface": "skills/vulnerability-hunt/scripts/hunt-verdict.mjs#main CLI (--cwd, validate <file>, front-page and verdict <ID>)",
+    "boundary": "hooks/lib/qa-shell-writes.mjs#own-script arguments the hunt guardrail does not judge, reaching findRoot(cwd), resolve(cwd, file) and the SECURITY-REPORT.md write",
+    "subsystem": "all in-scope subsystems (quick profile)",
+    "attack_class": "ATTACK-CLASSES.md#Resource and file handling",
+    "starting_paths": [
+      "skills/vulnerability-hunt/scripts/hunt-verdict.mjs",
+      "hooks/lib/qa-shell-writes.mjs",
+      "skills/qa-specialist/scripts/qa-preflight.mjs"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Resource and file handling",
+    "selected_companion_blocks": [
+      "AI-AND-LLM.md#Core discipline",
+      "AI-AND-LLM.md#Tool-argument injection into a downstream sink",
+      "AI-AND-LLM.md#Excessive agency and confused-deputy authority",
+      "AI-AND-LLM.md#Universal moves",
+      "AI-AND-LLM.md#Validation rules"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "AI-AND-LLM.md#Unbounded delegated action loops",
+        "reason": "same-user cost only, as the ledger already records for the hunter contract"
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 2,
+    "status": "deferred",
+    "agent_id": null,
+    "reviewed_paths": [],
+    "local_checks": [],
+    "result_fingerprints": [],
+    "unresolved": [
+      "quick_profile_final_critic: main() (hunt-verdict.mjs:746-791) takes --cwd from the agent, walks up with findRoot to any ancestor holding the project config, runs loadRun there and writes the SECURITY-REPORT.md of that root; validate reads any regular file path. The guardrail judges these arguments by key name only. No unit traced main(). Not hunted in this quick run."
+    ]
+  }
+]

@@ -66,6 +66,7 @@ mkdir -p "$DECOY/.agents" "$DECOY/.ultrapowers" "$ELSEWHERE"
 # Copies of the plugin's own scripts outside the plugin: the hunt refuses them (deny_node_script_outside_plugin).
 mkdir -p "$ELSEWHERE/plugin/skills/vulnerability-hunt/scripts"
 : > "$ELSEWHERE/plugin/skills/vulnerability-hunt/scripts/hunt-preflight.mjs"
+: > "$ELSEWHERE/plugin/skills/vulnerability-hunt/scripts/hunt-sandbox.mjs"
 # A copy of run-records.mjs outside the plugin: deny_node_run_records_copy_outside_plugin. The real one runs from the plugin.
 PLUGIN_M="$(cygpath -m "$REPO_ROOT" 2>/dev/null || printf %s "$REPO_ROOT")"
 mkdir -p "$ELSEWHERE/plugin/hooks/lib"

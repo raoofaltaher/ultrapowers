@@ -7,11 +7,12 @@
 #
 # By default, runs ShellCheck and shell syntax checks on changed shell scripts.
 # Use --format to format with shfmt before linting. Use --all for the full tracked
-# baseline, or pass files explicitly to lint a smaller set.
+# baseline, or pass files explicitly to lint a smaller set. The changed set and the
+# baseline skip the record folders tasks/, specs/, plans/ and reviews/.
 set -euo pipefail
 
 usage() {
-  sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 die() {
@@ -37,6 +38,19 @@ is_shell_file() {
 
   IFS= read -r first_line <"$path" || true
   [[ "$first_line" =~ ^#!.*[/[:space:]](bash|dash|ksh|sh)([[:space:]]|$) ]]
+}
+
+# The knowledge-base folders hold records, not this repository's code: a ticket's
+# attachments and the files of a hunt run are kept as they were written. The changed
+# set and the baseline skip them, as the version audit does (.version-bump.json); a
+# file named on the command line is linted wherever it is.
+is_record_path() {
+  case "$1" in
+    tasks/* | specs/* | plans/* | reviews/*)
+      return 0
+      ;;
+  esac
+  return 1
 }
 
 ensure_git_work_tree() {
@@ -70,7 +84,7 @@ collect_all_shell_files() {
   ensure_git_work_tree
 
   while IFS= read -r -d '' path; do
-    add_shell_file "$path"
+    is_record_path "$path" || add_shell_file "$path"
   done < <(git ls-files -z)
 }
 
@@ -81,18 +95,18 @@ collect_changed_shell_files() {
 
   if git rev-parse --verify HEAD >/dev/null 2>&1; then
     while IFS= read -r -d '' path; do
-      add_shell_file "$path"
+      is_record_path "$path" || add_shell_file "$path"
     done < <(git diff --name-only -z --diff-filter=ACMR HEAD)
 
     while IFS= read -r -d '' path; do
-      add_shell_file "$path"
+      is_record_path "$path" || add_shell_file "$path"
     done < <(git diff --cached --name-only -z --diff-filter=ACMR)
   else
     collect_all_shell_files
   fi
 
   while IFS= read -r -d '' path; do
-    add_shell_file "$path"
+    is_record_path "$path" || add_shell_file "$path"
   done < <(git ls-files --others --exclude-standard -z)
 }
 

@@ -1,0 +1,36 @@
+{
+  "run_id": "audit-2026-11-01/run-1/ultrapowers",
+  "hunt_run_record": "hunt-audit-2026-11-01-c47ddcde",
+  "repo": "ultrapowers",
+  "target": "S:/ultrapowers-live-gh63/audit",
+  "source_ref": {
+    "commit": "058c1da0a1b20bcbb52c5150d36e15f75e561dcd",
+    "branch": "GH-63-cloudflare-engine",
+    "dirty": true,
+    "dirty_paths": [".agents/ultrapowers.json (modified, not reviewed as another revision)", "reviews/live-check/ (untracked)"]
+  },
+  "profile": "quick",
+  "scope_paths": [],
+  "budget": null,
+  "execution_policy": "sandboxed-source-and-local-only",
+  "sandbox": "available",
+  "guardrail": "active",
+  "guardrail_evidence": "HUNT-GUARDRAIL DENY: inline interpreter code is blocked (the parent's `node -e` JSON check, 2026-11-01, after the run record was started)",
+  "selected_companion_files": ["ATTACK-CLASSES.md", "AI-AND-LLM.md", "SUPPLY-CHAIN-AND-RELEASE.md", "DESKTOP-MOBILE-AND-LOCAL-IPC.md", "CLIENT-SIDE.md", "CLOUD-AND-DEPLOYMENT.md"],
+  "prior_run_paths": [
+    {"path": "reviews/audit-2026-10-11/", "compatible": false, "reason": "written by the replaced hunter: no coverage-ledger.json and no Cloudflare findings.json"},
+    {"path": "reviews/audit-2026-10-23/", "compatible": false, "reason": "written by the replaced hunter: security-findings.json, no coverage-ledger.json"},
+    {"path": "reviews/audit-2026-10-23-pre-fix/", "compatible": false, "reason": "written by the replaced hunter: no coverage-ledger.json and no Cloudflare findings.json"}
+  ],
+  "shared_file_owners": {
+    "run-metadata.json": "parent",
+    "architecture.md": "parent",
+    "coverage-ledger.json": "parent",
+    "findings.json": "parent",
+    "tool-lanes.json": "parent",
+    "REPORT.md": "parent",
+    "FINDINGS-DETAIL.md": "parent",
+    "NEEDS-VALIDATION.md": "parent"
+  },
+  "run_status": "in_progress"
+}

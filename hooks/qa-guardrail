@@ -675,16 +675,17 @@ PROTECTED_RE='(^|/)\.ssh(/|$)|authorized_keys|id_rsa|id_ed25519|id_ecdsa|(^|/)\.
 # The autopilot envelope also keeps the agent out of CI, the plugin hooks, the repository's commit
 # hooks (they run inside the engine's own commit and push) and the env file: a stage that
 # rewrites the workflow or the hooks rewrites its own brakes.
-AUTOPILOT_PROTECTED_RE='(^|/)\.github/|(^|/)\.gitlab-ci\.yml$|(^|/)hooks/(qa-guardrail|session-start|team-memory-[a-z]+|lib/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|/)\.gemini/hooks/|(^|/)\.husky/|(^|/)\.pre-commit-config\.ya?ml$|(^|/)lefthook\.ya?ml$|(^|/)\.env($|\.)|(^|/)qa/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|/)\.ultrapowers/(autopilot-active|autopilot-stop)$|(^|/)\.ultrapowers/runs(/|$)|(^|/)\.mcp\.json$|(^|/)\.cursor/(mcp\.json|cli\.json|environment\.json|worktrees\.json|rules/|hooks/)|(^|/)\.devcontainer(/|\.json$)|(^|/)\.vscode/|(^|/)\.codex/|(^|/)\.kimi/|(^|/)\.factory/|(^|/)\.gemini/|(^|/)\.qwen/|(^|/)opencode\.jsonc?$|(^|/)\.hermes/|(^|/)\.opencode/|(^|/)\.cursor/hooks\.json$|(^|/)\.pi/|(^|/)\.claude-plugin/|(^|/)hooks\.json$'
+AUTOPILOT_PROTECTED_RE='(^|/)\.github/|(^|/)\.gitlab-ci\.yml$|(^|/)hooks/(qa-guardrail|session-start|team-memory-[a-z]+|lib/|hooks(-cursor|-codex)?\.json|run-hook\.cmd)|(^|/)\.gemini/hooks/|(^|/)\.husky/|(^|/)\.pre-commit-config\.ya?ml$|(^|/)lefthook\.ya?ml$|(^|/)\.env($|\.)|(^|/)qa/known-issues\.md$|^(agents|claude|gemini)\.md$|(^|/)\.ultrapowers/(autopilot-active|autopilot-stop)$|(^|/)\.ultrapowers/(runs|sandbox)(/|$)|(^|/)\.mcp\.json$|(^|/)\.cursor/(mcp\.json|cli\.json|environment\.json|worktrees\.json|rules/|hooks/)|(^|/)\.devcontainer(/|\.json$)|(^|/)\.vscode/|(^|/)\.codex/|(^|/)\.kimi/|(^|/)\.factory/|(^|/)\.gemini/|(^|/)\.qwen/|(^|/)opencode\.jsonc?$|(^|/)\.hermes/|(^|/)\.opencode/|(^|/)\.cursor/hooks\.json$|(^|/)\.pi/|(^|/)\.claude-plugin/|(^|/)hooks\.json$'
 # The QA baseline (known-issues) and the instruction files every later session obeys are the gate's
 # record and the agents' rules: a stage that edits its own baseline hides a failure from the QA
 # gate. The baseline's path is qa.knownIssues (default qa/known-issues.md, matched above).
 known_lc="$(lower "$known_issues")"
-# The QA and hunt run records: never written, moved or removed by a call of a run, through a file tool,
-# a patch or the shell. A run ends itself through hooks/lib/run-records.mjs end, which removes its
-# record only once its report holds its Verdict line (and logs the end in reviews/<id>/run-log.txt).
-MARKER_RE='(^|/)\.ultrapowers/runs(/|$)'
-MARKER_WHY="is a run record; no call of a run writes, moves or removes one: the run ends itself through run-records.mjs end once its report holds its Verdict line"
+# The QA and hunt run records (.ultrapowers/runs/) and the sandbox runner's log (.ultrapowers/sandbox/):
+# never written, moved or removed by a call of a run, through a file tool, a patch or the shell. A run
+# ends itself through hooks/lib/run-records.mjs end, which removes its record only once its report holds
+# its Verdict line (and logs the end in reviews/<id>/run-log.txt).
+MARKER_RE='(^|/)\.ultrapowers/(runs|sandbox)(/|$)'
+MARKER_WHY="is a run record; no call of a run writes, moves or removes one, or the sandbox runner's log: the run ends itself through run-records.mjs end once its report holds its Verdict line"
 # --- MCP tools of a tracker, of mail or chat, or of git (git: autopilot only): reads pass; in an autopilot stage writes belong to the
 # engine between stages (the approve label among them). A tool name with a read verb is a read.
 # This rule comes before the file-tool gate: a tracker tool that carries a `path` argument

@@ -1,0 +1,90 @@
+{
+  "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "hunt-config/repos-path-unbounded-from-audited-config",
+    "title": "repos[].path from the audited branch's config is not bounded to the project root before it is walked and bind-mounted",
+    "description": "readProject accepts any non-empty repos[].path. The preflight and the sandbox runner resolve it with resolve(root, path), which allows absolute paths and '..' segments. The preflight walks the result, reads its manifests and, in a full audit, prints its top-level folders. The runner binds the same directory read-only into the container that runs target code. If the checked-out branch can change .agents/ultrapowers.json, which the architecture lists as audited-tree data, a branch author can point a repository outside the project and so give the hunt, and the sandbox that runs agent-chosen commands, a view of host files that are not part of the project. The image (digest-pinned, --pull=never) and the limits (validated) are bounded; the path is not.",
+    "claimed_root_cause": "The config reader validates the repository name but not the path, so a value the audited tree can alter reaches the walk and the docker bind source as trusted input.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "skills/vulnerability-hunt/scripts/hunt-files.mjs",
+        "line": 59,
+        "scope": "readProject",
+        "description": "repos[].path is read with text(r.path) from .agents/ultrapowers.json and kept as written; only emptiness is checked."
+      },
+      {
+        "kind": "propagation",
+        "file": "skills/vulnerability-hunt/scripts/hunt-preflight.mjs",
+        "line": 564,
+        "scope": "preflight",
+        "description": "repoDir = resolve(root, repo.path) with no containment test; only existsSync is checked."
+      },
+      {
+        "kind": "propagation",
+        "file": "skills/vulnerability-hunt/scripts/hunt-preflight.mjs",
+        "line": 569,
+        "scope": "preflight",
+        "description": "walk(repoDir), manifestsFromFiles and declaredFacts read the directory, and a full audit prints its top-level folders as tree: lines."
+      },
+      {
+        "kind": "sink",
+        "file": "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs",
+        "line": 325,
+        "scope": "runCheck",
+        "description": "repoDir = resolve(root, entry.path) is bound read-only as /target (dockerArgs, line 130) into the container that runs the target's code (h2 owns the docker internals)."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs",
+        "line": 102,
+        "description": "Control on the image: a digest pin, a local-cache check and --pull=never (line 128) bound the image; nothing equivalent exists for the path."
+      },
+      {
+        "file": "templates/.agents/ultrapowers.json.tmpl",
+        "line": 8,
+        "description": "The scaffold writes nested relative repository paths, so a path outside the project is not part of the shipped layout."
+      }
+    ],
+    "blockers": [
+      "Whether the audited branch's .agents/ultrapowers.json is the effective config of a hunt (a pull request branch checked out in the root) is a deployment fact outside source.",
+      "The sandbox is unavailable for this run, so no mount was observed.",
+      "Which host files a hunter or a container command could then read depends on the guardrail's read rules (h1) and the sandbox masks (h2), which are outside this unit."
+    ],
+    "validation_plan": {
+      "local": "In a dummy project, set a repos[].path to '..' or an absolute dummy folder, run hunt-preflight.mjs --full-audit and confirm the dummy folder is walked and its folders printed. In the sandbox, once available, confirm that dockerArgs binds that folder. Fix: refuse any path whose realpath is not inside the realpath of the project root, in readProject, so both consumers share the check.",
+      "deployment": "The owner may confirm whether hunts are run on a pull request branch checked out in the project root, so that its config applies. If configs are always taken from the trusted base branch, this is hardening only."
+    }
+  },
+  "linked_unit_checks": [
+    {
+      "coverage_id": ".agents%2Fultrapowers.json%23repos%20and%20hunt::skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-files.mjs%23readProject::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Chained%20vulnerabilities%20and%20trust%20boundaries",
+      "checks": [
+        {
+          "agent_id": "h3-preflight",
+          "reviewed_paths": [
+            "skills/vulnerability-hunt/scripts/hunt-files.mjs",
+            "skills/vulnerability-hunt/scripts/hunt-preflight.mjs",
+            "templates/.agents/ultrapowers.json.tmpl"
+          ],
+          "invariant": "A repos[].path read from .agents/ultrapowers.json stays inside the project root before the preflight walks it, reads its manifests and hands it on as the repository folder",
+          "method": "source",
+          "result": "readProject keeps text(r.path) as written and checks only that name and path are non-empty (hunt-files.mjs:59). loadProject validates only the ticket (hunt-preflight.mjs:518-537). preflight() then runs resolve(root, repo.path) (:564), which accepts an absolute path or '..' segments, and the result goes to walk(), declaredFacts() and (full mode) the SCOPE tree: lines. The path is checked for existence only (:565). The template ships only a relative nested path. Nothing in the three files bounds it. Sibling control: repo names are validated (:553, hunt-sandbox.mjs:263), paths are not.",
+          "artifact": null
+        },
+        {
+          "agent_id": "h3-preflight",
+          "reviewed_paths": [
+            "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs"
+          ],
+          "invariant": "The sandbox's bind source, the sandbox image and the limits that come from the config are bounded before they reach docker run (h2 owns the docker argument internals; this check covers only the config-to-sink trust)",
+          "method": "source",
+          "result": "Image: PINNED digest, --pull=never and a local-cache check in probe (:99-104) bound hunt.sandbox.images, so the audited config cannot select an arbitrary image. Limits: LIMIT_RULES validators (:68-70) bound hunt.sandbox.limits. Mount source: runCheck sets repoDir = resolve(root, entry.path) (:325) with no containment check and dockerArgs binds it read-only as source=<repoDir> (:130). A path outside the project would therefore be mounted into the container that runs target code, and the key-material masks are computed only inside that directory (maskPaths(repoDir), :115-121). This is the one config value reaching a sink as trusted input.",
+          "artifact": null
+        }
+      ]
+    }
+  ],
+  "prior_records_same_fingerprint": []
+}

@@ -1,0 +1,10 @@
+{ "repos": [ { "repo": "ultrapowers", "research": {
+    "tools": ["gh api /advisories (GitHub global advisory database, GET only, signed-in gh 2.103.0)", "WebSearch", "WebFetch", "Firecrawl search and scrape", "Context7 documentation server", "DeepWiki documentation server"],
+    "status": "checked",
+    "reason": "Research tools were available. No query was sent: the only declared row (ws) belongs to npm, which has a present audit tool (npm 11.21.1), and no runtime or image row was declared.",
+    "notResearched": [
+      { "subject": "ws ^8.22.0 (tests/brainstorm-server/package.json:8)", "reason": "ecosystem npm has a present audit tool (npm); its database is the source, so the dependency is not queried here" },
+      { "subject": "runtime (Node engines or version file) of ultrapowers", "reason": "not declared in a readable form" },
+      { "subject": "dependencies of package.json (root, no lockfile)", "reason": "not declared in a readable form" }
+    ],
+    "advisories": [] } } ] }

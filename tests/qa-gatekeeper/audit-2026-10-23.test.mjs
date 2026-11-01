@@ -13,6 +13,7 @@ import test from 'node:test';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const { analyze } = await import(pathToFileURL(resolve(__dirname, '../../hooks/lib/qa-shell-writes.mjs')).href);
+const { isKeyMaterial } = await import(pathToFileURL(resolve(__dirname, '../../hooks/lib/guard-paths.mjs')).href);
 
 const qa = { cwd: '/p', root: '/p', ticket: '1234' };
 const hunt = { cwd: '/p', root: '/p', ticket: 'audit-1', profile: 'hunt' };
@@ -153,6 +154,14 @@ test('M5: a run record is never a call of the run\'s to write, move or remove', 
   assert.match(analyze('rm .ultrapowers/runs/qa-1234-0a1b2c3d.json', qa), /is a run record; no call of a run writes, moves or removes one/);
 });
 
+test('the sandbox runner\'s log is written by the runner alone, in every profile, an autopilot stage included', () => {
+  all(denied, [
+    'echo x > .ultrapowers/sandbox/GH-1/run-1.jsonl',
+    'echo x >> /p/.ultrapowers/sandbox/audit-1/run-1.jsonl',
+    'rm -f .ultrapowers/sandbox/empty',
+  ]);
+});
+
 test('a role variable never stands for a tracker credential, and the hunt reads none', () => {
   assert.ok(denied('echo $GH_TOKEN', { ...qa, roleVars: ['GH_TOKEN'] }));
   assert.ok(denied('printenv GH_TOKEN', { ...qa, roleVars: ['GH_TOKEN'] }));
@@ -285,13 +294,14 @@ test('RR7: a read redirect from /dev/tcp or /dev/udp opens a connection; so do t
 
 test('RR9: the hunt runs the plugin\'s own scripts from the plugin, never a copy inside the audited project', () => {
   const own = { cwd: REPO, root: REPO, ticket: 'audit-1', profile: 'hunt' };
-  for (const script of ['hooks/lib/run-records.mjs', 'skills/vulnerability-hunt/scripts/hunt-preflight.mjs', 'skills/task-review/scripts/assemble-review.mjs']) {
+  const scripts = ['hooks/lib/run-records.mjs', 'skills/vulnerability-hunt/scripts/hunt-preflight.mjs', 'skills/vulnerability-hunt/scripts/hunt-sandbox.mjs', 'skills/vulnerability-hunt/scripts/hunt-verdict.mjs', 'skills/vulnerability-hunt/cloudflare/validate-findings.cjs', 'skills/task-review/scripts/assemble-review.mjs'];
+  for (const script of scripts) {
     // run-records.mjs: only its end and list (RH1)
     const cmd = `node ${REPO}/${script} ${script.endsWith('run-records.mjs') ? 'end' : 'x'}`;
     assert.ok(allowed(cmd, own), `${script}: ${analyze(cmd, own)}`);
   }
   const proj = fwd(mkdtempSync(join(tmpdir(), 'audit-rr9-')));
-  for (const script of ['hooks/lib/run-records.mjs', 'skills/vulnerability-hunt/scripts/hunt-preflight.mjs', 'skills/task-review/scripts/assemble-review.mjs']) {
+  for (const script of scripts) {
     mkdirSync(dirname(`${proj}/${script}`), { recursive: true });
     writeFileSync(`${proj}/${script}`, '');
     const ctx = { cwd: proj, root: proj, ticket: 'audit-1', profile: 'hunt' };
@@ -1176,4 +1186,54 @@ test('R4 Low 7 (hook): a node planted in the project, on an absolute PATH entry 
   const r = run({ ULTRAPOWERS_NODE: process.execPath, PATH: `${tools}${delimiter}${process.env.PATH}` });
   assert.equal(r.status, 2, r.stderr);
   assert.equal(existsSync(sentinel), false, 'the planted node ran');
+});
+
+test('isKeyMaterial agrees with the bash hook\'s key list', () => {
+  // One path per alternative of KEY_RE in hooks/qa-guardrail, including the whole .aws folder.
+  for (const p of [
+    '.ssh/known_hosts', 'home/.ssh', 'authorized_keys', 'id_rsa', 'id_ed25519', 'id_ecdsa',
+    '.aws/config', '.aws/credentials', '.aws/sso/cache/x.json', 'home/u/.aws', 'home/u/.aws/config',
+    'mcp-secrets.env', 'secrets.local', 'run.local.sh', '.env', '.env.local', 'a/.env.production',
+    '.git-credentials', '.netrc', 'a/.npmrc', '.config/gh/hosts.yml', '.config/glab-cli/config.yml',
+    '.docker/config.json', '.kube/config', '.gnupg/private-keys-v1.d/x', '.pypirc',
+    '.cargo/credentials', '.cargo/credentials.toml', '.config/gcloud/application_default_credentials.json',
+    '.azure/msal_token_cache.json', '.pgpass', '.vault-token', '.gem/credentials',
+    'certs/server.pem', 'k.key', 'a/b.pfx', 'a/b.p12', 'a/b.pem.bak',
+  ]) assert.equal(isKeyMaterial(p), true, p);
+  for (const p of ['src/aws-client.js', 'docs/keys.md', 'src/config.js', 'aws/config', 'src/.awsome/x', 'src/key-handler.js']) {
+    assert.equal(isKeyMaterial(p), false, p);
+  }
+});
+
+test('the shell analyzer refuses to read .aws/config and .aws/sso in every profile', () => {
+  all(denied, ['cat .aws/config', 'cat ~/.aws/config', 'cat .aws/sso/cache/x.json', 'grep -r token .aws']);
+});
+
+test('a glob in the folder name does not reach .aws/config either', () => {
+  all(denied, ['cat .aw*/config', 'cat ~/.a?s/config']);
+});
+
+test('the gitleaks refusal names every flag the analyzer accepts', () => {
+  const why = analyze('gitleaks stdin --no-banner --redact', hunt);
+  assert.match(why, /^.*gitleaks may run only as/);
+  const form = why.split(' during the hunt')[0];
+  for (const flag of ['--redact', '--redact=100', '--no-banner', '--no-color', '-v', '--verbose', '--report-format', '-f', '--report-path', '-r', '--config', '-c', '--log-opts', '--log-level', '--max-target-megabytes', '--exit-code']) {
+    const at = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    assert.match(form, new RegExp(`(^|[\\s\\[|])${at(flag)}($|[\\s\\]|])`), `${flag} is missing from: ${form}`);
+  }
+});
+
+test('gitleaks with partial redaction or a debug log level is refused', () => {
+  for (const cmd of [
+    'gitleaks git . --redact=1 -v',
+    'gitleaks git . --redact=1 --no-banner --verbose',
+    'gitleaks dir . --redact=10 --report-format json --report-path /dev/stdout',
+    'gitleaks dir . --redact --log-level debug',
+    'gitleaks dir . --redact --log-level=trace',
+  ]) {
+    assert.match(analyze(cmd, hunt), /gitleaks may run only/, `${cmd}: ${analyze(cmd, hunt)}`);
+  }
+  for (const cmd of ['gitleaks dir . --redact=100 --no-banner', 'gitleaks dir . --redact --log-level warn']) {
+    assert.ok(allowed(cmd, hunt), `${cmd}: ${analyze(cmd, hunt)}`);
+  }
 });

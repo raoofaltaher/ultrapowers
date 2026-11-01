@@ -1,0 +1,60 @@
+{
+  "repo": "ultrapowers",
+  "lanes": [
+    {
+      "lane": "osint", "status": "skipped", "reason": "origin is a local path (S:/ultrapowers/.claude/worktrees/GH-63), so there is no <o>/<r> to query with gh; osv-scanner is absent",
+      "tools": [], "cves": [], "secrets": [], "alerts": [], "notes": [],
+      "declined": [
+        "plans/GH-63/Plan.md lines 276-442 not read (the Read tool truncated the file at line 275 and the lane was already skipped)",
+        "gh api repos/<o>/<r>/dependabot/alerts and secret-scanning/alerts not run: origin is a local path",
+        "gh search code for this repository's identifiers not run: origin is a local path, so no <o>/<r> to exclude",
+        "osv-scanner not run: absent from TOOLS"
+      ],
+      "filesRead": [
+        "S:/ultrapowers-live-gh63/project/tasks/GH-63/GH-63.md",
+        "S:/ultrapowers-live-gh63/project/tasks/GH-63/source.md",
+        "S:/ultrapowers-live-gh63/project/specs/GH-63/Spec.md",
+        "S:/ultrapowers-live-gh63/project/plans/GH-63/Plan.md (lines 1-275 only)"
+      ]
+    },
+    {
+      "lane": "dependencies", "status": "incomplete", "reason": "root package.json has no lockfile: npm audit exited 1 with ENOLOCK and no report; the root manifest declares no dependencies, so the offline fallback found nothing to audit. tests/brainstorm-server audited clean (exit 0).",
+      "tools": [
+        { "name": "npm", "version": "11.21.1", "command": "npm audit --package-lock-only --json --prefix tests/brainstorm-server", "exit": 0 },
+        { "name": "npm", "version": "11.21.1", "command": "npm audit --package-lock-only --json", "exit": 1 }
+      ],
+      "cves": [],
+      "secrets": [], "alerts": [],
+      "notes": [
+        { "file": "package.json", "line": 0, "kind": "missing-lockfile", "note": "No lockfile next to the root package.json, so npm audit cannot run (ENOLOCK). The manifest declares no dependencies or devDependencies, so nothing is unpinned; the missing lockfile is moot today." },
+        { "file": "package.json", "line": 0, "kind": "no-engines", "note": "No engines field; AGENTS.md states Node 22 or newer, but the manifest does not enforce it. Not an end-of-life runtime finding." },
+        { "file": "tests/brainstorm-server/package.json", "line": 8, "kind": "test-only-dependency", "note": "ws ^8.22.0 is locked to 8.22.0 (tests/brainstorm-server/package-lock.json:15) with an integrity hash; it is used only by the brainstorm-server tests. Optional peers bufferutil and utf-8-validate are not installed. npm audit found no advisory." }
+      ],
+      "declined": [
+        "pip-audit, cargo-audit and osv-scanner are absent; no manifest of those ecosystems is in scope",
+        "gh and glab are not signed in; not needed for this lane",
+        "reachability and import sites of ws were not checked, because no advisory exists",
+        "a Bash ls naming .npmrc was refused by the hunt guardrail (key material rule) and was not worked around; Glob found no .npmrc in the repository",
+        "Spec.md and Plan.md were searched for dependency-related lines only, not read in full"
+      ],
+      "filesRead": [
+        "S:/ultrapowers-live-gh63/project/package.json",
+        "S:/ultrapowers-live-gh63/project/tests/brainstorm-server/package.json",
+        "S:/ultrapowers-live-gh63/project/tests/brainstorm-server/package-lock.json",
+        "S:/ultrapowers-live-gh63/project/tasks/GH-63/GH-63.md",
+        "S:/ultrapowers-live-gh63/project/tasks/GH-63/source.md",
+        "S:/ultrapowers-live-gh63/project/specs/GH-63/Spec.md (grep only)",
+        "S:/ultrapowers-live-gh63/project/plans/GH-63/Plan.md (grep only)"
+      ]
+    },
+    {
+      "lane": "secrets", "status": "ok", "reason": "",
+      "tools": [ { "name": "gitleaks", "version": "8.30.1", "command": "gitleaks git S:/ultrapowers-live-gh63/project --log-opts=dev..GH-63-cloudflare-engine --no-banner --redact --report-format json --report-path reviews/GH-63/run-1/ultrapowers/gitleaks-git.json --config S:/ultrapowers-live-gh63/project/.gitleaks.toml", "exit": 0 } ],
+      "cves": [], "alerts": [],
+      "secrets": [],
+      "notes": [],
+      "declined": ["history before dev and uncommitted or untracked files were not scanned (ticket-range scan only)", "the search fallback was not run because gitleaks completed", "the repo's .gitleaks.toml rules and allowlists were not reviewed"],
+      "filesRead": ["reviews/GH-63/run-1/ultrapowers/gitleaks-git.json"]
+    }
+  ]
+}

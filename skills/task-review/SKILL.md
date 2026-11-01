@@ -54,7 +54,7 @@ A reviewer that returns no JSON block, or findings without root-cause notes, is 
 
 ## Step 3b: The vulnerability hunt
 
-After every reviewer has returned and before the QA gate, run `ultrapowers:vulnerability-hunt <ID> <repo words>`; it writes `reviews/<ID>/SECURITY-REPORT.md` and `security-findings.json`, which Step 5 folds in. Its verdict stands as written. A hunt that could not run is INCOMPLETE in the report, not a reason to skip Step 5.
+After every reviewer has returned and before the QA gate, run `ultrapowers:vulnerability-hunt <ID> <repo words>`; it writes `reviews/<ID>/SECURITY-REPORT.md` and the run folder `reviews/<ID>/run-<N>/`, which Step 5 folds in. Its verdict stands as written. A hunt that could not run is INCOMPLETE in the report, not a reason to skip Step 5.
 
 ## Step 4: The QA gate
 
@@ -66,7 +66,7 @@ Only after every reviewer has returned (a QA run's guardrail would deny the revi
 node "<SKILL_DIR>/scripts/assemble-review.mjs" "<ID>" --findings "reviews/<ID>/review-findings.json" --qa "reviews/<ID>/QA-REPORT.md"
 ```
 
-It writes `reviews/<ID>/TASK-REVIEW.md` from [templates/TASK-REVIEW.md](templates/TASK-REVIEW.md): `FAIL` on any Critical finding, a security `FAIL` or a QA `FAIL`, `BLOCKED` on a QA `PRECONDITION-FAILED` or `INCOMPLETE`, `PASS-WITH-ISSUES` on Important findings or a security or QA `PASS-WITH-ISSUES`, else `PASS`. It reads `reviews/<ID>/security-findings.json` when the hunt wrote it; a security `INCOMPLETE` never blocks and is named in the verdict. Do not hand-edit the verdict. Tell your human partner the verdict, the finding counts and the path, in four lines at most. Name ultrapowers:finishing-a-development-branch as the next step on the ticket route: it shows this verdict above its menu. Do not invoke it; the branch is finished when your human partner says so.
+It writes `reviews/<ID>/TASK-REVIEW.md` from [templates/TASK-REVIEW.md](templates/TASK-REVIEW.md): `FAIL` on any Critical finding, a security `FAIL` or a QA `FAIL`, `BLOCKED` on a QA `PRECONDITION-FAILED` or `INCOMPLETE`, or a security `INCOMPLETE`, `PASS-WITH-ISSUES` on Important findings or a security or QA `PASS-WITH-ISSUES`, else `PASS`. It reads the hunt's latest run folder `reviews/<ID>/run-<N>/` through `hunt-verdict.mjs` when the hunt wrote one, and refuses records from before this change (run the hunt again); a security `INCOMPLETE` makes the review `BLOCKED`, like a QA `INCOMPLETE`, and is named in the verdict. Do not hand-edit the verdict. Tell your human partner the verdict, the finding counts and the path, in four lines at most. Name ultrapowers:finishing-a-development-branch as the next step on the ticket route: it shows this verdict above its menu. Do not invoke it; the branch is finished when your human partner says so.
 
 ## Step 6: Post (only with `--post`)
 

@@ -1,0 +1,90 @@
+{
+  "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "hunt-preflight/changed-files-quoted-path-dropped-from-ticket-scope",
+    "title": "A changed file with a non-ASCII or special-character name silently drops out of the ticket-scoped hunt",
+    "description": "In a ticket-scoped hunt, changedFiles reads `git diff --name-only` without -z and without disabling core.quotepath. Git prints a changed path that holds a non-ASCII byte, a double quote, a backslash or a control character as a quoted, escaped string. The preflight then keeps only names for which existsSync(join(repoDir, name)) is true. The quoted string is not a path on disk, so the file is dropped with no note or count. The author of the audited branch controls file names. A changed file with such a name is absent from the SCOPE file: lines, the file count, the lane decisions and the Cloudflare `scope_paths`, so the hunt's verdict can describe a change set that omits that file.",
+    "claimed_root_cause": "The path list is parsed from newline-separated git output that quotes unusual names, and an existence filter then discards what it cannot resolve, silently and without -z.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "skills/vulnerability-hunt/scripts/hunt-preflight.mjs",
+        "line": 505,
+        "scope": "changedFiles",
+        "description": "git diff --name-only --diff-filter=d <base>...<branch> is spawned with no -z and no -c core.quotepath=false, so names with unusual bytes are quoted by git."
+      },
+      {
+        "kind": "propagation",
+        "file": "skills/vulnerability-hunt/scripts/hunt-preflight.mjs",
+        "line": 506,
+        "scope": "changedFiles",
+        "description": "stdout is split on newlines and kept as the list of changed paths, quoted forms included."
+      },
+      {
+        "kind": "propagation",
+        "file": "skills/vulnerability-hunt/scripts/hunt-preflight.mjs",
+        "line": 580,
+        "scope": "preflight",
+        "description": "The list is filtered by existsSync(join(repoDir, f)); a quoted name does not exist on disk, so the file is removed from the scope with no note."
+      },
+      {
+        "kind": "sink",
+        "file": "skills/vulnerability-hunt/scripts/hunt-preflight.mjs",
+        "line": 625,
+        "scope": "render",
+        "description": "Only the surviving names are printed as SCOPE file: lines, which the overlay uses as the run's scope_paths, so the omitted file is never audited."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "hooks/lib/resolve-tool.mjs",
+        "line": 57,
+        "description": "childEnv adds only NoDefaultCurrentDirectoryInExePath on Windows and sets no git quoting configuration."
+      },
+      {
+        "file": "tests/vulnerability-hunt/hunt-preflight.test.mjs",
+        "line": 669,
+        "description": "The tests check hostile names in manifest cells; none puts a quoted-name file in a ticket change set."
+      }
+    ],
+    "blockers": [
+      "The sandbox is unavailable for this run and the preflight was not run, so git's quoting of such a name in a ticket-branch diff was not observed.",
+      "Whether the user's or system git config sets core.quotepath=false is a deployment fact outside source; the default is true."
+    ],
+    "validation_plan": {
+      "local": "In a dummy repository, commit a file named with a non-ASCII character or a double quote on a ticket branch and run hunt-preflight.mjs for that ticket. Confirm the file is missing from SCOPE file: lines and from the count. Then compare against `git diff --name-only -z`. Fix: pass -z (or -c core.quotepath=false and a literal parse), split on NUL, and report a changed path that does not exist on disk in a note instead of dropping it.",
+      "deployment": "The owner may run git config --get core.quotepath on the machines that run hunts to see whether the default has been changed."
+    }
+  },
+  "linked_unit_checks": [
+    {
+      "coverage_id": "skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-preflight.mjs%23changedFiles::skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-preflight.mjs%23ticket%20scope::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Injection",
+      "checks": [
+        {
+          "agent_id": "h3-preflight",
+          "reviewed_paths": [
+            "skills/vulnerability-hunt/scripts/hunt-preflight.mjs",
+            "hooks/lib/resolve-tool.mjs"
+          ],
+          "invariant": "Every file the ticket's change set touches appears in the SCOPE file: lines, whatever the file is named",
+          "method": "source",
+          "result": "changedFiles runs `git diff --name-only --diff-filter=d <base><sep><branch>` with no -z and no -c core.quotepath=false (hunt-preflight.mjs:505). childEnv adds nothing git-related (resolve-tool.mjs:56-58). Git quotes such names by default: a path with a non-ASCII byte, a double quote, a backslash or a control character is printed as a double-quoted C-escaped string. The result is split on newlines (:506) and then filtered with existsSync(join(repoDir, f)) (:580). A quoted name is not a path on disk, so it is dropped with no note and no count. The rendered file: lines (:625), the SCOPE file count, the lane decision from `files.length` (:408-409) and the `scope_paths` of the Cloudflare run all omit that changed file. A ticket-scoped hunt (the default depth is quick) can then report on a change set that leaves out the file the author named in a non-ASCII way. Full-audit mode uses walk() and is not affected. Not observed: the sandbox is unavailable and the preflight was not run.",
+          "artifact": null
+        },
+        {
+          "agent_id": "h3-preflight",
+          "reviewed_paths": [
+            "skills/task-review/scripts/review-preflight.sh",
+            "skills/qa-specialist/scripts/qa-preflight.mjs",
+            "skills/vulnerability-hunt/scripts/hunt-files.mjs"
+          ],
+          "invariant": "A ref or branch name that reaches git argv, and the review-preflight output that carries ranges, cannot be read as an option or forge a range",
+          "method": "source",
+          "result": "The base is repos[].defaultBranch from the config (qa-preflight.mjs:266, default 'main'). It goes unvalidated into the argument `${base}...${branch}` with no `--` or --end-of-options (hunt-preflight.mjs:505; the same shape is in qa-preflight.mjs:224-237). A base starting with `--output=` would be taken as git's --output option and write the name list to a file whose name ends in `...<branch>`. The suffix keeps it from naming a useful file, so the impact is nil and this is hardening only. The branch half comes from rev-parse and is filtered by the ticket regex, and it is not in an option position. The ticket id passed to bash is validated (no leading '-', no whitespace, hunt-preflight.mjs:530). A forged RANGES section cannot come from DOCS: the awk filter in review-preflight.sh:36 prints only lines of the form `<n> bytes`. One side effect: ticketRanges aborts on any line containing 'ERROR' anywhere in review-preflight output (hunt-preflight.mjs:483), so a doc path containing that word stops the hunt. That is fail-closed.",
+          "artifact": null
+        }
+      ]
+    }
+  ],
+  "prior_records_same_fingerprint": []
+}

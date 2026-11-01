@@ -1,0 +1,101 @@
+{
+  "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "hunt-preflight/declared-where-cell-free-text-to-unguarded-research-agent",
+    "title": "The file:line cell of a DECLARED row carries free-text file paths from the audited tree to the unguarded research subagent",
+    "description": "The preflight keeps a DECLARED row only if its subject and version are plain, and a comment says no manifest string rides in a row as text. The fifth cell, `file:line`, is the manifest's repository path, and it gets a weaker check: no control character, backtick or `$(`, and at most 200 characters. A file path can hold spaces and arbitrary punctuation. A branch author who adds `<sentence-like directory name>/package.json` with one harmless dependency therefore gets the directory name printed in the row and passed unchanged to the research subagent. That subagent has the session's tools and no guardrail, and its only control on instruction-like rows is a sentence in its prompt.",
+    "claimed_root_cause": "Subject and version are filtered with plain-name allow-lists; the path cell is filtered with a deny-list of control characters, backtick and `$(` only, although it is the same kind of untrusted tree text going to the same unguarded consumer.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "skills/vulnerability-hunt/scripts/hunt-files.mjs",
+        "line": 31,
+        "scope": "walk",
+        "description": "Every real file path of the audited repository, including directory names the author chose, is returned as a relative path."
+      },
+      {
+        "kind": "propagation",
+        "file": "skills/vulnerability-hunt/scripts/hunt-preflight.mjs",
+        "line": 166,
+        "scope": "declaredFacts.push",
+        "description": "where = `${file}:${line}` is built from that path."
+      },
+      {
+        "kind": "propagation",
+        "file": "skills/vulnerability-hunt/scripts/hunt-preflight.mjs",
+        "line": 170,
+        "scope": "declaredFacts.push",
+        "description": "safeCell(where) is the only test on the path cell; PLAIN_SUBJECT and plainVersion apply to subject and version alone."
+      },
+      {
+        "kind": "propagation",
+        "file": "skills/vulnerability-hunt/scripts/hunt-preflight.mjs",
+        "line": 616,
+        "scope": "printable",
+        "description": "printable escapes only control characters, backtick and `$(`, so spaces and prose pass."
+      },
+      {
+        "kind": "sink",
+        "file": "skills/vulnerability-hunt/scripts/hunt-preflight.mjs",
+        "line": 632,
+        "scope": "render",
+        "description": "The cell is printed in the DECLARED section, which STEP 0b passes unchanged as <DECLARED> to a research subagent that has the session's tools and no guardrail (prompts/research.md:22-27)."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "skills/vulnerability-hunt/scripts/hunt-preflight.mjs",
+        "line": 132,
+        "description": "The comment states the design intent: a manifest string never rides in a row as text, and a non-plain row is dropped."
+      },
+      {
+        "file": "agents/vulnerability-hunter.md",
+        "line": 124,
+        "description": "The contract says the research step has the session's tools and no guardrail, and relies on the preflight dropping non-plain rows."
+      },
+      {
+        "file": "skills/vulnerability-hunt/prompts/research.md",
+        "line": 25,
+        "description": "The prompt's own defence is an instruction to report an instruction-like row in `reason` and not follow it, which is not a deterministic control."
+      }
+    ],
+    "blockers": [
+      "The sandbox is unavailable for this run and the preflight was not run, so the printed row with a prose path was not observed.",
+      "That the research subagent acts on such text with its tools is model behaviour and a harness fact (its tool set, whether it can run commands or send queries) that source cannot settle."
+    ],
+    "validation_plan": {
+      "local": "In a dummy repository, create a directory whose name is a harmless sentence containing a spaced phrase, put a package.json with one plain dependency inside it, and run hunt-preflight.mjs --full-audit. Confirm the DECLARED row prints the sentence in the file:line cell. Fix: apply the plain-name allow-list to the path cell too (for example drop the row, or print a hash of the path and the line only), and add a test beside tests/vulnerability-hunt/hunt-preflight.test.mjs:669.",
+      "deployment": "The owner may check the tool set the STEP 0b research subagent receives on each harness (shell, web fetch) to size the impact. No live probe is needed."
+    }
+  },
+  "linked_unit_checks": [
+    {
+      "coverage_id": "skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-preflight.mjs%23DECLARED%20rows::skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-preflight.mjs%23safeCell::profile%2Fquick%2Fall-in-scope-subsystems::AI-AND-LLM.md%23Indirect%20injection%20through%20retrieved%20or%20ingested%20content",
+      "checks": [
+        {
+          "agent_id": "h3-preflight",
+          "reviewed_paths": [
+            "skills/vulnerability-hunt/scripts/hunt-preflight.mjs",
+            "skills/vulnerability-hunt/scripts/hunt-files.mjs"
+          ],
+          "invariant": "Every cell of a DECLARED row that comes from the audited tree is a plain name or version, so tree text never rides to the unguarded research subagent",
+          "method": "source",
+          "result": "The subject and version are filtered hard: safeCell on the raw strings, then PLAIN_SUBJECT and plainVersion on the stripUrl output (hunt-preflight.mjs:136-145,170). The file:line cell is not. `where` = `${file}:${line}` (:166) is checked only by safeCell(where) at :170, which rejects control characters, a backtick, `$(` and more than 200 characters. A file path may hold spaces, letters and most punctuation. walk() returns every real path (hunt-files.mjs:30-31) and render() prints the cell through printable(), which escapes only those same characters (:614-617,632). A row with a plain dependency such as good@1.0.0 in a package.json under a directory named like a sentence therefore prints the sentence as the file:line cell. The comment at :132-135 says a manifest string never rides in a row as text, but this cell does. The existing tests cover subject and version cells only and none cover the path cell (tests/vulnerability-hunt/hunt-preflight.test.mjs:669-790).",
+          "artifact": null
+        },
+        {
+          "agent_id": "h3-preflight",
+          "reviewed_paths": [
+            "skills/vulnerability-hunt/prompts/research.md",
+            "agents/vulnerability-hunter.md"
+          ],
+          "invariant": "The consumer of DECLARED has a deterministic control, not only a prompt, between tree text and its tools",
+          "method": "source",
+          "result": "research.md:22-27 and vulnerability-hunter.md:120-124 hand the rows to a subagent that has the session's tools and no guardrail, 'unchanged'. The only control on the file:line cell is the prompt sentence telling it to treat an instruction-like row as data. The agent file states the reason itself: 'the step has the session's tools and no guardrail'. A prompt is not a boundary. The deterministic filter the design relies on is the one that misses this cell.",
+          "artifact": null
+        }
+      ]
+    }
+  ],
+  "prior_records_same_fingerprint": []
+}

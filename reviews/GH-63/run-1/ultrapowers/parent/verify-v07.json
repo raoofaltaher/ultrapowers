@@ -1,0 +1,135 @@
+{
+  "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "hunt-sandbox/mount-option-injection-comma-in-path",
+    "title": "Sandbox --mount strings take unescaped comma-bearing paths, so a path can inject a second source= field and bind a host path into the container",
+    "description": "hunt-sandbox.mjs builds three --mount values by template: the repository (:130), each masked file (:133) and the agent's inputs folder (:134). Docker splits a --mount value at commas into key=value fields. Nothing rejects or quotes a comma, a double quote or a newline in the interpolated path. Variant A (the agent): a prompt-injected hunting agent writes files under reviews/<id>/run-<N>/<repo>/agents/<agent>/inputs/ in a folder tree such as `x,source=` / `<abs host path components>` and calls `hunt-sandbox.mjs run --inputs agents/<agent>/inputs/x,source=/<host path>`. The realpath containment check passes, and the argument becomes `type=bind,source=<real inputs>/x,source=/<host path>,target=/inputs,readonly`. If Docker keeps the later source=, the host path (the project root with `.env`, `.agents/mcp-secrets.env`, `.ultrapowers/runs`, or `/home/<user>`) is bind-mounted read-only at /inputs, outside every mask. The agent knows its own project root from its working directory. A command it chooses (for example `cat`, base64) then prints the content into the artifact; the redaction patterns catch only assignment-shaped and vendor-prefixed values, and the artifact is a committed file under reviews/. Variant B (the audited tree): maskPaths takes file names from walk() over the audited tree. A tree holding nested folders `a,source=` / `home` / `u` / `.ssh` and a file `id_rsa` (the whole path matches KEY_RE) plus a plain file `a` yields `target=/target/a,source=/home/u/.ssh/id_rsa`, which can bind a host file over the decoy for the hostile target code to read. A name such as `.env.x,y` yields an invalid field and makes docker fail (exit 125), so the sandbox is permanently refused for that tree. Boundary crossed: a lower-trust principal (the agent, or the audited tree whose code runs in the container) selects a host path mounted into a container, and the key-material mask and the guardrail's key-file read refusal do not apply to it. Source-level change that enforces the invariant: refuse any repoDir, inputsDir or mask path containing ',', '\"', CR or LF (or CSV-quote the whole value) before building the --mount strings, and add a regression case for a folder named `x,source=` in --inputs and for a tree file `a,source=/etc/id_rsa`.",
+    "claimed_root_cause": "Mount specifications are built by string interpolation of paths whose names a lower-trust party controls, and the comma that separates Docker's --mount fields is neither rejected nor quoted, so a path can add or replace fields such as source=.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs",
+        "line": 467,
+        "scope": "main -> runCheck",
+        "description": "The agent's --inputs value (opts.inputs) and the audited tree's file names (through maskPaths) enter runCheck."
+      },
+      {
+        "kind": "propagation",
+        "file": "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs",
+        "line": 288,
+        "scope": "runCheck, --inputs handling",
+        "description": "resolve(runRepoDir, inputsRel) is realpath'd and checked only for containment in agents/<agent>/inputs and for being a folder; a comma in any folder name is accepted."
+      },
+      {
+        "kind": "propagation",
+        "file": "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs",
+        "line": 117,
+        "scope": "maskPaths",
+        "description": "walk(repoDir) returns every file path of the audited tree unfiltered; KEY_RE matches on `.ssh`, `id_rsa` or `.env` anywhere in the path, so a hostile name with a comma and a key-looking tail is kept in files."
+      },
+      {
+        "kind": "propagation",
+        "file": "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs",
+        "line": 327,
+        "scope": "runCheck",
+        "description": "inputsDir and masks go to dockerArgs with no check of ',' or '\"'."
+      },
+      {
+        "kind": "sink",
+        "file": "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs",
+        "line": 134,
+        "scope": "dockerArgs",
+        "description": "`--mount type=bind,source=${inputsDir},target=/inputs,readonly` (and the same shape for masked files at :133): the comma-joined string reaches the Docker CLI, which parses it as CSV fields."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs",
+        "line": 133,
+        "description": "The mask mount uses `target=/target/${file}` with a file name from the audited tree and no escaping."
+      },
+      {
+        "file": "skills/vulnerability-hunt/scripts/hunt-files.mjs",
+        "line": 25,
+        "description": "walk() accepts every name from readdirSync, skipping only symlinks and a few folders; no character is filtered."
+      },
+      {
+        "file": "hooks/qa-guardrail",
+        "line": 906,
+        "description": "During a hunt, writes are allowed anywhere under reviews/<id>/ with no rule on name characters, so the agent can create the comma-named folder tree."
+      },
+      {
+        "file": "hooks/lib/qa-shell-writes.mjs",
+        "line": 1233,
+        "description": "The arguments of the plugin's own hunt scripts are not judged, so the --inputs value passes the shell guardrail."
+      },
+      {
+        "file": "hooks/lib/guard-paths.mjs",
+        "line": 180,
+        "description": "KEY_RE matches id_rsa, authorized_keys and `.ssh` as substrings of any path, which is what lets a decoy tree path with a comma pass as key material."
+      },
+      {
+        "file": "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs",
+        "line": 345,
+        "description": "The last layer, redact(), is pattern-based; JSON-quoted names, truncated key blocks and any encoding of the content are not redacted."
+      }
+    ],
+    "blockers": [
+      "The sandbox is unavailable for this run (no hunt.sandbox in .agents/ultrapowers.json), so no docker command can be run",
+      "Docker's handling of a repeated source= (and of a target path that is absent) in one --mount value is not source-visible and must be observed on the installed engine",
+      "Whether container uid 65534 can read a given host file or folder (a 600 file owned by the host user is unreadable on a Linux engine; Docker Desktop's file sharing differs) is a host fact outside source",
+      "On a Windows host the injected source would have to start with a backslash and cannot carry a drive letter, so the reachable case is a Linux or macOS host; this is not settled by source"
+    ],
+    "validation_plan": {
+      "local": "With a Docker engine and a digest-pinned dummy image, create a dummy folder /tmp/h2probe holding marker.txt (no real secret). Create an inputs folder tree `agents/h2/inputs/x,source=/tmp/h2probe` (nested folders x,source= -> tmp -> h2probe) and call runCheck or the CLI with --inputs pointing at it and the command `ls /inputs`. Pass if the artifact lists marker.txt (the dummy host folder) and not the inputs folder content. Repeat for variant B with a tree file path `a,source=/tmp/h2probe/id_rsa` plus a plain file `a`, and run `ls -l /target/a`. Also run with a name such as `.env.x,y` and note the docker exit.",
+      "deployment": "The owner confirms on the supported Docker versions and hosts (Linux, macOS Docker Desktop) that the later source= wins and that uid 65534 can read a world-readable host file such as a project .env mounted this way."
+    }
+  },
+  "linked_unit_checks": [
+    {
+      "coverage_id": "skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-sandbox.mjs%23run::skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-sandbox.mjs%23dockerArgs::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Injection",
+      "checks": [
+        {
+          "agent_id": "h2-sandbox",
+          "reviewed_paths": [
+            "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs",
+            "skills/vulnerability-hunt/scripts/hunt-files.mjs"
+          ],
+          "invariant": "Every value placed in a docker run argument that a lower-trust party (the hunting agent, the audited tree) can influence stays one value: no separator, option or flag can be injected.",
+          "method": "source",
+          "result": "Argv-level injection is closed: spawn uses an argument array with no shell (spawnExec :190); name, agent and check are regex-pinned (:263,:270-271); env names are NAME-shaped with credential-looking names refused and values pushed as separate argv items (:274-279,:140); the image must match PINNED (:35,:102) and probe runs `docker image inspect <image>` first, so an image string that docker would read as a flag fails the probe; command words come after the image (:141). The three --mount strings (:130,:133,:134) are different: they are built by template with raw paths, and Docker splits --mount values at commas into key=value fields. The only escaping is none. inputsDir is the realpath of an agent-named folder, checked only by containment in agents/<agent>/inputs (:285-293). Mask file paths come straight from walk() over the audited tree (:117; hunt-files.mjs:25-31 filters nothing by character) and are placed after `target=/target/`. A folder or file name holding `,source=` followed by nested folders turns the rest of the path into a second source= field. Which later field Docker keeps cannot be observed here.",
+          "artifact": null
+        },
+        {
+          "agent_id": "h2-sandbox",
+          "reviewed_paths": [
+            "hooks/qa-guardrail",
+            "hooks/lib/qa-shell-writes.mjs"
+          ],
+          "invariant": "A control upstream of dockerArgs would stop a hunting agent from creating a comma-named inputs folder or passing it through --inputs.",
+          "method": "source",
+          "result": "None found. During a hunt, writes are allowed anywhere under reviews/<id>/ with no name rule (hooks/qa-guardrail:904-912), and the arguments of the plugin's own hunt scripts are not judged (hooks/lib/qa-shell-writes.mjs:1233-1256). Nothing in runCheck rejects ',' or '\"' in inputsDir (:283-294) or in mask paths (:327).",
+          "artifact": null
+        }
+      ]
+    },
+    {
+      "coverage_id": "skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-sandbox.mjs%23run::skills%2Fvulnerability-hunt%2Fscripts%2Fhunt-sandbox.mjs%23maskPaths%20and%20redact::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Cryptography%20and%20secrets",
+      "checks": [
+        {
+          "agent_id": "h2-sandbox",
+          "reviewed_paths": [
+            "skills/vulnerability-hunt/scripts/hunt-sandbox.mjs",
+            "hooks/lib/guard-paths.mjs",
+            "skills/vulnerability-hunt/scripts/hunt-files.mjs"
+          ],
+          "invariant": "The container sees none of the project's key material, MCP secrets file, run records or review folders, and nothing secret-shaped it prints reaches the artifact.",
+          "method": "source",
+          "result": "The mask set is sound for ordinary names: maskPaths masks reviews/ and .ultrapowers/ as read-only tmpfs, every file matching the shared KEY_RE (guard-paths.mjs:180, matched on the lowercased path, mounted by original-case name) plus .dev.vars, and .agents/mcp-secrets.env, each over an empty regular file the runner checks (:304-315). Symlinks are skipped by walk() but a container-side link cannot reach a host file. The container gets an empty environment, a credential-looking --env name is refused, and the redaction runs on the whole text before the 64 KiB cut (:345-348). The weakness is in the mask file path: it is the same unescaped `target=/target/${file}` text (:133) built from names the audited tree controls, so a hostile tree can inject a source= field and mount a host path over a decoy file. That is the same root cause as the inputs-folder variant and is consolidated under the one fingerprint. The redaction (:148-166) is the last layer and is weak in this setting: JSON-quoted `\"apiKey\": \"value\"` is not matched (the name must be followed directly by : or =); a private key printed without its END line is not matched; any encoding (base64, hex, reversal) passes. See hardening for the pathological-backtracking cost of the assignment pattern.",
+          "artifact": null
+        }
+      ]
+    }
+  ],
+  "prior_records_same_fingerprint": []
+}

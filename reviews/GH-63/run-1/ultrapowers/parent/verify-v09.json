@@ -1,0 +1,98 @@
+{
+  "candidate": {
+    "proposed_verdict": "needs_validation",
+    "fingerprint": "hunt-guardrail/key-material-aws-cache-weaker-in-shell-rule",
+    "title": "The shell key-material rule lets a hunter read ~/.aws/cli/cache and ~/.aws/sso/cache that the file-tool rule denies",
+    "description": "The file-tool rule in hooks/qa-guardrail denies the whole `.aws/` folder. The shell rule isKeyMaterial (guard-paths.mjs) names only `.aws/credentials`, and the bash text rule at :1143 does the same. The hunt allows cat, head, grep and similar on paths outside the project, so a prompt-injected hunter can read the AWS CLI's cached role credentials and SSO access tokens through the shell and put them in its context or in a committed reviews/<id>/ file, while the Read tool refuses the same file.",
+    "claimed_root_cause": "Two copies of the key list disagree: the file-tool KEY_RE uses `(^|/)\\.aws(/|$)` and the shared isKeyMaterial uses `\\.aws\\/credentials`, although the comment on isKeyMaterial says it is the same list as the hook's shell rule.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "hooks/lib/qa-shell-writes.mjs",
+        "line": 1529,
+        "scope": "checkAlias/judgeText",
+        "description": "A shell word such as ~/.aws/cli/cache/token.json is judged by text only, because a `~` word is not 'plain' (:1561)."
+      },
+      {
+        "kind": "propagation",
+        "file": "hooks/lib/qa-shell-writes.mjs",
+        "line": 1532,
+        "scope": "judgeText",
+        "description": "isKeyMaterial(keyText(word)) is the only key-name test for the word."
+      },
+      {
+        "kind": "propagation",
+        "file": "hooks/lib/guard-paths.mjs",
+        "line": 180,
+        "scope": "KEY_RE",
+        "description": "The shell copy of the key list matches `.aws/credentials` but not `.aws/cli/cache/*` or `.aws/sso/cache/*`."
+      },
+      {
+        "kind": "sink",
+        "file": "hooks/lib/qa-shell-writes.mjs",
+        "line": 1153,
+        "scope": "HUNT_PROGRAMS",
+        "description": "cat, head, tail and grep are on the hunt's program list and read any path, so the file is printed."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "hooks/qa-guardrail",
+        "line": 637,
+        "description": "The file-tool KEY_RE denies `(^|/)\\.aws(/|$)`, so the Read tool refuses the same file the shell reads."
+      },
+      {
+        "file": "hooks/qa-guardrail",
+        "line": 1143,
+        "description": "The bash text rule over the command also names only `.aws/credentials`."
+      },
+      {
+        "file": "hooks/lib/guard-paths.mjs",
+        "line": 177,
+        "description": "The comment claims the list is the same as the hook's shell rule; the two regexes differ."
+      },
+      {
+        "file": "hooks/lib/qa-shell-writes.mjs",
+        "line": 121,
+        "description": "keyGlobReaches (guard-paths.mjs:121) lists only .aws/credentials among the AWS names, so a glob such as ~/.aws/cli/cache/*.json is not caught either."
+      }
+    ],
+    "blockers": [
+      "No sandbox for this run, so the analyzer was not executed on `cat ~/.aws/sso/cache/x.json`",
+      "Whether the developer's machine holds a populated ~/.aws/cli/cache or ~/.aws/sso/cache is a deployment fact"
+    ],
+    "validation_plan": {
+      "local": "In a throwaway project with a hunt run record, feed hooks/qa-guardrail `cat ~/.aws/sso/cache/a.json` through Bash and `~/.aws/sso/cache/a.json` through Read, and compare: the shell call is expected to be allowed and the Read call denied.",
+      "deployment": "Owner check: list ~/.aws/cli/cache and ~/.aws/sso/cache on the hunting machine to see whether live credentials sit there; if so, align both lists on the whole `.aws/` folder."
+    }
+  },
+  "linked_unit_checks": [
+    {
+      "coverage_id": "hooks%2Fqa-guardrail%23hunt%20profile%20tool%20call::hooks%2Flib%2Fguard-paths.mjs%23isKeyMaterial::profile%2Fquick%2Fall-in-scope-subsystems::ATTACK-CLASSES.md%23Resource%20and%20file%20handling",
+      "checks": [
+        {
+          "agent_id": "h1-guardrail",
+          "reviewed_paths": [
+            "hooks/lib/guard-paths.mjs",
+            "hooks/lib/qa-shell-writes.mjs"
+          ],
+          "invariant": "isKeyMaterial is the same key list as the hook's file-tool rule, and its move out of qa-shell-writes.mjs changed no behaviour",
+          "method": "source",
+          "result": "git diff dev..GH-63-cloudflare-engine shows the KEY_RE removed from qa-shell-writes.mjs and added to guard-paths.mjs byte for byte, with every caller switched to isKeyMaterial (:1356, :1532, :1536, :1575, :2287), so the move is behaviour-neutral. The list is not the same as the file-tool rule in hooks/qa-guardrail:637, although the comment at guard-paths.mjs:177 claims it is: the file-tool regex denies the whole `.aws/` folder, the shell version only `.aws/credentials`. A read of `~/.aws/cli/cache/*.json` or `~/.aws/sso/cache/*.json` (cached temporary credentials and SSO bearer tokens) is therefore denied through the Read tool and allowed through `cat` (candidate hunt-guardrail/key-material-aws-cache-weaker-in-shell-rule). The 8.3 and symlink resolution in checkAlias (:1559-1576) is correct for in-project words, but a `~` word is judged by text only (`plain` is false).",
+          "artifact": null
+        },
+        {
+          "agent_id": "h1-guardrail",
+          "reviewed_paths": [
+            "hooks/qa-guardrail"
+          ],
+          "invariant": "a key-material path field or glob in any hunt tool call is denied before the hunt's tool gate and the write rules",
+          "method": "source",
+          "result": "The node block collects every path-shaped field and glob field (:471-490), and the bash block denies a KEY_RE match on the typed and the real spelling (:647-664) and on a glob that can expand to a key name (:666), before the hunt gate (:767) and the file-tool gate (:873). `.env.example` is stripped deliberately. A tool with an unreadable path or a twotargets call is denied (:550, :589-593). No bypass found for the tools the hunt gate lets through.",
+          "artifact": null
+        }
+      ]
+    }
+  ],
+  "prior_records_same_fingerprint": []
+}

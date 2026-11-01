@@ -1,0 +1,10 @@
+command: node ../inputs/mounts.mjs
+image: node@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da
+limits: cpus=1 memory=512m pids=128 fileSizeBytes=16777216 scratch=128m seconds=120
+env: none
+result: exit 0
+output (redacted, first 65536 bytes):
+MASK FILES: ["lib,source=/run/desktop/mnt/host/c,consistency=/id_rsa"]
+MOUNT: type=bind,source=/scratch/fx/repo,target=/target,readonly
+MOUNT: type=bind,source=/H/.ultrapowers/sandbox/empty,target=/target/lib,source=/run/desktop/mnt/host/c,consistency=/id_rsa,readonly
+REPO MOUNT: type=bind,source=/scratch/fx2/x,source=/run/desktop/mnt/host/c,consistency=,target=/target,readonly

@@ -1,0 +1,14 @@
+command: bash //inputs/run.sh
+image: node@sha256:4b150b48b4116e2a22f2c39cc27025fbf4f153e2078fd3b14d159fdb5c7279da
+limits: cpus=1 memory=512m pids=128 fileSizeBytes=16777216 scratch=128m seconds=120
+env: none
+result: timed out after 120 s
+output (redacted, first 65536 bytes):
+kind=pad n=10000 rc=0 start=1793540641.651372 end=1793540641.884478 reason=
+kind=pad n=100000 rc=0 start=1793540641.903493 end=1793540642.149487 reason=
+kind=pad n=400000 rc=0 start=1793540642.170254 end=1793540642.539619 reason=
+kind=semi n=10000 rc=0 start=1793540642.556528 end=1793540642.792866 reason=
+kind=semi n=100000 rc=0 start=1793540642.817951 end=1793540643.464136 reason=
+kind=semi n=400000 rc=0 start=1793540643.481869 end=1793540644.980734 reason=
+kind=sub n=10000 rc=0 start=1793540644.997551 end=1793540645.280679 reason=
+kind=sub n=100000 rc=0 start=1793540645.300110 end=1793540653.262398 reason=

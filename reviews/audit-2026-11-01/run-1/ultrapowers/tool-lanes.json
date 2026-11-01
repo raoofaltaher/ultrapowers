@@ -1,0 +1,66 @@
+{
+  "lanes": [
+    {
+      "lane": "dependencies", "status": "incomplete",
+      "reason": "root package.json: npm audit exited 1 with ENOLOCK (no lockfile, no report); the manifest declares zero dependencies, so nothing is unaudited in practice. tests/brainstorm-server audited clean.",
+      "tools": [
+        { "name": "npm", "version": "11.21.1", "command": "npm audit --package-lock-only --json --prefix S:/ultrapowers-live-gh63/audit/tests/brainstorm-server", "exit": 0 },
+        { "name": "npm", "version": "11.21.1", "command": "npm audit --package-lock-only --json --prefix S:/ultrapowers-live-gh63/audit", "exit": 1 }
+      ],
+      "cves": [],
+      "secrets": [], "alerts": [],
+      "notes": [
+        { "file": "package.json", "line": 1, "kind": "missing-lockfile", "note": "Root manifest has no lockfile, so npm audit fails with ENOLOCK. It declares no dependencies or devDependencies, so nothing is unpinned." },
+        { "file": "tests/brainstorm-server/package.json", "line": 8, "kind": "caret-range", "note": "ws ^8.22.0 is a range, pinned to 8.22.0 by tests/brainstorm-server/package-lock.json. The dependency is test-only (runtime false). No advisory was found." }
+      ],
+      "declined": [
+        "No verdict on the root manifest from a tool: npm audit could not run without a lockfile; the lane creates no lockfile.",
+        "pip-audit, cargo-audit and osv-scanner are absent and no manifest of those ecosystems is in scope; none were run."
+      ],
+      "filesRead": [
+        "S:/ultrapowers-live-gh63/audit/package.json",
+        "S:/ultrapowers-live-gh63/audit/tests/brainstorm-server/package.json",
+        "S:/ultrapowers-live-gh63/audit/tests/brainstorm-server/package-lock.json"
+      ]
+    },
+    {
+      "lane": "secrets", "status": "ok", "reason": "",
+      "tools": [
+        { "name": "gitleaks", "version": "8.30.1", "command": "gitleaks dir . --no-banner --redact --report-format json --report-path reviews/audit-2026-11-01/run-1/ultrapowers/gitleaks-dir.json --config .gitleaks.toml", "exit": 1 },
+        { "name": "gitleaks", "version": "8.30.1", "command": "gitleaks git . --no-banner --redact --report-format json --report-path reviews/audit-2026-11-01/run-1/ultrapowers/gitleaks-git.json --config .gitleaks.toml", "exit": 1 }
+      ],
+      "cves": [], "alerts": [],
+      "secrets": [],
+      "notes": [
+        { "file": "tests/brainstorm-server/ws-protocol.test.js", "line": 53, "kind": "placeholder", "note": "gitleaks generic-api-key hit (tree and history, commit 1aec84da03fbbf0f37284d306b8176b1af2ae23b); it is the public RFC 6455 section 4.2.2 sample WebSocket key, not a credential" },
+        { "file": "docs/ultrapowers/plans/2026-09-30-rename-and-fork-hygiene.md", "line": 2429, "kind": "placeholder", "note": "gitleaks generic-api-key hits at lines 2429, 2432 and 2433 in the tree, and lines 2427, 2430 and 2431 in history (commit a89ea5520e86fb467ceb2ddf1213d850bed1caf5); a made-up local acceptance-test token against localhost, not a credential" }
+      ],
+      "declined": [
+        "for-loop over the two gitleaks reports: HUNT-GUARDRAIL DENY (for is not on the hunt's command list); re-ran as plain jq commands, no workaround",
+        "content-search fallback (step 4) not run: gitleaks completed on both the tree and history; gitleaks is the only evidence and its rules do not cover every credential format"
+      ],
+      "filesRead": [
+        "reviews/audit-2026-11-01/run-1/ultrapowers/gitleaks-dir.json (File, StartLine, RuleID, Commit only)",
+        "reviews/audit-2026-11-01/run-1/ultrapowers/gitleaks-git.json (File, StartLine, RuleID, Commit only)",
+        "tests/brainstorm-server/ws-protocol.test.js (lines 48-57)",
+        "docs/ultrapowers/plans/2026-09-30-rename-and-fork-hygiene.md (lines 2415-2442)"
+      ]
+    },
+    {
+      "lane": "osint",
+      "status": "skipped",
+      "reason": "the remote of origin is a local path (S:/ultrapowers/.claude/worktrees/GH-63), not a GitHub or GitLab host, so there is no <o>/<r> for gh api; and osv-scanner is absent",
+      "tools": [],
+      "cves": [],
+      "secrets": [],
+      "alerts": [],
+      "notes": [],
+      "declined": [
+        "gh api repos/<o>/<r>/dependabot/alerts and secret-scanning/alerts: not run, origin is a local path",
+        "gh search code for the repository's identifiers: not run, lane skipped",
+        "osv-scanner on tests/brainstorm-server/package-lock.json: not run, osv-scanner is absent"
+      ],
+      "filesRead": []
+    }
+  ]
+}

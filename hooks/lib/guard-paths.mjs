@@ -1,7 +1,9 @@
 // guard-paths.mjs: the one path resolver behind every comparison of hooks/qa-guardrail and
 // hooks/lib/qa-shell-writes.mjs. A path is resolved to its real, canonical spelling (8.3 short
 // names, Git Bash `/c/` forms, symlinks) and compared exactly; it is compared case-insensitively
-// only when the project's own folder ignores case. Node standard library only.
+// only when the project's own folder ignores case. It also holds the key-material rule
+// (isKeyMaterial, keyGlobReaches): which names are credentials no call of a run may touch, shared by
+// the shell analyzer and the hunt sandbox. Node standard library only.
 import { execFileSync } from 'node:child_process';
 import { existsSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -118,7 +120,7 @@ export function rel(target, root, ignoreCase) {
 // under some folder, and with the shell's rule that `*` and `?` match no leading dot. A glob whose only
 // literal-free segments are wildcards (`*`, `repo/*`) reaches no name by itself, and a name inside a dot folder
 // (.config/gh/hosts.yml) is reached only by a glob that covers the folder too (so `*.json` is not `.docker/config.json`).
-const KEY_GLOB_NAMES = ['.env', '.env.local', '.env.production', '.env.development', '.env.test', '.ssh/id_rsa', '.ssh/id_ed25519', '.ssh/authorized_keys', '.aws/credentials',
+const KEY_GLOB_NAMES = ['.env', '.env.local', '.env.production', '.env.development', '.env.test', '.ssh/id_rsa', '.ssh/id_ed25519', '.ssh/authorized_keys', '.aws/credentials', '.aws/config',
   '.git-credentials', '.netrc', '.npmrc', '.config/gh/hosts.yml', '.config/glab-cli/config.yml', '.docker/config.json', '.kube/config', '.gnupg/private-keys-v1.d',
   'mcp-secrets.env', 'secrets.local', 'id_rsa', 'id_ed25519', 'id_ecdsa', 'authorized_keys', '.ssh/id_ecdsa',
   '.pypirc', '.pgpass', '.vault-token', '.cargo/credentials', '.cargo/credentials.toml', '.config/gcloud/application_default_credentials.json',
@@ -173,3 +175,11 @@ export function keyGlobReaches(word) {
   }
   return false;
 }
+
+// The names of key material that no call of a run may read, search, upload or write: the same list
+// as KEY_RE in hooks/qa-guardrail (its shell rule), matched against a forward-slash, lower-case path.
+// It matches at least every path the hook's list matches; `\.aws\/credentials` is kept as a looser
+// alternative (it also matches `x.aws/credentials`). isKeyMaterial is the one test the analyzer
+// (qa-shell-writes.mjs) and the hunt sandbox (which masks these files) both call.
+const KEY_RE = /(^|\/)\.ssh(\/|$)|authorized_keys|id_rsa|id_ed25519|id_ecdsa|(^|\/)\.aws(\/|$)|\.aws\/credentials|mcp-secrets\.env|secrets\.local|\.local\.sh|(^|\/)\.env($|\.)|\.git-credentials|(^|\/)\.netrc$|(^|\/)\.npmrc$|(^|\/)\.config\/(gh|glab-cli)(\/|$)|(^|\/)\.docker\/config\.json|(^|\/)\.kube(\/|$)|(^|\/)\.gnupg(\/|$)|(^|\/)\.pypirc$|(^|\/)\.cargo\/credentials(\.toml)?$|(^|\/)\.config\/gcloud(\/|$)|(^|\/)\.azure(\/|$)|(^|\/)\.pgpass$|(^|\/)\.vault-token$|(^|\/)\.gem\/credentials$|(^|\/)[A-Za-z0-9_][^/[\]|]*\.(pem|key|pfx|p12)(\.(bak|old|orig))?$/;
+export function isKeyMaterial(p) { return KEY_RE.test(p); }

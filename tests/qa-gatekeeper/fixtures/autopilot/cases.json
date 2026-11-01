@@ -369,6 +369,8 @@
   {"name":"deny_write_root_run_record","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.ultrapowers/runs/qa-1234-0a1b2c3d.json","content":"1234"}}},
   {"name":"deny_shell_nested_run_record","event":{"tool_name":"Bash","tool_input":{"command":"mkdir -p sub/.ultrapowers && echo 1234 > sub/.ultrapowers/runs/qa-1234-0a1b2c3d.json"}}},
   {"name":"deny_patch_nested_run_record","event":{"tool_name":"apply_patch","tool_input":{"patch":"*** Begin Patch\n*** Add File: sub/.ultrapowers/runs/qa-1234-0a1b2c3d.json\n+1234\n*** End Patch"}}},
+  {"name":"deny_write_sandbox_log","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.ultrapowers/sandbox/GH-1/run-1.jsonl","content":"x"}}},
+  {"name":"deny_shell_sandbox_log","event":{"tool_name":"Bash","tool_input":{"command":"echo x >> .ultrapowers/sandbox/GH-1/run-1.jsonl"}}},
   {"name":"deny_forge_hunt_run_record","reason":"protected path","event":{"tool_name":"Write","tool_input":{"file_path":"{{ROOT}}/.ultrapowers/runs/hunt-audit-9999-deadbeef.json","content":"{}"}}},
   {"name":"deny_rm_run_record","event":{"tool_name":"Bash","tool_input":{"command":"rm .ultrapowers/runs/qa-1234-0a1b2c3d.json"}}},
   {"name":"deny_rm_runs_glob","event":{"tool_name":"Bash","tool_input":{"command":"rm .ultrapowers/runs/*"}}},
