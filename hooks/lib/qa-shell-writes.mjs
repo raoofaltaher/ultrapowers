@@ -894,7 +894,7 @@ export function huntCheck(prog0, words, { viaRunner = false, interpreter = '' } 
 // report only into the audit's folder. A secret value must never reach stdout, a report the hunt keeps or a
 // command line; everything else (stdin, a baseline, a template, a diagnostics folder, an ignore file, a
 // decoder depth, a rule switch) is refused by name.
-const GITLEAKS_FORM = 'gitleaks may run only as gitleaks dir|git <path inside the project> --redact [--no-banner] [--report-format json --report-path reviews/<id>/<file>] [--config <file>] [--log-opts <base>..<branch>]';
+const GITLEAKS_FORM = 'gitleaks may run only as gitleaks dir|git <path inside the project> --redact|--redact=100 [--no-banner] [--no-color] [-v|--verbose] [--log-level info|warn|error|fatal] [--exit-code <n>] [--max-target-megabytes <n>] [--report-format|-f json --report-path|-r reviews/<id>/<file>] [--config|-c <file>] [--log-opts <base>..<branch>] (or gitleaks version|help, --help, -h alone)';
 const GITLEAKS_LOG_OPTS = /^[A-Za-z0-9][A-Za-z0-9._/-]*\.\.[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 // debug and trace may log matched values, so they are not on the list.
 const GITLEAKS_LEVELS = new Set(['info', 'warn', 'error', 'fatal']);
@@ -1511,6 +1511,8 @@ export function analyze(command, { cwd, root, ticket, profile = 'qa', ignoreCase
   // Key material named by a word, whatever reads it: the word as the shell resolves it (quotes removed,
   // `.e"n"v` is `.env`), the literal text around an expansion (`$HOME/.git-credentials`), a glob that can expand to
   // a key name (`.en?`, `.e[n]v`), and a word spelled with an 8.3 alias that resolves to key material (issue #31).
+  // The hook tests the typed command; an 8.3 short name (MCP-SE~1.ENV) hides the name from it, so any word with an
+  // alias-shaped segment is resolved here and its real name is tested.
   const keyText = (s) => String(s).replace(/\\/g, '/').toLowerCase().replace(/\.env\.example/g, '');
   const checkAlias = (w, dir) => {
     const raw = resolveWord(w);

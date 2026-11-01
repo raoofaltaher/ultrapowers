@@ -680,9 +680,10 @@ AUTOPILOT_PROTECTED_RE='(^|/)\.github/|(^|/)\.gitlab-ci\.yml$|(^|/)hooks/(qa-gua
 # record and the agents' rules: a stage that edits its own baseline hides a failure from the QA
 # gate. The baseline's path is qa.knownIssues (default qa/known-issues.md, matched above).
 known_lc="$(lower "$known_issues")"
-# The QA and hunt run records: never written, moved or removed by a call of a run, through a file tool,
-# a patch or the shell. A run ends itself through hooks/lib/run-records.mjs end, which removes its
-# record only once its report holds its Verdict line (and logs the end in reviews/<id>/run-log.txt).
+# The QA and hunt run records (.ultrapowers/runs/) and the sandbox runner's log (.ultrapowers/sandbox/):
+# never written, moved or removed by a call of a run, through a file tool, a patch or the shell. A run
+# ends itself through hooks/lib/run-records.mjs end, which removes its record only once its report holds
+# its Verdict line (and logs the end in reviews/<id>/run-log.txt).
 MARKER_RE='(^|/)\.ultrapowers/(runs|sandbox)(/|$)'
 MARKER_WHY="is a run record; no call of a run writes, moves or removes one, or the sandbox runner's log: the run ends itself through run-records.mjs end once its report holds its Verdict line"
 # --- MCP tools of a tracker, of mail or chat, or of git (git: autopilot only): reads pass; in an autopilot stage writes belong to the

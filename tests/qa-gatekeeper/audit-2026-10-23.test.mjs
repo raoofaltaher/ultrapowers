@@ -13,6 +13,7 @@ import test from 'node:test';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const { analyze } = await import(pathToFileURL(resolve(__dirname, '../../hooks/lib/qa-shell-writes.mjs')).href);
+const { isKeyMaterial } = await import(pathToFileURL(resolve(__dirname, '../../hooks/lib/guard-paths.mjs')).href);
 
 const qa = { cwd: '/p', root: '/p', ticket: '1234' };
 const hunt = { cwd: '/p', root: '/p', ticket: 'audit-1', profile: 'hunt' };
@@ -1185,6 +1186,41 @@ test('R4 Low 7 (hook): a node planted in the project, on an absolute PATH entry 
   const r = run({ ULTRAPOWERS_NODE: process.execPath, PATH: `${tools}${delimiter}${process.env.PATH}` });
   assert.equal(r.status, 2, r.stderr);
   assert.equal(existsSync(sentinel), false, 'the planted node ran');
+});
+
+test('isKeyMaterial agrees with the bash hook\'s key list', () => {
+  // One path per alternative of KEY_RE in hooks/qa-guardrail, including the whole .aws folder.
+  for (const p of [
+    '.ssh/known_hosts', 'home/.ssh', 'authorized_keys', 'id_rsa', 'id_ed25519', 'id_ecdsa',
+    '.aws/config', '.aws/credentials', '.aws/sso/cache/x.json', 'home/u/.aws', 'home/u/.aws/config',
+    'mcp-secrets.env', 'secrets.local', 'run.local.sh', '.env', '.env.local', 'a/.env.production',
+    '.git-credentials', '.netrc', 'a/.npmrc', '.config/gh/hosts.yml', '.config/glab-cli/config.yml',
+    '.docker/config.json', '.kube/config', '.gnupg/private-keys-v1.d/x', '.pypirc',
+    '.cargo/credentials', '.cargo/credentials.toml', '.config/gcloud/application_default_credentials.json',
+    '.azure/msal_token_cache.json', '.pgpass', '.vault-token', '.gem/credentials',
+    'certs/server.pem', 'k.key', 'a/b.pfx', 'a/b.p12', 'a/b.pem.bak',
+  ]) assert.equal(isKeyMaterial(p), true, p);
+  for (const p of ['src/aws-client.js', 'docs/keys.md', 'src/config.js', 'aws/config', 'src/.awsome/x', 'src/key-handler.js']) {
+    assert.equal(isKeyMaterial(p), false, p);
+  }
+});
+
+test('the shell analyzer refuses to read .aws/config and .aws/sso in every profile', () => {
+  all(denied, ['cat .aws/config', 'cat ~/.aws/config', 'cat .aws/sso/cache/x.json', 'grep -r token .aws']);
+});
+
+test('a glob in the folder name does not reach .aws/config either', () => {
+  all(denied, ['cat .aw*/config', 'cat ~/.a?s/config']);
+});
+
+test('the gitleaks refusal names every flag the analyzer accepts', () => {
+  const why = analyze('gitleaks stdin --no-banner --redact', hunt);
+  assert.match(why, /^.*gitleaks may run only as/);
+  const form = why.split(' during the hunt')[0];
+  for (const flag of ['--redact', '--redact=100', '--no-banner', '--no-color', '-v', '--verbose', '--report-format', '-f', '--report-path', '-r', '--config', '-c', '--log-opts', '--log-level', '--max-target-megabytes', '--exit-code']) {
+    const at = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    assert.match(form, new RegExp(`(^|[\\s\\[|])${at(flag)}($|[\\s\\]|])`), `${flag} is missing from: ${form}`);
+  }
 });
 
 test('gitleaks with partial redaction or a debug log level is refused', () => {
