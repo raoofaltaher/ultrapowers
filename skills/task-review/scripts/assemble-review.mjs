@@ -247,11 +247,13 @@ function main(argv) {
     const problem = regularFileProblem(file, label);
     return problem ? usage(`ERROR: ${problem}; nothing was written`) : 0;
   };
-  // The hunt's latest run folder, read the way hunt-verdict.mjs reads it, without the provenance check: the
-  // runner's log under .ultrapowers/ is not committed. Records from before GH-63 are refused, not read.
+  // The hunt's latest run folder, read the way hunt-verdict.mjs reads it. The provenance check runs when the
+  // runner's log folder .ultrapowers/sandbox/<ID>/ exists on this machine; that folder is not committed, so
+  // records read on another machine are judged without it. Records from before GH-63 are refused, not read.
+  const logFolder = lstatSync(join(root, '.ultrapowers', 'sandbox', id), { throwIfNoEntry: false });
   let run;
   try {
-    run = loadRun(root, id);
+    run = loadRun(root, id, logFolder?.isDirectory() ? { checkProvenance: true } : {});
   } catch (error) {
     return usage(`ERROR: cannot read the vulnerability hunt's run folder: ${error.message}`);
   }

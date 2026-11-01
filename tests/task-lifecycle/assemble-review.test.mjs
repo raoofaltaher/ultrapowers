@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { assemble } from '../../skills/task-review/scripts/assemble-review.mjs';
 import { loadRun, judgeRun, renderReviewSection } from '../../skills/vulnerability-hunt/scripts/hunt-verdict.mjs';
-import { makeRun, confirmed, needsValidation, cveRow, secretRow, lane } from '../vulnerability-hunt/fixtures.mjs';
+import { makeRun, confirmed, needsValidation, cveRow, secretRow, lane, coveredUnit } from '../vulnerability-hunt/fixtures.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(HERE, '../../skills/task-review/scripts/assemble-review.mjs');
@@ -366,6 +366,39 @@ test('--security is no longer a flag: the usage text does not offer it', () => {
   const root = project();
   try {
     assert.doesNotMatch(cli(root, []).stderr, /--security/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// A run with one local check whose artifact exists on disk; the runner's log folder is the thing that differs.
+function provenanceProject(withLogFolder) {
+  const root = project();
+  const rel = 'agents/h1/artifacts/c1.txt';
+  makeRun(root, '501', { repos: [api([], { ledger: [coveredUnit({ agent: 'h1', artifact: rel })] })] });
+  const file = join(root, 'reviews', '501', 'run-1', 'api', rel);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, 'captured output\n');
+  withFindings(root);
+  writeFileSync(join(root, 'reviews', '501', 'QA-REPORT.md'), qa('Verdict: PASS — ok.'));
+  if (withLogFolder) mkdirSync(join(root, '.ultrapowers', 'sandbox', '501'), { recursive: true });
+  return root;
+}
+
+test('with the runner\'s log folder present, an unproven artifact makes the review BLOCKED', () => {
+  const root = provenanceProject(true);
+  try {
+    const out = cli(root, ['501', '--findings', 'reviews/501/review-findings.json']);
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(out.stdout, /^Verdict: BLOCKED — .*the vulnerability hunt ended INCOMPLETE \(api: artifact agents\/h1\/artifacts\/c1\.txt not proven: no log for this run\)/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('without the log folder, the same records are judged without provenance', () => {
+  const root = provenanceProject(false);
+  try {
+    const out = cli(root, ['501', '--findings', 'reviews/501/review-findings.json']);
+    assert.equal(out.status, 0, out.stderr);
+    assert.match(out.stdout, /^Verdict: PASS — /);
+    assert.match(readFileSync(join(root, 'reviews', '501', 'TASK-REVIEW.md'), 'utf8'), /security: PASS \(/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
