@@ -139,6 +139,11 @@ test('two repositories each get a section, a TDD assessment and findings by seve
   assert.ok(r.markdown.indexOf('Api break') < r.markdown.indexOf('Api nit'), 'Critical before Minor within a repository');
 });
 
+test('the Summary counts the repositories: 1 repository, 2 repositories', () => {
+  assert.match(run([repoBlock('api')], qa('Verdict: PASS — ok.')).markdown, / across 1 repository\. /);
+  assert.match(run([repoBlock('api'), repoBlock('web')], qa('Verdict: PASS — ok.')).markdown, / across 2 repositories\. /);
+});
+
 // The vulnerability hunt: the run folder reviews/<ID>/run-<N>/, read through hunt-verdict.mjs (loadRun, judgeRun,
 // renderReviewSection). The records come from makeRun, the hunt's own fixtures.
 function huntRuns(list, id = '501') {

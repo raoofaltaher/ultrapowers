@@ -158,7 +158,7 @@ export function assemble({ id, findings, qaText, run = null, reportText = null, 
   out.push('| QA report | [QA-REPORT.md](QA-REPORT.md) |', '');
   out.push(`Verdict: ${verdict} — ${sentence}.`, '');
   out.push('## Summary', '');
-  out.push(`${plural(counts.Critical, 'Critical finding')}, ${plural(counts.Important, 'Important finding')} and ${plural(counts.Minor, 'Minor finding')} across ${plural(repos.length, 'repository')}. ${qaSkipped ? 'QA: not configured for this project' : `QA gate: ${qa ? qa.value : 'no verdict'}`}; ${securitySummary(sec)}. ${sentence}.`, '');
+  out.push(`${plural(counts.Critical, 'Critical finding')}, ${plural(counts.Important, 'Important finding')} and ${plural(counts.Minor, 'Minor finding')} across ${plural(repos.length, 'repository', 'repositories')}. ${qaSkipped ? 'QA: not configured for this project' : `QA gate: ${qa ? qa.value : 'no verdict'}`}; ${securitySummary(sec)}. ${sentence}.`, '');
   out.push('## Code review', '');
   for (const repo of repos) {
     out.push(`### ${repo.repo} (${repo.branch} against ${repo.base})`, '');
